@@ -4,8 +4,8 @@ use arrow::array::{Array, Int64Array, UInt64Array};
 use axum::{
     Json,
     body::Bytes,
-    extract::{Path, RawQuery, State},
-    http::{HeaderMap, StatusCode},
+    extract::{FromRequestParts, Path, RawQuery, State},
+    http::{HeaderMap, StatusCode, request::Parts},
     response::{IntoResponse, Response},
 };
 use krabka_blockstore::escape_object_path_segment;
@@ -17,7 +17,7 @@ use krabka_observability::server_security::Principal;
 use object_store::{ObjectStoreExt as _, PutPayload, path::Path as ObjectPath};
 use serde::{Deserialize, Serialize};
 
-use crate::MimirTenantAdminState;
+use crate::{MimirTenantAdminState, mimir_tenant_admin::read_optional_json};
 
 const UPLOAD_PREFIX: &str = "mimir-block-uploads";
 const MAX_META_BYTES: usize = 1024 * 1024;
@@ -85,20 +85,13 @@ struct UploadStatus<'a> {
 
 pub(crate) async fn start_block_upload(
     State(state): State<MimirTenantAdminState>,
-    Path(block): Path<String>,
-    axum::Extension(principal): axum::Extension<Principal>,
-    headers: HeaderMap,
+    caller: UploadCaller,
     body: Bytes,
 ) -> Response {
-    let (tenant, block) = match request_parameters(&headers, &principal, &block) {
+    let (tenant, block) = match open_upload(&state, &caller).await {
         Ok(parameters) => parameters,
         Err(response) => return *response,
     };
-    match load_state(&state, &tenant, &block).await {
-        Ok(Some(saved)) => return state_conflict(saved.result),
-        Ok(None) => {}
-        Err(error) => return internal(error),
-    }
     if body.len() > MAX_META_BYTES {
         return error(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -121,21 +114,14 @@ pub(crate) async fn start_block_upload(
 
 pub(crate) async fn upload_block_file(
     State(state): State<MimirTenantAdminState>,
-    Path(block): Path<String>,
     RawQuery(raw_query): RawQuery,
-    axum::Extension(principal): axum::Extension<Principal>,
-    headers: HeaderMap,
+    caller: UploadCaller,
     body: Bytes,
 ) -> Response {
-    let (tenant, block) = match request_parameters(&headers, &principal, &block) {
+    let (tenant, block) = match open_upload(&state, &caller).await {
         Ok(parameters) => parameters,
         Err(response) => return *response,
     };
-    match load_state(&state, &tenant, &block).await {
-        Ok(Some(saved)) => return state_conflict(saved.result),
-        Ok(None) => {}
-        Err(error) => return internal(error),
-    }
     let Some(path) = raw_query.as_deref().and_then(upload_path) else {
         return error(StatusCode::BAD_REQUEST, "missing or invalid file path");
     };
@@ -165,11 +151,9 @@ pub(crate) async fn upload_block_file(
 
 pub(crate) async fn finish_block_upload(
     State(state): State<MimirTenantAdminState>,
-    Path(block): Path<String>,
-    axum::Extension(principal): axum::Extension<Principal>,
-    headers: HeaderMap,
+    caller: UploadCaller,
 ) -> Response {
-    let (tenant, block) = match request_parameters(&headers, &principal, &block) {
+    let (tenant, block) = match caller.request_parameters() {
         Ok(parameters) => parameters,
         Err(response) => return *response,
     };
@@ -235,11 +219,9 @@ pub(crate) async fn finish_block_upload(
 
 pub(crate) async fn check_block_upload(
     State(state): State<MimirTenantAdminState>,
-    Path(block): Path<String>,
-    axum::Extension(principal): axum::Extension<Principal>,
-    headers: HeaderMap,
+    caller: UploadCaller,
 ) -> Response {
-    let (tenant, block) = match request_parameters(&headers, &principal, &block) {
+    let (tenant, block) = match caller.request_parameters() {
         Ok(parameters) => parameters,
         Err(response) => return *response,
     };
@@ -270,18 +252,6 @@ pub(crate) async fn check_block_upload(
         Ok(None) => error(StatusCode::NOT_FOUND, "block doesn't exist"),
         Err(error) => internal(error),
     }
-}
-
-fn request_parameters(
-    headers: &HeaderMap,
-    principal: &Principal,
-    block: &str,
-) -> Result<(String, String), Box<Response>> {
-    let tenant = krabka_metrics::authorized_tenant_from_headers(headers, principal)
-        .map_err(|error| Box::new(error.into_response()))?;
-    let block = canonical_block_id(block)
-        .ok_or_else(|| Box::new(error(StatusCode::BAD_REQUEST, "invalid block ID")))?;
-    Ok((tenant.as_str().to_owned(), block))
 }
 
 fn canonical_block_id(block: &str) -> Option<String> {
@@ -546,20 +516,84 @@ async fn object_bytes(
         .map_err(|error| error.to_string())
 }
 
+/// The response that refuses an upload already under way or settled, or
+/// `None` when the block has no upload state yet.
+/// The parts of an upload request that name its tenant and block.
+/// What an upload request says about who sends it and which block it names:
+/// its `{block}` path segment, its authenticated principal and its headers.
+///
+/// Extracting it rejects only what the separate extractors would have; the
+/// tenant and block ID are resolved by [`UploadCaller::request_parameters`].
+pub(crate) struct UploadCaller {
+    block: String,
+    principal: Principal,
+    headers: HeaderMap,
+}
+
+impl UploadCaller {
+    /// The caller's authorized tenant and canonical block ID, or the response
+    /// that refuses them.
+    fn request_parameters(&self) -> Result<(String, String), Box<Response>> {
+        let tenant = krabka_metrics::authorized_tenant_from_headers(&self.headers, &self.principal)
+            .map_err(|error| Box::new(error.into_response()))?;
+        let block = canonical_block_id(&self.block)
+            .ok_or_else(|| Box::new(error(StatusCode::BAD_REQUEST, "invalid block ID")))?;
+        Ok((tenant.as_str().to_owned(), block))
+    }
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for UploadCaller {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path(block) = Path::<String>::from_request_parts(parts, state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        let axum::Extension(principal) =
+            axum::Extension::<Principal>::from_request_parts(parts, state)
+                .await
+                .map_err(IntoResponse::into_response)?;
+        Ok(Self {
+            block,
+            principal,
+            headers: parts.headers.clone(),
+        })
+    }
+}
+
+/// Resolves the tenant and block of an upload that may still receive files,
+/// or the response that refuses it: a bad tenant or block ID, or an upload
+/// that has already started validating.
+async fn open_upload(
+    state: &MimirTenantAdminState,
+    caller: &UploadCaller,
+) -> Result<(String, String), Box<Response>> {
+    let (tenant, block) = caller.request_parameters()?;
+    if let Some(refusal) = refuse_existing_upload(state, &tenant, &block).await {
+        return Err(Box::new(refusal));
+    }
+    Ok((tenant, block))
+}
+
+async fn refuse_existing_upload(
+    state: &MimirTenantAdminState,
+    tenant: &str,
+    block: &str,
+) -> Option<Response> {
+    match load_state(state, tenant, block).await {
+        Ok(Some(saved)) => Some(state_conflict(saved.result)),
+        Ok(None) => None,
+        Err(error) => Some(internal(error)),
+    }
+}
+
 async fn load_meta(
     state: &MimirTenantAdminState,
     tenant: &str,
     block: &str,
 ) -> Result<Option<UploadMeta>, String> {
     let key = upload_object_key(tenant, block, "uploading-meta.json");
-    let bytes = match state.store.get(&key).await {
-        Ok(object) => object.bytes().await.map_err(|error| error.to_string())?,
-        Err(object_store::Error::NotFound { .. }) => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(|error| error.to_string())
+    read_optional_json(&state.store, &key).await
 }
 
 async fn load_state(
@@ -568,14 +602,7 @@ async fn load_state(
     block: &str,
 ) -> Result<Option<StoredUploadState>, String> {
     let key = upload_object_key(tenant, block, "state.json");
-    let bytes = match state.store.get(&key).await {
-        Ok(object) => object.bytes().await.map_err(|error| error.to_string())?,
-        Err(object_store::Error::NotFound { .. }) => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(|error| error.to_string())
+    read_optional_json(&state.store, &key).await
 }
 
 async fn save_state(

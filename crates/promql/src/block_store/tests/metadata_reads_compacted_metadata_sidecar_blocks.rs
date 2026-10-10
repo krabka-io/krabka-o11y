@@ -8,13 +8,14 @@ pub(crate) async fn metadata_reads_compacted_metadata_sidecar_blocks() {
 
     let series_labels = labels(&[("__name__", "http_requests_total")]);
     let fp = series_labels.fingerprint();
-    let batch = metadata_batch(
-        fp,
-        "http_requests_total",
-        "counter",
-        "Total HTTP requests.",
-        "requests",
-    );
+    let batch = encode_metadata_rows(&[MetadataRow {
+        fingerprint: fp,
+        metric_family_name: "http_requests_total".to_string(),
+        metric_type: "counter".to_string(),
+        help: "Total HTTP requests.".to_string(),
+        unit: "requests".to_string(),
+    }])
+    .unwrap();
     let block_meta = writer_store
         .writer()
         .write_block(

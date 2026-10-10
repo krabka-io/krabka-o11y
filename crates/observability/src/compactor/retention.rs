@@ -27,7 +27,7 @@ use crate::{
     LabelIndex, ObjectPath, ObjectStore, TimeRange, insert_descriptor_labels,
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
-    read_tenant_log_index_shard_ranges_from_object_store,
+    read_tenant_log_index_shard_ranges_or_empty_from_object_store,
     write_tenant_log_index_manifest_to_object_store,
 };
 

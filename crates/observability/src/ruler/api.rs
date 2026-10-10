@@ -9,7 +9,7 @@ pub(crate) mod prometheus_rules;
 pub(crate) use prometheus_rules::{
     expand_prometheus_alert_template, loki_yaml_mapping, prometheus_alert_template_map,
     prometheus_alerts_response, prometheus_rule_groups_response, serde_yaml_key,
-    yaml_duration_ns_field, yaml_string_field, yaml_string_template_map_field,
+    yaml_duration_ns_field, yaml_string_field, yaml_string_labels_field,
 };
 pub(crate) mod prometheus_alerts;
 pub(crate) use prometheus_alerts::prometheus_alerts_from_query_result;

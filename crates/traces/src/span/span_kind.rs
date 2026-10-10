@@ -1,8 +1,9 @@
 use super::{Deserialize, Serialize};
 
 /// OTLP span kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpanKind {
+    #[default]
     Unspecified,
     Internal,
     Server,

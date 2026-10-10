@@ -1,6 +1,6 @@
 use super::{
-    Array, BTreeMap, BTreeSet, RecordBatch, SCOL_LINKS, TracesError, collect_nested_attrs,
-    collect_nested_metadata, insert_tag_value, optional_list_column, struct_fixed_field,
+    Array, BTreeMap, BTreeSet, RecordBatch, SCOL_LINKS, TagCatalog, TracesError,
+    collect_nested_attrs, collect_nested_metadata, optional_list_column, struct_fixed_field,
     struct_list_field,
 };
 
@@ -9,6 +9,10 @@ pub(crate) fn collect_link_metadata(
     tag_names: &mut BTreeSet<String>,
     tag_values: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), TracesError> {
+    let mut catalog = TagCatalog {
+        names: tag_names,
+        values: tag_values,
+    };
     let Some(links) = optional_list_column(batch, SCOL_LINKS)? else {
         return Ok(());
     };
@@ -22,22 +26,12 @@ pub(crate) fn collect_link_metadata(
                 continue;
             }
             if !trace_ids.is_null(idx) {
-                insert_tag_value(
-                    tag_names,
-                    tag_values,
-                    "link:traceID",
-                    hex::encode(trace_ids.value(idx)),
-                );
+                catalog.insert("link:traceID", hex::encode(trace_ids.value(idx)));
             }
             if !span_ids.is_null(idx) {
-                insert_tag_value(
-                    tag_names,
-                    tag_values,
-                    "link:spanID",
-                    hex::encode(span_ids.value(idx)),
-                );
+                catalog.insert("link:spanID", hex::encode(span_ids.value(idx)));
             }
-            collect_nested_attrs(keys, values, idx, tag_names, tag_values)?;
+            collect_nested_attrs(keys, values, idx, catalog.names, catalog.values)?;
         }
         Ok(())
     })

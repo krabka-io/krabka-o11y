@@ -39,7 +39,12 @@ fn retention_matches_a_timestamp_ledger_across_sample_kinds_and_tenants() {
                 timestamp| {
         match kind {
             0 => store.push_float(tenant, labels.clone(), timestamp, 1.0),
-            1 => store.push_histogram(tenant, labels.clone(), timestamp, native_histogram()),
+            1 => store.push_histogram(
+                tenant,
+                labels.clone(),
+                timestamp,
+                count_two_sum_three_histogram(),
+            ),
             _ => store.push_exemplar(tenant, labels.clone(), Labels::new(), timestamp, 1.0),
         }
         ledger.push((tenant, kind, timestamp));

@@ -186,6 +186,7 @@ async fn write(
         ),
     };
     Ok(deployment
+        .infrastructure
         .client
         .post(format!("{base}/api/v1/push"))
         .header("X-Scope-OrgID", tenant)
@@ -303,6 +304,7 @@ async fn wait_metric(
     let deadline = tokio::time::Instant::now() + QUERY_TIMEOUT;
     loop {
         let text = deployment
+            .infrastructure
             .client
             .get(format!("{base}/metrics"))
             .send()
@@ -366,7 +368,7 @@ async fn histogram_compaction(version: RemoteWrite) -> TestResult {
             let expected = histogram_matrix(metric, &times[..=usize::from(time != START_MS)]);
             for base in [&hot_base, &cold_base] {
                 wait_data(
-                    &deployment.client,
+                    &deployment.infrastructure.client,
                     &range_url(base, metric, (START_MS, time, 1000))?,
                     "tenant-a",
                     &expected,
@@ -376,12 +378,14 @@ async fn histogram_compaction(version: RemoteWrite) -> TestResult {
         }
     }
     builder.stop_with_timeout(Some(30)).await?;
-    let compactor = start(s3_role(&deployment.network, ADMIN_PORT).with_cmd([
-        "krabka-metrics",
-        "--target=compactor",
-        "--object-store-url=s3://metrics",
-        "--compactor-interval=100ms",
-    ]))
+    let compactor = start(
+        s3_role(&deployment.infrastructure.network, ADMIN_PORT).with_cmd([
+            "krabka-metrics",
+            "--target=compactor",
+            "--object-store-url=s3://metrics",
+            "--compactor-interval=100ms",
+        ]),
+    )
     .await?;
     deployment.ready(&compactor, ADMIN_PORT).await?;
     // A nonzero output counter proves a merge ran, rather than merely a ready process.
@@ -400,13 +404,15 @@ async fn histogram_compaction(version: RemoteWrite) -> TestResult {
     for metric in ["integer_histogram", "float_histogram"] {
         let url = range_url(&base, metric, (START_MS, START_MS + 1000, 1000))?;
         wait_data(
-            &deployment.client,
+            &deployment.infrastructure.client,
             &url,
             "tenant-a",
             &histogram_matrix(metric, &times),
         )
         .await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == matrix(json!([])));
+        assert!(
+            data(&deployment.infrastructure.client, &url, "tenant-b").await? == matrix(json!([]))
+        );
     }
     Ok(())
 }
@@ -469,15 +475,21 @@ async fn metadata_and_exemplars(version: RemoteWrite) -> TestResult {
     let hot = base_url(&deployment.hot, DATA_PORT).await?;
     for (path, params, expected, empty) in &probes {
         let url = api_url(&hot, path, params)?;
-        wait_data(&deployment.client, &url, "tenant-a", expected).await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == *empty);
+        wait_data(
+            &deployment.infrastructure.client,
+            &url,
+            "tenant-a",
+            expected,
+        )
+        .await?;
+        assert!(data(&deployment.infrastructure.client, &url, "tenant-b").await? == *empty);
     }
     let builder = deployment.builder().await?;
     let cold = deployment.cold().await?;
     let base = base_url(&cold, DATA_PORT).await?;
     for (path, params, expected, _) in &probes {
         wait_data(
-            &deployment.client,
+            &deployment.infrastructure.client,
             &api_url(&base, path, params)?,
             "tenant-a",
             expected,
@@ -491,8 +503,14 @@ async fn metadata_and_exemplars(version: RemoteWrite) -> TestResult {
     let base = base_url(&reopened, DATA_PORT).await?;
     for (path, params, expected, empty) in &probes {
         let url = api_url(&base, path, params)?;
-        wait_data(&deployment.client, &url, "tenant-a", expected).await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == *empty);
+        wait_data(
+            &deployment.infrastructure.client,
+            &url,
+            "tenant-a",
+            expected,
+        )
+        .await?;
+        assert!(data(&deployment.infrastructure.client, &url, "tenant-b").await? == *empty);
     }
     Ok(())
 }
@@ -556,14 +574,14 @@ async fn out_of_order_floats_and_histograms_obey_the_tenant_window() -> TestResu
                 };
                 // Query before the oldest rejected timestamp too: rejected writes must never appear.
                 wait_data(
-                    &deployment.client,
+                    &deployment.infrastructure.client,
                     &range_url(&base, metric, (newest - 660_000, newest, 60_000))?,
                     tenant,
                     &expected,
                 )
                 .await?;
                 wait_data(
-                    &deployment.client,
+                    &deployment.infrastructure.client,
                     &range_url(&base, metric, (times[0], newest, 60_000))?,
                     tenant,
                     &expected,
@@ -623,7 +641,7 @@ async fn ha_replicas(version: RemoteWrite) -> TestResult {
         for (tenant, value) in [("tenant-a", 11), ("tenant-b", 23)] {
             let url = range_url(&base, "ha_gauge", (START_MS, START_MS, 1000))?;
             wait_data(
-                &deployment.client,
+                &deployment.infrastructure.client,
                 &url,
                 tenant,
                 &float_matrix(
@@ -640,18 +658,73 @@ async fn ha_replicas(version: RemoteWrite) -> TestResult {
 }
 
 async fn frontend(deployment: &Deployment) -> TestResult<ContainerAsync<GenericImage>> {
-    let container = start(super::query_role(&deployment.network).with_cmd([
-        "krabka-metrics-service",
-        "--target=query-frontend",
-        "--listen=0.0.0.0:4041",
-        "--object-store-url=s3://metrics",
-        "--cold-cache-ttl=100ms",
-        "--query-frontend-split=2s",
-        "--query-frontend-max-cache-freshness=1ms",
-    ]))
+    let container = start(
+        super::query_role(&deployment.infrastructure.network).with_cmd([
+            "krabka-metrics-service",
+            "--target=query-frontend",
+            "--listen=0.0.0.0:4041",
+            "--object-store-url=s3://metrics",
+            "--cold-cache-ttl=100ms",
+            "--query-frontend-split=2s",
+            "--query-frontend-max-cache-freshness=1ms",
+        ]),
+    )
     .await?;
     deployment.ready(&container, DATA_PORT).await?;
     Ok(container)
+}
+
+// Both tenants' gauge and histogram ranges, as the frontend answers them.
+// The ranges span `times` at a one-second step.
+async fn assert_frontend_ranges(deployment: &Deployment, base: &str, times: &[i64]) -> TestResult {
+    let bounds = (times[0], times[times.len() - 1], 1000);
+    for FrontendRange {
+        tenant,
+        metric,
+        expected,
+    } in frontend_ranges(times)
+    {
+        assert!(
+            data(
+                &deployment.infrastructure.client,
+                &range_url(base, metric, bounds)?,
+                tenant
+            )
+            .await?
+                == expected
+        );
+    }
+    Ok(())
+}
+
+// One tenant's expected answer to one frontend range query.
+struct FrontendRange {
+    tenant: &'static str,
+    metric: &'static str,
+    expected: Value,
+}
+
+// Both tenants' gauge and histogram ranges over `times`, as the frontend
+// answers them.
+fn frontend_ranges(times: &[i64]) -> Vec<FrontendRange> {
+    let mut ranges = Vec::new();
+    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
+        ranges.push(FrontendRange {
+            tenant,
+            metric: "frontend_gauge",
+            expected: float_matrix(
+                "frontend_gauge",
+                &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
+                json!({}),
+            ),
+        });
+        ranges.push(FrontendRange {
+            tenant,
+            metric: "frontend_histogram",
+            expected: histogram_matrix("frontend_histogram", times),
+        });
+    }
+    ranges
 }
 
 #[tokio::test]
@@ -681,61 +754,26 @@ async fn frontend_preserves_unaligned_float_and_histogram_queries_across_cache_h
     let times: Vec<_> = (0..7).map(|step| START_MS + 125 + step * 1000).collect();
     let bounds = (times[0], times[6], 1000);
     // Every evaluation is 125ms off the step grid and crosses four split windows.
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        for (metric, expected) in [
-            (
-                "frontend_gauge",
-                float_matrix(
-                    "frontend_gauge",
-                    &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                    json!({}),
-                ),
-            ),
-            (
-                "frontend_histogram",
-                histogram_matrix("frontend_histogram", &times),
-            ),
-        ] {
-            wait_data(
-                &deployment.client,
-                &range_url(&cold_base, metric, bounds)?,
-                tenant,
-                &expected,
-            )
-            .await?;
-        }
+    for FrontendRange {
+        tenant,
+        metric,
+        expected,
+    } in frontend_ranges(&times)
+    {
+        wait_data(
+            &deployment.infrastructure.client,
+            &range_url(&cold_base, metric, bounds)?,
+            tenant,
+            &expected,
+        )
+        .await?;
     }
     builder.stop_with_timeout(Some(30)).await?;
     deployment.hot.stop_with_timeout(Some(30)).await?;
     let frontend = frontend(&deployment).await?;
     let base = base_url(&frontend, DATA_PORT).await?;
     for _ in 0..2 {
-        for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-            for (metric, expected) in [
-                (
-                    "frontend_gauge",
-                    float_matrix(
-                        "frontend_gauge",
-                        &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                        json!({}),
-                    ),
-                ),
-                (
-                    "frontend_histogram",
-                    histogram_matrix("frontend_histogram", &times),
-                ),
-            ] {
-                assert!(
-                    data(
-                        &deployment.client,
-                        &range_url(&base, metric, bounds)?,
-                        tenant
-                    )
-                    .await?
-                        == expected
-                );
-            }
-        }
+        assert_frontend_ranges(&deployment, &base, &times).await?;
     }
     wait_metric(
         &deployment,
@@ -748,32 +786,7 @@ async fn frontend_preserves_unaligned_float_and_histogram_queries_across_cache_h
     // A fresh process must hit the same object-store cache, with tenant keys intact.
     let reopened = self::frontend(&deployment).await?;
     let base = base_url(&reopened, DATA_PORT).await?;
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        for (metric, expected) in [
-            (
-                "frontend_gauge",
-                float_matrix(
-                    "frontend_gauge",
-                    &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                    json!({}),
-                ),
-            ),
-            (
-                "frontend_histogram",
-                histogram_matrix("frontend_histogram", &times),
-            ),
-        ] {
-            assert!(
-                data(
-                    &deployment.client,
-                    &range_url(&base, metric, bounds)?,
-                    tenant
-                )
-                .await?
-                    == expected
-            );
-        }
-    }
+    assert_frontend_ranges(&deployment, &base, &times).await?;
     wait_metric(
         &deployment,
         &reopened,
@@ -848,6 +861,7 @@ async fn remote_read(
     request: &pb::v1::ReadRequest,
 ) -> TestResult<reqwest::Response> {
     Ok(deployment
+        .infrastructure
         .client
         .post(format!("{base}/api/v1/read"))
         .header("X-Scope-OrgID", tenant)
@@ -897,7 +911,7 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
     for container in [&deployment.hot, &cold] {
         let base = base_url(container, DATA_PORT).await?;
         wait_data(
-            &deployment.client,
+            &deployment.infrastructure.client,
             &range_url(&base, "read_float", (START_MS, START_MS + 2000, 1000))?,
             "tenant-a",
             &float_matrix(
@@ -909,7 +923,7 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
         .await?;
         for metric in ["read_integer_histogram", "read_float_histogram"] {
             wait_data(
-                &deployment.client,
+                &deployment.infrastructure.client,
                 &range_url(&base, metric, (START_MS, START_MS + 1000, 1000))?,
                 "tenant-a",
                 &histogram_matrix(metric, &[START_MS, START_MS + 1000]),
@@ -921,20 +935,12 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
             Some((START_MS, START_MS + 2000)),
             Some((START_MS + 1000, START_MS + 1000)),
         ] {
-            let query = pb::v1::Query {
-                start_timestamp_ms: START_MS,
-                end_timestamp_ms: START_MS + 2000,
-                matchers: vec![pb::v1::LabelMatcher {
-                    r#type: pb::v1::label_matcher::Type::Re as i32,
-                    name: "__name__".into(),
-                    value: "read_.*".into(),
-                }],
-                hints: hint_range.map(|(start_ms, end_ms)| pb::v1::ReadHints {
+            let query =
+                read_metrics_query(hint_range.map(|(start_ms, end_ms)| pb::v1::ReadHints {
                     start_ms,
                     end_ms,
                     ..Default::default()
-                }),
-            };
+                }));
             let request = pb::v1::ReadRequest {
                 queries: vec![query.clone()],
                 accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
@@ -978,20 +984,11 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
         }
         for narrowed in [false, true] {
             let request = pb::v1::ReadRequest {
-                queries: vec![pb::v1::Query {
-                    start_timestamp_ms: START_MS,
-                    end_timestamp_ms: START_MS + 2000,
-                    matchers: vec![pb::v1::LabelMatcher {
-                        r#type: pb::v1::label_matcher::Type::Re as i32,
-                        name: "__name__".into(),
-                        value: "read_.*".into(),
-                    }],
-                    hints: narrowed.then_some(pb::v1::ReadHints {
-                        start_ms: START_MS + 1000,
-                        end_ms: START_MS + 1000,
-                        ..Default::default()
-                    }),
-                }],
+                queries: vec![read_metrics_query(narrowed.then_some(pb::v1::ReadHints {
+                    start_ms: START_MS + 1000,
+                    end_ms: START_MS + 1000,
+                    ..Default::default()
+                }))],
                 accepted_response_types: vec![
                     pb::v1::ResponseType::StreamedXorChunks as i32,
                     pb::v1::ResponseType::Samples as i32,
@@ -1168,6 +1165,7 @@ async fn otlp_gauges_counters_and_histograms_preserve_translation_and_metadata()
     let deployment = Deployment::start().await?;
     let write_base = base_url(&deployment.distributor, DATA_PORT).await?;
     let response = deployment
+        .infrastructure
         .client
         .post(format!("{write_base}/otlp/v1/metrics"))
         .header("X-Scope-OrgID", "tenant-a")
@@ -1256,8 +1254,16 @@ async fn check_otlp(deployment: &Deployment, base: &str, probes: &[(&str, Value)
             (*metric).to_owned()
         };
         let url = range_url(base, &query, (START_MS, START_MS, 1000))?;
-        wait_data(&deployment.client, &url, "tenant-a", expected).await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == matrix(json!([])));
+        wait_data(
+            &deployment.infrastructure.client,
+            &url,
+            "tenant-a",
+            expected,
+        )
+        .await?;
+        assert!(
+            data(&deployment.infrastructure.client, &url, "tenant-b").await? == matrix(json!([]))
+        );
     }
     for (metric, kind, help, unit) in [
         (
@@ -1277,13 +1283,27 @@ async fn check_otlp(deployment: &Deployment, base: &str, probes: &[(&str, Value)
     ] {
         let url = api_url(base, "/api/v1/metadata", &[("metric", metric.into())])?;
         wait_data(
-            &deployment.client,
+            &deployment.infrastructure.client,
             &url,
             "tenant-a",
             &json!({metric: [{"type": kind, "help": help, "unit": unit}]}),
         )
         .await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == json!({}));
+        assert!(data(&deployment.infrastructure.client, &url, "tenant-b").await? == json!({}));
     }
     Ok(())
+}
+
+/// A remote-read query for every `read_.*` series over the two seeded samples.
+fn read_metrics_query(hints: Option<pb::v1::ReadHints>) -> pb::v1::Query {
+    pb::v1::Query {
+        start_timestamp_ms: START_MS,
+        end_timestamp_ms: START_MS + 2000,
+        matchers: vec![pb::v1::LabelMatcher {
+            r#type: pb::v1::label_matcher::Type::Re as i32,
+            name: "__name__".into(),
+            value: "read_.*".into(),
+        }],
+        hints,
+    }
 }

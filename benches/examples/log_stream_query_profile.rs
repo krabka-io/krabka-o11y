@@ -2,14 +2,15 @@
 
 use std::{hint::black_box, sync::Arc, time::Instant};
 
-use krabka_o11y_benches::log_queries::LogQueryFixture;
+use krabka_o11y_benches::{log_queries::LogQueryFixture, profile_run_args::ProfileRunArgs};
 use krabka_observability::execute_stream_query_from_object_store;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args().skip(1);
-    let streams = args.next().expect("stream count").parse::<usize>()?;
-    let iterations = args.next().expect("iteration count").parse::<usize>()?;
-    let name = args.next().expect("query case");
+    let ProfileRunArgs {
+        streams,
+        iterations,
+        case: name,
+    } = ProfileRunArgs::take_from(&mut std::env::args().skip(1))?;
     let runtime = tokio::runtime::Runtime::new()?;
     let fixture = runtime.block_on(LogQueryFixture::new(streams));
     let case = fixture.case(&name);

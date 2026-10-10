@@ -3,19 +3,19 @@ use std::{collections::BTreeSet, sync::Arc};
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path},
     http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
 };
 use base64::Engine;
-use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy};
+use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy, TimeRange};
 use krabka_observability::{
     RoleReadiness,
     server_security::{Principal, authorize_tenant},
 };
 use krabka_traceql::{
-    AttrValue, ComparisonOp, Field, FieldExpr, Intrinsic, ScanJob, ScanOptions, Scope, ScopedTag,
+    AttrValue, ComparisonOp, Field, FieldExpr, ScanJob, ScanOptions, Scope, ScopedTag,
     SearchOptions, SearchResponse, SpanRef, SpanStore, SpansetExpr, TagScope, TraceMetricsResponse,
     TraceSpans, TraceqlEngine, TraceqlError, TypedValue, Value as TraceqlValue,
 };
@@ -49,54 +49,6 @@ use crate::{
 #[cfg(test)]
 mod tests {
 
-    /// The intrinsic tag names are Tempo's API surface: a client asking for
-    /// `span:parentID` gets nothing back if this map spells it `span:parentId`.
-    /// Every variant is named here, and the names are checked for being
-    /// distinct as well as correct -- returning a neighbour's string is the
-    /// failure a per-variant spot check misses. A new variant needs a row.
-    #[test]
-    fn every_intrinsic_maps_to_its_tempo_tag_name() {
-        let cases = [
-            (Intrinsic::Name, "span:name"),
-            (Intrinsic::Duration, "span:duration"),
-            (Intrinsic::Kind, "span:kind"),
-            (Intrinsic::Status, "span:status"),
-            (Intrinsic::StatusMessage, "span:statusMessage"),
-            (Intrinsic::Id, "span:id"),
-            (Intrinsic::ParentId, "span:parentID"),
-            (Intrinsic::ChildCount, "span:childCount"),
-            (Intrinsic::TraceDuration, "trace:duration"),
-            (Intrinsic::TraceRootName, "trace:rootName"),
-            (Intrinsic::TraceRootService, "trace:rootService"),
-            (Intrinsic::TraceId, "trace:id"),
-            (Intrinsic::EventName, "event:name"),
-            (Intrinsic::EventTimeSinceStart, "event:timeSinceStart"),
-            (Intrinsic::LinkTraceId, "link:traceID"),
-            (Intrinsic::LinkSpanId, "link:spanID"),
-            (Intrinsic::InstrumentationName, "instrumentation:name"),
-            (Intrinsic::InstrumentationVersion, "instrumentation:version"),
-            (Intrinsic::NestedSetLeft, "span:nestedSetLeft"),
-            (Intrinsic::NestedSetRight, "span:nestedSetRight"),
-            (Intrinsic::NestedSetParent, "span:nestedSetParent"),
-        ];
-
-        for (intrinsic, want) in &cases {
-            check!(
-                super::intrinsic_tag_name(intrinsic) == *want,
-                "{intrinsic:?}"
-            );
-        }
-
-        let names = cases
-            .iter()
-            .map(|(_, name)| *name)
-            .collect::<std::collections::BTreeSet<_>>();
-        check!(
-            names.len() == cases.len(),
-            "every intrinsic has its own name"
-        );
-    }
-
     /// `collect_trace_intrinsic_values` reports one trace-level intrinsic
     /// with the type name a client reads it as. Three of the four arms
     /// survived: deleting one falls through to the catch-all and reports
@@ -113,25 +65,7 @@ mod tests {
             root_service_name: "svc-a".into(),
             root_trace_name: "root-a".into(),
             resource_attributes: Vec::new(),
-            spans: vec![SpanRef {
-                span_id: [1; 8],
-                parent_span_id: None,
-                name: "root-a".into(),
-                kind: 0,
-                nested_set_left: 1,
-                nested_set_right: 2,
-                nested_set_parent: 0,
-                start_time_unix_nano: 1_001,
-                duration: nanos(200),
-                status_code: 0,
-                status_message: String::new(),
-                instrumentation_name: String::new(),
-                instrumentation_version: String::new(),
-                resource_attributes: Vec::new(),
-                attributes: Vec::new(),
-                events: Vec::new(),
-                links: Vec::new(),
-            }],
+            spans: vec![root_span_ref("root-a")],
         };
         let collect = |tag: &str| {
             let mut values = BTreeSet::new();
@@ -419,24 +353,26 @@ mod tests {
     };
     use http_body_util::BodyExt;
     use krabka_blockstore::{
-        AttrValue as BlockAttrValue, BlockLevel, BlockStore, NestedSet as BlockNestedSet,
-        ShardedTraceBloom, SpanAttr, SpanKind as BlockSpanKind, SpanRow,
-        StatusCode as BlockStatusCode, TraceBlockStats, TraceIndex, encode_span_rows,
-        span_block_schema,
+        AttrValue as BlockAttrValue, BlockLevel, BlockStore, ShardedTraceBloom, SpanAttr, SpanRow,
+        TraceBlockStats, TraceIndex, encode_span_rows, span_block_schema,
     };
     use krabka_traceql::{
-        AttrValue, EngineOpts, EventRef, InMemorySpanStore, InputSpan, LinkRef, TraceqlEngine,
+        AttrValue, EngineOpts, EventRef, InMemorySpanStore, InputSpan, Intrinsic, LinkRef,
+        TagCatalog, TraceqlEngine,
     };
     use krabka_units::{nanos, secs};
     use object_store::{buffered::BufWriter, memory::InMemory, path::Path};
     use opentelemetry_proto::tonic::trace::v1::TracesData;
-    use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
+    use parquet::arrow::AsyncArrowWriter;
     use serde_json::{Value, json};
     use tower::ServiceExt;
     use url::Url;
 
     use super::*;
-    use crate::querier::store::{KrabkaSpanStore, SharedTraceIndex};
+    use crate::querier::store::{
+        KrabkaSpanStore, SharedTraceIndex,
+        test_support::{RowGroupBlock, versioned_block_properties, write_row_group_block},
+    };
 
     // Every query route reads its principal from the request extensions,
     // where the authentication layer puts it. The tests drive the routers
@@ -465,40 +401,226 @@ mod tests {
         Arc::new(ArcSwap::from_pointee(index))
     }
 
-    fn span(trace: u8, span: u8, parent: Option<u8>, svc: &str) -> InputSpan {
-        span_at(trace, span, parent, svc, 1_000 + i64::from(span))
+    /// The `env=prod` root span of `root-svc` that the query-filter tests
+    /// build their traces from.
+    fn prod_root_span() -> InputSpan {
+        SpanFixture {
+            trace: 1,
+            span: 1,
+            service: "root-svc",
+            start_ns: 1_000,
+            attrs: vec![("env".into(), AttrValue::Str("prod".into()))],
+            ..SpanFixture::default()
+        }
+        .build()
     }
 
-    fn span_at(trace: u8, span: u8, parent: Option<u8>, svc: &str, start_ns: i64) -> InputSpan {
-        span_at_with_attrs(trace, span, parent, svc, start_ns, Vec::new())
+    /// Root span 1 of trace 9, in service `a`.
+    fn root_span_a() -> InputSpan {
+        SpanFixture {
+            trace: 9,
+            span: 1,
+            service: "a",
+            start_ns: 1_001,
+            ..SpanFixture::default()
+        }
+        .build()
     }
 
-    fn span_at_with_attrs(
+    /// Trace 9: `root_span_a` and its child span 2 in service `b`.
+    fn root_and_child_spans() -> Vec<InputSpan> {
+        let child = SpanFixture {
+            trace: 9,
+            span: 2,
+            parent: Some(1),
+            service: "b",
+            start_ns: 1_002,
+            ..SpanFixture::default()
+        }
+        .build();
+        vec![root_span_a(), child]
+    }
+
+    fn root_span_ref(name: &str) -> SpanRef {
+        SpanRef {
+            span_id: [1; 8],
+            name: name.into(),
+            nested_set_left: 1,
+            nested_set_right: 2,
+            start_time_unix_nano: 1_001,
+            duration: nanos(200),
+            ..SpanRef::default()
+        }
+    }
+
+    // A router over one `tenant-a` trace rooted at `root-a` in `svc-a`.
+    fn app_with_trace(spans: Vec<InputSpan>) -> axum::Router {
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("tenant-a", "svc-a", "root-a", spans);
+        router(Arc::new(TraceqlEngine::new(
+            Arc::new(store),
+            EngineOpts::default(),
+        )))
+    }
+
+    // `root-a` in `svc-a`: an `env=prod` root whose child carries
+    // `target=kept`.
+    fn push_prod_trace(store: &mut InMemorySpanStore) {
+        store.push_trace(
+            "tenant-a",
+            "svc-a",
+            "root-a",
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000,
+                    attrs: vec![("env".into(), AttrValue::Str("prod".into()))],
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 1,
+                    span: 2,
+                    parent: Some(1),
+                    service: "b",
+                    start_ns: 2_000,
+                    attrs: vec![("target".into(), AttrValue::Str("kept".into()))],
+                }
+                .build(),
+            ],
+        );
+    }
+
+    // A router over `store` with the default engine options.
+    fn router_over(store: InMemorySpanStore) -> axum::Router {
+        router(Arc::new(TraceqlEngine::new(
+            Arc::new(store),
+            EngineOpts::default(),
+        )))
+    }
+
+    /// The one `env=dev` span of trace 2, which `push_dev_trace` stores as
+    /// `tenant-a`'s `root-b` trace in `svc-b`.
+    struct DevSpan<'a> {
+        service: &'a str,
+        start_ns: i64,
+        /// Attributes after `env=dev`.
+        extra_attrs: Vec<(String, AttrValue)>,
+    }
+
+    impl Default for DevSpan<'_> {
+        fn default() -> Self {
+            Self {
+                service: "c",
+                start_ns: 3_000,
+                extra_attrs: Vec::new(),
+            }
+        }
+    }
+
+    fn push_dev_trace(store: &mut InMemorySpanStore, dev: DevSpan<'_>) {
+        let DevSpan {
+            service,
+            start_ns,
+            extra_attrs,
+        } = dev;
+        let mut attrs = vec![("env".into(), AttrValue::Str("dev".into()))];
+        attrs.extend(extra_attrs);
+        let span = SpanFixture {
+            trace: 2,
+            span: 1,
+            service,
+            start_ns,
+            attrs,
+            ..SpanFixture::default()
+        }
+        .build();
+        store.push_trace("tenant-a", "svc-b", "root-b", vec![span]);
+    }
+
+    // The prod trace beside `root-b` in `svc-b`, one `env=dev` span that also
+    // carries `noise=dropped`.
+    fn prod_and_dev_trace_app() -> axum::Router {
+        let mut store = InMemorySpanStore::new();
+        push_prod_trace(&mut store);
+        push_dev_trace(
+            &mut store,
+            DevSpan {
+                extra_attrs: vec![("noise".into(), AttrValue::Str("dropped".into()))],
+                ..DevSpan::default()
+            },
+        );
+        router_over(store)
+    }
+
+    /// A 200ns span named `span`, whose trace, span and parent ids repeat the
+    /// bytes `trace`, `span` and `parent`, with a `svc` attribute naming
+    /// `service` ahead of `attrs`.
+    struct SpanFixture<'a> {
         trace: u8,
         span: u8,
         parent: Option<u8>,
-        svc: &str,
+        service: &'a str,
         start_ns: i64,
         attrs: Vec<(String, AttrValue)>,
-    ) -> InputSpan {
-        let mut all_attrs = vec![("svc".into(), AttrValue::Str(svc.into()))];
-        all_attrs.extend(attrs);
-        InputSpan {
-            trace_id: [trace; 16],
-            span_id: [span; 8],
-            parent_span_id: parent.map(|p| [p; 8]),
-            name: "span".into(),
-            kind: 0,
-            start_unix_nano: start_ns,
-            duration: nanos(200),
-            status_code: 0,
-            status_message: String::new(),
-            instrumentation_name: String::new(),
-            instrumentation_version: String::new(),
-            attrs: all_attrs,
-            events: Vec::new(),
-            links: Vec::new(),
+    }
+
+    impl Default for SpanFixture<'_> {
+        fn default() -> Self {
+            Self {
+                trace: 1,
+                span: 1,
+                parent: None,
+                service: "a",
+                start_ns: 0,
+                attrs: Vec::new(),
+            }
         }
+    }
+
+    impl SpanFixture<'_> {
+        fn build(self) -> InputSpan {
+            let Self {
+                trace,
+                span,
+                parent,
+                service,
+                start_ns,
+                attrs,
+            } = self;
+            let mut all_attrs = vec![("svc".into(), AttrValue::Str(service.into()))];
+            all_attrs.extend(attrs);
+            InputSpan {
+                trace_id: [trace; 16],
+                span_id: [span; 8],
+                parent_span_id: parent.map(|p| [p; 8]),
+                name: "span".into(),
+                kind: 0,
+                start_unix_nano: start_ns,
+                duration: nanos(200),
+                status_code: 0,
+                status_message: String::new(),
+                instrumentation_name: String::new(),
+                instrumentation_version: String::new(),
+                attrs: all_attrs,
+                events: Vec::new(),
+                links: Vec::new(),
+            }
+        }
+    }
+
+    // The `a` span 1 of trace 9, starting at 1 µs.
+    fn trace_nine_span() -> InputSpan {
+        SpanFixture {
+            trace: 9,
+            span: 1,
+            service: "a",
+            start_ns: 1_000,
+            ..SpanFixture::default()
+        }
+        .build()
     }
 
     fn app() -> axum::Router {
@@ -510,24 +632,14 @@ mod tests {
 
     fn app_with_opts(opts: EngineOpts) -> axum::Router {
         let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "tenant-a",
-            "svc-a",
-            "root-a",
-            vec![span(9, 1, None, "a"), span(9, 2, Some(1), "b")],
-        );
+        store.push_trace("tenant-a", "svc-a", "root-a", root_and_child_spans());
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), opts));
         router(engine)
     }
 
     fn app_with_http_config(cfg: HttpConfig) -> axum::Router {
         let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "tenant-a",
-            "svc-a",
-            "root-a",
-            vec![span(9, 1, None, "a"), span(9, 2, Some(1), "b")],
-        );
+        store.push_trace("tenant-a", "svc-a", "root-a", root_and_child_spans());
         let engine = Arc::new(TraceqlEngine::new(
             Arc::new(store),
             EngineOpts {
@@ -536,17 +648,6 @@ mod tests {
             },
         ));
         router_with_config(engine, cfg, RoleReadiness::new())
-    }
-
-    // Every block writer stamps the block format version, and every reader
-    // refuses a block without it.
-    fn versioned_block_properties() -> parquet::file::properties::WriterPropertiesBuilder {
-        WriterProperties::builder().set_key_value_metadata(Some(vec![
-            parquet::file::metadata::KeyValue::new(
-                krabka_blockstore::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
-                Some(krabka_blockstore::PERSISTED_BLOCK_FORMAT_VERSION.to_string()),
-            ),
-        ]))
     }
 
     #[test]
@@ -623,8 +724,10 @@ mod tests {
         }
     }
 
-    async fn get_json(uri: &str) -> (StatusCode, Value) {
-        let resp = app()
+    // GET `uri` from `app` for `tenant-a`, and return the status and the raw
+    // body.
+    async fn get_bytes_with_app(app: axum::Router, uri: &str) -> (StatusCode, axum::body::Bytes) {
+        let resp = app
             .oneshot(
                 Request::builder()
                     .uri(uri)
@@ -636,87 +739,76 @@ mod tests {
             .unwrap();
         let status = resp.status();
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        (status, serde_json::from_slice(&bytes).unwrap())
+        (status, bytes)
+    }
+
+    async fn get_json(uri: &str) -> (StatusCode, Value) {
+        get_json_with_app(app(), uri).await
+    }
+
+    // GET `uri` for `tenant-a` with an optional `Accept`, and return the
+    // status, the content type, and the raw body.
+    async fn get_accepting(
+        uri: &str,
+        accept: Option<&str>,
+    ) -> (StatusCode, Option<String>, axum::body::Bytes) {
+        let mut request = Request::builder()
+            .uri(uri)
+            .header(TENANT_HEADER, "tenant-a");
+        if let Some(accept) = accept {
+            request = request.header("accept", accept);
+        }
+        let resp = app()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        (status, content_type, bytes)
     }
 
     async fn get_text(uri: &str) -> (StatusCode, String) {
-        let resp = app()
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        (status, String::from_utf8(bytes.to_vec()).unwrap())
+        get_text_with_app(app(), uri).await
     }
 
     async fn get_text_with_app(app: axum::Router, uri: &str) -> (StatusCode, String) {
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let (status, bytes) = get_bytes_with_app(app, uri).await;
         (status, String::from_utf8(bytes.to_vec()).unwrap())
     }
 
+    // `GET /api/v2/traces/{id}` of trace 9, as JSON.
+    async fn get_trace_nine_v2(app: axum::Router) -> (StatusCode, Value) {
+        get_json_with_app(app, "/api/v2/traces/09090909090909090909090909090909").await
+    }
+
+    // Serves `span` as the only span of its trace, and returns that span as
+    // `GET /api/v2/traces/{id}` of trace 9 renders it.
+    async fn served_v2_span(span: InputSpan) -> Value {
+        let (status, body) = get_trace_nine_v2(app_with_trace(vec![span])).await;
+        check!(status == StatusCode::OK);
+        body["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0].clone()
+    }
+
     async fn get_json_with_app(app: axum::Router, uri: &str) -> (StatusCode, Value) {
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let (status, bytes) = get_bytes_with_app(app, uri).await;
         (status, serde_json::from_slice(&bytes).unwrap())
     }
 
     fn block_span_row(trace: u8, span: u8, name: &str) -> SpanRow {
         SpanRow {
-            trace_id: [trace; 16],
-            span_id: [span; 8],
-            parent_span_id: None,
-            nested_set: BlockNestedSet {
-                nested_set_left: 1,
-                nested_set_right: 2,
-                parent_id: 0,
-            },
-            child_count: 0,
-            root_service_name: Some("api".into()),
             root_span_name: Some(name.into()),
-            trace_start_unix_nano: 1_000,
-            trace_duration: nanos(500),
             name: Some(name.into()),
-            kind: BlockSpanKind::Server,
-            start_unix_nano: 1_000,
-            duration: nanos(500),
-            status_code: BlockStatusCode::Ok,
-            status_message: None,
-            instrumentation_name: Some("otel-rust".into()),
-            instrumentation_version: None,
             attrs: vec![SpanAttr {
                 key: "svc".into(),
                 is_array: false,
                 value: BlockAttrValue::Str(vec!["api".into()]),
             }],
-            events: Vec::new(),
-            links: Vec::new(),
+            ..crate::querier::test_rows::api_root_server_row([trace; 16], [span; 8])
         }
     }
 
@@ -728,19 +820,15 @@ mod tests {
         ));
         let first = encode_span_rows(&[block_span_row(1, 1, "first-rg")]).unwrap();
         let second = encode_span_rows(&[block_span_row(2, 2, "second-rg")]).unwrap();
-        let props = versioned_block_properties()
-            .set_max_row_group_row_count(Some(1))
-            .set_write_batch_size(1)
-            .build();
-        let object_writer = BufWriter::new(
-            object_store.clone(),
-            Path::from("blocks/row-groups.parquet"),
-        );
-        let mut writer =
-            AsyncArrowWriter::try_new(object_writer, span_block_schema(), Some(props)).unwrap();
-        writer.write(&first).await.unwrap();
-        writer.write(&second).await.unwrap();
-        writer.close().await.unwrap();
+        write_row_group_block(
+            &object_store,
+            RowGroupBlock {
+                key: "blocks/row-groups.parquet",
+                schema: span_block_schema(),
+                batches: &[first, second],
+            },
+        )
+        .await;
 
         let mut trace_index = TraceIndex::new();
         let mut bloom = ShardedTraceBloom::with_tempo_defaults(1);
@@ -855,20 +943,21 @@ mod tests {
         let spans = [1, 3]
             .into_iter()
             .map(|value| {
-                span_at_with_attrs(
-                    9,
-                    value,
-                    None,
-                    "api",
-                    1000 + i64::from(value),
-                    vec![(
+                SpanFixture {
+                    trace: 9,
+                    span: value,
+                    service: "api",
+                    start_ns: 1000 + i64::from(value),
+                    attrs: vec![(
                         "numbers".into(),
                         AttrValue::Array(vec![
                             AttrValue::Int(i64::from(value)),
                             AttrValue::Int(i64::from(value + 1)),
                         ]),
                     )],
-                )
+                    ..SpanFixture::default()
+                }
+                .build()
             })
             .collect();
         let mut store = InMemorySpanStore::new();
@@ -909,21 +998,7 @@ mod tests {
     #[tokio::test]
     async fn metrics_query_range_honors_backend_row_group_job_params() {
         let app = row_group_job_app().await;
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=0&end=1&step=1&block=blocks%2Frow-groups.parquet&rowGroupStart=1&rowGroupEnd=2",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(app, "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=0&end=1&step=1&block=blocks%2Frow-groups.parquet&rowGroupStart=1&rowGroupEnd=2").await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -943,21 +1018,7 @@ mod tests {
     #[tokio::test]
     async fn search_tag_values_v2_filter_honors_backend_row_group_job_params() {
         let app = row_group_job_app().await;
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/v2/search/tag/span:name/values?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=0&end=1&block=blocks%2Frow-groups.parquet&rowGroupStart=1&rowGroupEnd=2",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(app, "/api/v2/search/tag/span:name/values?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=0&end=1&block=blocks%2Frow-groups.parquet&rowGroupStart=1&rowGroupEnd=2").await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -992,8 +1053,22 @@ mod tests {
             "svc-a",
             "root-a",
             vec![
-                span_at(9, 1, None, "a", 0),
-                span_at(9, 2, None, "b", 1_000_000_000),
+                SpanFixture {
+                    trace: 9,
+                    span: 1,
+                    service: "a",
+                    start_ns: 0,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 2,
+                    service: "b",
+                    start_ns: 1_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
             ],
         );
         let engine = Arc::new(TraceqlEngine::new(
@@ -1003,21 +1078,7 @@ mod tests {
                 ..EngineOpts::default()
             },
         ));
-        let resp = router(engine)
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=0&end=1&step=1&exemplars=1",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(router(engine), "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=0&end=1&step=1&exemplars=1").await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(body["series"][0]["exemplars"].as_array().unwrap().len() == 1);
@@ -1098,9 +1159,32 @@ mod tests {
             "svc-a",
             "root-a",
             vec![
-                span_at(9, 1, None, "a", fixture_time - 60_000_000_000),
-                span_at(9, 2, Some(1), "a", fixture_time - 30_000_000_000),
-                span_at(9, 3, Some(1), "a", fixture_time - 7_200_000_000_000),
+                SpanFixture {
+                    trace: 9,
+                    span: 1,
+                    service: "a",
+                    start_ns: fixture_time - 60_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 2,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: fixture_time - 30_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 3,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: fixture_time - 7_200_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
             ],
         );
         let (status, body) = get_json_with_app(
@@ -1128,10 +1212,41 @@ mod tests {
             "svc",
             "root",
             vec![
-                span_at(9, 1, None, "a", 0),
-                span_at(9, 2, Some(1), "a", 1_000_000_000),
-                span_at(9, 3, Some(1), "a", 2_000_000_000),
-                span_at(9, 4, Some(1), "a", 3_000_000_000),
+                SpanFixture {
+                    trace: 9,
+                    span: 1,
+                    service: "a",
+                    start_ns: 0,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 2,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: 1_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 3,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: 2_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 4,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: 3_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
             ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
@@ -1529,31 +1644,39 @@ overrides:
             "tenant-a",
             "svc-a",
             "inside",
-            vec![span_at(1, 1, None, "a", 1_500_000_000)],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_500_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-b",
             "outside",
-            vec![span_at(2, 1, None, "b", 2_000_000_000)],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "b",
+                    start_ns: 2_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=1.4&end=1.6")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-
+        let app = router_over(store);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=1.4&end=1.6",
+        )
+        .await;
         assert2::assert!(status == StatusCode::OK);
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
         assert2::assert!(body["traces"].as_array().unwrap().len() == 1);
         assert2::assert!(body["traces"][0]["rootTraceName"].as_str() == Some("inside"));
     }
@@ -1561,9 +1684,8 @@ overrides:
     #[tokio::test]
     async fn search_defaults_missing_tenant_to_anonymous() {
         let mut store = InMemorySpanStore::new();
-        store.push_trace("anonymous", "svc-a", "root-a", vec![span(9, 1, None, "a")]);
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
+        store.push_trace("anonymous", "svc-a", "root-a", vec![root_span_a()]);
+        let app = router_over(store);
 
         let resp = app
             .oneshot(
@@ -1598,39 +1720,62 @@ overrides:
         check!(spans.len() == 1);
     }
 
-    #[tokio::test]
-    async fn search_honors_min_duration_parameter() {
+    // A router over two `tenant-a` traces: `short`, one instant span at 1s, and
+    // `long`, which starts at `long_trace_start_ns` and whose second span
+    // starts three seconds after its first.
+    fn short_and_long_trace_app(long_trace_start_ns: i64) -> axum::Router {
         let mut store = InMemorySpanStore::new();
         store.push_trace(
             "tenant-a",
             "svc-a",
             "short",
-            vec![span_at(1, 1, None, "a", 1_000_000_000)],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-b",
             "long",
             vec![
-                span_at(2, 1, None, "b", 1_000_000_000),
-                span_at(2, 2, Some(1), "b", 4_000_000_000),
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "b",
+                    start_ns: long_trace_start_ns,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 2,
+                    span: 2,
+                    parent: Some(1),
+                    service: "b",
+                    start_ns: long_trace_start_ns + 3_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
             ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&minDuration=2s&start=0&end=10")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        router(engine)
+    }
+
+    #[tokio::test]
+    async fn search_honors_min_duration_parameter() {
+        let app = short_and_long_trace_app(1_000_000_000);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&minDuration=2s&start=0&end=10",
+        )
+        .await;
 
         check!(status == StatusCode::OK);
         check!(body["traces"].as_array().unwrap().len() == 1);
@@ -1639,29 +1784,34 @@ overrides:
 
     #[tokio::test]
     async fn search_honors_nanosecond_precision_min_duration_parameter() {
-        let mut short = span_at(1, 1, None, "a", 1_000_000_000);
+        let mut short = SpanFixture {
+            trace: 1,
+            span: 1,
+            service: "a",
+            start_ns: 1_000_000_000,
+            ..SpanFixture::default()
+        }
+        .build();
         short.duration = nanos(1_000_000);
-        let mut long = span_at(2, 1, None, "b", 1_000_000_000);
+        let mut long = SpanFixture {
+            trace: 2,
+            span: 1,
+            service: "b",
+            start_ns: 1_000_000_000,
+            ..SpanFixture::default()
+        }
+        .build();
         long.duration = nanos(1_000_001);
 
         let mut store = InMemorySpanStore::new();
         store.push_trace("tenant-a", "svc-a", "short", vec![short]);
         store.push_trace("tenant-a", "svc-b", "long", vec![long]);
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&minDuration=1000001ns&start=0&end=10")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = router_over(store);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&minDuration=1000001ns&start=0&end=10",
+        )
+        .await;
 
         check!(status == StatusCode::OK);
         check!(body["traces"].as_array().unwrap().len() == 1);
@@ -1671,37 +1821,12 @@ overrides:
 
     #[tokio::test]
     async fn search_honors_max_duration_parameter() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "tenant-a",
-            "svc-a",
-            "short",
-            vec![span_at(1, 1, None, "a", 1_000_000_000)],
-        );
-        store.push_trace(
-            "tenant-a",
-            "svc-b",
-            "long",
-            vec![
-                span_at(2, 1, None, "b", 1_000_000_000),
-                span_at(2, 2, Some(1), "b", 4_000_000_000),
-            ],
-        );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&maxDuration=2s&start=0&end=10")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = short_and_long_trace_app(1_000_000_000);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&maxDuration=2s&start=0&end=10",
+        )
+        .await;
 
         check!(status == StatusCode::OK);
         check!(body["traces"].as_array().unwrap().len() == 1);
@@ -1710,37 +1835,12 @@ overrides:
 
     #[tokio::test]
     async fn search_applies_duration_filter_before_limit() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "tenant-a",
-            "svc-a",
-            "short",
-            vec![span_at(1, 1, None, "a", 1_000_000_000)],
-        );
-        store.push_trace(
-            "tenant-a",
-            "svc-b",
-            "long",
-            vec![
-                span_at(2, 1, None, "b", 2_000_000_000),
-                span_at(2, 2, Some(1), "b", 5_000_000_000),
-            ],
-        );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&minDuration=2s&limit=1&start=0&end=10")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = short_and_long_trace_app(2_000_000_000);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&minDuration=2s&limit=1&start=0&end=10",
+        )
+        .await;
 
         check!(status == StatusCode::OK);
         check!(body["traces"].as_array().unwrap().len() == 1);
@@ -1754,29 +1854,38 @@ overrides:
             "tenant-a",
             "svc-a",
             "first",
-            vec![span_at(1, 1, None, "a", 1_000)],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-b",
             "second",
-            vec![span_at(2, 1, None, "b", 2_000)],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "b",
+                    start_ns: 2_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&limit=1&start=0&end=10")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = router_over(store);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&limit=1&start=0&end=10",
+        )
+        .await;
 
         check!(status == StatusCode::OK);
         check!(body["traces"].as_array().unwrap().len() == 1);
@@ -1918,25 +2027,7 @@ overrides:
                 ("service.name".into(), AttrValue::Str("svc-a".into())),
                 ("cloud.region".into(), AttrValue::Str("us-east-1".into())),
             ],
-            spans: vec![SpanRef {
-                span_id: [1; 8],
-                parent_span_id: None,
-                name: "root-a".into(),
-                kind: 0,
-                nested_set_left: 1,
-                nested_set_right: 2,
-                nested_set_parent: 0,
-                start_time_unix_nano: 1_001,
-                duration: nanos(200),
-                status_code: 0,
-                status_message: String::new(),
-                instrumentation_name: String::new(),
-                instrumentation_version: String::new(),
-                resource_attributes: Vec::new(),
-                attributes: Vec::new(),
-                events: Vec::new(),
-                links: Vec::new(),
-            }],
+            spans: vec![root_span_ref("root-a")],
         };
 
         let body = trace_json(&trace, 10);
@@ -2026,9 +2117,9 @@ overrides:
         assert2::assert!(scope.version == "1.2.3");
     }
 
-    #[test]
-    fn trace_json_projects_repeated_resource_attributes_as_arrays() {
-        let trace = TraceSpans {
+    // An `api` trace whose resource repeats `deployment.zone` as `a` and `b`.
+    fn repeated_zone_trace() -> TraceSpans {
+        TraceSpans {
             trace_id: [9; 16],
             root_service_name: "api".into(),
             root_trace_name: "GET /".into(),
@@ -2036,26 +2127,13 @@ overrides:
                 ("deployment.zone".into(), AttrValue::Str("a".into())),
                 ("deployment.zone".into(), AttrValue::Str("b".into())),
             ],
-            spans: vec![SpanRef {
-                span_id: [1; 8],
-                parent_span_id: None,
-                name: "api".into(),
-                kind: 0,
-                nested_set_left: 1,
-                nested_set_right: 2,
-                nested_set_parent: 0,
-                start_time_unix_nano: 1_001,
-                duration: nanos(200),
-                status_code: 0,
-                status_message: String::new(),
-                instrumentation_name: String::new(),
-                instrumentation_version: String::new(),
-                resource_attributes: Vec::new(),
-                attributes: Vec::new(),
-                events: Vec::new(),
-                links: Vec::new(),
-            }],
-        };
+            spans: vec![root_span_ref("api")],
+        }
+    }
+
+    #[test]
+    fn trace_json_projects_repeated_resource_attributes_as_arrays() {
+        let trace = repeated_zone_trace();
 
         let body = trace_json(&trace, 10);
 
@@ -2190,34 +2268,7 @@ overrides:
 
     #[test]
     fn trace_protobuf_projects_repeated_resource_attributes_as_arrays() {
-        let trace = TraceSpans {
-            trace_id: [9; 16],
-            root_service_name: "api".into(),
-            root_trace_name: "GET /".into(),
-            resource_attributes: vec![
-                ("deployment.zone".into(), AttrValue::Str("a".into())),
-                ("deployment.zone".into(), AttrValue::Str("b".into())),
-            ],
-            spans: vec![SpanRef {
-                span_id: [1; 8],
-                parent_span_id: None,
-                name: "api".into(),
-                kind: 0,
-                nested_set_left: 1,
-                nested_set_right: 2,
-                nested_set_parent: 0,
-                start_time_unix_nano: 1_001,
-                duration: nanos(200),
-                status_code: 0,
-                status_message: String::new(),
-                instrumentation_name: String::new(),
-                instrumentation_version: String::new(),
-                resource_attributes: Vec::new(),
-                attributes: Vec::new(),
-                events: Vec::new(),
-                links: Vec::new(),
-            }],
-        };
+        let trace = repeated_zone_trace();
 
         let bytes = trace_protobuf(&trace, 10).unwrap();
         let data = TracesData::decode(bytes.as_slice()).unwrap();
@@ -2246,56 +2297,39 @@ overrides:
         assert2::assert!(attrs[1].key == "service.name");
     }
 
-    #[tokio::test]
-    async fn by_id_honors_protobuf_accept_header() {
-        let resp = app()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .header("accept", "application/protobuf")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let content_type = resp
-            .headers()
-            .get("content-type")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        // v2 returns a Tempo TraceByIDResponse wrapping the OTLP trace.
-        let data = TraceByIdResponse::decode(bytes).unwrap().trace.unwrap();
-
+    // A protobuf trace-by-id answer whose first scope holds trace 9's two spans.
+    fn check_protobuf_trace_nine(
+        status: StatusCode,
+        content_type: Option<&str>,
+        data: &TracesData,
+    ) {
         check!(status == StatusCode::OK);
-        check!(content_type.as_deref() == Some("application/protobuf"));
-        assert2::assert!(data.resource_spans.len() == 1);
+        check!(content_type == Some("application/protobuf"));
         assert2::assert!(data.resource_spans[0].scope_spans[0].spans.len() == 2);
         check!(data.resource_spans[0].scope_spans[0].spans[0].trace_id == vec![9; 16]);
     }
 
     #[tokio::test]
+    async fn by_id_honors_protobuf_accept_header() {
+        let (status, content_type, bytes) = get_accepting(
+            "/api/v2/traces/09090909090909090909090909090909",
+            Some("application/protobuf"),
+        )
+        .await;
+        // v2 returns a Tempo TraceByIDResponse wrapping the OTLP trace.
+        let data = TraceByIdResponse::decode(bytes).unwrap().trace.unwrap();
+
+        assert2::assert!(data.resource_spans.len() == 1);
+        check_protobuf_trace_nine(status, content_type.as_deref(), &data);
+    }
+
+    #[tokio::test]
     async fn by_id_accept_header_matches_media_type_case_insensitively() {
-        let resp = app()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .header("accept", "Application/Protobuf; q=1")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let content_type = resp
-            .headers()
-            .get("content-type")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let (status, content_type, bytes) = get_accepting(
+            "/api/v2/traces/09090909090909090909090909090909",
+            Some("Application/Protobuf; q=1"),
+        )
+        .await;
 
         check!(status == StatusCode::OK);
         check!(content_type.as_deref() == Some("application/protobuf"));
@@ -2315,30 +2349,14 @@ overrides:
     async fn trace_by_id_v1_returns_bare_otlp_protobuf() {
         // Grafana's backend falls back to the v1 endpoint and decodes it as
         // `tempopb.Trace` (wire-identical to a bare OTLP `TracesData`).
-        let resp = app()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/traces/09090909090909090909090909090909")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .header("accept", "application/protobuf")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let content_type = resp
-            .headers()
-            .get("content-type")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let (status, content_type, bytes) = get_accepting(
+            "/api/traces/09090909090909090909090909090909",
+            Some("application/protobuf"),
+        )
+        .await;
         let data = TracesData::decode(bytes).unwrap();
 
-        check!(status == StatusCode::OK);
-        check!(content_type.as_deref() == Some("application/protobuf"));
-        assert2::assert!(data.resource_spans[0].scope_spans[0].spans.len() == 2);
-        check!(data.resource_spans[0].scope_spans[0].spans[0].trace_id == vec![9; 16]);
+        check_protobuf_trace_nine(status, content_type.as_deref(), &data);
     }
 
     #[tokio::test]
@@ -2390,25 +2408,12 @@ overrides:
     #[tokio::test]
     async fn by_id_projects_instrumentation_scope() {
         let mut store = InMemorySpanStore::new();
-        let mut span = span_at(9, 1, None, "a", 1_000);
+        let mut span = trace_nine_span();
         span.instrumentation_name = "tracer".into();
         span.instrumentation_version = "1.2.3".into();
         store.push_trace("tenant-a", "svc-a", "root-a", vec![span]);
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = router_over(store);
+        let (status, body) = get_trace_nine_v2(app).await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -2422,30 +2427,12 @@ overrides:
 
     #[tokio::test]
     async fn by_id_projects_span_kind_and_status() {
-        let mut store = InMemorySpanStore::new();
-        let mut span = span_at(9, 1, None, "a", 1_000);
+        let mut span = trace_nine_span();
         span.kind = 2;
         span.status_code = 2;
         span.status_message = "boom".into();
-        store.push_trace("tenant-a", "svc-a", "root-a", vec![span]);
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
-        let span = &body["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        let span = served_v2_span(span).await;
 
-        check!(status == StatusCode::OK);
         check!(span["kind"] == "SPAN_KIND_SERVER");
         check!(
             span["status"]
@@ -2458,8 +2445,7 @@ overrides:
 
     #[tokio::test]
     async fn by_id_projects_events_and_links() {
-        let mut store = InMemorySpanStore::new();
-        let mut span = span_at(9, 1, None, "a", 1_000);
+        let mut span = trace_nine_span();
         span.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -2470,25 +2456,8 @@ overrides:
             span_id: [8; 8],
             attributes: vec![("link.kind".into(), AttrValue::Str("retry".into()))],
         }];
-        store.push_trace("tenant-a", "svc-a", "root-a", vec![span]);
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
-        let span = &body["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        let span = served_v2_span(span).await;
 
-        check!(status == StatusCode::OK);
         check!(
             span["events"]
                 == json!([{
@@ -2569,19 +2538,11 @@ overrides:
 
         // Window [4s, 6s] covers only the late span by start, yet the by-id
         // lookup must return both spans with status COMPLETE.
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/traces/09090909090909090909090909090909?start=4&end=6")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/v2/traces/09090909090909090909090909090909?start=4&end=6",
+        )
+        .await;
         let spans = body["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"]
             .as_array()
             .unwrap();
@@ -2616,12 +2577,7 @@ overrides:
     #[tokio::test]
     async fn by_id_marks_trace_partial_when_span_limit_truncates() {
         let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "tenant-a",
-            "svc-a",
-            "root-a",
-            vec![span(9, 1, None, "a"), span(9, 2, Some(1), "b")],
-        );
+        store.push_trace("tenant-a", "svc-a", "root-a", root_and_child_spans());
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
         let app = router_with_config(
             engine,
@@ -2631,19 +2587,7 @@ overrides:
             },
             RoleReadiness::new(),
         );
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_trace_nine_v2(app).await;
 
         check!(status == StatusCode::OK);
         check!(body["status"] == "PARTIAL");
@@ -2673,61 +2617,12 @@ overrides:
 
     #[tokio::test]
     async fn search_tags_legacy_respects_query_filter() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "tenant-a",
-            "svc-a",
-            "root-a",
-            vec![
-                span_at_with_attrs(
-                    1,
-                    1,
-                    None,
-                    "a",
-                    1_000,
-                    vec![("env".into(), AttrValue::Str("prod".into()))],
-                ),
-                span_at_with_attrs(
-                    1,
-                    2,
-                    Some(1),
-                    "b",
-                    2_000,
-                    vec![("target".into(), AttrValue::Str("kept".into()))],
-                ),
-            ],
-        );
-        store.push_trace(
-            "tenant-a",
-            "svc-b",
-            "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "c",
-                3_000,
-                vec![
-                    ("env".into(), AttrValue::Str("dev".into())),
-                    ("noise".into(), AttrValue::Str("dropped".into())),
-                ],
-            )],
-        );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D&scope=span")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = prod_and_dev_trace_app();
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D&scope=span",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -2743,45 +2638,23 @@ overrides:
     #[tokio::test]
     async fn search_tags_legacy_query_filter_returns_instrumentation_scope() {
         let mut store = InMemorySpanStore::new();
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.instrumentation_name = "tracer".into();
         root.instrumentation_version = "1.2.3".into();
         store.push_trace("tenant-a", "svc-a", "root-a", vec![root]);
-        store.push_trace(
-            "tenant-a",
-            "svc-b",
-            "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "dropped-svc",
-                3_000,
-                vec![("env".into(), AttrValue::Str("dev".into()))],
-            )],
+        push_dev_trace(
+            &mut store,
+            DevSpan {
+                service: "dropped-svc",
+                ..DevSpan::default()
+            },
         );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D&scope=instrumentation")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = router_over(store);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D&scope=instrumentation",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -2969,61 +2842,12 @@ overrides:
 
     #[tokio::test]
     async fn search_tags_v2_respects_query_filter() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "tenant-a",
-            "svc-a",
-            "root-a",
-            vec![
-                span_at_with_attrs(
-                    1,
-                    1,
-                    None,
-                    "a",
-                    1_000,
-                    vec![("env".into(), AttrValue::Str("prod".into()))],
-                ),
-                span_at_with_attrs(
-                    1,
-                    2,
-                    Some(1),
-                    "b",
-                    2_000,
-                    vec![("target".into(), AttrValue::Str("kept".into()))],
-                ),
-            ],
-        );
-        store.push_trace(
-            "tenant-a",
-            "svc-b",
-            "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "c",
-                3_000,
-                vec![
-                    ("env".into(), AttrValue::Str("dev".into())),
-                    ("noise".into(), AttrValue::Str("dropped".into())),
-                ],
-            )],
-        );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D&scope=span")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = prod_and_dev_trace_app();
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/v2/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D&scope=span",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -3042,14 +2866,7 @@ overrides:
     #[tokio::test]
     async fn search_tags_v2_query_filter_returns_event_and_link_scopes() {
         let mut store = InMemorySpanStore::new();
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -3061,35 +2878,14 @@ overrides:
             attributes: vec![("link.kind".into(), AttrValue::Str("retry".into()))],
         }];
         store.push_trace("tenant-a", "svc-a", "root-a", vec![root]);
-        store.push_trace(
-            "tenant-a",
-            "svc-b",
-            "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "c",
-                3_000,
-                vec![("env".into(), AttrValue::Str("dev".into()))],
-            )],
-        );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
+        push_dev_trace(&mut store, DevSpan::default());
+        let app = router_over(store);
 
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/v2/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -3174,58 +2970,42 @@ overrides:
             "svc-a",
             "root-a",
             vec![
-                span_at_with_attrs(
-                    1,
-                    1,
-                    None,
-                    "a",
-                    1_000,
-                    vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000,
+                    attrs: vec![
                         ("env".into(), AttrValue::Str("prod".into())),
                         ("target".into(), AttrValue::Str("kept".into())),
                     ],
-                ),
-                span_at_with_attrs(
-                    1,
-                    2,
-                    Some(1),
-                    "b",
-                    2_000,
-                    vec![("target".into(), AttrValue::Str("also-kept".into()))],
-                ),
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 1,
+                    span: 2,
+                    parent: Some(1),
+                    service: "b",
+                    start_ns: 2_000,
+                    attrs: vec![("target".into(), AttrValue::Str("also-kept".into()))],
+                }
+                .build(),
             ],
         );
-        store.push_trace(
-            "tenant-a",
-            "svc-b",
-            "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "c",
-                3_000,
-                vec![
-                    ("env".into(), AttrValue::Str("dev".into())),
-                    ("target".into(), AttrValue::Str("dropped".into())),
-                ],
-            )],
+        push_dev_trace(
+            &mut store,
+            DevSpan {
+                extra_attrs: vec![("target".into(), AttrValue::Str("dropped".into()))],
+                ..DevSpan::default()
+            },
         );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/search/tag/target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = router_over(store);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/search/tag/target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -3345,7 +3125,10 @@ overrides:
         ) -> Result<Option<TraceSpans>, TraceqlError> {
             Ok(None)
         }
+    }
 
+    #[async_trait::async_trait]
+    impl TagCatalog for IndexedOnlyStore {
         async fn tag_names(
             &self,
             _tenant: &str,
@@ -3380,19 +3163,7 @@ overrides:
             Arc::clone(&store),
             EngineOpts::default(),
         )));
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/search/tag/resource.service.name/values?q=%7B%20resource.service.name%20%3D%20%22krabka-broker%22%20%7D&limit=5000")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(app, "/api/v2/search/tag/resource.service.name/values?q=%7B%20resource.service.name%20%3D%20%22krabka-broker%22%20%7D&limit=5000").await;
 
         check!(status == StatusCode::OK);
         check!(
@@ -3459,58 +3230,21 @@ overrides:
     #[tokio::test]
     async fn search_tag_values_v2_respects_query_filter() {
         let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "tenant-a",
-            "svc-a",
-            "root-a",
-            vec![
-                span_at_with_attrs(
-                    1,
-                    1,
-                    None,
-                    "a",
-                    1_000,
-                    vec![("env".into(), AttrValue::Str("prod".into()))],
-                ),
-                span_at_with_attrs(
-                    1,
-                    2,
-                    Some(1),
-                    "b",
-                    2_000,
-                    vec![("target".into(), AttrValue::Str("kept".into()))],
-                ),
-            ],
+        push_prod_trace(&mut store);
+        push_dev_trace(
+            &mut store,
+            DevSpan {
+                service: "b",
+                start_ns: 2_000,
+                ..DevSpan::default()
+            },
         );
-        store.push_trace(
-            "tenant-a",
-            "svc-b",
-            "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "b",
-                2_000,
-                vec![("env".into(), AttrValue::Str("dev".into()))],
-            )],
-        );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/search/tag/.svc/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = router_over(store);
+        let (status, body) = get_json_with_app(
+            app.clone(),
+            "/api/v2/search/tag/.svc/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -3531,19 +3265,11 @@ overrides:
             })
         );
 
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -3566,46 +3292,33 @@ overrides:
             "tenant-a",
             "svc-a",
             "root-a",
-            vec![span_at_with_attrs(
-                1,
-                1,
-                None,
-                "span-svc",
-                1_000,
-                vec![("env".into(), AttrValue::Str("prod".into()))],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "span-svc",
+                    start_ns: 1_000,
+                    attrs: vec![("env".into(), AttrValue::Str("prod".into()))],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
-        store.push_trace(
-            "tenant-a",
-            "svc-b",
-            "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "dropped-svc",
-                2_000,
-                vec![("env".into(), AttrValue::Str("dev".into()))],
-            )],
+        push_dev_trace(
+            &mut store,
+            DevSpan {
+                service: "dropped-svc",
+                start_ns: 2_000,
+                ..DevSpan::default()
+            },
         );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
+        let app = router_over(store);
 
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/v2/search/tag/resource.service.name/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/v2/search/tag/resource.service.name/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -3629,45 +3342,36 @@ overrides:
             "svc-a",
             "root-a",
             vec![
-                span_at_with_attrs(
-                    1,
-                    1,
-                    None,
-                    "a",
-                    1_000_000_000,
-                    vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000_000_000,
+                    attrs: vec![
                         ("env".into(), AttrValue::Str("prod".into())),
                         ("target".into(), AttrValue::Str("inside".into())),
                     ],
-                ),
-                span_at_with_attrs(
-                    1,
-                    2,
-                    Some(1),
-                    "b",
-                    5_000_000_000,
-                    vec![("target".into(), AttrValue::Str("outside".into()))],
-                ),
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 1,
+                    span: 2,
+                    parent: Some(1),
+                    service: "b",
+                    start_ns: 5_000_000_000,
+                    attrs: vec![("target".into(), AttrValue::Str("outside".into()))],
+                }
+                .build(),
             ],
         );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
+        let app = router_over(store);
 
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D&start=0&end=2",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D&start=0&end=2",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -3681,6 +3385,19 @@ overrides:
                 }
             })
         );
+    }
+
+    // A tag-values v2 body that holds the one string value `value`.
+    fn single_string_tag_value(value: &str) -> Value {
+        json!({
+            "tagValues": [{
+                "type": "string",
+                "value": value
+            }],
+            "metrics": {
+                "inspectedBytes": "0"
+            }
+        })
     }
 
     async fn filtered_tag_values(app: &Router, tag: &str) -> (StatusCode, Value) {
@@ -3704,31 +3421,32 @@ overrides:
     #[tokio::test]
     async fn search_tag_values_v2_query_filter_returns_intrinsic_values() {
         let mut store = InMemorySpanStore::new();
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.name = "root".into();
-        let mut child = span_at_with_attrs(1, 2, Some(1), "child-svc", 2_000, Vec::new());
+        let mut child = SpanFixture {
+            trace: 1,
+            span: 2,
+            parent: Some(1),
+            service: "child-svc",
+            start_ns: 2_000,
+            ..SpanFixture::default()
+        }
+        .build();
         child.name = "child".into();
         child.instrumentation_name = "tracer".into();
         store.push_trace("tenant-a", "svc-a", "root-a", vec![root, child]);
-        let mut dropped = span_at_with_attrs(
-            2,
-            1,
-            None,
-            "dropped-svc",
-            3_000,
-            vec![("env".into(), AttrValue::Str("dev".into()))],
-        );
+        let mut dropped = SpanFixture {
+            trace: 2,
+            span: 1,
+            service: "dropped-svc",
+            start_ns: 3_000,
+            attrs: vec![("env".into(), AttrValue::Str("dev".into()))],
+            ..SpanFixture::default()
+        }
+        .build();
         dropped.name = "dropped".into();
         store.push_trace("tenant-a", "svc-b", "root-b", vec![dropped]);
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
+        let app = router_over(store);
         let (status, body) = filtered_tag_values(&app, "span:name").await;
 
         assert2::assert!(status == StatusCode::OK);
@@ -3862,14 +3580,7 @@ overrides:
     #[tokio::test]
     async fn search_tag_values_v2_query_filter_returns_event_and_link_values() {
         let mut store = InMemorySpanStore::new();
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -3881,80 +3592,22 @@ overrides:
             attributes: Vec::new(),
         }];
         store.push_trace("tenant-a", "svc-a", "root-a", vec![root]);
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
+        let app = router_over(store);
 
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/v2/search/tag/event:name/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        for (tag, value) in [
+            ("event:name", "exception"),
+            ("link:traceID", "09090909090909090909090909090909"),
+        ] {
+            let (status, body) = filtered_tag_values(&app, tag).await;
 
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "exception"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
-
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/v2/search/tag/link:traceID/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
-
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "09090909090909090909090909090909"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
+            assert2::assert!(status == StatusCode::OK, "{tag}");
+            assert2::assert!(body == single_string_tag_value(value), "{tag}");
+        }
     }
 
     #[tokio::test]
     async fn search_tag_values_v2_query_filter_returns_event_and_link_attribute_values() {
-        let mut store = InMemorySpanStore::new();
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -3965,128 +3618,19 @@ overrides:
             span_id: [8; 8],
             attributes: vec![("link.kind".into(), AttrValue::Str("retry".into()))],
         }];
-        store.push_trace("tenant-a", "svc-a", "root-a", vec![root]);
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
+        let app = app_with_trace(vec![root]);
 
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/v2/search/tag/cache.key/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        for (tag, value) in [
+            ("cache.key", "users"),
+            ("event.cache.key", "users"),
+            ("link.kind", "retry"),
+            ("link.link.kind", "retry"),
+        ] {
+            let (status, body) = filtered_tag_values(&app, tag).await;
 
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "users"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
-
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/v2/search/tag/event.cache.key/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
-
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "users"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
-
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/v2/search/tag/link.kind/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
-
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "retry"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
-
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(
-                        "/api/v2/search/tag/link.link.kind/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-                    )
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
-
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "retry"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
+            assert2::assert!(status == StatusCode::OK, "{tag}");
+            assert2::assert!(body == single_string_tag_value(value), "{tag}");
+        }
     }
 
     #[tokio::test]
@@ -4098,34 +3642,28 @@ overrides:
                 "tenant-a",
                 "svc-a",
                 &format!("root-{trace}"),
-                vec![span_at_with_attrs(
-                    trace,
-                    1,
-                    None,
-                    "a",
-                    i64::from(trace),
-                    vec![
-                        ("env".into(), AttrValue::Str("prod".into())),
-                        ("target".into(), AttrValue::Str(target.into())),
-                    ],
-                )],
+                vec![
+                    SpanFixture {
+                        trace,
+                        span: 1,
+                        service: "a",
+                        start_ns: i64::from(trace),
+                        attrs: vec![
+                            ("env".into(), AttrValue::Str("prod".into())),
+                            ("target".into(), AttrValue::Str(target.into())),
+                        ],
+                        ..SpanFixture::default()
+                    }
+                    .build(),
+                ],
             );
         }
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = router_over(store);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -4154,49 +3692,46 @@ overrides:
             "tenant-a",
             "svc-a",
             "root-old",
-            vec![span_at_with_attrs(
-                1,
-                1,
-                None,
-                "a",
-                1_000,
-                vec![
-                    ("env".into(), AttrValue::Str("prod".into())),
-                    ("target".into(), AttrValue::Str("old".into())),
-                ],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000,
+                    attrs: vec![
+                        ("env".into(), AttrValue::Str("prod".into())),
+                        ("target".into(), AttrValue::Str("old".into())),
+                    ],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-a",
             "root-new",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "a",
-                2_000,
-                vec![
-                    ("env".into(), AttrValue::Str("prod".into())),
-                    ("target".into(), AttrValue::Str("new".into())),
-                ],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "a",
+                    start_ns: 2_000,
+                    attrs: vec![
+                        ("env".into(), AttrValue::Str("prod".into())),
+                        ("target".into(), AttrValue::Str("new".into())),
+                    ],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
-        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
-        let app = router(engine);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D&limit=1")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let app = router_over(store);
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D&limit=1",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         let values = body["tagValues"].as_array().unwrap();
@@ -4211,17 +3746,20 @@ overrides:
                 "tenant-a",
                 "svc-a",
                 &format!("root-{i:02}"),
-                vec![span_at_with_attrs(
-                    i + 1,
-                    1,
-                    None,
-                    "a",
-                    i64::from(i) * 1_000,
-                    vec![
-                        ("env".into(), AttrValue::Str("prod".into())),
-                        ("target".into(), AttrValue::Str(format!("value-{i:02}"))),
-                    ],
-                )],
+                vec![
+                    SpanFixture {
+                        trace: i + 1,
+                        span: 1,
+                        service: "a",
+                        start_ns: i64::from(i) * 1_000,
+                        attrs: vec![
+                            ("env".into(), AttrValue::Str("prod".into())),
+                            ("target".into(), AttrValue::Str(format!("value-{i:02}"))),
+                        ],
+                        ..SpanFixture::default()
+                    }
+                    .build(),
+                ],
             );
         }
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
@@ -4233,19 +3771,11 @@ overrides:
             },
             RoleReadiness::new(),
         );
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D&limit=5000")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, body) = get_json_with_app(
+            app,
+            "/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D&limit=5000",
+        )
+        .await;
 
         assert2::assert!(status == StatusCode::OK);
         let values = body["tagValues"].as_array().unwrap();
@@ -4260,8 +3790,6 @@ mod attr_values_json;
 mod attrs_json;
 mod base64_fn;
 mod buildinfo;
-mod collect_event_values;
-mod collect_link_values;
 mod collect_span_intrinsic_values;
 mod collect_trace_intrinsic_values;
 mod decode_trace_id;
@@ -4279,6 +3807,7 @@ mod filter_metrics_exemplars;
 mod filter_search_duration;
 mod filter_tag_values;
 mod group_attrs;
+mod group_by_instrumentation;
 mod http_config;
 mod instant_metric_bounds;
 mod instant_metrics_response;
@@ -4287,7 +3816,6 @@ mod instrumentation_groups;
 mod instrumentation_key;
 mod instrumentation_scope_json;
 mod instrumentation_tags;
-mod intrinsic_tag_name;
 mod intrinsic_tags;
 mod is_match_all_query;
 mod key_is_safe_attribute;
@@ -4299,7 +3827,7 @@ mod merge_static_scope;
 mod metric_label_json;
 mod metric_prom_labels;
 mod metrics_query_param;
-mod nested_attribute_key_matches;
+mod metrics_request;
 mod optional_seconds_param;
 mod optional_time_bounds;
 mod optional_usize_param;
@@ -4319,8 +3847,8 @@ mod parse_logfmt_tags;
 mod parse_logfmt_value;
 mod parse_seconds_to_ns;
 mod parse_step_to_ns;
-mod parse_tag_scope;
 mod q_filter_limit;
+mod querier_request;
 mod query_instant;
 mod query_instant_inner;
 mod query_param;
@@ -4328,6 +3856,7 @@ mod query_range;
 mod query_range_inner;
 mod request_tenant;
 mod required_seconds_param;
+mod required_time_range;
 mod resource_attrs;
 mod resource_span_group;
 mod resource_span_groups;
@@ -4338,7 +3867,6 @@ mod router_with_state;
 mod scan_options_param;
 mod scope_param;
 mod scope_spans_json;
-mod scoped_attribute_tag;
 mod scoped_tags_from_traces;
 mod search;
 mod search_inner;
@@ -4350,13 +3878,11 @@ mod search_tag_values;
 mod search_tag_values_inner;
 mod search_tag_values_json;
 mod search_tag_values_v2;
-mod search_tag_values_v2_inner;
 mod search_tag_values_v2_json;
 mod search_tags;
 mod search_tags_inner;
 mod search_tags_json;
 mod search_tags_v2;
-mod search_tags_v2_inner;
 mod search_tags_v2_json;
 mod span_attributes;
 mod span_end_unix_nano;
@@ -4368,12 +3894,13 @@ mod tag_scope_name;
 mod tag_values_from_traces;
 mod tags_to_traceql;
 mod tempo_tag_alias;
+mod tenant_and_bounds;
+mod timed_tag_values;
 mod trace_by_id;
 mod trace_by_id_inner;
 mod trace_by_id_response;
 mod trace_by_id_response_protobuf;
 mod trace_by_id_v1;
-mod trace_by_id_v1_inner;
 mod trace_duration;
 mod trace_json;
 mod trace_metrics_json;
@@ -4383,8 +3910,8 @@ mod trace_span_json;
 mod trace_traces_data;
 mod traceql_query_error_response;
 mod traceql_tag_field;
+mod traces_matching_filter;
 mod typed_traceql_value;
-mod typed_value_parts;
 mod wants_json;
 mod wants_protobuf;
 
@@ -4395,8 +3922,6 @@ use attr_values_json::attr_values_json;
 use attrs_json::attrs_json;
 use base64_fn::base64;
 use buildinfo::buildinfo;
-use collect_event_values::collect_event_values;
-use collect_link_values::collect_link_values;
 use collect_span_intrinsic_values::collect_span_intrinsic_values;
 use collect_trace_intrinsic_values::collect_trace_intrinsic_values;
 use decode_trace_id::decode_trace_id;
@@ -4414,6 +3939,7 @@ use filter_metrics_exemplars::filter_metrics_exemplars;
 use filter_search_duration::filter_search_duration;
 use filter_tag_values::filter_tag_values;
 use group_attrs::group_attrs;
+use group_by_instrumentation::group_by_instrumentation;
 pub use http_config::HttpConfig;
 pub(crate) use instant_metric_bounds::instant_metric_bounds;
 pub(crate) use instant_metrics_response::instant_metrics_response;
@@ -4422,10 +3948,10 @@ use instrumentation_groups::InstrumentationGroups;
 use instrumentation_key::InstrumentationKey;
 use instrumentation_scope_json::instrumentation_scope_json;
 use instrumentation_tags::INSTRUMENTATION_TAGS;
-use intrinsic_tag_name::intrinsic_tag_name;
 use intrinsic_tags::INTRINSIC_TAGS;
 use is_match_all_query::is_match_all_query;
 use key_is_safe_attribute::key_is_safe_attribute;
+use krabka_traceql::typed_value_parts;
 use limit_error_response::limit_error_response;
 use link_tags::LINK_TAGS;
 use links_json::links_json;
@@ -4434,9 +3960,9 @@ use merge_static_scope::merge_static_scope;
 use metric_label_json::metric_label_json;
 use metric_prom_labels::metric_prom_labels;
 use metrics_query_param::metrics_query_param;
-use nested_attribute_key_matches::nested_attribute_key_matches;
+pub(crate) use metrics_request::{TenantRequest, metrics_request};
 use optional_seconds_param::optional_seconds_param;
-use optional_time_bounds::optional_time_bounds;
+pub(crate) use optional_time_bounds::optional_time_bounds;
 use optional_usize_param::optional_usize_param;
 use otlp_attrs::otlp_attrs;
 use otlp_event::otlp_event;
@@ -4448,21 +3974,22 @@ use otlp_traces_data::OtlpTracesData;
 use otlp_value::otlp_value;
 use otlp_values::otlp_values;
 use overrides::overrides;
-use parse_duration_component_ns::parse_duration_component_ns;
-use parse_go_duration_ns::parse_go_duration_ns;
-use parse_logfmt_tags::parse_logfmt_tags;
-use parse_logfmt_value::parse_logfmt_value;
-use parse_seconds_to_ns::parse_seconds_to_ns;
+pub(crate) use parse_duration_component_ns::parse_duration_component_ns;
+pub(crate) use parse_go_duration_ns::parse_go_duration_ns;
+pub(crate) use parse_logfmt_tags::parse_logfmt_tags;
+pub(crate) use parse_logfmt_value::parse_logfmt_value;
+pub(crate) use parse_seconds_to_ns::parse_seconds_to_ns;
 use parse_step_to_ns::parse_step_to_ns;
-use parse_tag_scope::parse_tag_scope;
 use q_filter_limit::q_filter_limit;
+use querier_request::QuerierRequest;
 use query_instant::query_instant;
 use query_instant_inner::query_instant_inner;
-use query_param::query_param;
+pub(crate) use query_param::query_param;
 use query_range::query_range;
 use query_range_inner::query_range_inner;
-use request_tenant::request_tenant;
+pub(crate) use request_tenant::request_tenant;
 use required_seconds_param::required_seconds_param;
+use required_time_range::required_time_range;
 use resource_attrs::ResourceAttrs;
 use resource_span_group::ResourceSpanGroup;
 use resource_span_groups::resource_span_groups;
@@ -4473,7 +4000,6 @@ use router_with_state::router_with_state;
 use scan_options_param::scan_options_param;
 use scope_param::scope_param;
 use scope_spans_json::scope_spans_json;
-use scoped_attribute_tag::scoped_attribute_tag;
 use scoped_tags_from_traces::scoped_tags_from_traces;
 use search::search;
 use search_inner::search_inner;
@@ -4482,16 +4008,14 @@ use search_query::search_query;
 use search_span_json::search_span_json;
 use search_stream::search_stream;
 use search_tag_values::search_tag_values;
-use search_tag_values_inner::search_tag_values_inner;
+use search_tag_values_inner::{TagValuesRequest, search_tag_values_inner};
 use search_tag_values_json::search_tag_values_json;
 use search_tag_values_v2::search_tag_values_v2;
-use search_tag_values_v2_inner::search_tag_values_v2_inner;
 use search_tag_values_v2_json::search_tag_values_v2_json;
 use search_tags::search_tags;
 use search_tags_inner::search_tags_inner;
 use search_tags_json::search_tags_json;
 use search_tags_v2::search_tags_v2;
-use search_tags_v2_inner::search_tags_v2_inner;
 use search_tags_v2_json::search_tags_v2_json;
 use span_attributes::span_attributes;
 use span_end_unix_nano::span_end_unix_nano;
@@ -4499,16 +4023,17 @@ use span_kind_json::span_kind_json;
 use span_resource_attributes::span_resource_attributes;
 use span_status_json::span_status_json;
 use step_param::step_param;
-use tag_scope_name::tag_scope_name;
+pub(crate) use tag_scope_name::tag_scope_name;
 use tag_values_from_traces::tag_values_from_traces;
 use tags_to_traceql::tags_to_traceql;
 use tempo_tag_alias::tempo_tag_alias;
+pub(crate) use tenant_and_bounds::tenant_and_bounds;
+use timed_tag_values::timed_tag_values;
 use trace_by_id::trace_by_id;
-use trace_by_id_inner::trace_by_id_inner;
+use trace_by_id_inner::{TraceByIdRequest, TraceEncoding, trace_by_id_inner};
 use trace_by_id_response::TraceByIdResponse;
 use trace_by_id_response_protobuf::trace_by_id_response_protobuf;
 use trace_by_id_v1::trace_by_id_v1;
-use trace_by_id_v1_inner::trace_by_id_v1_inner;
 use trace_duration::trace_duration;
 use trace_json::trace_json;
 use trace_metrics_json::{trace_metrics_instant_json, trace_metrics_json};
@@ -4518,10 +4043,12 @@ use trace_span_json::trace_span_json;
 use trace_traces_data::trace_traces_data;
 use traceql_query_error_response::traceql_query_error_response;
 use traceql_tag_field::traceql_tag_field;
+use traces_matching_filter::{TagFilter, traces_matching_filter};
 use typed_traceql_value::typed_traceql_value;
-use typed_value_parts::typed_value_parts;
 pub(crate) use wants_json::wants_json;
 use wants_protobuf::wants_protobuf;
+
+use super::tag_scope_from_name;
 
 mod tempo_metric_bounds;
 use tempo_metric_bounds::tempo_metric_bounds;

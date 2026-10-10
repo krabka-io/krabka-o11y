@@ -1,14 +1,34 @@
-use super::{DataFusionError, DfResult, Expr, LogicalPlan, UserDefinedLogicalNodeCore, fmt};
+use std::fmt;
+
+use datafusion::{
+    common::Result as DfResult,
+    logical_expr::{Expr, LogicalPlan, UserDefinedLogicalNodeCore},
+};
+
+use crate::extension::only_logical_input;
+
+/// The step grid and columns an instant-vector selection reads, shared by the
+/// logical [`InstantManipulate`] node and its physical `InstantManipulateExec`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
+pub struct InstantManipulateSettings {
+    /// The first grid instant, in milliseconds.
+    pub start_ms: i64,
+    /// The last grid instant, in milliseconds.
+    pub end_ms: i64,
+    /// The grid stride, in milliseconds.
+    pub step_ms: i64,
+    /// How far back from a grid instant a sample may lie, in milliseconds.
+    pub lookback_delta_ms: i64,
+    /// The `Int64` sample-timestamp column.
+    pub time_index: String,
+    /// The `Float64` sample-value column.
+    pub field_column: String,
+}
 
 /// Logical node: instant-vector selection over a step grid.
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd)]
 pub struct InstantManipulate {
-    pub start_ms: i64,
-    pub end_ms: i64,
-    pub step_ms: i64,
-    pub lookback_delta_ms: i64,
-    pub time_index: String,
-    pub field_column: String,
+    pub settings: InstantManipulateSettings,
     pub input: LogicalPlan,
 }
 
@@ -17,44 +37,24 @@ impl UserDefinedLogicalNodeCore for InstantManipulate {
         "InstantManipulate"
     }
 
-    fn inputs(&self) -> Vec<&LogicalPlan> {
-        vec![&self.input]
-    }
-
-    fn schema(&self) -> &datafusion::common::DFSchemaRef {
-        self.input.schema()
-    }
-
-    fn expressions(&self) -> Vec<Expr> {
-        vec![]
-    }
+    pass_through_logical_node_plumbing!();
 
     fn fmt_for_explain(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "PromInstantManipulate: start_ms={}, end_ms={}, step_ms={}, lookback_delta_ms={}",
-            self.start_ms, self.end_ms, self.step_ms, self.lookback_delta_ms
+            self.settings.start_ms,
+            self.settings.end_ms,
+            self.settings.step_ms,
+            self.settings.lookback_delta_ms
         )
     }
 
-    fn with_exprs_and_inputs(
-        &self,
-        exprs: Vec<Expr>,
-        mut inputs: Vec<LogicalPlan>,
-    ) -> DfResult<Self> {
-        if !exprs.is_empty() || inputs.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "InstantManipulate expects no expressions and one input".to_string(),
-            ));
-        }
+    fn with_exprs_and_inputs(&self, exprs: Vec<Expr>, inputs: Vec<LogicalPlan>) -> DfResult<Self> {
+        let input = only_logical_input(&exprs, inputs, "InstantManipulate")?;
         Ok(Self {
-            start_ms: self.start_ms,
-            end_ms: self.end_ms,
-            step_ms: self.step_ms,
-            lookback_delta_ms: self.lookback_delta_ms,
-            time_index: self.time_index.clone(),
-            field_column: self.field_column.clone(),
-            input: inputs.swap_remove(0),
+            settings: self.settings.clone(),
+            input,
         })
     }
 }

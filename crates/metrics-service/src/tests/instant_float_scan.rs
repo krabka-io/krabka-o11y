@@ -8,12 +8,11 @@ use std::{
 
 use assert2::assert;
 use krabka_blockstore::{BlockStore, MatchOp, TenantId};
-use krabka_metrics::{
-    BucketSpan, LimitError, NativeHistogram, ObjectStoreCompactionIndexSink, ResetHint,
-};
+use krabka_metrics::{LimitError, ObjectStoreCompactionIndexSink};
 use krabka_promql::{
-    EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError,
-    PromqlLabels as Labels, PromqlMatcher as LabelMatcher, QueryResult, WalHead,
+    EngineOpts, InMemoryMetricStore, MergedMetricStore, MetricBlockStore, MetricStore,
+    PromqlEngine, PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher, QueryResult,
+    WalHead, testkit::count_two_sum_three_histogram,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
@@ -28,6 +27,20 @@ struct Fixture {
     list_calls: Arc<AtomicUsize>,
     objects: Arc<dyn ObjectStore>,
     parquet_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+}
+
+impl Fixture {
+    /// The generic merged store over `5_000..=end_ms`, a control that always
+    /// takes the full scan.
+    async fn control_engine(
+        &self,
+        end_ms: i64,
+    ) -> PromqlEngine<MergedMetricStore<MetricBlockStore, WalHead>> {
+        PromqlEngine::new(
+            Arc::new(self.store.current_store(5_000, end_ms).await.unwrap()),
+            EngineOpts::default(),
+        )
+    }
 }
 
 fn labels() -> Labels {
@@ -122,11 +135,7 @@ async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
     }
     let tenant = TenantId::new("tenant-a").unwrap();
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
-    let expected: QueryResult = serde_json::from_value(serde_json::json!({
-        "InstantVector": [{"labels": {"__name__": "up", "job": "api"},
-            "ts_ms": 12_000, "value": {"Float": 7.0}}]
-    }))
-    .unwrap();
+    let expected = api_up_seven_at_12s();
     assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
     assert!(
         fixture
@@ -254,11 +263,7 @@ async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_wind
             ..EngineOpts::default()
         },
     );
-    let expected: QueryResult = serde_json::from_value(serde_json::json!({
-        "InstantVector": [{"labels": {"__name__": "up", "job": "api"},
-            "ts_ms": 12_000, "value": {"Float": 7.0}}]
-    }))
-    .unwrap();
+    let expected = api_up_seven_at_12s();
     assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
     let aggregate: QueryResult = serde_json::from_value(serde_json::json!({
         "InstantVector": [{"labels": {}, "ts_ms": 12_000, "value": {"Float": 7.0}}]
@@ -274,10 +279,7 @@ async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_wind
     assert!(fixture.reads.load(Ordering::SeqCst) == 0);
 
     // The generic merged store is a control that always takes the full scan.
-    let control = PromqlEngine::new(
-        Arc::new(fixture.store.current_store(5_000, 12_000).await.unwrap()),
-        EngineOpts::default(),
-    );
+    let control = fixture.control_engine(12_000).await;
     for query in [
         "up",
         "sum(up)",
@@ -353,10 +355,7 @@ async fn cold_newer_or_missing_series_are_read_and_stale_hot_markers_stay_select
                 .is_some()
         );
         let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
-        let control = PromqlEngine::new(
-            Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
-            EngineOpts::default(),
-        );
+        let control = fixture.control_engine(14_000).await;
         for query in [
             "up",
             "sum(up)",
@@ -473,22 +472,9 @@ async fn latest_aggregate_preserves_compensated_sums_across_series() {
             .to_vec()
     );
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
-    let expected: QueryResult = serde_json::from_value(serde_json::json!({
-        "InstantVector": [{"labels": {}, "ts_ms": 14_000, "value": {"Float": 1.0}}]
-    }))
-    .unwrap();
-    assert!(
-        engine
-            .query_instant(&tenant, "sum(up)", 14_000)
-            .await
-            .unwrap()
-            == expected
-    );
+    assert_sum_up_is_one_at_14s(&engine, &tenant).await;
     assert!(fixture.reads.load(Ordering::SeqCst) == 0);
-    let control = PromqlEngine::new(
-        Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
-        EngineOpts::default(),
-    );
+    let control = fixture.control_engine(14_000).await;
     for query in ["sum(up)", "avg(up)", "sum by (job) (up)", "topk(1, up)"] {
         assert!(
             engine.query_instant(&tenant, query, 14_000).await.unwrap()
@@ -504,17 +490,7 @@ async fn newer_cold_block_does_not_force_reads_of_dominated_history() {
     let fixture = fixture(&blocks).await;
     let tenant = TenantId::new("tenant-a").unwrap();
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
-    let expected: QueryResult = serde_json::from_value(serde_json::json!({
-        "InstantVector": [{"labels": {}, "ts_ms": 14_000, "value": {"Float": 1.0}}]
-    }))
-    .unwrap();
-    assert!(
-        engine
-            .query_instant(&tenant, "sum(up)", 14_000)
-            .await
-            .unwrap()
-            == expected
-    );
+    assert_sum_up_is_one_at_14s(&engine, &tenant).await;
     assert!(
         fixture
             .parquet_keys
@@ -525,17 +501,8 @@ async fn newer_cold_block_does_not_force_reads_of_dominated_history() {
             .collect::<Vec<_>>()
             == vec!["metrics/tenant-a/float/9.parquet".to_string()]
     );
-    let control = PromqlEngine::new(
-        Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
-        EngineOpts::default(),
-    );
-    assert!(
-        control
-            .query_instant(&tenant, "sum(up)", 14_000)
-            .await
-            .unwrap()
-            == expected
-    );
+    let control = fixture.control_engine(14_000).await;
+    assert_sum_up_is_one_at_14s(&control, &tenant).await;
     assert!(fixture.parquet_keys.lock().unwrap().len() == 10);
     // A retirement race must retain the ordinary path's warning and hot value.
     fixture
@@ -607,10 +574,7 @@ async fn conflicting_cold_ties_keep_the_full_scan() {
     );
     let tenant = TenantId::new("tenant-a").unwrap();
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
-    let control = PromqlEngine::new(
-        Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
-        EngineOpts::default(),
-    );
+    let control = fixture.control_engine(14_000).await;
     assert!(
         engine
             .query_instant(&tenant, "sum(up)", 14_000)
@@ -663,24 +627,7 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
             "tenant-a",
             job_labels("hist-boundary"),
             9_000,
-            NativeHistogram {
-                schema: 0,
-                is_float: false,
-                reset_hint: ResetHint::No,
-                zero_threshold: 1e-128,
-                zero_count: 0.0,
-                count: 2.0,
-                sum: 3.0,
-                positive_spans: vec![BucketSpan {
-                    offset: 0,
-                    length: 1,
-                }],
-                positive_counts: vec![2.0],
-                negative_spans: Vec::new(),
-                negative_counts: Vec::new(),
-                custom_values: None,
-                start_timestamp_ms: None,
-            },
+            count_two_sum_three_histogram(),
         );
     });
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
@@ -727,11 +674,7 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
         ..EngineOpts::default()
     };
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts);
-    let expected: QueryResult = serde_json::from_value(serde_json::json!({
-        "InstantVector": [{"labels": {"__name__": "up", "job": "api"},
-            "ts_ms": 12_000, "value": {"Float": 7.0}}]
-    }))
-    .unwrap();
+    let expected = api_up_seven_at_12s();
     assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
     let control = PromqlEngine::new(
         Arc::new(fixture.store.current_store(5_000, 12_000).await.unwrap()),
@@ -821,24 +764,7 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
             "tenant-a",
             histogram.clone(),
             9_000,
-            NativeHistogram {
-                schema: 0,
-                is_float: false,
-                reset_hint: ResetHint::No,
-                zero_threshold: 1e-128,
-                zero_count: 0.0,
-                count: 2.0,
-                sum: 3.0,
-                positive_spans: vec![BucketSpan {
-                    offset: 0,
-                    length: 1,
-                }],
-                positive_counts: vec![2.0],
-                negative_spans: Vec::new(),
-                negative_counts: Vec::new(),
-                custom_values: None,
-                start_timestamp_ms: None,
-            },
+            count_two_sum_three_histogram(),
         );
     });
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
@@ -870,11 +796,7 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
         ..EngineOpts::default()
     };
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts);
-    let expected: QueryResult = serde_json::from_value(serde_json::json!({
-        "InstantVector": [{"labels": {"__name__": "up", "job": "api"},
-            "ts_ms": 12_000, "value": {"Float": 7.0}}]
-    }))
-    .unwrap();
+    let expected = api_up_seven_at_12s();
     assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
     // Aggregates' full scan counts the inclusive label boundary. Preserve
     // the original latest hot-row path when a summary bound exceeds the cap.
@@ -937,4 +859,26 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
             == BTreeMap::from([(labels().fingerprint(), labels())])
     );
     assert!(cold_fixture.reads.load(Ordering::SeqCst) == 0);
+}
+
+async fn assert_sum_up_is_one_at_14s<S: MetricStore>(engine: &PromqlEngine<S>, tenant: &TenantId) {
+    let expected: QueryResult = serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {}, "ts_ms": 14_000, "value": {"Float": 1.0}}]
+    }))
+    .unwrap();
+    assert!(
+        engine
+            .query_instant(tenant, "sum(up)", 14_000)
+            .await
+            .unwrap()
+            == expected
+    );
+}
+
+fn api_up_seven_at_12s() -> QueryResult {
+    serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {"__name__": "up", "job": "api"},
+            "ts_ms": 12_000, "value": {"Float": 7.0}}]
+    }))
+    .unwrap()
 }

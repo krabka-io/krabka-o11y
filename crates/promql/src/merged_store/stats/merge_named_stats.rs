@@ -1,4 +1,5 @@
 use super::{BTreeMap, NamedTsdbStat};
+use crate::series_stats::named_stats;
 
 pub(crate) fn merge_named_stats(
     left: Vec<NamedTsdbStat>,
@@ -8,15 +9,5 @@ pub(crate) fn merge_named_stats(
     for stat in left.into_iter().chain(right) {
         *values.entry(stat.name).or_default() += stat.value;
     }
-    let mut out = values
-        .into_iter()
-        .map(|(name, value)| NamedTsdbStat { name, value })
-        .collect::<Vec<_>>();
-    out.sort_by(|left, right| {
-        right
-            .value
-            .cmp(&left.value)
-            .then_with(|| left.name.cmp(&right.name))
-    });
-    out
+    named_stats(values)
 }

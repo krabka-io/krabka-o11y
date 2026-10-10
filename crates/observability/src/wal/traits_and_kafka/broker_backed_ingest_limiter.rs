@@ -1,9 +1,9 @@
 use super::{
-    AdminBrokerAccess, AdminClient, AdminError, Arc, AtomicBool, BrokerAccessCache,
-    BrokerAccessPolicy, ByteRate, ByteRateExt, ByteSize, ByteSizeExt, CancellationToken,
-    ClientResourcePolicy, ClientSecurity, IngestLimitError, IngestQuotaBucket, LogIngestLimiter,
-    Mutex, PRODUCER_BYTE_RATE_QUOTA_KEY, Principal, TenantId, TenantLru, Time, WalLogRecord,
-    admin_connection_options, async_trait, check_tenant_wal_write_acl, ingest_quota_bytes,
+    AdminBrokerAccess, AdminError, Arc, AtomicBool, BrokerAccessCache, BrokerAccessPolicy,
+    ByteRate, ByteRateExt, ByteSize, ByteSizeExt, CancellationToken, ClientResourcePolicy,
+    ClientSecurity, IngestLimitError, IngestQuotaBucket, LogIngestLimiter, Mutex,
+    PRODUCER_BYTE_RATE_QUOTA_KEY, Principal, TenantId, TenantLru, Time, WalLogRecord, async_trait,
+    check_tenant_wal_write_acl, ingest_quota_bytes,
 };
 
 /// Allows a push when the broker's ACLs grant the request's ACL principal
@@ -31,14 +31,8 @@ impl BrokerBackedIngestLimiter {
         burst_window: Time,
         policy: BrokerAccessPolicy,
     ) -> Result<Self, AdminError> {
-        let admin = AdminClient::connect_with_options(
-            &[bootstrap.to_string()],
-            admin_connection_options(client_resource_policy, security),
-        )
-        .await?;
-        let source = Arc::new(AdminBrokerAccess {
-            admin: tokio::sync::Mutex::new(admin),
-        });
+        let source =
+            AdminBrokerAccess::connect(bootstrap, client_resource_policy, security).await?;
         Ok(Self::with_access(
             BrokerAccessCache::new(source, wal_topic, policy, Arc::new(AtomicBool::new(false))),
             burst_window,

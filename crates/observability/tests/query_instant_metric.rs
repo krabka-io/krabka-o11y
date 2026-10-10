@@ -4,56 +4,31 @@
 mod support;
 
 use assert2::{assert, check};
-use axum::{
-    body::{Body, to_bytes},
-    http::{Request, StatusCode},
-};
+use axum::http::StatusCode;
 use datafusion::arrow::array::{Float64Array, MapArray, TimestampNanosecondArray};
 use krabka_observability::loki_router;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use serde_json::json;
 use support::{
-    assert_loki_error, expected_loki_stats, expected_loki_stats_with, json_body,
-    loki_forwarded_fixture as fixture, text_body,
+    LokiStatsCounts, LokiSuccess, Tenant, assert_json_ok, assert_loki_error, expected_loki_stats,
+    json_body, loki_forwarded_fixture as fixture, parquet_batch, text_body,
 };
-use tower::ServiceExt as _;
 
 #[tokio::test]
 async fn query_endpoint_returns_metric_query_as_loki_vector_json() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "1"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 /// A synthetic vector sample is written in seconds, as every instant sample
@@ -63,65 +38,37 @@ async fn query_endpoint_returns_synthetic_vector_timestamps_in_seconds() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=2%2Avector%283%29&time=20000000000")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/query?query=2%2Avector%283%29&time=20000000000",
         )
-        .await
-        .unwrap();
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {},
-                            "value": [20, "6"]
-                        }
-                    ],
-                    "stats": expected_loki_stats()
+    assert_json_ok(
+        response,
+        &LokiSuccess {
+            result_type: "vector",
+            data_result: json!([
+                {
+                    "metric": {},
+                    "value": [20, "6"]
                 }
-            })
-    );
+            ]),
+            stats: expected_loki_stats(),
+        }
+        .json(),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_returns_vector_metrics_as_parquet_when_requested() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=2%2Avector%283%29&time=0.000000020")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("accept", "application/vnd.apache.parquet")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        response
-            .headers()
-            .get("content-type")
-            .and_then(|value| value.to_str().ok())
-            == Some("application/vnd.apache.parquet")
-    );
-    let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
-    let mut reader = ParquetRecordBatchReader::try_new(body, 1024).unwrap();
-    let batch = reader.next().unwrap().unwrap();
-    assert!(reader.next().is_none());
+    let batch = parquet_batch(
+        loki_router(fixture()),
+        "/loki/api/v1/query?query=2%2Avector%283%29&time=0.000000020",
+    )
+    .await;
 
     assert!(batch.num_rows() == 1);
     for (index, name) in [(0, "timestamp"), (1, "labels"), (2, "value")] {
@@ -145,461 +92,205 @@ async fn query_endpoint_returns_vector_metrics_as_parquet_when_requested() {
 
 #[tokio::test]
 async fn query_endpoint_filters_metric_query_with_scalar_comparison() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%3E%201&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%3E%201&time=0.000000019",
+        data_result: json!([]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_vector_bool_comparison_on_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%3E%20bool%20on%28%29%20vector%280%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {},
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%3E%20bool%20on%28%29%20vector%280%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {},
+                    "value": [19, "1"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_vector_set_and_on_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20and%20on%28%29%20vector%281%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20and%20on%28%29%20vector%281%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "1"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_vector_metric_set_or_on_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=vector%281%29%20or%20on%28%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {},
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=vector%281%29%20or%20on%28%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {},
+                    "value": [19, "1"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_query_scalar_arithmetic() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_vector_arithmetic_on_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2B%20on%28%29%20vector%281%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {},
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2B%20on%28%29%20vector%281%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {},
+                    "value": [19, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_vector_metric_arithmetic_group_right_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=vector%281%29%20%2B%20on%28%29%20group_right%28app%2C%20env%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {},
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=vector%281%29%20%2B%20on%28%29%20group_right%28app%2C%20env%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {},
+                    "value": [19, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_scalar_metric_query_arithmetic() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=2%20-%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=2%20-%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "1"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_parenthesized_metric_query_scalar_arithmetic() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_parenthesized_metric_operand_scalar_arithmetic() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%29%20%2A%202&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%29%20%2A%202&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_arithmetic() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_arithmetic_ignoring_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20ignoring%28app%29%20count_over_time%28%7Bapp%3D%22worker%22%7D%5B30s%5D%29&time=0.000000025")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [25, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20ignoring%28app%29%20count_over_time%28%7Bapp%3D%22worker%22%7D%5B30s%5D%29&time=0.000000025",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [25, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_arithmetic_group_left_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%20%2F%20on%28env%29%20group_left%20sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29&time=0.000000025")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
     assert!(
-        body.pointer("/data/result")
-            == Some(&json!([
+        fixture_data_result("/loki/api/v1/query?query=sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%20%2F%20on%28env%29%20group_left%20sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29&time=0.000000025").await
+            == Some(json!([
                 {
                     "metric": {
                         "app": "api",
@@ -620,25 +311,9 @@ async fn query_endpoint_applies_metric_binary_arithmetic_group_left_modifier() {
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_arithmetic_group_right_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%20%2F%20on%28env%29%20group_right%20sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29&time=0.000000025")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
     assert!(
-        body.pointer("/data/result")
-            == Some(&json!([
+        fixture_data_result("/loki/api/v1/query?query=sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%20%2F%20on%28env%29%20group_right%20sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29&time=0.000000025").await
+            == Some(json!([
                 {
                     "metric": {
                         "app": "api",
@@ -659,101 +334,45 @@ async fn query_endpoint_applies_metric_binary_arithmetic_group_right_modifier() 
 
 #[tokio::test]
 async fn query_endpoint_filters_metric_binary_comparison() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%3E%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%3E%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_comparison_on_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%3E%20bool%20on%28env%29%20count_over_time%28%7Bapp%3D%22worker%22%7D%5B30s%5D%29&time=0.000000025")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [25, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%3E%20bool%20on%28env%29%20count_over_time%28%7Bapp%3D%22worker%22%7D%5B30s%5D%29&time=0.000000025",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [25, "1"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_comparison_group_left_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%20%3C%20bool%20on%28env%29%20group_left%20sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29&time=0.000000025")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
     assert!(
-        body.pointer("/data/result")
-            == Some(&json!([
+        fixture_data_result("/loki/api/v1/query?query=sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%20%3C%20bool%20on%28env%29%20group_left%20sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29&time=0.000000025").await
+            == Some(json!([
                 {
                     "metric": {
                         "app": "api",
@@ -774,442 +393,171 @@ async fn query_endpoint_applies_metric_binary_comparison_group_left_modifier() {
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_set_and() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20and%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20and%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_set_on_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20and%20on%28env%29%20count_over_time%28%7Bapp%3D%22worker%22%7D%5B30s%5D%29&time=0.000000025")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [25, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20and%20on%28env%29%20count_over_time%28%7Bapp%3D%22worker%22%7D%5B30s%5D%29&time=0.000000025",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [25, "2"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_set_unless() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20unless%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20unless%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        data_result: json!([]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_filters_scalar_metric_query_comparison() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=2%20%3E%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
+    FixtureVector {
+        uri: "/loki/api/v1/query?query=2%20%3E%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "value": [19, "1"]
                 }
-            })
-    );
+            ]),
+    }
+    .assert_served()
+    .await;
+}
+
+// The one `{app="api", env="prod"}` sample at 19 ns, relabelled with
+// `service="api-api"`, that a `label_replace` query over the fixture answers
+// with `value`.
+struct ApiServiceSample<'a> {
+    uri: &'a str,
+    value: &'a str,
+}
+
+impl ApiServiceSample<'_> {
+    async fn assert_served(self) {
+        FixtureVector {
+            uri: self.uri,
+            data_result: json!([
+                {
+                    "metric": {
+                        "app": "api",
+                        "env": "prod",
+                        "service": "api-api"
+                    },
+                    "value": [19, self.value]
+                }
+            ]),
+        }
+        .assert_served()
+        .await;
+    }
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_label_replace_metric_query() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod",
-                                "service": "api-api"
-                            },
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "1",
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_parenthesized_label_replace_metric_query() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=%28label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod",
-                                "service": "api-api"
-                            },
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=%28label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%29&time=0.000000019",
+        value: "1",
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_label_replace_metric_binary_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod",
-                                "service": "api-api"
-                            },
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "2",
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod",
-                                "service": "api-api"
-                            },
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "1",
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_scalar_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod",
-                                "service": "api-api"
-                            },
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "1",
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_comparison_with_label_replace_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3E%20bool%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod",
-                                "service": "api-api"
-                            },
-                            "value": [19, "0"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3E%20bool%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "0",
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_set_with_label_replace_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod",
-                                "service": "api-api"
-                            },
-                            "value": [19, "2"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "2",
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_group_left_with_label_replace_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20on%28env%29%20group_left%20label_replace%28sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000025")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
     assert!(
-        body.pointer("/data/result")
-            == Some(&json!([
+        fixture_data_result("/loki/api/v1/query?query=label_replace%28sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20on%28env%29%20group_left%20label_replace%28sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000025").await
+            == Some(json!([
                 {
                     "metric": {
                         "app": "api",
@@ -1232,25 +580,9 @@ async fn query_endpoint_applies_metric_binary_group_left_with_label_replace_oper
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_comparison_group_left_with_label_replace_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3C%20bool%20on%28env%29%20group_left%20label_replace%28sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000025")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
     assert!(
-        body.pointer("/data/result")
-            == Some(&json!([
+        fixture_data_result("/loki/api/v1/query?query=label_replace%28sum%20by%28app%2C%20env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3C%20bool%20on%28env%29%20group_left%20label_replace%28sum%20by%28env%29%28count_over_time%28%7Benv%3D%22prod%22%7D%5B30s%5D%29%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000025").await
+            == Some(json!([
                 {
                     "metric": {
                         "app": "api",
@@ -1276,16 +608,7 @@ async fn query_endpoint_rejects_label_join_metric_query_like_loki() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29&time=0.000000019").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     let body = text_body(response).await;
@@ -1297,16 +620,7 @@ async fn query_endpoint_rejects_parenthesized_label_join_metric_query_like_loki(
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=%28label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29%29&time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=%28label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29%29&time=0.000000019").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     let body = text_body(response).await;
@@ -1318,17 +632,41 @@ async fn query_endpoint_rejects_metric_pipeline_errors() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%20json%20%5B30s%5D%29&time=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%20json%20%5B30s%5D%29&time=0.000000030").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "JSONParserErr");
+}
+
+/// An instant query over the forwarded fixture, sent as `tenant-a`, that
+/// answers the vector `data_result` after reading one block line.
+struct FixtureVector<'a> {
+    uri: &'a str,
+    data_result: serde_json::Value,
+}
+
+impl FixtureVector<'_> {
+    async fn assert_served(self) {
+        let response = Tenant("tenant-a")
+            .get(&loki_router(fixture()), self.uri)
+            .await;
+        assert_json_ok(
+            response,
+            &LokiSuccess {
+                result_type: "vector",
+                data_result: self.data_result,
+                stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+            }
+            .json(),
+        )
+        .await;
+    }
+}
+
+/// The `data.result` of a successful instant query over the forwarded
+/// fixture, sent as `tenant-a`.
+async fn fixture_data_result(uri: &str) -> Option<serde_json::Value> {
+    let response = Tenant("tenant-a").get(&loki_router(fixture()), uri).await;
+    assert!(response.status() == StatusCode::OK);
+    json_body(response).await.pointer("/data/result").cloned()
 }

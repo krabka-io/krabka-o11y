@@ -46,19 +46,7 @@ impl LiveSource for RemoteLiveSource {
         url.query_pairs_mut()
             .append_pair("start", &start_ns.to_string())
             .append_pair("end", &end_ns.to_string());
-        let resp = self
-            .http
-            .get(url)
-            .header(TENANT_HEADER, tenant)
-            .send()
-            .await
-            .map_err(|err| TraceqlError::Plan(err.to_string()))?;
-        if !resp.status().is_success() {
-            return Err(TraceqlError::Plan(format!(
-                "remote live-store returned {}",
-                resp.status()
-            )));
-        }
+        let resp = self.get_success(tenant, url).await?;
         let bytes = resp
             .bytes()
             .await
@@ -86,12 +74,7 @@ impl LiveSource for RemoteLiveSource {
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        if !resp.status().is_success() {
-            return Err(TraceqlError::Plan(format!(
-                "remote live-store returned {}",
-                resp.status()
-            )));
-        }
+        let resp = require_success(resp)?;
         let bytes = resp
             .bytes()
             .await
@@ -100,6 +83,13 @@ impl LiveSource for RemoteLiveSource {
         trace_spans_from_otlp(trace_id, data).map(Some)
     }
 
+    fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
+        crate::querier::store::block_builder_frontier_ns(&self.trace_index, tenant)
+    }
+}
+
+#[async_trait::async_trait]
+impl TagCatalog for RemoteLiveSource {
     async fn tag_names(
         &self,
         tenant: &str,
@@ -141,20 +131,12 @@ impl LiveSource for RemoteLiveSource {
         let json = self.get_json(tenant, url).await?;
         typed_values_from_json(&json)
     }
-
-    fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
-        let trace_index = self.trace_index.load();
-        trace_index
-            .trace_blocks(tenant)
-            .iter()
-            .map(|block| block.max_ts.saturating_add(1))
-            .max()
-            .unwrap_or_default()
-    }
 }
 
 impl RemoteLiveSource {
-    pub(crate) async fn get_json(&self, tenant: &str, url: Url) -> Result<serde_json::Value> {
+    /// GETs `url` as `tenant`, and refuses an answer whose status is not a
+    /// success.
+    async fn get_success(&self, tenant: &str, url: Url) -> Result<reqwest::Response> {
         let resp = self
             .http
             .get(url)
@@ -162,14 +144,25 @@ impl RemoteLiveSource {
             .send()
             .await
             .map_err(|err| TraceqlError::Plan(err.to_string()))?;
-        if !resp.status().is_success() {
-            return Err(TraceqlError::Plan(format!(
-                "remote live-store returned {}",
-                resp.status()
-            )));
-        }
+        require_success(resp)
+    }
+
+    pub(crate) async fn get_json(&self, tenant: &str, url: Url) -> Result<serde_json::Value> {
+        let resp = self.get_success(tenant, url).await?;
         resp.json()
             .await
             .map_err(|err| TraceqlError::Plan(err.to_string()))
+    }
+}
+
+/// The live-store's answer, or the error that names its non-success status.
+fn require_success(resp: reqwest::Response) -> Result<reqwest::Response> {
+    if resp.status().is_success() {
+        Ok(resp)
+    } else {
+        Err(TraceqlError::Plan(format!(
+            "remote live-store returned {}",
+            resp.status()
+        )))
     }
 }

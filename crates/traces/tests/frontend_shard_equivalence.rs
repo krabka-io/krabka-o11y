@@ -8,33 +8,15 @@
 use std::sync::Arc;
 
 use assert2::check;
-use krabka_blockstore::TenantId;
+use krabka_blockstore::{TenantId, TimeRange};
 use krabka_traces::frontend::{
     MembershipView, QueryFrontend,
     backend::{MockQuerier, SearchPartial},
     config::FrontendConfig,
-    job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
+    job::{BlockMetaInfo, MockCatalog},
     wire::{Metrics, SpanJson, SpanSetJson, TraceJson},
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _, millis};
-
-fn block(id: &str, start: i64, end: i64, rgs: &[u64]) -> BlockMetaInfo {
-    let row_groups = rgs
-        .iter()
-        .enumerate()
-        .map(|(i, &b)| RowGroupInfo {
-            index: u32::try_from(i).unwrap(),
-            compressed: ByteSize::from_bytes(b),
-        })
-        .collect();
-    BlockMetaInfo {
-        block_id: id.to_string(),
-        start_ns: start,
-        end_ns: end,
-        size: ByteSize::from_bytes(rgs.iter().sum()),
-        row_groups,
-    }
-}
 
 fn trace_with_spans(tid: &str, start: u64, span_ids: &[&str]) -> TraceJson {
     let spans: Vec<SpanJson> = span_ids
@@ -46,18 +28,13 @@ fn trace_with_spans(tid: &str, start: u64, span_ids: &[&str]) -> TraceJson {
             attributes: vec![],
         })
         .collect();
-    let matched = u32::try_from(spans.len()).unwrap();
     TraceJson {
         trace_id: tid.to_string(),
         root_service_name: "svc".to_string(),
         root_trace_name: "GET /".to_string(),
         start_time_unix_nano: start.to_string(),
         duration: millis(1),
-        span_sets: vec![SpanSetJson {
-            spans,
-            matched,
-            attributes: Vec::new(),
-        }],
+        span_sets: vec![SpanSetJson::of_matched_spans(spans)],
     }
 }
 
@@ -81,8 +58,22 @@ async fn sharded_search_equals_unsharded() {
     // trace 01 is split: b1 has span 01, b2-rg0 has span 02 (same traceID).
     // trace 02 lives wholly in b2-rg1. Live returns nothing.
     let catalog = MockCatalog::new(vec![
-        block("b1", 0, 100, &[500]),
-        block("b2", 100, 200, &[15_000, 15_000]),
+        BlockMetaInfo::with_row_groups(
+            "b1",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 100,
+            },
+            &[500],
+        ),
+        BlockMetaInfo::with_row_groups(
+            "b2",
+            TimeRange {
+                start_ns: 100,
+                end_ns: 200,
+            },
+            &[15_000, 15_000],
+        ),
     ]);
     let backend = MockQuerier::new();
     // Dispatch order = plan order = [Live, b1, b2-rg0, b2-rg1] (max_concurrency 1).
@@ -134,7 +125,14 @@ async fn sharded_search_equals_unsharded() {
 
 #[tokio::test]
 async fn limit_and_spss_applied_after_merge() {
-    let catalog = MockCatalog::new(vec![block("b1", 0, 100, &[500])]);
+    let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+        "b1",
+        TimeRange {
+            start_ns: 0,
+            end_ns: 100,
+        },
+        &[500],
+    )]);
     let backend = MockQuerier::new();
     backend.stub_search(partial(
         vec![

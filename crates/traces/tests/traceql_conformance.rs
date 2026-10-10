@@ -3,9 +3,7 @@ use std::path::Path;
 const KNOWN_UNSUPPORTED: &[(&str, &str)] = &[];
 
 fn traceql_case_file(path: &Path) -> datatest_stable::Result<()> {
-    std::fs::metadata(path)?;
-    let report = krabka_traceql::testkit::run_corpus_file(path);
-    println!("{}", report.to_text());
+    let report = krabka_traceql::testkit::run_and_print_corpus_file(path)?;
 
     let failing = report
         .cases

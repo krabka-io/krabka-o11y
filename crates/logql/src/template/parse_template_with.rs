@@ -1,6 +1,7 @@
 use super::{
     ParseError, TemplateControlExpression, TemplatePart, TemplateWith,
-    find_template_control_action, parse_template_parts, template_parse_error,
+    find_template_control_action, parse_template_else_body, parse_template_parts,
+    template_parse_error,
 };
 
 pub(crate) fn parse_template_with(
@@ -40,15 +41,7 @@ pub(crate) fn parse_template_with(
         return Err(template_parse_error("unexpected template control action"));
     }
 
-    let Some((end_body, end_expression, end_next)) =
-        find_template_control_action(template, control_next)?
-    else {
-        return Err(template_parse_error("expected template end action"));
-    };
-    if end_expression != "end" {
-        return Err(template_parse_error("unexpected template control action"));
-    }
-    let else_parts = parse_template_parts(&template[control_next..end_body])?;
+    let (else_parts, end_next) = parse_template_else_body(template, control_next)?;
     Ok((
         TemplateWith {
             expression,

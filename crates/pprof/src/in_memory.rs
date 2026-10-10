@@ -5,11 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow::{
-    array::{ArrayRef, BinaryBuilder, Int64Builder, StringDictionaryBuilder, UInt64Builder},
-    datatypes::Int32Type,
-    record_batch::RecordBatch,
-};
+use arrow::record_batch::RecordBatch;
 use datafusion::catalog::MemTable;
 use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
 use regex::Regex;

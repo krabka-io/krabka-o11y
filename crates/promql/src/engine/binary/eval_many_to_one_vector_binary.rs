@@ -1,58 +1,36 @@
 use super::{
-    BTreeMap, BTreeSet, BinModifier, BinaryOp, InstantSample, MissingSide, PromqlError, Result,
+    BTreeSet, InstantSample, MissingSide, Result, VectorMatching, VectorOperands,
     apply_binary_fill_value, apply_binary_sample_value, binary_match_key, binary_returns_bool,
-    copy_group_labels, labels_without_metric_name, one_to_one_binary_result_labels,
+    copy_group_labels, fill_missing_right, index_by_match_key, labels_without_metric_name,
+    one_to_one_binary_result_labels,
 };
 
 pub(crate) fn eval_many_to_one_vector_binary(
-    left: Vec<InstantSample>,
-    right: Vec<InstantSample>,
-    op: BinaryOp,
-    modifier: Option<&BinModifier>,
+    operands: VectorOperands,
+    matching: VectorMatching<'_>,
     group_labels: &[String],
 ) -> Result<Vec<InstantSample>> {
-    let mut right_by_key: BTreeMap<String, InstantSample> = BTreeMap::new();
-    for sample in right {
-        let key = binary_match_key(&sample.labels, modifier);
-        if right_by_key.insert(key.clone(), sample).is_some() {
-            return Err(PromqlError::Exec(format!(
-                "many-to-one matching requires the right side to be unique for key `{key}`"
-            )));
-        }
-    }
+    let VectorOperands { left, right } = operands;
+    let VectorMatching { op, modifier } = matching;
+    let right_by_key = index_by_match_key(right, modifier, |key| {
+        format!("many-to-one matching requires the right side to be unique for key `{key}`")
+    })?;
 
     let mut out = Vec::new();
     let mut matched = BTreeSet::new();
     for left_sample in left {
         let key = binary_match_key(&left_sample.labels, modifier);
         let Some(right_sample) = right_by_key.get(&key) else {
-            let Some(rhs_fill) = modifier.and_then(|modifier| modifier.fill_values.rhs) else {
-                continue;
-            };
-            let Some(value) =
-                apply_binary_fill_value(&left_sample, rhs_fill, op, modifier, MissingSide::Right)?
-            else {
-                continue;
-            };
-            let preserves_name = op.is_comparison() && !binary_returns_bool(modifier);
-            let drop_name = if preserves_name {
-                left_sample.drop_name
-            } else {
-                true
-            };
-            let mut labels = if preserves_name {
-                left_sample.labels
-            } else {
-                labels_without_metric_name(&left_sample.labels)
-            };
-            let filled_labels = one_to_one_binary_result_labels(&labels, modifier, false);
-            copy_group_labels(&mut labels, &filled_labels, group_labels);
-            out.push(InstantSample {
-                labels,
-                ts_ms: left_sample.ts_ms,
-                value,
-                drop_name,
-            });
+            out.extend(fill_missing_right(&left_sample, matching, |fill| {
+                let mut labels = if fill.preserves_name {
+                    left_sample.labels.clone()
+                } else {
+                    labels_without_metric_name(&left_sample.labels)
+                };
+                let filled_labels = one_to_one_binary_result_labels(&labels, modifier, false);
+                copy_group_labels(&mut labels, &filled_labels, group_labels);
+                labels
+            })?);
             continue;
         };
         matched.insert(key);

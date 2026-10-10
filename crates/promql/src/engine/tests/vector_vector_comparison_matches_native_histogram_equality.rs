@@ -24,64 +24,26 @@ pub(crate) async fn vector_vector_comparison_matches_native_histogram_equality()
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let equal = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "histogram_count(a == on (x) b)",
-            10_000,
-        )
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = &equal else {
-        panic!("expected vector");
-    };
-    assert2::assert!(samples.len() == 1);
-    assert2::assert!(samples[0].labels == labels(&[("x", "1")]));
-    assert2::assert!(samples[0].value == SampleValue::Float(4.0));
+    for query in [
+        "histogram_count(a == on (x) b)",
+        "histogram_count(a != on (x) c)",
+    ] {
+        let samples = instant_vector(&engine, query, 10_000).await;
+        assert2::assert!(samples.len() == 1, "{query}");
+        assert2::assert!(samples[0].labels == labels(&[("x", "1")]), "{query}");
+        assert2::assert!(samples[0].value == SampleValue::Float(4.0), "{query}");
+    }
 
-    let not_equal = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "histogram_count(a != on (x) c)",
-            10_000,
-        )
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = &not_equal else {
-        panic!("expected vector");
-    };
-    assert2::assert!(samples.len() == 1);
-    assert2::assert!(samples[0].labels == labels(&[("x", "1")]));
-    assert2::assert!(samples[0].value == SampleValue::Float(4.0));
-
-    let false_filter = engine
-        .query_instant(&tenant_id("tenant-a"), "a == on (x) c", 10_000)
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = false_filter else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "a == on (x) c", 10_000).await;
     assert2::assert!(samples.is_empty());
 
-    let bool_result = engine
-        .query_instant(&tenant_id("tenant-a"), "a == bool on (x) c", 10_000)
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = bool_result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "a == bool on (x) c", 10_000).await;
     check!(samples.len() == 1);
     check!(samples[0].labels.get("__name__").is_none());
     check!(samples[0].labels.get("job").is_none());
     check!(samples[0].labels.get("x") == Some("1"));
     check!(approx_eq(float_value(&samples[0].value), 0.0));
 
-    let invalid = engine
-        .query_instant(&tenant_id("tenant-a"), "a > bool on (x) b", 10_000)
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = invalid else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "a > bool on (x) b", 10_000).await;
     assert2::assert!(samples.is_empty());
 }

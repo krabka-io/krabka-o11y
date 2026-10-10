@@ -1,7 +1,7 @@
 use super::{
-    BlockStoreError, CompactorRunError, ObjectPath, ObjectStore, TimeRange,
+    CompactorRunError, ObjectPath, ObjectStore, TimeRange,
     list_tenant_log_index_shard_ranges_from_object_store,
-    read_tenant_log_index_shard_ranges_from_object_store,
+    read_tenant_log_index_shard_ranges_or_empty_from_object_store,
 };
 
 /// Every shard of `tenant` that the sweep has to rewrite.
@@ -22,11 +22,8 @@ pub(crate) async fn tenant_log_index_shard_ranges(
     tenant: &str,
 ) -> Result<Vec<TimeRange>, CompactorRunError> {
     let catalogued =
-        match read_tenant_log_index_shard_ranges_from_object_store(store, prefix, tenant).await {
-            Ok(shard_ranges) => shard_ranges,
-            Err(BlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => Vec::new(),
-            Err(error) => return Err(error.into()),
-        };
+        read_tenant_log_index_shard_ranges_or_empty_from_object_store(store, prefix, tenant)
+            .await?;
     let listed =
         list_tenant_log_index_shard_ranges_from_object_store(store, prefix, tenant).await?;
 

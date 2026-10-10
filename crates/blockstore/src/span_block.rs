@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use arrow::{
     array::{
-        ArrayRef, BooleanBuilder, FixedSizeBinaryBuilder, Float64Builder, Int32Builder,
-        Int64Builder, ListBuilder, StringBuilder, StringDictionaryBuilder, StructBuilder,
+        ArrayBuilder, ArrayRef, BooleanBuilder, FixedSizeBinaryBuilder, Float64Builder,
+        Int32Builder, Int64Builder, ListBuilder, StringBuilder, StringDictionaryBuilder,
+        StructBuilder,
     },
     datatypes::{DataType, Field, Fields, Int32Type},
     record_batch::RecordBatch,
@@ -397,6 +398,7 @@ mod append_links;
 mod attr_value;
 mod encode_span_rows;
 mod encode_span_rows_with_promoted_attrs;
+mod new_attributed_struct_builder;
 mod new_event_struct_builder;
 mod new_link_struct_builder;
 mod new_str_list;
@@ -416,6 +418,7 @@ use append_links::append_links;
 pub use attr_value::AttrValue;
 pub use encode_span_rows::encode_span_rows;
 pub use encode_span_rows_with_promoted_attrs::encode_span_rows_with_promoted_attrs;
+use new_attributed_struct_builder::{StructColumn, new_attributed_struct_builder};
 use new_event_struct_builder::new_event_struct_builder;
 use new_link_struct_builder::new_link_struct_builder;
 use new_str_list::new_str_list;
@@ -423,7 +426,7 @@ use new_str_list_list::new_str_list_list;
 use promoted_attr_builder::PromotedAttrBuilder;
 use promoted_attr_value::promoted_attr_value;
 pub use span_attr::SpanAttr;
-use span_column_builders::SpanColumnBuilders;
+pub use span_column_builders::SpanColumnBuilders;
 pub use span_event::SpanEvent;
 pub use span_link::SpanLink;
 pub use span_row::SpanRow;

@@ -26,9 +26,11 @@ use krabka_profiles::{
     query::{self, QuerierState},
     wire::pb,
 };
+use pinned_grafana_image::pinned_grafana_image;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK};
 use testcontainers::{
     GenericImage, ImageExt,
     core::{Host, IntoContainerPort, WaitFor},
@@ -38,6 +40,10 @@ use tokio::sync::oneshot;
 
 #[path = "../../metrics-service/tests/support/generated_differential.rs"]
 mod generated_differential;
+#[path = "../../metrics-service/tests/support/pinned_grafana_image.rs"]
+mod pinned_grafana_image;
+#[path = "../src/bin/krabka-profiles/synthetic_cpu_profile.rs"]
+mod synthetic_cpu_profile;
 
 const TENANT: &str = "tenant-a";
 /// Pyroscope HTTP port inside the container.
@@ -52,8 +58,6 @@ const WALL_PROFILE_TYPE: &str = "wall:wall:nanoseconds:wall:nanoseconds";
 const CPU_NAME: &str = "process_cpu";
 const E2E_SERVICE: &str = "checkout";
 const E2E_SELECTOR: &str = r#"{service_name="checkout"}"#;
-const FUNC_WORK: &str = "main.work";
-const FUNC_HOT: &str = "main.hotloop";
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -148,8 +152,7 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
     // https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/frontend/readpath/router.go#L115-L124
     let pyroscope =
         start_pyroscope_with_options(&["-architecture.storage=v1", "-write-path=ingester"]).await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
     let fixture_nanos = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?
         / 10_000_000_000
         * 10_000_000_000
@@ -160,19 +163,7 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
         fixture_nanos,
     )?;
 
-    let sink = CapturingSink::default();
-    let store = WalTailProfileStore::new();
-    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
-
-    post_push_profile(&client, &pyroscope_base, None, &gzipped_pprof).await?;
-    post_push_profile(
-        &client,
-        &krabka.distributor_base,
-        Some(TENANT),
-        &gzipped_pprof,
-    )
-    .await?;
-    drain_sink_into_cold_store(&sink)?;
+    let krabka = ingest_into_both(&client, &pyroscope_base, &gzipped_pprof).await?;
 
     let pyroscope_render = render_until_non_empty(
         &client,
@@ -291,23 +282,10 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
 async fn real_pyroscope_series_and_stats_match_krabka_after_identical_ingest() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
     let gzipped_pprof = fetch_goroutine_pprof(&client, &pyroscope_base).await?;
 
-    let sink = CapturingSink::default();
-    let store = WalTailProfileStore::new();
-    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
-
-    post_push_profile(&client, &pyroscope_base, None, &gzipped_pprof).await?;
-    post_push_profile(
-        &client,
-        &krabka.distributor_base,
-        Some(TENANT),
-        &gzipped_pprof,
-    )
-    .await?;
-    drain_sink_into_cold_store(&sink)?;
+    let krabka = ingest_into_both(&client, &pyroscope_base, &gzipped_pprof).await?;
 
     // (a) GetProfileStats — empty (all-default) request body. Pyroscope ingests
     // asynchronously, so poll until it reports data, then compare.
@@ -898,15 +876,9 @@ async fn start_pyroscope_with_options(
 }
 
 async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // Set by //bazel/defs.bzl; see the note above.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+        pinned_grafana_image()
             .with_exposed_port(3000.tcp())
             .with_wait_for(WaitFor::seconds(5))
             .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
@@ -945,6 +917,27 @@ impl KrabkaPair {
     }
 }
 
+/// Starts a krabka pair, pushes `gzipped_pprof` to both it and the Pyroscope
+/// at `pyroscope_base`, and drains krabka's WAL into its cold store.
+async fn ingest_into_both(
+    client: &reqwest::Client,
+    pyroscope_base: &str,
+    gzipped_pprof: &[u8],
+) -> TestResult<KrabkaPair> {
+    let sink = CapturingSink::default();
+    let krabka = start_krabka_pair(sink.clone(), WalTailProfileStore::new()).await?;
+
+    post_push_profile(client, PushTarget::oracle(pyroscope_base), gzipped_pprof).await?;
+    post_push_profile(
+        client,
+        PushTarget::krabka(&krabka.distributor_base),
+        gzipped_pprof,
+    )
+    .await?;
+    drain_sink_into_cold_store(&sink)?;
+    Ok(krabka)
+}
+
 async fn start_krabka_pair(
     sink: CapturingSink,
     store: WalTailProfileStore,
@@ -960,21 +953,20 @@ async fn start_krabka_pair_with_architecture(
     start_krabka_pair_with_query_options(
         sink,
         store,
-        architecture,
-        architecture == query::PyroscopeQueryArchitecture::V2,
-        true,
+        QuerierQueryMode {
+            architecture,
+            async_queries_enabled: architecture == query::PyroscopeQueryArchitecture::V2,
+            query_analysis_series_enabled: true,
+        },
     )
     .await
 }
 
-async fn start_krabka_pair_with_query_options(
+/// Serves a distributor on a loopback port whose WAL is `sink`. It runs until
+/// the returned sender fires or is dropped.
+async fn start_distributor(
     sink: CapturingSink,
-    store: WalTailProfileStore,
-    architecture: query::PyroscopeQueryArchitecture,
-    async_enabled: bool,
-    analysis_enabled: bool,
-) -> TestResult<KrabkaPair> {
-    let cold = sink.cold.clone();
+) -> TestResult<(std::net::SocketAddr, oneshot::Sender<()>)> {
     let (distributor_shutdown, distributor_rx) = oneshot::channel();
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
@@ -998,21 +990,55 @@ async fn start_krabka_pair_with_query_options(
         },
     )
     .await?;
+    Ok((distributor_addr, distributor_shutdown))
+}
+
+/// The hot store a querier reads in front of its cold one.
+struct ProfileTiers {
+    hot: WalTailProfileStore,
+    cold: WalTailProfileStore,
+}
+
+/// A querier over `tiers`, with no per-query range cap. The differential /
+/// e2e corpus intentionally queries the full `[0, i64::MAX]` range to compare
+/// against real Pyroscope.
+fn unbounded_querier_state(
+    tiers: ProfileTiers,
+) -> QuerierState<UnionProfileStore<WalTailProfileStore, WalTailProfileStore>> {
+    QuerierState::new_with_limits(
+        Arc::new(UnionProfileStore::new(
+            Arc::new(tiers.hot),
+            Arc::new(tiers.cold),
+        )),
+        krabka_profiles::limits::Limits {
+            max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
+            ..Default::default()
+        },
+    )
+}
+
+/// How a Krabka querier answers queries.
+#[derive(Clone, Copy)]
+struct QuerierQueryMode {
+    architecture: query::PyroscopeQueryArchitecture,
+    async_queries_enabled: bool,
+    query_analysis_series_enabled: bool,
+}
+
+async fn start_krabka_pair_with_query_options(
+    sink: CapturingSink,
+    store: WalTailProfileStore,
+    query_mode: QuerierQueryMode,
+) -> TestResult<KrabkaPair> {
+    let cold = sink.cold.clone();
+    let (distributor_addr, distributor_shutdown) = start_distributor(sink).await?;
 
     let (querier_shutdown, querier_rx) = oneshot::channel();
-    // The differential / e2e corpus intentionally queries the full `[0, i64::MAX]`
-    // range to compare against real Pyroscope, so disable the per-query range cap.
     let querier_state = Arc::new(
-        QuerierState::new_with_limits(
-            Arc::new(UnionProfileStore::new(Arc::new(store), Arc::new(cold))),
-            krabka_profiles::limits::Limits {
-                max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
-                ..Default::default()
-            },
-        )
-        .with_query_architecture(architecture)
-        .with_async_queries_enabled(async_enabled)
-        .with_query_analysis_series_enabled(analysis_enabled),
+        unbounded_querier_state(ProfileTiers { hot: store, cold })
+            .with_query_architecture(query_mode.architecture)
+            .with_async_queries_enabled(query_mode.async_queries_enabled)
+            .with_query_analysis_series_enabled(query_mode.query_analysis_series_enabled),
     );
     let querier_addr = query::serve(
         "127.0.0.1:0".parse()?,
@@ -1053,12 +1079,93 @@ fn timestamp_goroutine_profile(compressed: &[u8], timestamp_nanos: i64) -> TestR
     gzip_bytes(&PprofProfile::from(profile).encode())
 }
 
+/// A `push.v1` JSON push.
+#[derive(Clone, Copy)]
+struct PushJson<'a> {
+    base: &'a str,
+    /// Sent as `X-Scope-OrgID` when given.
+    tenant: Option<&'a str>,
+    body: &'a Value,
+    /// Names the push in the error.
+    what: &'a str,
+}
+
+/// Where a test push goes: the push API at `base`, as `tenant`.
+#[derive(Clone, Copy)]
+struct PushTarget<'a> {
+    base: &'a str,
+    /// Sent as `X-Scope-OrgID` when given.
+    tenant: Option<&'a str>,
+}
+
+impl<'a> PushTarget<'a> {
+    /// The upstream oracle at `base`, which takes no tenant.
+    fn oracle(base: &'a str) -> Self {
+        Self { base, tenant: None }
+    }
+
+    /// The Krabka distributor at `base`, as the test tenant.
+    fn krabka(base: &'a str) -> Self {
+        Self {
+            base,
+            tenant: Some(TENANT),
+        }
+    }
+}
+
+/// Posts `push` and fails unless it is accepted.
+async fn post_push_json(client: &reqwest::Client, push: PushJson<'_>) -> TestResult {
+    let PushJson {
+        base,
+        tenant,
+        body,
+        what,
+    } = push;
+    let request = client
+        .post(format!("{base}/push.v1.PusherService/Push"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(body);
+    send_expecting_ok(
+        request,
+        &ExpectedOk {
+            tenant,
+            what: &format!("push.v1 {what} to {base}"),
+        },
+    )
+    .await
+}
+
+/// Who a request that must be accepted is sent as, and how a rejection of it
+/// names the request.
+struct ExpectedOk<'a> {
+    tenant: Option<&'a str>,
+    what: &'a str,
+}
+
+/// Sends `request`, as `expected.tenant` when there is one, and fails unless
+/// the response is `200 OK`.
+async fn send_expecting_ok(
+    mut request: reqwest::RequestBuilder,
+    expected: &ExpectedOk<'_>,
+) -> TestResult {
+    if let Some(tenant) = expected.tenant {
+        request = request.header("x-scope-orgid", tenant);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("{} returned {status}: {body}", expected.what).into());
+    }
+    Ok(())
+}
+
 async fn post_push_profile(
     client: &reqwest::Client,
-    base: &str,
-    tenant: Option<&str>,
+    target: PushTarget<'_>,
     gzipped_pprof: &[u8],
 ) -> TestResult {
+    let PushTarget { base, tenant } = target;
     let body = json!({
         "series": [{
             "labels": [
@@ -1072,20 +1179,16 @@ async fn post_push_profile(
             }]
         }]
     });
-    let mut request = client
-        .post(format!("{base}/push.v1.PusherService/Push"))
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .json(&body);
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("push.v1 profile push to {base} returned {status}: {body}").into());
-    }
-    Ok(())
+    post_push_json(
+        client,
+        PushJson {
+            base,
+            tenant,
+            body: &body,
+            what: "profile push",
+        },
+    )
+    .await
 }
 
 async fn render_any(
@@ -1890,6 +1993,16 @@ fn json_i64(value: &Value) -> Option<i64> {
     value
         .as_i64()
         .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+}
+
+/// The base URL of `pyroscope`'s HTTP port, once its `/ready` answers.
+async fn ready_pyroscope_base(
+    client: &reqwest::Client,
+    pyroscope: &testcontainers::ContainerAsync<GenericImage>,
+) -> TestResult<String> {
+    let base = mapped_base_url(pyroscope, PYROSCOPE_HTTP_PORT).await?;
+    wait_for_http_ok(client, &base, &["/ready"]).await?;
+    Ok(base)
 }
 
 async fn wait_for_http_ok(client: &reqwest::Client, base: &str, paths: &[&str]) -> TestResult {
@@ -2956,81 +3069,15 @@ fn synthetic_cpu_pprof(time_nanos: i64) -> TestResult<Vec<u8>> {
 }
 
 fn synthetic_cpu_pprof_with_values(time_nanos: i64, values: [i64; 2]) -> TestResult<Vec<u8>> {
-    // string_table: 0="" 1="cpu" 2="nanoseconds" 3=main.work 4=main.hotloop 5="app.go"
-    let profile = proto::Profile {
-        sample_type: vec![proto::ValueType { r#type: 1, unit: 2 }],
-        sample: vec![
-            proto::Sample {
-                location_id: vec![2, 1], // leaf-first: main.hotloop -> main.work
-                value: vec![values[0]],
-                label: Vec::new(),
-            },
-            proto::Sample {
-                location_id: vec![1], // main.work
-                value: vec![values[1]],
-                label: Vec::new(),
-            },
-        ],
-        mapping: vec![proto::Mapping {
-            id: 1,
-            symbolization: proto::MappingSymbolization::from_parts((true, false, false, false)),
-            ..Default::default()
-        }],
-        location: vec![
-            proto::Location {
-                id: 1,
-                mapping_id: 1,
-                address: 0x1000,
-                line: vec![proto::Line {
-                    function_id: 1,
-                    line: 10,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-            proto::Location {
-                id: 2,
-                mapping_id: 1,
-                address: 0x2000,
-                line: vec![proto::Line {
-                    function_id: 2,
-                    line: 20,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-        ],
-        function: vec![
-            proto::Function {
-                id: 1,
-                name: 3,
-                system_name: 3,
-                filename: 5,
-                start_line: 1,
-            },
-            proto::Function {
-                id: 2,
-                name: 4,
-                system_name: 4,
-                filename: 5,
-                start_line: 2,
-            },
-        ],
-        string_table: vec![
-            String::new(),
-            "cpu".to_string(),
-            "nanoseconds".to_string(),
-            FUNC_WORK.to_string(),
-            FUNC_HOT.to_string(),
-            "app.go".to_string(),
-        ],
-        time_nanos,
-        duration_nanos: 1_000_000_000,
-        period_type: Some(proto::ValueType { r#type: 1, unit: 2 }),
-        period: 10_000_000,
-        ..Default::default()
-    };
-    gzip_bytes(&PprofProfile::from(profile).encode())
+    let [hot_value, work_value] = values;
+    gzip_bytes(
+        &synthetic_cpu_profile::SyntheticCpuProfile {
+            time_nanos,
+            hot_value,
+            work_value,
+        }
+        .encode(),
+    )
 }
 
 fn gzip_bytes(bytes: &[u8]) -> TestResult<Vec<u8>> {
@@ -3045,16 +3092,34 @@ async fn post_cpu_profile(
     tenant: Option<&str>,
     gzipped_pprof: &[u8],
 ) -> TestResult {
-    post_cpu_profile_with_id(client, base, tenant, gzipped_pprof, "krabka-grafana-e2e").await
+    post_cpu_profile_with_id(
+        client,
+        PushTarget { base, tenant },
+        IdentifiedCpuProfile {
+            gzipped_pprof,
+            profile_id: "krabka-grafana-e2e",
+        },
+    )
+    .await
+}
+
+/// A gzipped CPU pprof profile, pushed under the sample `ID` `profile_id`.
+#[derive(Clone, Copy)]
+struct IdentifiedCpuProfile<'a> {
+    gzipped_pprof: &'a [u8],
+    profile_id: &'a str,
 }
 
 async fn post_cpu_profile_with_id(
     client: &reqwest::Client,
-    base: &str,
-    tenant: Option<&str>,
-    gzipped_pprof: &[u8],
-    profile_id: &str,
+    target: PushTarget<'_>,
+    profile: IdentifiedCpuProfile<'_>,
 ) -> TestResult {
+    let PushTarget { base, tenant } = target;
+    let IdentifiedCpuProfile {
+        gzipped_pprof,
+        profile_id,
+    } = profile;
     let body = json!({
         "series": [{
             "labels": [
@@ -3068,20 +3133,16 @@ async fn post_cpu_profile_with_id(
             }]
         }]
     });
-    let mut request = client
-        .post(format!("{base}/push.v1.PusherService/Push"))
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .json(&body);
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("push.v1 cpu profile to {base} returned {status}: {body}").into());
-    }
-    Ok(())
+    post_push_json(
+        client,
+        PushJson {
+            base,
+            tenant,
+            body: &body,
+            what: "cpu profile",
+        },
+    )
+    .await
 }
 
 struct KrabkaPublic {
@@ -3110,40 +3171,10 @@ async fn start_krabka_public(
     store: WalTailProfileStore,
 ) -> TestResult<KrabkaPublic> {
     let cold = sink.cold.clone();
-    let (distributor_shutdown, distributor_rx) = oneshot::channel();
-    let distributor_state = Arc::new(DistributorState {
-        sink: Arc::new(sink),
-        overrides: OverridesProvider::new(Limits::default()),
-        tenant_policy: TenantPolicy::anonymous(),
-        active_series: Mutex::default(),
-        cumulative_profiles: tokio::sync::Mutex::default(),
-        ingestion_buckets: Mutex::default(),
-        relabel: Vec::new(),
-        max_decompressed: krabka_units::mebibytes(16),
-        max_tracked_tenants: 4096,
-        legacy_decode_limits: krabka_profiles::ingest::LegacyDecodeLimits::default(),
-        metrics: krabka_profiles::metrics::ServiceMetrics::new(),
-    });
-    let distributor_addr = distributor::serve(
-        "127.0.0.1:0".parse()?,
-        distributor_state,
-        &ServerSecurity::default(),
-        async move {
-            let _ = distributor_rx.await;
-        },
-    )
-    .await?;
+    let (distributor_addr, distributor_shutdown) = start_distributor(sink).await?;
 
     let (querier_shutdown, querier_rx) = oneshot::channel();
-    // The differential / e2e corpus intentionally queries the full `[0, i64::MAX]`
-    // range to compare against real Pyroscope, so disable the per-query range cap.
-    let querier_state = Arc::new(QuerierState::new_with_limits(
-        Arc::new(UnionProfileStore::new(Arc::new(store), Arc::new(cold))),
-        krabka_profiles::limits::Limits {
-            max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
-            ..Default::default()
-        },
-    ));
+    let querier_state = Arc::new(unbounded_querier_state(ProfileTiers { hot: store, cold }));
     let querier_addr = query::serve(
         "0.0.0.0:0".parse()?,
         querier_state,
@@ -3579,24 +3610,18 @@ async fn post_ingest(
         query.append_pair("aggregationType", "average");
     }
     let query = query.finish();
-    let mut request = client
+    let request = client
         .post(format!("{base}/ingest?{query}"))
         .header(reqwest::header::CONTENT_TYPE, case.content_type)
         .body(case.body.clone());
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "/ingest format={} to {base} returned {status}: {body}",
-            case.format
-        )
-        .into());
-    }
-    Ok(())
+    send_expecting_ok(
+        request,
+        &ExpectedOk {
+            tenant,
+            what: &format!("/ingest format={} to {base}", case.format),
+        },
+    )
+    .await
 }
 
 async fn assert_legacy_failure_statuses_match(
@@ -3700,8 +3725,7 @@ fn drain_sink_into_cold_store(sink: &CapturingSink) -> TestResult {
 async fn real_pyroscope_legacy_ingest_formats_match_krabka() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
     let goroutine_pprof = fetch_goroutine_pprof(&client, &pyroscope_base).await?;
 
     let sink = CapturingSink::default();
@@ -3807,8 +3831,7 @@ struct ProfileTypeCase {
 async fn real_pyroscope_profile_types_match_krabka() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
 
     let now_nanos = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?;
     let cases = vec![
@@ -3849,8 +3872,8 @@ async fn real_pyroscope_profile_types_match_krabka() -> TestResult {
     let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
 
     for case in &cases {
-        post_push_typed(&client, &pyroscope_base, None, case).await?;
-        post_push_typed(&client, &krabka.distributor_base, Some(TENANT), case).await?;
+        post_push_typed(&client, PushTarget::oracle(&pyroscope_base), case).await?;
+        post_push_typed(&client, PushTarget::krabka(&krabka.distributor_base), case).await?;
     }
     drain_sink_into_cold_store(&sink)?;
 
@@ -3902,10 +3925,10 @@ async fn fetch_debug_pprof(
 
 async fn post_push_typed(
     client: &reqwest::Client,
-    base: &str,
-    tenant: Option<&str>,
+    target: PushTarget<'_>,
     case: &ProfileTypeCase,
 ) -> TestResult {
+    let PushTarget { base, tenant } = target;
     let body = json!({
         "series": [{
             "labels": [
@@ -3918,20 +3941,16 @@ async fn post_push_typed(
             }]
         }]
     });
-    let mut request = client
-        .post(format!("{base}/push.v1.PusherService/Push"))
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .json(&body);
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("push.v1 {} to {base} returned {status}: {body}", case.name).into());
-    }
-    Ok(())
+    post_push_json(
+        client,
+        PushJson {
+            base,
+            tenant,
+            body: &body,
+            what: case.name,
+        },
+    )
+    .await
 }
 
 // -- OTLP `v1development` differential ------------------------------------
@@ -3950,8 +3969,7 @@ async fn post_push_typed(
 async fn real_pyroscope_otlp_export_matches_krabka() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
 
     let sink = CapturingSink::default();
     let store = WalTailProfileStore::new();
@@ -4183,8 +4201,7 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
         "-self-profiling.disable-push=true",
     ])
     .await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
     let sink = CapturingSink::default();
     let store = WalTailProfileStore::new();
     let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
@@ -4243,10 +4260,11 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
         post_cpu_profile(&client, base, tenant, &cpu_profile).await?;
         post_cpu_profile_with_id(
             &client,
-            base,
-            tenant,
-            &cpu_right_profile,
-            "krabka-diff-right",
+            PushTarget { base, tenant },
+            IdentifiedCpuProfile {
+                gzipped_pprof: &cpu_right_profile,
+                profile_id: "krabka-diff-right",
+            },
         )
         .await?;
         post_otlp_export(
@@ -4307,10 +4325,12 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
     compare_populated_diffs(
         evidence,
         &client,
-        &pyroscope_base,
-        &krabka.querier_base,
-        &store,
-        fixture_timestamp,
+        PopulatedBackends {
+            oracle_base: &pyroscope_base,
+            krabka_base: &krabka.querier_base,
+            store: &store,
+            fixture_timestamp,
+        },
     )
     .await?;
 
@@ -4350,16 +4370,12 @@ fn populated_diff_expected(reverse: bool) -> Value {
         "rightTicks": if reverse {140} else {28}})
 }
 
-async fn compare_populated_diffs(
-    evidence: &mut Value,
-    client: &reqwest::Client,
-    oracle_base: &str,
-    krabka_base: &str,
+/// Serves a query-frontend over `store` on a loopback port, sharding each
+/// query into 500ms ranges, and returns its base URL. It runs until the
+/// returned sender fires or is dropped.
+async fn start_sharded_frontend(
     store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
-    fixture_timestamp: i64,
-) -> TestResult {
-    use pb::querier::v1::{DiffRequest, DiffResponse, SelectMergeStacktracesRequest};
-
+) -> TestResult<(String, oneshot::Sender<()>)> {
     let (shutdown, shutdown_rx) = oneshot::channel();
     let frontend = query::serve(
         "127.0.0.1:0".parse()?,
@@ -4375,7 +4391,33 @@ async fn compare_populated_diffs(
         },
     )
     .await?;
-    let frontend_base = format!("http://{frontend}");
+    Ok((format!("http://{frontend}"), shutdown))
+}
+
+/// The two backends of a populated comparison, and the store and fixture
+/// timestamp behind the Krabka one.
+#[derive(Clone, Copy)]
+struct PopulatedBackends<'a> {
+    oracle_base: &'a str,
+    krabka_base: &'a str,
+    store: &'a UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
+    fixture_timestamp: i64,
+}
+
+async fn compare_populated_diffs(
+    evidence: &mut Value,
+    client: &reqwest::Client,
+    backends: PopulatedBackends<'_>,
+) -> TestResult {
+    use pb::querier::v1::{DiffRequest, DiffResponse, SelectMergeStacktracesRequest};
+
+    let PopulatedBackends {
+        oracle_base,
+        krabka_base,
+        store,
+        fixture_timestamp,
+    } = backends;
+    let (frontend_base, shutdown) = start_sharded_frontend(store).await?;
     let side = |timestamp| SelectMergeStacktracesRequest {
         profile_type_id: CPU_PROFILE_TYPE.to_string(),
         label_selector: E2E_SELECTOR.to_string(),
@@ -4645,19 +4687,14 @@ async fn compare_populated_query_analysis(
         for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
             evidence["active_case"] = json!({"method": "AnalyzeQuery", "backend": base,
                 "request": request, "classification": "matched"});
-            let json: AnalyzeQueryResponse = serde_json::from_value(
-                connect_json(
-                    client,
-                    base,
-                    tenant,
-                    "AnalyzeQuery",
-                    serde_json::to_value(&request)?,
-                )
-                .await?,
-            )?;
-            let binary: AnalyzeQueryResponse =
-                connect_protobuf(client, base, tenant, "AnalyzeQuery", &request).await?;
-            for (transport, response) in [("json", json), ("protobuf", binary)] {
+            let backend = RpcBackend {
+                client,
+                base,
+                tenant,
+            };
+            for (transport, response) in
+                analyze_query_over_both_transports(backend, &request).await?
+            {
                 if assert_queried_series_count(&response, expected).is_err()
                     && evidence.get("failure_diagnostics").is_none()
                 {
@@ -4683,13 +4720,14 @@ async fn compare_populated_query_analysis(
                 }
                 record_profile_rpc_case(
                     evidence,
-                    json!({
-                        "method": "AnalyzeQuery", "name": name, "backend": base, "transport": transport,
-                        "request": request, "classification": "matched",
-                        "status": if assert_queried_series_count(&response, expected).is_ok() { "passed" } else { "failed" },
-                        "expected_count": expected, "actual_count": response.query_impact.as_ref().map(|impact| impact.total_queried_series),
-                        "response":response,"comparison_fields":["query_impact.total_queried_series"],
-                    }),
+                    with_queried_series_outcome(
+                        json!({
+                            "method": "AnalyzeQuery", "name": name, "backend": base, "transport": transport,
+                            "request": request, "classification": "matched",
+                        }),
+                        &response,
+                        expected,
+                    ),
                 )?;
                 if let Err(error) = assert_queried_series_count(&response, expected) {
                     analysis_failures.push(format!("{error}: backend={base}, transport={transport}, request={request:?}, response={response:?}"));
@@ -4723,19 +4761,14 @@ async fn compare_populated_query_analysis(
     ] {
         let request = AnalyzeQueryRequest { query, start, end };
         for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
-            let json: AnalyzeQueryResponse = serde_json::from_value(
-                connect_json(
-                    client,
-                    base,
-                    tenant,
-                    "AnalyzeQuery",
-                    serde_json::to_value(&request)?,
-                )
-                .await?,
-            )?;
-            let binary: AnalyzeQueryResponse =
-                connect_protobuf(client, base, tenant, "AnalyzeQuery", &request).await?;
-            for (transport, response) in [("json", json), ("protobuf", binary)] {
+            let backend = RpcBackend {
+                client,
+                base,
+                tenant,
+            };
+            for (transport, response) in
+                analyze_query_over_both_transports(backend, &request).await?
+            {
                 let expected = AnalyzeQueryResponse::default();
                 let passed = response == expected;
                 record_profile_rpc_case(
@@ -4764,30 +4797,26 @@ async fn compare_populated_query_analysis(
     for (base, tenant, expected) in [(oracle_base, None, 1), (krabka_base, Some(TENANT), 1)] {
         evidence["active_case"] = json!({"method": "AnalyzeQuery", "backend": base,
             "request": excluded_time, "classification": "matched"});
-        let json: AnalyzeQueryResponse = serde_json::from_value(
-            connect_json(
-                client,
-                base,
-                tenant,
-                "AnalyzeQuery",
-                serde_json::to_value(&excluded_time)?,
-            )
-            .await?,
-        )?;
-        let binary: AnalyzeQueryResponse =
-            connect_protobuf(client, base, tenant, "AnalyzeQuery", &excluded_time).await?;
-        for (transport, response) in [("json", json), ("protobuf", binary)] {
+        let backend = RpcBackend {
+            client,
+            base,
+            tenant,
+        };
+        for (transport, response) in
+            analyze_query_over_both_transports(backend, &excluded_time).await?
+        {
             record_profile_rpc_case(
                 evidence,
-                json!({
-                    "method": "AnalyzeQuery", "name":"excluded time", "backend": base, "transport": transport,
-                    "request": excluded_time, "classification": "matched",
-                    "reason": "pinned v1 Head.Series returns all selector-matching series within an overlapping head without per-profile time filtering",
-                    "source": "https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/phlaredb/head.go#L498-L532",
-                    "status": if assert_queried_series_count(&response, expected).is_ok() { "passed" } else { "failed" },
-                    "expected_count": expected, "actual_count": response.query_impact.as_ref().map(|impact| impact.total_queried_series),
-                        "response":response,"comparison_fields":["query_impact.total_queried_series"],
-                }),
+                with_queried_series_outcome(
+                    json!({
+                        "method": "AnalyzeQuery", "name":"excluded time", "backend": base, "transport": transport,
+                        "request": excluded_time, "classification": "matched",
+                        "reason": "pinned v1 Head.Series returns all selector-matching series within an overlapping head without per-profile time filtering",
+                        "source": "https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/phlaredb/head.go#L498-L532",
+                    }),
+                    &response,
+                    expected,
+                ),
             )?;
             if let Err(error) = assert_queried_series_count(&response, expected) {
                 analysis_failures.push(format!("{error}: backend={base}, transport={transport}, v1 head-series compatibility, request={excluded_time:?}, response={response:?}"));
@@ -4883,10 +4912,12 @@ async fn compare_generated_populated_profiles(
     write_profile_rpc_evidence(evidence)?;
     let rejection_result = run_generated_profile_rejections(
         client,
-        oracle_base,
-        krabka_base,
-        store,
-        fixture_timestamp,
+        PopulatedBackends {
+            oracle_base,
+            krabka_base,
+            store,
+            fixture_timestamp,
+        },
         &output,
     )
     .await;
@@ -4896,28 +4927,16 @@ async fn compare_generated_populated_profiles(
 
 async fn run_generated_profile_rejections(
     client: &reqwest::Client,
-    oracle_base: &str,
-    krabka_base: &str,
-    store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
-    time_ms: i64,
+    backends: PopulatedBackends<'_>,
     output: &std::path::Path,
 ) -> TestResult {
-    let (shutdown, shutdown_rx) = oneshot::channel();
-    let frontend = query::serve(
-        "127.0.0.1:0".parse()?,
-        Arc::new(QuerierState::new_frontend(
-            Arc::new(store.clone()),
-            krabka_profiles::query_frontend::FrontendConfig {
-                shard_width: krabka_units::millis(500),
-            },
-        )),
-        &ServerSecurity::default(),
-        async move {
-            let _ = shutdown_rx.await;
-        },
-    )
-    .await?;
-    let frontend_base = format!("http://{frontend}");
+    let PopulatedBackends {
+        oracle_base,
+        krabka_base,
+        store,
+        fixture_timestamp: time_ms,
+    } = backends;
+    let (frontend_base, shutdown) = start_sharded_frontend(store).await?;
     let frontend_base = &frontend_base;
     let result = generated_differential::run(
         "pyroscope-rejections",
@@ -5284,6 +5303,60 @@ async fn assert_v1_heatmap_capability(
     Ok(())
 }
 
+/// One backend a querier RPC is sent to: its base URL, and the tenant header
+/// Krabka needs and the single-tenant oracle does not.
+#[derive(Clone, Copy)]
+struct RpcBackend<'a> {
+    client: &'a reqwest::Client,
+    base: &'a str,
+    tenant: Option<&'a str>,
+}
+
+/// `request`'s `AnalyzeQuery` answer from `backend`, once over JSON and once
+/// over protobuf, each named by its transport.
+async fn analyze_query_over_both_transports(
+    backend: RpcBackend<'_>,
+    request: &pb::querier::v1::AnalyzeQueryRequest,
+) -> TestResult<[(&'static str, pb::querier::v1::AnalyzeQueryResponse); 2]> {
+    let RpcBackend {
+        client,
+        base,
+        tenant,
+    } = backend;
+    let json: pb::querier::v1::AnalyzeQueryResponse = serde_json::from_value(
+        connect_json(
+            client,
+            base,
+            tenant,
+            "AnalyzeQuery",
+            serde_json::to_value(request)?,
+        )
+        .await?,
+    )?;
+    let binary: pb::querier::v1::AnalyzeQueryResponse =
+        connect_protobuf(client, base, tenant, "AnalyzeQuery", request).await?;
+    Ok([("json", json), ("protobuf", binary)])
+}
+
+/// Orders exemplars, and each exemplar's labels, canonically, so two backends
+/// that return the same exemplars in different orders compare equal.
+fn sort_exemplars(exemplars: &mut [pb::querier::v1::Exemplar]) {
+    for exemplar in exemplars.iter_mut() {
+        exemplar
+            .labels
+            .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+    }
+    exemplars.sort_by_key(|e| {
+        (
+            e.timestamp,
+            e.value,
+            e.profile_id.clone(),
+            e.trace_id.clone(),
+            e.span_id.clone(),
+        )
+    });
+}
+
 async fn connect_protobuf<Req: prost::Message, Resp: prost::Message + Default>(
     client: &reqwest::Client,
     base: &str,
@@ -5362,6 +5435,31 @@ fn normalized_flamegraph_stacks(
     }
     stacks.sort();
     Ok(stacks)
+}
+
+/// `case` with the outcome of an `AnalyzeQuery` series-count comparison
+/// appended after its own fields: whether `response` queried `expected`
+/// series, both counts, the response, and the field compared.
+fn with_queried_series_outcome(
+    mut case: Value,
+    response: &pb::querier::v1::AnalyzeQueryResponse,
+    expected: u64,
+) -> Value {
+    case["status"] = json!(if assert_queried_series_count(response, expected).is_ok() {
+        "passed"
+    } else {
+        "failed"
+    });
+    case["expected_count"] = json!(expected);
+    case["actual_count"] = json!(
+        response
+            .query_impact
+            .as_ref()
+            .map(|impact| impact.total_queried_series)
+    );
+    case["response"] = json!(response);
+    case["comparison_fields"] = json!(["query_impact.total_queried_series"]);
+    case
 }
 
 fn assert_queried_series_count(
@@ -5647,16 +5745,14 @@ async fn post_otlp_export(
     if let Some(content_encoding) = content_encoding {
         request = request.header(reqwest::header::CONTENT_ENCODING, content_encoding);
     }
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("OTLP export to {base} returned {status}: {body}").into());
-    }
-    Ok(())
+    send_expecting_ok(
+        request,
+        &ExpectedOk {
+            tenant,
+            what: &format!("OTLP export to {base}"),
+        },
+    )
+    .await
 }
 
 /// The modern RPC fields require v2; a successful v1 capability probe is not
@@ -5979,9 +6075,11 @@ async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> T
         let candidate = start_krabka_pair_with_query_options(
             sink.clone(),
             store.clone(),
-            architecture,
-            false,
-            false,
+            QuerierQueryMode {
+                architecture,
+                async_queries_enabled: false,
+                query_analysis_series_enabled: false,
+            },
         )
         .await?;
         for (service, values) in [
@@ -6218,10 +6316,11 @@ async fn profile_v2_fixtures(
     }
     post_cpu_profile_with_id(
         client,
-        oracle_base,
-        None,
-        &synthetic_cpu_pprof(time * 1_000_000)?,
-        "03030303-0303-0303-0303-030303030303",
+        PushTarget::oracle(oracle_base),
+        IdentifiedCpuProfile {
+            gzipped_pprof: &synthetic_cpu_pprof(time * 1_000_000)?,
+            profile_id: "03030303-0303-0303-0303-030303030303",
+        },
     )
     .await?;
     let identity = connect_json_until(client, oracle_base, None, "SelectSeries", json!({"profileTypeID":CPU_PROFILE_TYPE,"labelSelector":E2E_SELECTOR,"start":time-1000,"end":time+1000,"step":1.0,"exemplarType":"EXEMPLAR_TYPE_INDIVIDUAL"}),
@@ -6233,10 +6332,11 @@ async fn profile_v2_fixtures(
     assert_eq!(identity["series"][0]["points"][0]["value"], 140.0);
     post_cpu_profile_with_id(
         client,
-        &candidate.distributor_base,
-        Some(TENANT),
-        &synthetic_cpu_pprof(time * 1_000_000)?,
-        &profile_id,
+        PushTarget::krabka(&candidate.distributor_base),
+        IdentifiedCpuProfile {
+            gzipped_pprof: &synthetic_cpu_pprof(time * 1_000_000)?,
+            profile_id: &profile_id,
+        },
     )
     .await?;
     drain_sink_into_cold_store(sink)?;
@@ -6823,20 +6923,7 @@ fn profile_v2_response_value(method: &str, response: Value) -> TestResult<Value>
                     .labels
                     .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
                 for point in &mut series.points {
-                    for exemplar in &mut point.exemplars {
-                        exemplar
-                            .labels
-                            .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
-                    }
-                    point.exemplars.sort_by_key(|e| {
-                        (
-                            e.timestamp,
-                            e.value,
-                            e.profile_id.clone(),
-                            e.trace_id.clone(),
-                            e.span_id.clone(),
-                        )
-                    });
+                    sort_exemplars(&mut point.exemplars);
                 }
             }
             response
@@ -6852,20 +6939,7 @@ fn profile_v2_response_value(method: &str, response: Value) -> TestResult<Value>
                     .labels
                     .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
                 for slot in &mut series.slots {
-                    for exemplar in &mut slot.exemplars {
-                        exemplar
-                            .labels
-                            .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
-                    }
-                    slot.exemplars.sort_by_key(|e| {
-                        (
-                            e.timestamp,
-                            e.value,
-                            e.profile_id.clone(),
-                            e.trace_id.clone(),
-                            e.span_id.clone(),
-                        )
-                    });
+                    sort_exemplars(&mut slot.exemplars);
                 }
             }
             response

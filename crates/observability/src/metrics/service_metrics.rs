@@ -1,4 +1,22 @@
-use super::*;
+use super::{
+    CompactionMetrics, Counter, Family, IngestHelpText, IngestInstruments, IngestRequest,
+    ObjectStoreMetrics, PipelineInstruments, QueryHelpText, QueryInstruments, QueryRequest,
+    Registry, SharedRegistry, TenantLabel, WalConsumerMetrics, WalProduceMetrics,
+    register_in_new_registry,
+};
+
+const INGEST_HELP: IngestHelpText = IngestHelpText {
+    requests: "Log-ingest (push) requests by outcome (status=ok|error)",
+    bytes: "Cumulative request-body bytes accepted on the log-ingest path",
+    items: "Cumulative log lines/records accepted on the log-ingest path",
+    duration: "Log-ingest push-handler latency in seconds",
+    wal_append_failures: "Cumulative log-WAL (produce) append failures",
+};
+
+const QUERY_HELP: QueryHelpText = QueryHelpText {
+    requests: "Querier requests by route and outcome (route, status=ok|error)",
+    duration: "Querier handler latency in seconds, by route",
+};
 
 /// Cheaply-clonable bundle of metric handles plus the shared registry.
 ///
@@ -9,11 +27,9 @@ use super::*;
 pub struct ServiceMetrics {
     pub registry: SharedRegistry,
     // INGEST (distributor role).
-    pub ingest_requests: Family<StatusLabel, Counter>,
-    pub ingest_bytes: Counter,
-    pub ingest_items: Counter,
-    pub ingest_duration: Histogram,
-    pub wal_append_failures: Counter,
+    /// Log-ingest requests, bytes, lines/records, latency and WAL append
+    /// failures.
+    pub ingest: IngestInstruments,
     /// Per-tenant accepted log lines on the ingest path. Complements the
     /// tenant-agnostic `ingest_items` counter with per-tenant attribution.
     pub ingest_lines: Family<TenantLabel, Counter>,
@@ -23,8 +39,8 @@ pub struct ServiceMetrics {
     /// [`krabka_blockstore::BlockDescriptor`].
     pub blocks_written: Counter,
     // QUERY (querier role).
-    pub query_requests: Family<RouteStatusLabel, Counter>,
-    pub query_duration: Family<RouteLabel, Histogram>,
+    /// Querier requests and per-route latency.
+    pub query: QueryInstruments,
     // WAL-CONSUMER, COMPACTOR and OBJECT-STORE roles.
     /// WAL consumer progress and receive delay. See
     /// [`WalConsumerMetrics`] for what lag this measures and what it leaves
@@ -48,91 +64,41 @@ impl ServiceMetrics {
     /// bundle.
     #[must_use]
     pub fn new() -> Self {
-        let mut registry = Registry::with_prefix("krabka_logs");
+        register_in_new_registry("krabka_logs", Self::register)
+    }
 
-        let ingest_requests = Family::<StatusLabel, Counter>::default();
-        let ingest_bytes = Counter::default();
-        let ingest_items = Counter::default();
-        let ingest_duration = Histogram::new([
-            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
-        ]);
-        let wal_append_failures = Counter::default();
+    fn register(registry: &mut Registry, shared: SharedRegistry) -> Self {
+        let ingest = IngestInstruments::register(registry, &INGEST_HELP);
         let ingest_lines = Family::<TenantLabel, Counter>::default();
-        let blocks_written = Counter::default();
-        let query_requests = Family::<RouteStatusLabel, Counter>::default();
-        let query_duration = Family::<RouteLabel, Histogram>::new_with_constructor(|| {
-            Histogram::new([0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0])
-        });
-
-        registry.register(
-            "ingest_requests",
-            "Log-ingest (push) requests by outcome (status=ok|error)",
-            ingest_requests.clone(),
-        );
-        registry.register(
-            "ingest_bytes",
-            "Cumulative request-body bytes accepted on the log-ingest path",
-            ingest_bytes.clone(),
-        );
-        registry.register(
-            "ingest_items",
-            "Cumulative log lines/records accepted on the log-ingest path",
-            ingest_items.clone(),
-        );
-        registry.register(
-            "ingest_duration_seconds",
-            "Log-ingest push-handler latency in seconds",
-            ingest_duration.clone(),
-        );
-        registry.register(
-            "wal_append_failures",
-            "Cumulative log-WAL (produce) append failures",
-            wal_append_failures.clone(),
-        );
         registry.register(
             "ingest_lines",
             "Accepted log lines on the ingest path, by tenant",
             ingest_lines.clone(),
         );
+        let blocks_written = Counter::default();
         registry.register(
             "blocks_written",
             "Log blocks durably written to object storage by the compactor",
             blocks_written.clone(),
         );
-        registry.register(
-            "query_requests",
-            "Querier requests by route and outcome (route, status=ok|error)",
-            query_requests.clone(),
-        );
-        registry.register(
-            "query_duration_seconds",
-            "Querier handler latency in seconds, by route",
-            query_duration.clone(),
-        );
-
-        // These three come from the shared modules, so the four signals export
-        // the same instrument under their own prefix and one dashboard reads
-        // all four.
-        let wal_consumer = WalConsumerMetrics::register(&mut registry);
-        let wal_produce = WalProduceMetrics::register(&mut registry);
-        let compaction = CompactionMetrics::register(&mut registry);
-        let object_store = ObjectStoreMetrics::register(&mut registry);
-
-        Self {
-            registry: Arc::new(Mutex::new(registry)),
+        let query = QueryInstruments::register(registry, &QUERY_HELP);
+        let PipelineInstruments {
             wal_consumer,
             wal_produce,
             compaction,
             object_store,
-            ingest_requests,
-            ingest_bytes,
-            ingest_items,
-            ingest_duration,
-            wal_append_failures,
+        } = PipelineInstruments::register(registry);
+
+        Self {
+            registry: shared,
+            ingest,
             ingest_lines,
             blocks_written,
-            query_requests,
-            query_duration,
+            query,
+            wal_consumer,
+            wal_produce,
+            compaction,
+            object_store,
         }
     }
 
@@ -140,28 +106,21 @@ impl ServiceMetrics {
     /// request counter, accumulates bytes and lines, and observes the handler
     /// latency.
     ///
-    /// `ok=false` covers any 4xx or 5xx, that is a validation, rate-limit,
+    /// [`RequestOutcome::Error`](crate::service_metrics::RequestOutcome::Error)
+    /// covers any 4xx or 5xx, that is a validation, rate-limit,
     /// decode, or produce failure. [`Self::record_wal_append_failure`] bumps
     /// the WAL/produce-specific failure counter separately, and only at the
     /// actual produce error site, so a 4xx client error does not inflate
     /// it.
-    pub fn record_ingest(&self, ok: bool, body: ByteSize, items: u64, elapsed: Time) {
-        let status = if ok { "ok" } else { "error" };
-        self.ingest_requests
-            .get_or_create(&StatusLabel {
-                status: status.into(),
-            })
-            .inc();
-        self.ingest_bytes.inc_by(body.bytes_u64());
-        self.ingest_items.inc_by(items);
-        self.ingest_duration.observe(elapsed.secs_f64());
+    pub fn record_ingest(&self, request: IngestRequest) {
+        self.ingest.record(request);
     }
 
     /// Bumps the WAL/produce append-failure counter. Callers call it only
     /// when the failure was an actual WAL (Kafka produce) error, and not a
     /// client or validation 4xx.
     pub fn record_wal_append_failure(&self) {
-        self.wal_append_failures.inc();
+        self.ingest.record_wal_append_failure();
     }
 
     /// Adds `lines` accepted log lines to the per-tenant ingest-lines counter.
@@ -188,19 +147,8 @@ impl ServiceMetrics {
 
     /// Records one querier request. It bumps the per-(route, status) request
     /// counter and observes the per-route handler latency.
-    pub fn record_query(&self, route: &str, ok: bool, elapsed: Time) {
-        let status = if ok { "ok" } else { "error" };
-        self.query_requests
-            .get_or_create(&RouteStatusLabel {
-                route: route.into(),
-                status: status.into(),
-            })
-            .inc();
-        self.query_duration
-            .get_or_create(&RouteLabel {
-                route: route.into(),
-            })
-            .observe(elapsed.secs_f64());
+    pub fn record_query(&self, request: QueryRequest<'_>) {
+        self.query.record(request);
     }
 }
 

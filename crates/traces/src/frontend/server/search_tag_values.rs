@@ -1,37 +1,52 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Path, Principal, QuerierBackend,
-    QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, json,
-    optional_time_bounds, request_tenant,
+    ApiVersion, BlockCatalog, FrontendRequest, IntoResponse, Json, Path, QuerierBackend, Response,
+    RouteVariant, backend_error_response, json, optional_time_bounds, tenant_and_bounds,
+    with_warnings,
 };
 
-pub(crate) async fn search_tag_values<B, C>(
-    State(qf): State<Arc<QueryFrontend<B, C>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+/// `/api/search/tag/{tag}/values`, or for [`ApiVersion::V2`] the typed
+/// `/api/v2/search/tag/{tag}/values`.
+pub(crate) async fn search_tag_values<B, C, V>(
+    request: FrontendRequest<B, C>,
     Path(tag): Path<String>,
-    uri: Uri,
 ) -> Response
 where
     B: QuerierBackend + 'static,
     C: BlockCatalog + 'static,
+    V: RouteVariant<ApiVersion>,
 {
-    let tenant = match request_tenant(&headers, &principal, &qf.cfg.tenant_policy) {
-        Ok(tenant) => tenant,
-        Err(rejection) => return *rejection,
-    };
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let (values, _, _) = match qf.tag_values(&tenant, &tag, start_ns, end_ns).await {
+    let (tenant, start_ns, end_ns) =
+        match tenant_and_bounds(request.tenant_request(), optional_time_bounds) {
+            Ok(request) => request,
+            Err(rejection) => return *rejection,
+        };
+    let qf = request.qf;
+    let (values, _metrics, warnings) = match qf
+        .tag_values(
+            &tenant,
+            &tag,
+            krabka_blockstore::TimeRange { start_ns, end_ns },
+        )
+        .await
+    {
         Ok(out) => out,
         Err(err) => return backend_error_response(&err),
     };
-    let tag_values = values
-        .into_iter()
-        .map(|value| value.value)
-        .collect::<BTreeSet<_>>();
-    Json(json!({ "tagValues": tag_values })).into_response()
+    if matches!(V::VARIANT, ApiVersion::V1) {
+        let tag_values = values
+            .into_iter()
+            .map(|value| value.value)
+            .collect::<BTreeSet<_>>();
+        return Json(json!({ "tagValues": tag_values })).into_response();
+    }
+    let tag_values: Vec<_> = values
+        .iter()
+        .map(|v| json!({ "type": &v.type_, "value": &v.value }))
+        .collect();
+    with_warnings(
+        json!({ "tagValues": tag_values, "metrics": { "inspectedBytes": "0" } }),
+        &warnings,
+    )
 }

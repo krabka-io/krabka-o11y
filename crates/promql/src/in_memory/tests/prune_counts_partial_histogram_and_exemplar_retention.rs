@@ -8,8 +8,8 @@ pub(crate) async fn prune_counts_partial_histogram_and_exemplar_retention() {
     store.push_float("t", live.clone(), 8_999, 1.0);
     store.push_float("t", live.clone(), 9_000, 2.0);
     store.push_float("t", stale.clone(), 1_000, 3.0);
-    store.push_histogram("t", live.clone(), 8_999, native_histogram());
-    store.push_histogram("t", live.clone(), 9_000, native_histogram());
+    store.push_histogram("t", live.clone(), 8_999, count_two_sum_three_histogram());
+    store.push_histogram("t", live.clone(), 9_000, count_two_sum_three_histogram());
     store.push_exemplar("t", live.clone(), lbls(&[("trace_id", "old")]), 8_999, 1.0);
     store.push_exemplar("t", live.clone(), lbls(&[("trace_id", "new")]), 9_000, 2.0);
 

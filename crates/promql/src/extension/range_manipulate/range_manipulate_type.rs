@@ -1,7 +1,26 @@
 use super::{
-    Arc, DataFusionError, DfResult, Expr, LogicalPlan, UserDefinedLogicalNodeCore,
-    build_extended_range_schema, fmt,
+    Arc, DfResult, Expr, LogicalPlan, UserDefinedLogicalNodeCore, build_extended_range_schema, fmt,
 };
+use crate::extension::only_logical_input;
+
+/// The step grid, window and columns a range-vector materialization reads,
+/// shared by the logical [`RangeManipulate`] node and its physical
+/// `RangeManipulateExec`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
+pub struct RangeManipulateSettings {
+    /// The first eval step, in milliseconds.
+    pub start_ms: i64,
+    /// The last eval step, in milliseconds.
+    pub end_ms: i64,
+    /// The eval-step stride, in milliseconds.
+    pub interval_ms: i64,
+    /// The width of the window that closes on each eval step, in milliseconds.
+    pub range_ms: i64,
+    /// The `Int64` sample-timestamp column.
+    pub time_index: String,
+    /// The `Float64` sample-value column.
+    pub field_column: String,
+}
 
 /// Logical node: materialize range vectors over a step grid.
 ///
@@ -11,12 +30,7 @@ use super::{
 /// parameters.
 #[derive(Debug, Clone)]
 pub struct RangeManipulate {
-    pub start_ms: i64,
-    pub end_ms: i64,
-    pub interval_ms: i64,
-    pub range_ms: i64,
-    pub time_index: String,
-    pub field_column: String,
+    pub settings: RangeManipulateSettings,
     pub input: LogicalPlan,
     pub(crate) output_schema: datafusion::common::DFSchemaRef,
 }
@@ -29,27 +43,17 @@ impl RangeManipulate {
     /// Returns an error if the metric input is malformed.
     /// Returns an error if a limit is exceeded.
     /// Returns an error if the backing WAL, block store, or remote endpoint fails.
-    pub fn new(
-        start_ms: i64,
-        end_ms: i64,
-        interval_ms: i64,
-        range_ms: i64,
-        time_index: String,
-        field_column: String,
-        input: LogicalPlan,
-    ) -> DfResult<Self> {
-        let extended =
-            build_extended_range_schema(input.schema().as_arrow(), &time_index, &field_column);
+    pub fn new(settings: RangeManipulateSettings, input: LogicalPlan) -> DfResult<Self> {
+        let extended = build_extended_range_schema(
+            input.schema().as_arrow(),
+            &settings.time_index,
+            &settings.field_column,
+        );
         let output_schema = Arc::new(datafusion::common::DFSchema::try_from(
             extended.as_ref().clone(),
         )?);
         Ok(Self {
-            start_ms,
-            end_ms,
-            interval_ms,
-            range_ms,
-            time_index,
-            field_column,
+            settings,
             input,
             output_schema,
         })
@@ -57,16 +61,8 @@ impl RangeManipulate {
 
     /// The logical parameters that define node identity: every field except the
     /// derived `output_schema`.
-    pub(crate) fn identity(&self) -> (i64, i64, i64, i64, &str, &str, &LogicalPlan) {
-        (
-            self.start_ms,
-            self.end_ms,
-            self.interval_ms,
-            self.range_ms,
-            &self.time_index,
-            &self.field_column,
-            &self.input,
-        )
+    pub(crate) fn identity(&self) -> (&RangeManipulateSettings, &LogicalPlan) {
+        (&self.settings, &self.input)
     }
 }
 
@@ -88,22 +84,7 @@ impl PartialOrd for RangeManipulate {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         // `LogicalPlan` is not `Ord`; order by the scalar parameters only, which
         // is sufficient for the framework's deterministic-ordering needs.
-        (
-            self.start_ms,
-            self.end_ms,
-            self.interval_ms,
-            self.range_ms,
-            &self.time_index,
-            &self.field_column,
-        )
-            .partial_cmp(&(
-                other.start_ms,
-                other.end_ms,
-                other.interval_ms,
-                other.range_ms,
-                &other.time_index,
-                &other.field_column,
-            ))
+        self.settings.partial_cmp(&other.settings)
     }
 }
 
@@ -128,28 +109,15 @@ impl UserDefinedLogicalNodeCore for RangeManipulate {
         write!(
             f,
             "PromRangeManipulate: start_ms={}, end_ms={}, interval_ms={}, range_ms={}",
-            self.start_ms, self.end_ms, self.interval_ms, self.range_ms
+            self.settings.start_ms,
+            self.settings.end_ms,
+            self.settings.interval_ms,
+            self.settings.range_ms
         )
     }
 
-    fn with_exprs_and_inputs(
-        &self,
-        exprs: Vec<Expr>,
-        mut inputs: Vec<LogicalPlan>,
-    ) -> DfResult<Self> {
-        if !exprs.is_empty() || inputs.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "RangeManipulate expects no expressions and one input".to_string(),
-            ));
-        }
-        Self::new(
-            self.start_ms,
-            self.end_ms,
-            self.interval_ms,
-            self.range_ms,
-            self.time_index.clone(),
-            self.field_column.clone(),
-            inputs.swap_remove(0),
-        )
+    fn with_exprs_and_inputs(&self, exprs: Vec<Expr>, inputs: Vec<LogicalPlan>) -> DfResult<Self> {
+        let input = only_logical_input(&exprs, inputs, "RangeManipulate")?;
+        Self::new(self.settings.clone(), input)
     }
 }

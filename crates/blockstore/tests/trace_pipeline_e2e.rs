@@ -14,9 +14,9 @@ use std::{
 use arrow::array::{FixedSizeBinaryArray, Int32Array};
 use assert2::check;
 use krabka_blockstore::{
-    AttrValue, BlockLevel, BlockWriter, ShardedTraceBloom, SpanAttr, SpanKind, SpanNode, SpanRow,
-    StatusCode, SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set, encode_span_rows,
-    read_block, span_block_decl, span_block_schema,
+    AttrValue, BlockLevel, BlockWriter, CycleSpans, ShardedTraceBloom, SpanAttr, SpanKind,
+    SpanNode, SpanRow, StatusCode, SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set,
+    encode_span_rows, read_block, span_block_decl, span_block_schema,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, memory::InMemory};
@@ -30,7 +30,7 @@ fn sid(n: u8) -> [u8; 8] {
 /// denormalized onto each row as both the root service name and a
 /// `service.name` attribute.
 fn build_trace(trace_id: [u8; 16], nodes: &[SpanNode], service: &str) -> Vec<SpanRow> {
-    let ns = assign_nested_set(nodes);
+    let ns = assign_nested_set(nodes, CycleSpans::AssignIntervals);
     nodes
         .iter()
         .zip(&ns)

@@ -1,4 +1,4 @@
-use super::{clamp_float, round_to_nearest};
+use super::{clamp_float, prometheus_sgn, round_to_nearest};
 
 /// Which per-row scalar function a [`ScalarMathUdf`] evaluates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -95,8 +95,9 @@ impl ScalarMathOp {
     /// `round`, `[min]` or `[max]` for `clamp_min` and `clamp_max`, and
     /// `[min, max]` for `clamp`. `value` is the per-row instant-vector value.
     ///
-    /// This is a direct port of the interpreter's `UnaryFloatFn::apply`,
-    /// `clamp_float`, and `round_to_nearest`, and it evaluates bit-for-bit.
+    /// The interpreter's `UnaryFloatFn::apply` evaluates through this method,
+    /// and `clamp_float` and `round_to_nearest` are the interpreter's own, so
+    /// both paths evaluate bit-for-bit.
     pub(crate) fn apply(self, value: f64, params: &[f64]) -> f64 {
         match self {
             Self::Abs => value.abs(),
@@ -121,17 +122,7 @@ impl ScalarMathOp {
             Self::Atanh => value.atanh(),
             Self::Deg => value.to_degrees(),
             Self::Rad => value.to_radians(),
-            Self::Sgn => {
-                if value.is_nan() {
-                    f64::NAN
-                } else if value > 0.0 {
-                    1.0
-                } else if value < 0.0 {
-                    -1.0
-                } else {
-                    0.0
-                }
-            }
+            Self::Sgn => prometheus_sgn(value),
             // `round(v / to_nearest + 0.5).floor() * to_nearest`, matching
             // `round_to_nearest` (the `.5`-rounds-up direction included).
             Self::Round => round_to_nearest(value, params[0]),

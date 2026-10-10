@@ -4,23 +4,12 @@ use super::*;
 pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_results() {
     let cache = QueryFrontendCache::default();
     let executor = RecordingExecutor::default();
-    let cached_query = FrontendRangeQuery {
-        query: "up".into(),
-        start_ms: 0,
-        end_ms: 60_000,
-        step: millis(60_000),
-        shard: None,
-    };
+    let cached_query = up_range_query(60_000, None);
     cache
         .insert(
             "tenant-a",
             &cached_query,
-            unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-                drop_name: false,
-                start_timestamps_ms: std::collections::BTreeMap::new(),
-                labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
-                samples: vec![(0, SampleValue::Float(1.0))],
-            }])),
+            one_sample_matrix(labels(&[("__name__", "up"), ("job", "api")])),
         )
         .await
         .unwrap();
@@ -64,23 +53,22 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
             .await
             .unwrap()
             .expect("fresh subquery cached")
-            == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-                drop_name: false,
-                start_timestamps_ms: std::collections::BTreeMap::new(),
-                labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
-                samples: vec![(120_000, SampleValue::Float(120_000.0))],
-            }]))
+            == up_api_matrix(&[FloatPoint {
+                ts_ms: 120_000,
+                value: 120_000.0
+            }])
     );
     assert2::assert!(
         result
-            == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-                drop_name: false,
-                start_timestamps_ms: std::collections::BTreeMap::new(),
-                labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
-                samples: vec![
-                    (0, SampleValue::Float(1.0)),
-                    (120_000, SampleValue::Float(120_000.0)),
-                ],
-            }]))
+            == up_api_matrix(&[
+                FloatPoint {
+                    ts_ms: 0,
+                    value: 1.0
+                },
+                FloatPoint {
+                    ts_ms: 120_000,
+                    value: 120_000.0
+                }
+            ])
     );
 }

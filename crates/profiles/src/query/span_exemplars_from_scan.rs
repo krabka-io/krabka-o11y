@@ -30,14 +30,7 @@ pub(crate) async fn span_exemplars_from_scan(
         value = PCOL_VALUE,
         table = scan.samples_table,
     );
-    let batches = scan
-        .ctx
-        .sql(&sql)
-        .await
-        .map_err(|err| ProfileError::Plan(err.to_string()))?
-        .collect()
-        .await
-        .map_err(|err| ProfileError::Exec(err.to_string()))?;
+    let batches = scan.collect_sql(&sql).await?;
     let mut per_span: BTreeMap<SpanKey, i64> = BTreeMap::new();
     for batch in batches {
         let timestamps = batch.column(0).as_primitive::<Int64Type>();

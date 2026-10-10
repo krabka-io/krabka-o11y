@@ -4,7 +4,7 @@ use crate::{
     ActiveLogDeleteFilter, Arc, BTreeSet, ColdBlockScan, ComparisonOp, HttpQueryError, Labels,
     MetricBinarySetOp, MetricQuery, MetricScalarArithmeticOp, MetricValue,
     MetricVectorGroupModifier, MetricVectorMatching, Ordering, ParseError, QuerierState,
-    QueryHotTail, StreamPlan, TimeRange, Value,
+    QueryHotTail, SampleOrder, StreamPlan, TimeRange, Value,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
     execute_metric_query_range_with_deletes,
     execute_metric_query_range_with_hot_tail_frontier_and_deletes, format_metric_value,
@@ -23,16 +23,20 @@ mod apply_metric_scalar_comparison_to_loki_result;
 mod apply_metric_scalar_comparison_to_sample;
 mod apply_metric_scalar_comparison_to_series;
 mod apply_metric_selection;
+mod apply_scalar_to_loki_result;
 mod default_metric_range_step;
 mod execute_http_metric_range_query;
 mod include_metric_group_labels;
 mod metric_binary_set_keeps_sample;
+mod metric_comparison;
 mod metric_samples_share_timestamp;
 mod metric_scalar_arithmetic_value;
 mod metric_scalar_comparison_matches;
 mod metric_series_labels;
 mod metric_vector_group_modifier;
 mod metric_vector_matching_key;
+mod sample_value_slot;
+mod scalar_operands;
 mod sort_loki_metric_results_by_labels;
 
 pub(crate) use apply_metric_binary_set_to_loki_result::apply_metric_binary_set_to_loki_result;
@@ -52,14 +56,20 @@ pub(crate) use apply_metric_scalar_comparison_to_sample::apply_scalar_comparison
 pub(crate) use apply_metric_scalar_comparison_to_series::apply_metric_scalar_comparison_to_series;
 pub(crate) use apply_metric_scalar_comparison_to_series::apply_scalar_comparison_to_series;
 pub(crate) use apply_metric_selection::apply_metric_selection;
+pub(crate) use apply_scalar_to_loki_result::{ScalarLiteral, apply_scalar_to_loki_result};
 pub(crate) use default_metric_range_step::default_metric_range_step;
 pub(crate) use execute_http_metric_range_query::execute_http_metric_range_query;
 pub(crate) use include_metric_group_labels::include_metric_group_labels;
 pub(crate) use metric_binary_set_keeps_sample::metric_binary_set_keeps_sample;
+pub(crate) use metric_comparison::{
+    ComparisonResult, MetricComparison, ScalarArithmetic, ScalarComparison,
+};
 pub(crate) use metric_samples_share_timestamp::metric_samples_share_timestamp;
 pub(crate) use metric_scalar_arithmetic_value::metric_scalar_arithmetic_value;
 pub(crate) use metric_scalar_comparison_matches::metric_scalar_comparison_matches;
 pub(crate) use metric_series_labels::metric_series_labels;
 pub(crate) use metric_vector_group_modifier::metric_vector_group_modifier;
 pub(crate) use metric_vector_matching_key::metric_vector_matching_key;
+use sample_value_slot::{SampleValueSlot, sample_value_slot};
+pub(crate) use scalar_operands::{ScalarOperands, ScalarSide};
 pub(crate) use sort_loki_metric_results_by_labels::sort_loki_metric_results_by_labels;

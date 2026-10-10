@@ -18,7 +18,6 @@
 //! tenant.
 
 use std::{
-    collections::BTreeMap,
     future::IntoFuture as _,
     iter,
     net::SocketAddr,
@@ -41,12 +40,10 @@ use krabka_observability::{
         ServerSecurityArgs, authenticate_requests, install_crypto_provider, serve_router,
     },
 };
-use krabka_traceql::{
-    AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
-};
+use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
-    AttrValue, Limits, Span, SpanRecord, TracesError,
-    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, WalSink},
+    Limits, SpanRecord,
+    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, ReceiverEndpoint},
     frontend::{
         FrontendConfig, HttpQuerier, MembershipView, MockCatalog, MockQuerier, QuerierScheme,
         QueryFrontend, router_with_backend,
@@ -55,20 +52,18 @@ use krabka_traces::{
     querier::http::HttpConfig,
     wire::{
         jaeger_grpc::api_v2::{
-            Batch as JaegerBatch, PostSpansRequest, Process as JaegerProcess, Span as JaegerSpan,
-            collector_service_client::CollectorServiceClient,
+            self as api_v2, PostSpansRequest, collector_service_client::CollectorServiceClient,
             collector_service_server::CollectorService as _,
         },
         otlp::decode_otlp,
     },
 };
-use krabka_units::{Time, convert::TimeExt as _};
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{
         ExportTraceServiceRequest, trace_service_client::TraceServiceClient,
         trace_service_server::TraceService as _,
     },
-    common::v1::{AnyValue, InstrumentationScope, KeyValue as OtlpKeyValue, any_value::Value},
+    common::v1::InstrumentationScope,
     resource::v1::Resource,
     trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan, TracesData},
 };
@@ -87,6 +82,17 @@ use tonic::{
 };
 use tower::ServiceExt as _;
 
+mod ingest_capture;
+#[path = "../src/wire/jaeger_grpc/post_spans_fixture.rs"]
+mod post_spans_fixture;
+mod span_store;
+
+use self::{
+    ingest_capture::{CapturingSink, DoorPush, push_to_door, serve_until_shutdown, string_kv},
+    post_spans_fixture::{checkout_grpc_span, checkout_post_spans_request},
+    span_store::span_store_from_records,
+};
+
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// The colliding trace identity both tenants ingest under the *same* bytes.
@@ -97,11 +103,6 @@ const COLLIDING_TRACE_ID_HEX: &str = "abababababababababababababababab";
 const TENANT_A_ONLY_KEY: &str = "tenant_only";
 const TENANT_A_ONLY_VALUE: &str = "A";
 
-#[derive(Clone, Default)]
-struct CapturingSink {
-    records: Arc<Mutex<Vec<SpanRecord>>>,
-}
-
 impl CapturingSink {
     /// The tenant of every record appended so far, in order.
     fn tenants(&self) -> Vec<String> {
@@ -111,17 +112,6 @@ impl CapturingSink {
             .iter()
             .map(|record| record.tenant.clone())
             .collect()
-    }
-}
-
-#[async_trait::async_trait]
-impl WalSink for CapturingSink {
-    async fn append(&self, rec: SpanRecord) -> Result<(), TracesError> {
-        self.records
-            .lock()
-            .map_err(|_| TracesError::Wal("capturing sink lock poisoned".into()))?
-            .push(rec);
-        Ok(())
     }
 }
 
@@ -142,24 +132,18 @@ impl TestServer {
 async fn ingest(tenant: &str, otlp_body: &[u8]) -> TestResult<Vec<SpanRecord>> {
     let sink = CapturingSink::default();
     let state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
-    let resp = authenticated(distributor::router(state))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/traces")
-                .header("content-type", "application/x-protobuf")
-                .header(TENANT_HEADER, tenant)
-                .body(Body::from(otlp_body.to_vec()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::OK);
-    let _ = resp.into_body().collect().await?;
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
-    Ok(records)
+    push_to_door(
+        authenticated(distributor::router(state)),
+        DoorPush {
+            uri: "/v1/traces",
+            content_type: "application/x-protobuf",
+            tenant,
+            body: Body::from(otlp_body.to_vec()),
+            expected_status: StatusCode::OK,
+        },
+    )
+    .await?;
+    sink.snapshot()
 }
 
 /// Boot the querier over a real socket, atop a tenant-keyed store seeded from
@@ -183,109 +167,11 @@ async fn start_querier(
     ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, app);
     Ok(TestServer {
         base_url: format!("http://127.0.0.1:{port}"),
         shutdown: tx,
     })
-}
-
-fn span_store_from_records(records: &[SpanRecord]) -> InMemorySpanStore {
-    let mut grouped: BTreeMap<(String, [u8; 16]), Vec<Span>> = BTreeMap::new();
-    for record in records {
-        grouped
-            .entry((record.tenant.clone(), record.span.trace_id))
-            .or_default()
-            .push(record.span.clone());
-    }
-
-    let mut store = InMemorySpanStore::new();
-    for ((tenant, _), spans) in grouped {
-        let root = spans
-            .iter()
-            .find(|span| span.parent_span_id.is_none())
-            .unwrap_or(&spans[0]);
-        let root_service = resource_attr(root, "service.name")
-            .unwrap_or("unknown")
-            .to_string();
-        let root_name = root.name.clone();
-        store.push_trace(
-            &tenant,
-            &root_service,
-            &root_name,
-            spans.into_iter().map(input_span).collect(),
-        );
-    }
-    store
-}
-
-fn input_span(span: Span) -> InputSpan {
-    let mut attrs = span.resource_attrs;
-    attrs.extend(span.span_attrs);
-    InputSpan {
-        trace_id: span.trace_id,
-        span_id: span.span_id,
-        parent_span_id: span.parent_span_id,
-        name: span.name,
-        kind: span.kind.as_i32(),
-        start_unix_nano: span.start_ns,
-        duration: Time::from_nanos(span.duration_ns),
-        status_code: span.status.as_i32(),
-        status_message: span.status_message,
-        instrumentation_name: span.instrumentation_scope,
-        instrumentation_version: span.instrumentation_version,
-        attrs: attrs
-            .into_iter()
-            .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
-            .collect(),
-        events: Vec::new(),
-        links: Vec::new(),
-    }
-}
-
-fn traceql_attr(value: AttrValue) -> Option<TraceqlAttrValue> {
-    if let AttrValue::Array(values) = &value
-        && values.iter().any(|element| {
-            matches!(
-                element,
-                AttrValue::Array(_) | AttrValue::Bytes(_) | AttrValue::Unsupported(_)
-            ) || values.first().is_some_and(|first| {
-                std::mem::discriminant(first) != std::mem::discriminant(element)
-            })
-        })
-    {
-        return Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()));
-    }
-    match value {
-        AttrValue::Unsupported(value) => Some(TraceqlAttrValue::Unsupported(value)),
-        AttrValue::Array(values) => Some(TraceqlAttrValue::Array(
-            values
-                .into_iter()
-                .map(traceql_attr)
-                .collect::<Option<Vec<_>>>()?,
-        )),
-        AttrValue::Str(value) => Some(TraceqlAttrValue::Str(value)),
-        AttrValue::Int(value) => Some(TraceqlAttrValue::Int(value)),
-        AttrValue::Double(value) => Some(TraceqlAttrValue::Float(value)),
-        AttrValue::Bool(value) => Some(TraceqlAttrValue::Bool(value)),
-        AttrValue::Bytes(_) => None,
-    }
-}
-
-fn resource_attr<'a>(span: &'a Span, key: &str) -> Option<&'a str> {
-    span.resource_attrs
-        .iter()
-        .find_map(|attr| match &attr.value {
-            AttrValue::Str(value) if attr.key == key => Some(value.as_str()),
-            _ => None,
-        })
 }
 
 /// Build a one-span OTLP trace under the colliding `trace_id`.
@@ -353,16 +239,6 @@ fn trace_with_n_spans(trace_seed: u8, n: usize) -> Vec<u8> {
         }],
     }
     .encode_to_vec()
-}
-
-fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
-    OtlpKeyValue {
-        key: key.into(),
-        value: Some(AnyValue {
-            value: Some(Value::StringValue(value.into())),
-        }),
-        ..OtlpKeyValue::default()
-    }
 }
 
 async fn get_json(
@@ -618,12 +494,7 @@ overrides:
 
     // The read door, from the same provider: a `limit=2` search is over
     // tenant-tight's search cap and within every other tenant's.
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
-    let server = start_querier(records, overrides).await?;
+    let server = start_querier(sink.snapshot()?, overrides).await?;
     let client = reqwest::Client::new();
     let search = |tenant: &'static str| {
         let url = format!(
@@ -673,14 +544,7 @@ overrides:
     // Bind a real socket for the distributor so X-Scope-OrgID flows through HTTP.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, router);
     let base_url = format!("http://127.0.0.1:{port}");
 
     // tenant-a: first single-span push consumes the burst; second is over-rate.
@@ -772,28 +636,7 @@ fn otlp_request(value: Option<&[u8]>) -> TestResult<GrpcRequest<ExportTraceServi
 }
 
 fn jaeger_request(value: Option<&[u8]>) -> TestResult<GrpcRequest<PostSpansRequest>> {
-    let mut request = GrpcRequest::new(PostSpansRequest {
-        batch: Some(JaegerBatch {
-            process: Some(JaegerProcess {
-                service_name: "checkout".into(),
-                tags: Vec::new(),
-            }),
-            spans: vec![JaegerSpan {
-                trace_id: vec![0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                span_id: vec![0, 0, 0, 0, 0, 0, 0, 3],
-                operation_name: "GET /grpc".into(),
-                start_time: Some(prost_types::Timestamp {
-                    seconds: 1,
-                    nanos: 0,
-                }),
-                duration: Some(prost_types::Duration {
-                    seconds: 0,
-                    nanos: 25_000,
-                }),
-                ..JaegerSpan::default()
-            }],
-        }),
-    });
+    let mut request = GrpcRequest::new(checkout_post_spans_request(checkout_grpc_span()));
     *request.metadata_mut() = tenant_metadata(value)?;
     request
         .extensions_mut()
@@ -1365,12 +1208,12 @@ async fn a_secured_otlp_http_push_reaches_the_wal_only_for_a_granted_principal()
     let security = load_security(&pki.listener_flags()?)?.with_security_events(events.clone());
     let sink = CapturingSink::default();
     let stop = CancellationToken::new();
-    let (addr, _server) = distributor::serve(
-        "127.0.0.1:0".parse()?,
-        Arc::new(DistributorState::new(Arc::new(sink.clone()))),
-        &security,
-        stop.clone(),
-    )
+    let (addr, _server) = distributor::serve(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
+        state: Arc::new(DistributorState::new(Arc::new(sink.clone()))),
+        security: &security,
+        shutdown: stop.clone(),
+    })
     .await?;
     let client = pki.https_client()?;
     let url = format!("https://{addr}/v1/traces");
@@ -1483,16 +1326,20 @@ async fn secured_grpc_doors_authenticate_and_authorize_before_the_wal() -> TestR
     let sink = CapturingSink::default();
     let state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
     let stop = CancellationToken::new();
-    let (otlp_addr, _otlp) = distributor::serve_otlp_grpc(
-        "127.0.0.1:0".parse()?,
-        Arc::clone(&state),
-        &security,
-        stop.clone(),
-    )
+    let (otlp_addr, _otlp) = distributor::serve_otlp_grpc(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
+        state: Arc::clone(&state),
+        security: &security,
+        shutdown: stop.clone(),
+    })
     .await?;
-    let (jaeger_addr, _jaeger) =
-        distributor::serve_jaeger_grpc("127.0.0.1:0".parse()?, state, &security, stop.clone())
-            .await?;
+    let (jaeger_addr, _jaeger) = distributor::serve_jaeger_grpc(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
+        state,
+        security: &security,
+        shutdown: stop.clone(),
+    })
+    .await?;
     let mut otlp = TraceServiceClient::new(pki.grpc_endpoint(otlp_addr)?.connect().await?);
     let mut jaeger = CollectorServiceClient::new(pki.grpc_endpoint(jaeger_addr)?.connect().await?);
 
@@ -1602,19 +1449,19 @@ async fn the_jaeger_compact_receiver_starts_only_without_authentication() -> Tes
     let state = Arc::new(DistributorState::new(Arc::new(CapturingSink::default())));
     let stop = CancellationToken::new();
 
-    let with_authentication = distributor::serve_jaeger_compact_udp(
-        held.local_addr()?,
-        Arc::clone(&state),
-        &load_security(&pki.credentials_flags()?)?,
-        stop.clone(),
-    )
+    let with_authentication = distributor::serve_jaeger_compact_udp(ReceiverEndpoint {
+        addr: held.local_addr()?,
+        state: Arc::clone(&state),
+        security: &load_security(&pki.credentials_flags()?)?,
+        shutdown: stop.clone(),
+    })
     .await?;
-    let without_authentication = distributor::serve_jaeger_compact_udp(
-        "127.0.0.1:0".parse()?,
+    let without_authentication = distributor::serve_jaeger_compact_udp(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
         state,
-        &ServerSecurity::default(),
-        stop.clone(),
-    )
+        security: &ServerSecurity::default(),
+        shutdown: stop.clone(),
+    })
     .await?;
 
     check!(with_authentication.is_none());

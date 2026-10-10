@@ -5,6 +5,8 @@ use promql_parser::parser::{
     token::{T_GTR, T_LSS, TokenType},
 };
 
+use super::skip_literal_or_comment;
+
 // Private AST tokens for operators absent from promql-parser 0.11. Parsing uses
 // the corresponding comparison precedence, then restores the operator in order. A temporary bool modifier permits scalar
 // operands without treating trim as a comparison. A user bool modifier consequently
@@ -20,23 +22,11 @@ pub(crate) fn normalize_histogram_trim(query: &str) -> (String, VecDeque<u16>) {
     let mut braces = 0_u32;
     let mut index = 0;
     while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            if byte == b'\\' && delimiter != b'`' {
-                index += 2;
-                continue;
-            }
-            if byte == delimiter {
-                quote = None;
-            }
-        } else if matches!(byte, b'"' | b'\'' | b'`') {
-            quote = Some(byte);
-        } else if byte == b'#' {
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
+        if skip_literal_or_comment(&mut quote, &bytes, &mut index) {
             continue;
-        } else if byte == b'{' {
+        }
+        let byte = bytes[index];
+        if byte == b'{' {
             braces += 1;
         } else if byte == b'}' {
             braces = braces.saturating_sub(1);

@@ -1,6 +1,6 @@
 use super::{
     ColdAttributeTagNames, INSTRUMENTATION_ATTR_PREFIX, RESOURCE_ATTR_PREFIX, RecordBatch,
-    TraceqlError, attr_values_with_resource, event_values, link_values,
+    ResourceAttrs, TraceqlError, attr_values_with_resource, event_values, link_values,
 };
 
 pub(crate) fn collect_attribute_tag_names(
@@ -8,7 +8,7 @@ pub(crate) fn collect_attribute_tag_names(
     names: &mut ColdAttributeTagNames,
 ) -> Result<(), TraceqlError> {
     for row in 0..batch.num_rows() {
-        for (key, _) in attr_values_with_resource(batch, row, true)? {
+        for (key, _) in attr_values_with_resource(batch, row, ResourceAttrs::Include)? {
             if let Some(key) = key.strip_prefix(RESOURCE_ATTR_PREFIX) {
                 names.resource.insert(key.to_string());
             } else if let Some(key) = key.strip_prefix(INSTRUMENTATION_ATTR_PREFIX) {

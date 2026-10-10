@@ -363,7 +363,7 @@
       "path": "/metrics",
       "sources": [
         "crates/observability/src/distributor/router/with_role_ops_routes.rs",
-        "crates/observability/src/metrics/metrics_router.rs"
+        "crates/observability/src/service_metrics/metrics_router.rs"
       ]
     },
     {
@@ -1047,8 +1047,7 @@
       "method": "GET",
       "path": "/metrics",
       "sources": [
-        "crates/metrics/src/metrics/metrics_router.rs",
-        "crates/promql/src/metrics/metrics_router.rs"
+        "crates/observability/src/service_metrics/metrics_router.rs"
       ]
     },
     {
@@ -1784,7 +1783,7 @@
       "method": "GET",
       "path": "/metrics",
       "sources": [
-        "crates/profiles/src/metrics/metrics_router.rs"
+        "crates/observability/src/service_metrics/metrics_router.rs"
       ]
     },
     {
@@ -2216,7 +2215,7 @@
       "method": "GET",
       "path": "/metrics",
       "sources": [
-        "crates/traces/src/metrics/metrics_router.rs"
+        "crates/observability/src/service_metrics/metrics_router.rs"
       ]
     },
     {

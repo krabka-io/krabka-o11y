@@ -3,14 +3,28 @@ use super::{
     UInt64Array, UInt64Type, profile_samples_schema,
 };
 
+/// The rows of a cold block that a query keeps: those of a series in `fps`
+/// and of `profile_type`, timestamped in `[start_ms, end_ms]` Unix
+/// milliseconds.
+#[derive(Clone, Copy)]
+pub(crate) struct BlockRowFilter<'a> {
+    pub(crate) fps: &'a std::collections::BTreeSet<SeriesFingerprint>,
+    pub(crate) profile_type: &'a str,
+    pub(crate) start_ms: i64,
+    pub(crate) end_ms: i64,
+}
+
 pub(crate) fn filter_and_remap_batch(
     batch: &RecordBatch,
     partition_map: &BTreeMap<u64, u64>,
-    fps: &std::collections::BTreeSet<SeriesFingerprint>,
-    profile_type: &str,
-    start_ms: i64,
-    end_ms: i64,
+    filter: BlockRowFilter<'_>,
 ) -> Result<RecordBatch, ProfileError> {
+    let BlockRowFilter {
+        fps,
+        profile_type,
+        start_ms,
+        end_ms,
+    } = filter;
     let fingerprints = batch.column(0).as_primitive::<UInt64Type>();
     let timestamps = batch.column(1).as_primitive::<Int64Type>();
     let profile_types = batch

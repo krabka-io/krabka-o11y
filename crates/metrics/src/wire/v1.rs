@@ -17,23 +17,12 @@ mod tests {
     use prost::Message;
 
     use super::*;
-
-    fn snappy(body: &[u8]) -> Vec<u8> {
-        snap::raw::Encoder::new().compress_vec(body).unwrap()
-    }
+    use crate::wire::test_support::{check_up_sample_with_trace_exemplar, snappy, up_v1_series};
 
     #[test]
     fn decodes_v1_samples_and_exemplars() {
         let req = pb::v1::WriteRequest {
             timeseries: vec![pb::v1::TimeSeries {
-                labels: vec![pb::v1::Label {
-                    name: "__name__".into(),
-                    value: "up".into(),
-                }],
-                samples: vec![pb::v1::Sample {
-                    value: 1.0,
-                    timestamp: 1000,
-                }],
                 exemplars: vec![pb::v1::Exemplar {
                     labels: vec![pb::v1::Label {
                         name: "trace_id".into(),
@@ -42,17 +31,17 @@ mod tests {
                     value: 2.0,
                     timestamp: 1100,
                 }],
-                histograms: Vec::new(),
+                ..up_v1_series(pb::v1::Sample {
+                    value: 1.0,
+                    timestamp: 1000,
+                })
             }],
             metadata: Vec::new(),
         };
 
         let decoded = decode_v1(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
 
-        assert!(decoded.len() == 1);
-        check!(decoded[0].labels.get("__name__") == Some("up"));
-        check!(decoded[0].samples == vec![DecodedSample::new(1000, 1.0)]);
-        check!(decoded[0].exemplars[0].labels.get("trace_id") == Some("abc"));
+        check_up_sample_with_trace_exemplar(&decoded);
     }
 
     #[test]

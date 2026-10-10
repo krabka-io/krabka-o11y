@@ -1,9 +1,11 @@
 use super::*;
 
 pub(crate) async fn ingest_handler(
-    Extension(state): Extension<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    IngestRequestParts {
+        state,
+        principal,
+        headers,
+    }: IngestRequestParts,
     RawQuery(query): RawQuery,
     body: Bytes,
 ) -> Response {
@@ -50,12 +52,12 @@ pub(crate) async fn ingest_handler(
         state.metrics.record_ingest_samples(tenant.as_str(), 1);
     }
     // The `/ingest` door carries exactly one profile per request.
-    state.metrics.record_ingest(
-        result.is_ok(),
-        IngestBytes(bytes),
-        IngestItems(1),
-        start.elapsed().as_time(),
-    );
+    state.metrics.record_ingest(IngestRequest {
+        outcome: RequestOutcome::from_result(&result),
+        body: ByteSize::from_bytes(bytes),
+        items: 1,
+        elapsed: start.elapsed().as_time(),
+    });
     match result {
         Ok(()) => StatusCode::OK.into_response(),
         Err(err) => profiles_error_response(err),

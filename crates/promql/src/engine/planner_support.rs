@@ -64,7 +64,7 @@ pub(super) use match_experimental_over_time_range_call::match_experimental_over_
 pub(super) use match_over_time_range_call::match_over_time_range_call;
 pub(super) use match_rate_range_call::match_rate_range_call;
 pub(super) use match_subquery_range_call::match_subquery_range_call;
-use no_param_outer_range_fn::no_param_outer_range_fn;
+pub(super) use no_param_outer_range_fn::no_param_outer_range_fn;
 pub(super) use over_time_family_to_outer_range_fn::over_time_family_to_outer_range_fn;
 use param_aggregate_op_is_plannable::param_aggregate_op_is_plannable;
 pub(super) use range_expr_routes_through_planner::range_expr_routes_through_planner;

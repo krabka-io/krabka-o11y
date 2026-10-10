@@ -44,8 +44,10 @@ impl std::fmt::Display for BreakableStore {
     }
 }
 
-#[async_trait::async_trait]
-impl ObjectStore for BreakableStore {
+crate::delegate_object_store! {
+    BreakableStore => inner;
+    forward [put_multipart_opts, get_opts, list_with_delimiter, copy_opts, delete_stream];
+
     async fn put_opts(
         &self,
         location: &Path,
@@ -64,22 +66,6 @@ impl ObjectStore for BreakableStore {
         self.inner.put_opts(location, payload, options).await
     }
 
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: object_store::PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: object_store::GetOptions,
-    ) -> object_store::Result<object_store::GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
     fn list(
         &self,
         prefix: Option<&Path>,
@@ -88,29 +74,6 @@ impl ObjectStore for BreakableStore {
             return futures::stream::once(async { Err(transient()) }).boxed();
         }
         self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&Path>,
-    ) -> object_store::Result<object_store::ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: object_store::CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: futures::stream::BoxStream<'static, object_store::Result<Path>>,
-    ) -> futures::stream::BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
     }
 }
 

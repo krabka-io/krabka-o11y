@@ -1,6 +1,6 @@
-use super::{Ordering, Value, loki_vector_sample_value};
+use super::{Ordering, SampleOrder, Value, loki_vector_sample_value};
 
-pub(crate) fn sort_loki_vector_result(value: &mut Value, descending: bool) {
+pub(crate) fn sort_loki_vector_result(value: &mut Value, order: SampleOrder) {
     if value.pointer("/data/resultType").and_then(Value::as_str) != Some("vector") {
         return;
     }
@@ -20,10 +20,6 @@ pub(crate) fn sort_loki_vector_result(value: &mut Value, descending: bool) {
             (None, Some(_)) => Ordering::Greater,
             (None, None) => Ordering::Equal,
         };
-        if descending {
-            ordering.reverse()
-        } else {
-            ordering
-        }
+        order.orient(ordering)
     });
 }

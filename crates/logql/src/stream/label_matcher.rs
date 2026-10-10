@@ -30,13 +30,11 @@ impl LabelMatcher {
 
     #[must_use]
     pub fn matches(&self, labels: &Labels) -> bool {
-        let candidate = labels.get(&self.name);
-        match self.op {
-            MatchOp::Equal => candidate == Some(&self.value),
-            MatchOp::NotEqual => candidate != Some(&self.value),
-            MatchOp::RegexEqual => self.regex().is_match(candidate.map_or("", String::as_str)),
-            MatchOp::RegexNotEqual => candidate.is_none_or(|value| !self.regex().is_match(value)),
-        }
+        self.op.accepts(
+            &self.value,
+            labels.get(&self.name).map(String::as_str),
+            |value| self.regex().is_match(value),
+        )
     }
 
     #[must_use]

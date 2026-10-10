@@ -39,6 +39,7 @@ mod native_histogram_not_gauge_warning;
 mod native_histogram_quantile_nan_result_info;
 mod native_histogram_quantile_nan_skew_info;
 mod range_sort_warnings;
+mod type_and_unit_labels;
 mod warn_mixed_histograms;
 
 pub(super) use annotation_source::{ANNOTATION_SOURCE, with_source_position};
@@ -67,4 +68,5 @@ pub(super) use native_histogram_not_gauge_warning::native_histogram_not_gauge_wa
 pub(super) use native_histogram_quantile_nan_result_info::native_histogram_quantile_nan_result_info;
 pub(super) use native_histogram_quantile_nan_skew_info::native_histogram_quantile_nan_skew_info;
 pub(super) use range_sort_warnings::emit_range_sort_warnings;
+pub(super) use type_and_unit_labels::TypeAndUnitLabels;
 pub(super) use warn_mixed_histograms::warn_mixed_histograms;

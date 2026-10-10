@@ -1,6 +1,6 @@
 use super::{
-    ParseError, TemplateRange, find_template_control_action, parse_template_parts,
-    parse_template_range_expression, template_parse_error,
+    ParseError, TemplateRange, find_template_control_action, parse_template_else_body,
+    parse_template_parts, parse_template_range_expression, template_parse_error,
 };
 
 pub(crate) fn parse_template_range(
@@ -30,15 +30,7 @@ pub(crate) fn parse_template_range(
         return Err(template_parse_error("unexpected template control action"));
     }
 
-    let Some((end_body, end_expression, end_next)) =
-        find_template_control_action(template, control_next)?
-    else {
-        return Err(template_parse_error("expected template end action"));
-    };
-    if end_expression != "end" {
-        return Err(template_parse_error("unexpected template control action"));
-    }
-    let else_parts = parse_template_parts(&template[control_next..end_body])?;
+    let (else_parts, end_next) = parse_template_else_body(template, control_next)?;
     Ok((
         TemplateRange {
             binding,

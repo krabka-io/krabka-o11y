@@ -33,7 +33,7 @@ mod tests {
 
     use assert2::{assert, check};
     use krabka_blockstore::{BlockIndex, Labels, MatchOp};
-    use krabka_pprof::{DebuginfodConfig, EngineOpts, FlameEngine, SymbolizeRequest};
+    use krabka_pprof::{DebuginfodConfig, EngineOpts, FlameEngine};
     use krabka_units::{mebibytes, millis, secs};
     use object_store::{ObjectStore, memory::InMemory};
 
@@ -105,7 +105,11 @@ mod tests {
     use super::*;
     use crate::{
         blockbuilder::build_block,
-        wal::{ProfileRecord, WalSample, WalSymbolSet},
+        test_support::{
+            CpuRecord, build_test_block, check_falls_back_to_address_frame, cold_api_flamegraph,
+            cpu_record, index_with_series, serve_on_loopback_with,
+        },
+        wal::{ProfileRecord, WalSample},
     };
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
@@ -228,10 +232,8 @@ mod tests {
 
     #[tokio::test]
     async fn query_analysis_with_omitted_bounds_returns_empty_for_hot_and_cold_data() {
-        use krabka_observability::server_security::ServerSecurity;
         use krabka_pprof::{InMemoryProfileStore, UnionProfileStore};
 
-        use crate::query::{QuerierState, serve};
         let objects: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let mut records = [
             record_at("t", "shared", vec![0], 5, 1_000_000_000),
@@ -241,13 +243,7 @@ mod tests {
         for (record, id) in records.iter_mut().zip(["shared-cold", "cold-a", "cold-b"]) {
             record.labels.push(("__profile_id__".into(), id.into()));
         }
-        let mut index = ProfileIndex::new();
-        for rec in &records {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
+        let mut index = index_with_series(&records, &[]);
         for block in build_block(
             &objects,
             "t",
@@ -306,20 +302,8 @@ mod tests {
         );
         let heads = Arc::new(UnionProfileStore::new(Arc::new(first), Arc::new(second)));
         let mixed = Arc::new(UnionProfileStore::new(heads, Arc::clone(&cold)));
-        let state = Arc::new(QuerierState::new(mixed).with_query_analysis_series_enabled(true));
-        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = stopped.await;
-            },
-        )
-        .await
-        .unwrap();
-        let client = reqwest::Client::new();
-        for (start, end) in [(0, 0), (0, 50), (3000, 0)] {
+        let (bound, stop) = serve_analysis_querier(mixed).await;
+        for (start_ms, end_ms) in [(0, 0), (0, 50), (3000, 0)] {
             for (tenant, query) in [
                 ("t", "{}"),
                 ("t", "{service_name=\"hot-only\"}"),
@@ -336,20 +320,16 @@ mod tests {
                 ("absent", "{}"),
                 ("t", "{invalid"),
             ] {
-                let response: serde_json::Value = client
-                    .post(format!(
-                        "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-                    ))
-                    .header("x-scope-orgid", tenant)
-                    .json(&serde_json::json!({"query":query,"start":start,"end":end}))
-                    .send()
-                    .await
-                    .unwrap()
-                    .error_for_status()
-                    .unwrap()
-                    .json()
-                    .await
-                    .unwrap();
+                let response = analyze_query(
+                    bound,
+                    &AnalyzeQuery {
+                        tenant,
+                        query,
+                        start_ms,
+                        end_ms,
+                    },
+                )
+                .await;
                 check!(response == serde_json::json!({}));
             }
         }
@@ -364,36 +344,68 @@ mod tests {
             Arc::new(InMemoryProfileStore::new()),
             cold,
         ));
-        let state = Arc::new(QuerierState::new(flushed).with_query_analysis_series_enabled(true));
-        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = stopped.await;
-            },
-        )
-        .await
-        .unwrap();
-        for (start, end) in [(0, 0), (0, 2000), (3000, 0)] {
-            let response: serde_json::Value = client
-                .post(format!(
-                    "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-                ))
-                .header("x-scope-orgid", "t")
-                .json(&serde_json::json!({"query":"{}","start":start,"end":end}))
-                .send()
-                .await
-                .unwrap()
-                .error_for_status()
-                .unwrap()
-                .json()
-                .await
-                .unwrap();
+        let (bound, stop) = serve_analysis_querier(flushed).await;
+        for (start_ms, end_ms) in [(0, 0), (0, 2000), (3000, 0)] {
+            let response = analyze_query(
+                bound,
+                &AnalyzeQuery {
+                    tenant: "t",
+                    query: "{}",
+                    start_ms,
+                    end_ms,
+                },
+            )
+            .await;
             check!(response == serde_json::json!({}));
         }
         let _ = stop.send(());
+    }
+
+    /// Serves `store` on loopback as a querier with query analysis enabled.
+    async fn serve_analysis_querier<S: krabka_pprof::ProfileStore + 'static>(
+        store: Arc<S>,
+    ) -> (std::net::SocketAddr, tokio::sync::oneshot::Sender<()>) {
+        use crate::query::{QuerierState, serve};
+
+        let state = Arc::new(QuerierState::new(store).with_query_analysis_series_enabled(true));
+        serve_on_loopback_with(async |addr, security, shutdown| {
+            serve(addr, state, security, shutdown).await
+        })
+        .await
+    }
+
+    /// One `AnalyzeQuery` call: the tenant it is made as, and its body.
+    struct AnalyzeQuery<'a> {
+        tenant: &'a str,
+        query: &'a str,
+        start_ms: i64,
+        end_ms: i64,
+    }
+
+    /// Posts `request` to the querier at `bound` and returns the JSON answer,
+    /// failing on any non-success status.
+    async fn analyze_query(
+        bound: std::net::SocketAddr,
+        request: &AnalyzeQuery<'_>,
+    ) -> serde_json::Value {
+        reqwest::Client::new()
+            .post(format!(
+                "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
+            ))
+            .header("x-scope-orgid", request.tenant)
+            .json(&serde_json::json!({
+                "query": request.query,
+                "start": request.start_ms,
+                "end": request.end_ms,
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -403,17 +415,7 @@ mod tests {
         let mut input_keys = Vec::new();
         for (offset, value) in [(0, 5), (1, 7)] {
             let rec = record("t", "api", vec![0], value);
-            let meta = build_block(
-                &store,
-                "t",
-                0,
-                std::slice::from_ref(&rec),
-                (offset, offset),
-                &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-            )
-            .await
-            .unwrap()
-            .remove(0);
+            let meta = build_test_block(&store, std::slice::from_ref(&rec), offset).await;
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
             index
                 .add_series("t", labels.fingerprint(), &labels)
@@ -484,69 +486,27 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec_a = record("t", "api", vec![0], 5);
         let rec_b = record("t", "api", vec![0], 7);
-        let meta_a = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec_a),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let meta_b = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec_b),
-            (1, 1),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        let labels = Labels::from_pairs(rec_a.labels.iter().cloned());
-        index
-            .add_series("t", labels.fingerprint(), &labels)
-            .unwrap();
-        index.add_block(&meta_a);
-        index.add_block(&meta_b);
-        let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-        let engine = FlameEngine::new(cold, EngineOpts::default());
+        let meta_a = build_test_block(&store, std::slice::from_ref(&rec_a), 0).await;
+        let meta_b = build_test_block(&store, std::slice::from_ref(&rec_b), 1).await;
+        let index = index_with_series([&rec_a], &[&meta_a, &meta_b]);
 
-        let fg = engine
-            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
-            .await
-            .unwrap();
+        let fg = cold_api_flamegraph(store, index).await;
 
         assert!(fg.total == 12);
         assert!(fg.names.iter().any(|name| name == "main"));
     }
 
+    async fn single_block_cold_store(records: &[ProfileRecord]) -> ColdProfileStore {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let meta = build_test_block(&store, records, 0).await;
+        let index = index_with_series(records, &[&meta]);
+        ColdProfileStore::new(store, Arc::new(index))
+    }
+
     #[tokio::test]
     async fn cold_store_projects_labels_with_matchers() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec = record("t", "api", vec![0], 5);
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index
-            .add_series("t", labels.fingerprint(), &labels)
-            .unwrap();
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let cold = single_block_cold_store(std::slice::from_ref(&rec)).await;
 
         let values = cold
             .label_values(
@@ -564,26 +524,8 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_stats_report_block_time_bounds() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec = record("t", "api", vec![0], 5);
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index
-            .add_series("t", labels.fingerprint(), &labels)
-            .unwrap();
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let cold = single_block_cold_store(std::slice::from_ref(&rec)).await;
 
         let stats = cold.stats("t", 0, i64::MAX).await.unwrap();
 
@@ -599,30 +541,10 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_stats_honor_sample_time_inside_overlapping_block() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let first = record_at("t", "api", vec![0], 5, 1_000_000_000);
         let later = record_at("t", "worker", vec![0], 7, 3_000_000_000);
-        let records = vec![first.clone(), later.clone()];
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            &records,
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        for rec in [&first, &later] {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let records = vec![first, later];
+        let cold = single_block_cold_store(&records).await;
 
         let stats = cold.stats("t", 1_000, 1_000).await.unwrap();
 
@@ -647,39 +569,11 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let early = record_at("t", "api", vec![0], 5, 1_000_000_000); // 1000 ms
         let late = record_at("t", "worker", vec![0], 7, 5_000_000_000); // 5000 ms
-        let meta_early = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&early),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let meta_late = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&late),
-            (1, 1),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
+        let meta_early = build_test_block(&store, std::slice::from_ref(&early), 0).await;
+        let meta_late = build_test_block(&store, std::slice::from_ref(&late), 1).await;
         assert!(meta_early.min_ts == 1000 && meta_early.max_ts == 1000);
         assert!(meta_late.min_ts == 5000 && meta_late.max_ts == 5000);
-        let mut index = ProfileIndex::new();
-        for rec in [&early, &late] {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
-        index.add_block(&meta_early);
-        index.add_block(&meta_late);
+        let index = index_with_series([&early, &late], &[&meta_early, &meta_late]);
         // Drop the block payloads so any attempt to load+scan a batch would error.
         store
             .delete(&Path::from(meta_early.object_key.clone()))
@@ -720,26 +614,8 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_profile_types_honor_query_time_range() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec = record("t", "api", vec![0], 5);
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index
-            .add_series("t", labels.fingerprint(), &labels)
-            .unwrap();
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let cold = single_block_cold_store(std::slice::from_ref(&rec)).await;
 
         let types = cold.profile_types("t", 2_000, 3_000).await.unwrap();
 
@@ -748,7 +624,6 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_profile_types_do_not_leak_types_outside_time_range_in_same_block() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let cpu = record_at("t", "api", vec![0], 5, 1_000_000_000);
         let mut memory = record_at("t", "api", vec![0], 7, 3_000_000_000);
         memory.profile_type = "memory:alloc_space:bytes:space:bytes".to_string();
@@ -757,27 +632,8 @@ mod tests {
             ("__profile_type__".to_string(), memory.profile_type.clone()),
             ("service_name".to_string(), "api".to_string()),
         ];
-        let records = vec![cpu.clone(), memory.clone()];
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            &records,
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        for rec in &records {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let records = vec![cpu, memory];
+        let cold = single_block_cold_store(&records).await;
 
         let types = cold.profile_types("t", 1_000, 1_000).await.unwrap();
 
@@ -786,26 +642,8 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_label_values_honor_query_time_range() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec = record("t", "api", vec![0], 5);
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index
-            .add_series("t", labels.fingerprint(), &labels)
-            .unwrap();
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let cold = single_block_cold_store(std::slice::from_ref(&rec)).await;
 
         let values = cold
             .label_values("t", "service_name", &[], 2_000, 3_000)
@@ -817,30 +655,10 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_label_values_do_not_leak_series_outside_time_range_in_same_block() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let api = record_at("t", "api", vec![0], 5, 1_000_000_000);
         let worker = record_at("t", "worker", vec![0], 7, 3_000_000_000);
-        let records = vec![api.clone(), worker.clone()];
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            &records,
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        for rec in &records {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let records = vec![api, worker];
+        let cold = single_block_cold_store(&records).await;
 
         let values = cold
             .label_values("t", "service_name", &[], 1_000, 1_000)
@@ -852,26 +670,8 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_label_names_honor_query_time_range() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec = record("t", "api", vec![0], 5);
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index
-            .add_series("t", labels.fingerprint(), &labels)
-            .unwrap();
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let cold = single_block_cold_store(std::slice::from_ref(&rec)).await;
 
         let names = cold.label_names("t", &[], 2_000, 3_000).await.unwrap();
 
@@ -880,33 +680,13 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_label_names_do_not_leak_series_outside_time_range_in_same_block() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let api = record_at("t", "api", vec![0], 5, 1_000_000_000);
         let mut worker = record_at("t", "worker", vec![0], 7, 3_000_000_000);
         worker
             .labels
             .push(("pod".to_string(), "worker-0".to_string()));
-        let records = vec![api.clone(), worker.clone()];
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            &records,
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        for rec in &records {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let records = vec![api, worker];
+        let cold = single_block_cold_store(&records).await;
 
         let names = cold.label_names("t", &[], 1_000, 1_000).await.unwrap();
 
@@ -915,26 +695,8 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_series_honor_query_time_range() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec = record("t", "api", vec![0], 5);
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index
-            .add_series("t", labels.fingerprint(), &labels)
-            .unwrap();
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let cold = single_block_cold_store(std::slice::from_ref(&rec)).await;
 
         let series = cold
             .series("t", &[], &["service_name".to_string()], 2_000, 3_000)
@@ -946,30 +708,10 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_series_do_not_leak_series_outside_time_range_in_same_block() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let api = record_at("t", "api", vec![0], 5, 1_000_000_000);
         let worker = record_at("t", "worker", vec![0], 7, 3_000_000_000);
-        let records = vec![api.clone(), worker.clone()];
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            &records,
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        for rec in &records {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
-        index.add_block(&meta);
-        let cold = ColdProfileStore::new(store, Arc::new(index));
+        let records = vec![api, worker];
+        let cold = single_block_cold_store(&records).await;
 
         let series = cold
             .series("t", &[], &["service_name".to_string()], 1_000, 1_000)
@@ -988,25 +730,8 @@ mod tests {
         let api = record_at("t", "api", vec![0], 5, 1_000_000_000);
         let worker = record_at("t", "worker", vec![0], 7, 3_000_000_000);
         let records = vec![api.clone(), worker.clone()];
-        let meta = build_block(
-            &store,
-            "t",
-            0,
-            &records,
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        for rec in &records {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
-        index.add_block(&meta);
+        let meta = build_test_block(&store, &records, 0).await;
+        let index = index_with_series(&records, &[&meta]);
         store
             .delete(&Path::from(meta.object_key.clone()))
             .await
@@ -1042,17 +767,7 @@ mod tests {
 
     #[test]
     fn cold_store_native_resolver_falls_back_to_address_frame() {
-        let resolver = local_native_resolver();
-        let out = resolver
-            .symbolize(&SymbolizeRequest {
-                build_id: String::new(),
-                filename: "/missing/native".to_string(),
-                address: 0x99,
-            })
-            .unwrap();
-
-        assert!(out[0].function == "/missing/native+0x99");
-        assert!(out[0].file == "/missing/native");
+        check_falls_back_to_address_frame(local_native_resolver().as_ref());
     }
 
     #[test]
@@ -1121,7 +836,17 @@ mod tests {
         // Dense per-block map: stored partitions {0, 1} -> {base|0, base|1}.
         let partition_map = BTreeMap::from([(0_u64, partition_base), (1_u64, partition_base | 1)]);
         let fps = BTreeSet::from([fp_keep]);
-        let out = filter_and_remap_batch(&batch, &partition_map, &fps, PT, 0, 5_000).unwrap();
+        let out = filter_and_remap_batch(
+            &batch,
+            &partition_map,
+            BlockRowFilter {
+                fps: &fps,
+                profile_type: PT,
+                start_ms: 0,
+                end_ms: 5_000,
+            },
+        )
+        .unwrap();
 
         // Two surviving rows (the partition-0 and partition-1 keeps).
         assert!(out.num_rows() == 2);
@@ -1148,41 +873,14 @@ mod tests {
         value: i64,
         timestamp_ns: i64,
     ) -> ProfileRecord {
-        ProfileRecord {
-            tenant: tenant.to_string(),
-            labels: vec![
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("__profile_type__".to_string(), PT.to_string()),
-                ("service_name".to_string(), service.to_string()),
-            ],
-            profile_type: PT.to_string(),
-            samples: vec![WalSample {
-                stacktrace_location_refs: stack,
-                value,
-                timestamp_ns,
-                span_id: None,
-                trace_id: None,
-            }],
-            symbols: symbols(),
-        }
-    }
-
-    fn symbols() -> WalSymbolSet {
-        WalSymbolSet {
-            strings: vec![String::new(), "main".to_string()],
-            functions: vec![crate::wal::WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![crate::wal::WalLocation {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![(0, 1)],
-            }],
-            mappings: Vec::new(),
-        }
+        cpu_record(CpuRecord {
+            tenant,
+            service,
+            stack,
+            value,
+            timestamp_ns,
+            function: "main",
+        })
     }
 }
 
@@ -1198,6 +896,6 @@ use batch_fingerprints_overlap::batch_fingerprints_overlap;
 use block_partition_map::block_partition_map;
 pub use cold_profile_store::ColdProfileStore;
 use composite_symbols::CompositeSymbols;
-use filter_and_remap_batch::filter_and_remap_batch;
+use filter_and_remap_batch::{BlockRowFilter, filter_and_remap_batch};
 use is_unbounded_metadata_range::is_unbounded_metadata_range;
 use local_native_resolver::local_native_resolver;

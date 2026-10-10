@@ -3,8 +3,8 @@ use super::{
     MetricsPartial, MetricsResponseJson, QuerierBackend, QuerierScheme, SearchJobRequest,
     SearchPartial, SearchResponseJson, TENANT_HEADER, TagNamesJobRequest, TagNamesPartial,
     TagValuesBody, TagValuesJobRequest, TagValuesPartial, TagsBody, TraceByIdJobRequest,
-    TraceByIdResponseJson, TracePartial, async_trait, build_url, error_for_status, ns_to_seconds,
-    push_shard_params, scope_param,
+    TraceByIdResponseJson, TracePartial, async_trait, build_url, decode_json_body,
+    internal_http_client, ns_to_seconds, push_shard_params, tag_scope_name,
 };
 
 /// The HTTP transport to one querier at a time.
@@ -41,11 +41,22 @@ impl HttpQuerier {
         scheme: QuerierScheme,
         internal_client: &InternalClient,
     ) -> Result<Self, BackendError> {
-        let http = internal_client
-            .apply(reqwest::Client::builder().timeout(timeout))
-            .build()
-            .map_err(|e| BackendError::Transport(e.to_string()))?;
+        let http = internal_http_client(timeout, internal_client)?;
         Ok(Self { http, scheme })
+    }
+
+    /// Sends a GET for `url` with `tenant` in the tenant header.
+    async fn send_tenant_get(
+        &self,
+        url: reqwest::Url,
+        tenant: &str,
+    ) -> Result<reqwest::Response, BackendError> {
+        self.http
+            .get(url)
+            .header(TENANT_HEADER, tenant)
+            .send()
+            .await
+            .map_err(|e| Self::map_send_err(&e))
     }
 
     pub(crate) fn map_send_err(e: &reqwest::Error) -> BackendError {
@@ -70,17 +81,9 @@ impl QuerierBackend for HttpQuerier {
         ];
         push_shard_params(&mut params, &req.shard);
         let resp = self
-            .http
-            .get(build_url(&url, &params)?)
-            .header(TENANT_HEADER, req.tenant.as_str())
-            .send()
-            .await
-            .map_err(|e| Self::map_send_err(&e))?;
-        let resp = error_for_status(resp).await?;
-        let body: SearchResponseJson = resp
-            .json()
-            .await
-            .map_err(|e| BackendError::Transport(format!("decode search body: {e}")))?;
+            .send_tenant_get(build_url(&url, &params)?, req.tenant.as_str())
+            .await?;
+        let body: SearchResponseJson = decode_json_body(resp, "search").await?;
         Ok(SearchPartial {
             traces: body.traces,
             metrics: body.metrics,
@@ -102,22 +105,14 @@ impl QuerierBackend for HttpQuerier {
             ("end", ns_to_seconds(req.end_ns)),
         ];
         let resp = self
-            .http
-            .get(build_url(&url, &params)?)
-            .header(TENANT_HEADER, req.tenant.as_str())
-            .send()
-            .await
-            .map_err(|e| Self::map_send_err(&e))?;
+            .send_tenant_get(build_url(&url, &params)?, req.tenant.as_str())
+            .await?;
         // The querier returns 404 when it does not hold the trace; treat that as
         // an empty partial rather than an error (another querier may have it).
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(TracePartial::default());
         }
-        let resp = error_for_status(resp).await?;
-        let body: TraceByIdResponseJson = resp
-            .json()
-            .await
-            .map_err(|e| BackendError::Transport(format!("decode trace body: {e}")))?;
+        let body: TraceByIdResponseJson = decode_json_body(resp, "trace").await?;
         Ok(TracePartial {
             trace: body,
             metrics: crate::frontend::wire::Metrics::default(),
@@ -138,21 +133,13 @@ impl QuerierBackend for HttpQuerier {
             ("end", ns_to_seconds(req.end_ns)),
         ];
         if let Some(scope) = req.scope {
-            params.push(("scope", scope_param(scope).to_string()));
+            params.push(("scope", tag_scope_name(scope).to_string()));
         }
         push_shard_params(&mut params, &req.shard);
         let resp = self
-            .http
-            .get(build_url(&url, &params)?)
-            .header(TENANT_HEADER, req.tenant.as_str())
-            .send()
-            .await
-            .map_err(|e| Self::map_send_err(&e))?;
-        let resp = error_for_status(resp).await?;
-        let body: TagsBody = resp
-            .json()
-            .await
-            .map_err(|e| BackendError::Transport(format!("decode tags body: {e}")))?;
+            .send_tenant_get(build_url(&url, &params)?, req.tenant.as_str())
+            .await?;
+        let body: TagsBody = decode_json_body(resp, "tags").await?;
         Ok(TagNamesPartial {
             tags: body.scoped_tags(),
             metrics: body.metrics,
@@ -183,18 +170,8 @@ impl QuerierBackend for HttpQuerier {
                 pairs.append_pair(key, value);
             }
         }
-        let resp = self
-            .http
-            .get(url)
-            .header(TENANT_HEADER, req.tenant.as_str())
-            .send()
-            .await
-            .map_err(|e| Self::map_send_err(&e))?;
-        let resp = error_for_status(resp).await?;
-        let body: TagValuesBody = resp
-            .json()
-            .await
-            .map_err(|e| BackendError::Transport(format!("decode tag-values body: {e}")))?;
+        let resp = self.send_tenant_get(url, req.tenant.as_str()).await?;
+        let body: TagValuesBody = decode_json_body(resp, "tag-values").await?;
         let metrics = body.metrics;
         Ok(TagValuesPartial {
             values: body.into_typed_values(),
@@ -219,25 +196,16 @@ impl QuerierBackend for HttpQuerier {
         }
         push_shard_params(&mut params, &req.shard);
         let resp = self
-            .http
-            .get(build_url(&url, &params)?)
-            .header(TENANT_HEADER, req.tenant.as_str())
-            .send()
-            .await
-            .map_err(|e| Self::map_send_err(&e))?;
-        let resp = error_for_status(resp).await?;
+            .send_tenant_get(build_url(&url, &params)?, req.tenant.as_str())
+            .await?;
         if req.instant {
-            let response: InstantMetricsResponseJson = resp.json().await.map_err(|e| {
-                BackendError::Transport(format!("decode instant metrics body: {e}"))
-            })?;
+            let response: InstantMetricsResponseJson =
+                decode_json_body(resp, "instant metrics").await?;
             return response
                 .into_partial(req.end_ns)
                 .map_err(BackendError::Transport);
         }
-        let response: MetricsResponseJson = resp
-            .json()
-            .await
-            .map_err(|e| BackendError::Transport(format!("decode metrics body: {e}")))?;
+        let response: MetricsResponseJson = decode_json_body(resp, "metrics").await?;
         Ok(MetricsPartial {
             response,
             metrics: crate::frontend::wire::Metrics::default(),

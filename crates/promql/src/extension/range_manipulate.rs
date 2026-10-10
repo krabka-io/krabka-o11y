@@ -49,24 +49,19 @@ use arrow::{
 };
 use datafusion::{
     common::{DataFusionError, Result as DfResult},
-    execution::TaskContext,
     logical_expr::{Expr, LogicalPlan, UserDefinedLogicalNodeCore},
     physical_expr::EquivalenceProperties,
-    physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
-        stream::RecordBatchStreamAdapter,
-    },
+    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
 };
-use futures::StreamExt;
 
 use crate::range_array::RangeArray;
 
 #[cfg(test)]
 mod tests {
     use arrow::{
-        array::{Array, DictionaryArray, Float64Array, Int64Array, StringArray},
+        array::{Array, AsArray, DictionaryArray, Float64Array, Int64Array, StringArray},
         compute::concat_batches,
-        datatypes::{DataType, Field, Int64Type, Schema},
+        datatypes::{ArrowPrimitiveType, DataType, Field, Float64Type, Int64Type, Schema},
     };
     use assert2::check;
     use datafusion::{
@@ -99,10 +94,9 @@ mod tests {
         (batch, schema)
     }
 
-    /// Decodes a `RangeArray` dict column into one `Vec` of i64 timestamps per cell.
-    ///
-    /// This helper reads the backing values generically.
-    fn timestamp_cells(batch: &RecordBatch, name: &str) -> Vec<Vec<i64>> {
+    /// Decodes a `RangeArray` dict column into one `Vec` of its `T` values per
+    /// cell.
+    fn range_cells<T: ArrowPrimitiveType>(batch: &RecordBatch, name: &str) -> Vec<Vec<T::Native>> {
         let dict = batch
             .column_by_name(name)
             .unwrap()
@@ -112,48 +106,41 @@ mod tests {
         let range = RangeArray::try_from_dict_array(dict).unwrap();
         (0..range.len())
             .map(|cell| {
-                let arr = range.get(cell).unwrap();
-                let arr = arr.as_any().downcast_ref::<Int64Array>().unwrap();
-                (0..arr.len()).map(|i| arr.value(i)).collect()
+                range
+                    .get(cell)
+                    .unwrap()
+                    .as_primitive::<T>()
+                    .values()
+                    .to_vec()
             })
             .collect()
+    }
+
+    fn timestamp_cells(batch: &RecordBatch, name: &str) -> Vec<Vec<i64>> {
+        range_cells::<Int64Type>(batch, name)
     }
 
     fn value_cells(batch: &RecordBatch, name: &str) -> Vec<Vec<f64>> {
-        let dict = batch
-            .column_by_name(name)
-            .unwrap()
-            .as_any()
-            .downcast_ref::<DictionaryArray<Int64Type>>()
-            .unwrap();
-        let range = RangeArray::try_from_dict_array(dict).unwrap();
-        (0..range.len())
-            .map(|cell| {
-                let arr = range.get(cell).unwrap();
-                let arr = arr.as_any().downcast_ref::<Float64Array>().unwrap();
-                (0..arr.len()).map(|i| arr.value(i)).collect()
-            })
-            .collect()
+        range_cells::<Float64Type>(batch, name)
     }
 
-    async fn run(
-        batch: RecordBatch,
-        schema: Arc<Schema>,
-        start: i64,
-        end: i64,
-        interval: i64,
-        range: i64,
-    ) -> RecordBatch {
+    /// Settings over the `timestamp` and `value` columns, on a one-instant grid
+    /// at zero with a one-millisecond window; each test overrides the grid.
+    fn timestamp_value_settings() -> RangeManipulateSettings {
+        RangeManipulateSettings {
+            start_ms: 0,
+            end_ms: 0,
+            interval_ms: 1,
+            range_ms: 1,
+            time_index: "timestamp".into(),
+            field_column: "value".into(),
+        }
+    }
+
+    async fn run(batch: RecordBatch, settings: RangeManipulateSettings) -> RecordBatch {
+        let schema = batch.schema();
         let mem = MemorySourceConfig::try_new_exec(&[vec![batch]], schema, None).unwrap();
-        let exec = RangeManipulateExec::new(
-            start,
-            end,
-            interval,
-            range,
-            "timestamp".into(),
-            "value".into(),
-            mem,
-        );
+        let exec = RangeManipulateExec::new(settings, mem);
         let out_schema = exec.output_schema.clone();
         let ctx = SessionContext::new();
         let out = collect(Arc::new(exec), ctx.task_ctx()).await.unwrap();
@@ -164,7 +151,7 @@ mod tests {
     fn physical_node_owns_no_expressions() {
         let (batch, schema) = series_batch(vec![0], vec![1.0]);
         let mem = MemorySourceConfig::try_new_exec(&[vec![batch]], schema, None).unwrap();
-        let exec = RangeManipulateExec::new(0, 0, 1, 1, "timestamp".into(), "value".into(), mem);
+        let exec = RangeManipulateExec::new(timestamp_value_settings(), mem);
         // The plan owns no expression, so a visitor that fails must never run.
         let walk = exec.apply_expressions(&mut |_| plan_err!("visited an expression"));
         check!(let Ok(TreeNodeRecursion::Continue) = walk);
@@ -194,8 +181,18 @@ mod tests {
     #[tokio::test]
     async fn right_boundary_sample_is_included() {
         // Sample exactly at eval timestamp t must land in the window.
-        let (batch, schema) = series_batch(vec![100], vec![1.0]);
-        let out = run(batch, schema, 100, 100, 60, 60).await;
+        let (batch, _) = series_batch(vec![100], vec![1.0]);
+        let out = run(
+            batch,
+            RangeManipulateSettings {
+                start_ms: 100,
+                end_ms: 100,
+                interval_ms: 60,
+                range_ms: 60,
+                ..timestamp_value_settings()
+            },
+        )
+        .await;
         let cells = timestamp_cells(&out, "timestamp_range");
         assert2::assert!(cells == vec![vec![100_i64]]);
     }
@@ -204,8 +201,18 @@ mod tests {
     async fn left_edge_sample_is_excluded() {
         // Sample at t - range must be excluded (left-open). With t=100, range=60
         // the left edge is 40; a sample at 40 is out, a sample at 41 is in.
-        let (batch, schema) = series_batch(vec![40, 41], vec![1.0, 2.0]);
-        let out = run(batch, schema, 100, 100, 60, 60).await;
+        let (batch, _) = series_batch(vec![40, 41], vec![1.0, 2.0]);
+        let out = run(
+            batch,
+            RangeManipulateSettings {
+                start_ms: 100,
+                end_ms: 100,
+                interval_ms: 60,
+                range_ms: 60,
+                ..timestamp_value_settings()
+            },
+        )
+        .await;
         let ts_cells = timestamp_cells(&out, "timestamp_range");
         let val_cells = value_cells(&out, "value_range");
         assert2::assert!(ts_cells == vec![vec![41_i64]]);
@@ -215,8 +222,18 @@ mod tests {
     #[tokio::test]
     async fn empty_window_produces_empty_cell() {
         // No samples in (40, 100]; the window must be empty, not absent.
-        let (batch, schema) = series_batch(vec![10, 20], vec![1.0, 2.0]);
-        let out = run(batch, schema, 100, 100, 60, 60).await;
+        let (batch, _) = series_batch(vec![10, 20], vec![1.0, 2.0]);
+        let out = run(
+            batch,
+            RangeManipulateSettings {
+                start_ms: 100,
+                end_ms: 100,
+                interval_ms: 60,
+                range_ms: 60,
+                ..timestamp_value_settings()
+            },
+        )
+        .await;
         let ts_cells = timestamp_cells(&out, "timestamp_range");
         assert2::assert!(ts_cells == vec![Vec::<i64>::new()]);
     }
@@ -224,8 +241,18 @@ mod tests {
     #[tokio::test]
     async fn multiple_eval_steps_fold_overlapping_windows() {
         // range=60, interval=30. Samples every 25ms.
-        let (batch, schema) = series_batch(vec![0, 25, 50, 75, 100], vec![0.0, 1.0, 2.0, 3.0, 4.0]);
-        let out = run(batch, schema, 60, 120, 30, 60).await;
+        let (batch, _) = series_batch(vec![0, 25, 50, 75, 100], vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        let out = run(
+            batch,
+            RangeManipulateSettings {
+                start_ms: 60,
+                end_ms: 120,
+                interval_ms: 30,
+                range_ms: 60,
+                ..timestamp_value_settings()
+            },
+        )
+        .await;
 
         // Eval steps: 60, 90, 120.
         let eval = out
@@ -258,8 +285,18 @@ mod tests {
     #[tokio::test]
     async fn windows_share_offsets_across_value_and_timestamp() {
         // The two RangeArray columns must be row-aligned: same cell lengths.
-        let (batch, schema) = series_batch(vec![10, 20, 30], vec![1.0, 2.0, 3.0]);
-        let out = run(batch, schema, 30, 30, 30, 30).await;
+        let (batch, _) = series_batch(vec![10, 20, 30], vec![1.0, 2.0, 3.0]);
+        let out = run(
+            batch,
+            RangeManipulateSettings {
+                start_ms: 30,
+                end_ms: 30,
+                interval_ms: 30,
+                range_ms: 30,
+                ..timestamp_value_settings()
+            },
+        )
+        .await;
         let ts_cells = timestamp_cells(&out, "timestamp_range");
         let val_cells = value_cells(&out, "value_range");
         // (0, 30] -> 10, 20, 30
@@ -272,8 +309,18 @@ mod tests {
         // A series with no samples projects nothing: no labels to repeat and no
         // windows to emit, so the output batch has the extended schema but zero
         // rows.
-        let (batch, schema) = series_batch(vec![], vec![]);
-        let out = run(batch, schema, 0, 120, 60, 60).await;
+        let (batch, _) = series_batch(vec![], vec![]);
+        let out = run(
+            batch,
+            RangeManipulateSettings {
+                start_ms: 0,
+                end_ms: 120,
+                interval_ms: 60,
+                range_ms: 60,
+                ..timestamp_value_settings()
+            },
+        )
+        .await;
         assert2::assert!(out.num_rows() == 0);
         let out_schema = out.schema();
         let names: Vec<&str> = out_schema
@@ -295,6 +342,6 @@ mod step_windows;
 pub use build_extended_range_schema::build_extended_range_schema;
 use range_array_type::range_array_type;
 pub use range_manipulate_exec::RangeManipulateExec;
-pub use range_manipulate_type::RangeManipulate;
+pub use range_manipulate_type::{RangeManipulate, RangeManipulateSettings};
 pub use range_suffix::RANGE_SUFFIX;
 use step_windows::StepWindows;

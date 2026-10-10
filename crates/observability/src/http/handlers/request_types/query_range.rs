@@ -18,6 +18,6 @@ pub(crate) async fn query_range(
         QueryKind::Range,
     )
     .await;
-    state.record_query("query_range", resp.status().is_success(), start);
+    state.record_query("query_range", resp.status(), start);
     resp
 }

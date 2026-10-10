@@ -8,9 +8,7 @@ use super::*;
 /// interpreter's `eval_instant_expr_over_steps` scalar stitching.
 #[tokio::test]
 pub(crate) async fn range_scalar_expr_planner_path_matches_interpreter() {
-    use promql_parser::parser::Expr;
-
-    use crate::{DurationExprContext, parse_promql_with_duration_context};
+    use crate::DurationExprContext;
 
     // A store with one series so calendar functions over `time()` have a
     // defined eval timeline; scalars ignore the series entirely.
@@ -21,14 +19,10 @@ pub(crate) async fn range_scalar_expr_planner_path_matches_interpreter() {
     let (start, end, step) = (0_i64, 300_000_i64, millis(60_000));
 
     for query in ["42", "1 + 2", "time()", "2 * (3 + 4)"] {
-        let expr =
-            parse_promql_with_duration_context(query, DurationExprContext::range(start, end, step))
-                .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-        let mut probe = &expr;
-        while let Expr::Paren(paren) = probe {
-            probe = &paren.expr;
-        }
-        assert2::assert!(super::super::range_expr_routes_through_planner(probe));
+        assert2::assert!(range_query_routes_through_planner(
+            query,
+            DurationExprContext::range(start, end, step)
+        ));
         let planner = engine
             .query_range(&tenant_id("t"), query, start, end, step)
             .await

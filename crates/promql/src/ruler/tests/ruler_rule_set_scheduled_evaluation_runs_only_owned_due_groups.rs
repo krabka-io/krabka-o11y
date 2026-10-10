@@ -24,27 +24,7 @@ rules:
             .or_insert_with(BTreeMap::new)
             .insert(group_name.to_string(), group);
     }
-    let mut group_state = super::super::RulerGroupState::default();
-    group_state.apply_records(vec![
-        super::super::RulerGroupStateRecord {
-            tenant: "tenant-a".to_string(),
-            namespace: "team-a".to_string(),
-            group: "not-yet".to_string(),
-            last_eval_ms: 120_000,
-        },
-        super::super::RulerGroupStateRecord {
-            tenant: "tenant-a".to_string(),
-            namespace: "team-b".to_string(),
-            group: "due".to_string(),
-            last_eval_ms: 60_000,
-        },
-        super::super::RulerGroupStateRecord {
-            tenant: "tenant-a".to_string(),
-            namespace: "team-c".to_string(),
-            group: "also-due".to_string(),
-            last_eval_ms: 90_000,
-        },
-    ]);
+    let mut group_state = staggered_group_state();
     let shard = super::super::RulerShard::new(1, 2).expect("ruler shard");
     let expected = super::super::filter_ruler_rule_set_for_shard_due_for_eval(
         "tenant-a",
@@ -58,25 +38,24 @@ rules:
         .flat_map(|groups| groups.keys().cloned())
         .collect::<BTreeSet<_>>();
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels("up", "api"), 180_000, 1.0);
-    let store = Arc::new(store);
-    let engine = PromqlEngine::new(store, EngineOpts::default());
+    let engine = up_api_engine(&[180_000]);
     let wal_sink = RecordingSink::default();
     let alert_sink = RecordingAlertmanagerSink::default();
     let state_sink = RecordingRulerStateSink::default();
     let mut alert_state = super::super::RulerAlertState::default();
 
-    let evaluation = super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval(
-        &engine,
-        (&wal_sink, &alert_sink, &state_sink),
-        &mut alert_state,
-        &tenant_id("tenant-a"),
-        &rules,
-        (&mut group_state, shard, 180_000),
-    )
-    .await
-    .expect("scheduled rule-set evaluation");
+    let evaluation =
+        super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
+            &engine,
+            (&wal_sink, &alert_sink, &state_sink),
+            &mut alert_state,
+            &tenant_id("tenant-a"),
+            &rules,
+            (&mut group_state, shard, 180_000),
+        )
+        .await
+        .expect("scheduled rule-set evaluation")
+        .evaluation;
 
     assert2::assert!(evaluation.recording_records == expected_groups.len());
     assert2::assert!(
@@ -121,7 +100,7 @@ rules:
     let first_wal = RecordingSink::default();
     let first_state_sink = RecordingRulerStateSink::default();
     let mut first_group_state = super::super::RulerGroupState::default();
-    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval(
+    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
         &engine,
         (
             &first_wal,
@@ -139,7 +118,7 @@ rules:
     let mut replacement_group_state = super::super::RulerGroupState::default();
     replacement_group_state.apply_records(first_state_sink.group_records());
     let replacement_wal = RecordingSink::default();
-    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval(
+    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
         &engine,
         (
             &replacement_wal,

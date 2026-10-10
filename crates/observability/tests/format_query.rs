@@ -8,12 +8,51 @@ use axum::{
     http::{Request, StatusCode},
 };
 use krabka_observability::{
-    InMemoryWalSink, QuerierIndexSource, Role, ServiceConfig, ServiceDependencies,
-    build_service_router, distributor_router, loki_router,
+    InMemoryWalSink, Role, ServiceConfig, ServiceDependencies, build_service_router,
+    distributor_router, loki_router,
 };
 use serde_json::json;
-use support::{fixture, json_body};
+use support::{fixture, json_body, minimal_service_config};
 use tower::ServiceExt as _;
+
+/// A URL-encoded query and the text the format-query endpoint formats it
+/// into.
+struct FormatCase<'a> {
+    encoded_query: &'a str,
+    expected: &'a str,
+}
+
+/// Checks that the format-query endpoint over the shared fixture formats each
+/// case's query into its expected text.
+async fn assert_formats(cases: &[FormatCase<'_>]) {
+    let app = loki_router(fixture());
+
+    for FormatCase {
+        encoded_query: query,
+        expected,
+    } in cases
+    {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/loki/api/v1/format_query?query={query}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(response.status() == StatusCode::OK);
+        assert!(
+            json_body(response).await
+                == json!({
+                    "status": "success",
+                    "data": expected
+                })
+        );
+    }
+}
 
 #[tokio::test]
 async fn format_query_endpoint_is_available_on_distributor_and_compactor_routers() {
@@ -39,25 +78,8 @@ async fn format_query_endpoint_is_available_on_distributor_and_compactor_routers
     );
 
     let config = ServiceConfig {
-        target: Role::BlockBuilder,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
         index_prefix: Some("observability/logs".to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
+        ..minimal_service_config(Role::BlockBuilder)
     };
     let compactor_app = build_service_router(&config, ServiceDependencies::default(), None)
         .await
@@ -568,27 +590,7 @@ async fn format_query_endpoint_accepts_label_replace_metric_query() {
 
 #[tokio::test]
 async fn format_query_endpoint_rejects_label_join_metric_query_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/format_query?query=label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "invalid-query",
-                "error": "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER"
-            })
-    );
+    assert_rejects_leading_identifier("/loki/api/v1/format_query?query=label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29").await;
 }
 
 #[tokio::test]
@@ -718,146 +720,46 @@ async fn format_query_endpoint_formats_label_replace_metric_scalar_expression_li
 
 #[tokio::test]
 async fn format_query_endpoint_rejects_label_join_vector_function_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/format_query?query=label_join%28vector%281%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22missing%22%29")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "invalid-query",
-                "error": "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER"
-            })
-    );
+    assert_rejects_leading_identifier("/loki/api/v1/format_query?query=label_join%28vector%281%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22missing%22%29").await;
 }
 
 #[tokio::test]
 async fn format_query_endpoint_formats_vector_set_expression_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    for (query, expected) in [
-        (
-            "vector%281%29%20or%20vector%282%29",
-            "(vector(1.000000) or vector(2.000000))",
-        ),
-        (
-            "label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%20or%20vector%282%29",
-            r#"(label_replace(vector(1.000000),"service","api-$1","missing","(.*)") or vector(2.000000))"#,
-        ),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/format_query?query={query}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-        assert!(
-            json_body(response).await
-                == json!({
-                    "status": "success",
-                    "data": expected
-                })
-        );
-    }
+    assert_formats(&[FormatCase {
+ encoded_query: "vector%281%29%20or%20vector%282%29",
+ expected: "(vector(1.000000) or vector(2.000000))",
+ }, FormatCase {
+ encoded_query: "label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%20or%20vector%282%29",
+ expected: r#"(label_replace(vector(1.000000),"service","api-$1","missing","(.*)") or vector(2.000000))"#,
+ }]).await;
 }
 
 #[tokio::test]
 async fn format_query_endpoint_formats_vector_arithmetic_expression_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    for (query, expected) in [
-        (
-            "vector%281%29%2Bvector%282%29",
-            "(vector(1.000000) + vector(2.000000))",
-        ),
-        (
-            "label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%2Bvector%282%29",
-            r#"(label_replace(vector(1.000000),"service","api-$1","missing","(.*)") + vector(2.000000))"#,
-        ),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/format_query?query={query}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-        assert!(
-            json_body(response).await
-                == json!({
-                    "status": "success",
-                    "data": expected
-                })
-        );
-    }
+    assert_formats(&[FormatCase {
+ encoded_query: "vector%281%29%2Bvector%282%29",
+ expected: "(vector(1.000000) + vector(2.000000))",
+ }, FormatCase {
+ encoded_query: "label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%2Bvector%282%29",
+ expected: r#"(label_replace(vector(1.000000),"service","api-$1","missing","(.*)") + vector(2.000000))"#,
+ }]).await;
 }
 
 #[tokio::test]
 async fn format_query_endpoint_formats_metric_vector_arithmetic_expression_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    for (query, expected) in [
-        (
-            "count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2Bvector%281%29",
-            r#"(count_over_time({app="api"}[30s]) + vector(1.000000))"#,
-        ),
-        (
-            "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%2Bvector%282%29",
-            "  label_replace(count_over_time({app=\"api\"}[30s]),\"service\",\"$1-api\",\"app\",\"(.*)\")\n+\n  vector(2.000000)",
-        ),
-        (
-            "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%20vector%281%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%2Bvector%282%29",
-            "  label_replace(\n    (count_over_time({app=\"api\"}[30s]) + vector(1.000000)),\n    \"service\",\n    \"$1-api\",\n    \"app\",\n    \"(.*)\"\n  )\n+\n  vector(2.000000)",
-        ),
-        (
-            "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201.25e-1%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%2Bvector%282%29",
-            "  label_replace((count_over_time({app=\"api\"}[30s]) + 0.125),\"service\",\"$1-api\",\"app\",\"(.*)\")\n+\n  vector(2.000000)",
-        ),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/format_query?query={query}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-        assert!(
-            json_body(response).await
-                == json!({
-                    "status": "success",
-                    "data": expected
-                })
-        );
-    }
+    assert_formats(&[FormatCase {
+ encoded_query: "count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2Bvector%281%29",
+ expected: r#"(count_over_time({app="api"}[30s]) + vector(1.000000))"#,
+ }, FormatCase {
+ encoded_query: "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%2Bvector%282%29",
+ expected: "  label_replace(count_over_time({app=\"api\"}[30s]),\"service\",\"$1-api\",\"app\",\"(.*)\")\n+\n  vector(2.000000)",
+ }, FormatCase {
+ encoded_query: "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%20vector%281%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%2Bvector%282%29",
+ expected: "  label_replace(\n    (count_over_time({app=\"api\"}[30s]) + vector(1.000000)),\n    \"service\",\n    \"$1-api\",\n    \"app\",\n    \"(.*)\"\n  )\n+\n  vector(2.000000)",
+ }, FormatCase {
+ encoded_query: "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201.25e-1%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%2Bvector%282%29",
+ expected: "  label_replace((count_over_time({app=\"api\"}[30s]) + 0.125),\"service\",\"$1-api\",\"app\",\"(.*)\")\n+\n  vector(2.000000)",
+ }]).await;
 }
 
 #[tokio::test]
@@ -937,43 +839,16 @@ async fn format_query_endpoint_formats_quantile_metric_vector_arithmetic_like_lo
 
 #[tokio::test]
 async fn format_query_endpoint_formats_metric_vector_set_modifier_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    for (query, expected) in [
-        (
-            "count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20or%20on%28app%29%20vector%281%29",
-            r#"(count_over_time({app="api"}[30s]) or on (app)  vector(1.000000))"#,
-        ),
-        (
-            "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20vector%282%29",
-            "  label_replace(count_over_time({app=\"api\"}[30s]),\"service\",\"$1-api\",\"app\",\"(.*)\")\nor\n  vector(2.000000)",
-        ),
-        (
-            "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%20vector%281%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20vector%282%29",
-            "  label_replace(\n    (count_over_time({app=\"api\"}[30s]) + vector(1.000000)),\n    \"service\",\n    \"$1-api\",\n    \"app\",\n    \"(.*)\"\n  )\nor\n  vector(2.000000)",
-        ),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/format_query?query={query}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-        assert!(
-            json_body(response).await
-                == json!({
-                    "status": "success",
-                    "data": expected
-                })
-        );
-    }
+    assert_formats(&[FormatCase {
+ encoded_query: "count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20or%20on%28app%29%20vector%281%29",
+ expected: r#"(count_over_time({app="api"}[30s]) or on (app)  vector(1.000000))"#,
+ }, FormatCase {
+ encoded_query: "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20vector%282%29",
+ expected: "  label_replace(count_over_time({app=\"api\"}[30s]),\"service\",\"$1-api\",\"app\",\"(.*)\")\nor\n  vector(2.000000)",
+ }, FormatCase {
+ encoded_query: "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%20vector%281%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20vector%282%29",
+ expected: "  label_replace(\n    (count_over_time({app=\"api\"}[30s]) + vector(1.000000)),\n    \"service\",\n    \"$1-api\",\n    \"app\",\n    \"(.*)\"\n  )\nor\n  vector(2.000000)",
+ }]).await;
 }
 
 #[tokio::test]
@@ -1128,39 +1003,13 @@ async fn format_query_endpoint_formats_vector_group_modifier_without_labels_like
 
 #[tokio::test]
 async fn format_query_endpoint_formats_metric_vector_bool_comparison_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    for (query, expected) in [
-        (
-            "count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%3Ebool%20vector%281%29",
-            r#"(count_over_time({app="api"}[30s]) > bool vector(1.000000))"#,
-        ),
-        (
-            "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3E%20bool%20vector%282%29",
-            "  label_replace(count_over_time({app=\"api\"}[30s]),\"service\",\"$1-api\",\"app\",\"(.*)\")\n> bool\n  vector(2.000000)",
-        ),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/format_query?query={query}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-        assert!(
-            json_body(response).await
-                == json!({
-                    "status": "success",
-                    "data": expected
-                })
-        );
-    }
+    assert_formats(&[FormatCase {
+ encoded_query: "count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%3Ebool%20vector%281%29",
+ expected: r#"(count_over_time({app="api"}[30s]) > bool vector(1.000000))"#,
+ }, FormatCase {
+ encoded_query: "label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3E%20bool%20vector%282%29",
+ expected: "  label_replace(count_over_time({app=\"api\"}[30s]),\"service\",\"$1-api\",\"app\",\"(.*)\")\n> bool\n  vector(2.000000)",
+ }]).await;
 }
 
 #[tokio::test]
@@ -1290,88 +1139,38 @@ async fn format_query_endpoint_formats_vector_aggregation_like_loki() {
 
 #[tokio::test]
 async fn format_query_endpoint_formats_sort_vector_expression_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    for (query, expected) in [
-        (
-            "sort%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%20vector%281%29%29",
-            r#"sort((count_over_time({app="api"}[30s]) + vector(1.000000)))"#,
-        ),
-        (
-            "sort_desc%28vector%281%29%2Bcount_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%29",
-            r#"sort_desc((vector(1.000000) + count_over_time({app="api"}[30s])))"#,
-        ),
-        (
-            "sort%28label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%29",
-            r#"sort(label_replace(vector(1.000000),"service","api-$1","missing","(.*)"))"#,
-        ),
-        (
-            "sort_desc%28label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%20vector%281%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%29",
-            "sort_desc(\n  label_replace(\n    (count_over_time({app=\"api\"}[30s]) + vector(1.000000)),\n    \"service\",\n    \"$1-api\",\n    \"app\",\n    \"(.*)\"\n  )\n)",
-        ),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/format_query?query={query}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-        assert!(
-            json_body(response).await
-                == json!({
-                    "status": "success",
-                    "data": expected
-                })
-        );
-    }
+    assert_formats(&[FormatCase {
+ encoded_query: "sort%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%20vector%281%29%29",
+ expected: r#"sort((count_over_time({app="api"}[30s]) + vector(1.000000)))"#,
+ }, FormatCase {
+ encoded_query: "sort_desc%28vector%281%29%2Bcount_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%29",
+ expected: r#"sort_desc((vector(1.000000) + count_over_time({app="api"}[30s])))"#,
+ }, FormatCase {
+ encoded_query: "sort%28label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%29",
+ expected: r#"sort(label_replace(vector(1.000000),"service","api-$1","missing","(.*)"))"#,
+ }, FormatCase {
+ encoded_query: "sort_desc%28label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%20vector%281%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%29",
+ expected: "sort_desc(\n  label_replace(\n    (count_over_time({app=\"api\"}[30s]) + vector(1.000000)),\n    \"service\",\n    \"$1-api\",\n    \"app\",\n    \"(.*)\"\n  )\n)",
+ }]).await;
 }
 
 #[tokio::test]
 async fn format_query_endpoint_formats_metric_offsets_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    for (query, expected) in [
-        (
-            "count_over_time%28%7Bapp%3D%22api%22%7D%5B10s%5D%20offset%205m%29",
-            r#"count_over_time({app="api"}[10s] offset 5m0s)"#,
-        ),
-        (
-            "count_over_time%28%7Bapp%3D%22api%22%7D%5B10s%5D%20offset%201h%29",
-            r#"count_over_time({app="api"}[10s] offset 1h0m0s)"#,
-        ),
-        (
-            "count_over_time%28%7Bapp%3D%22api%22%7D%5B10s%5D%20offset%201500ms%29",
-            r#"count_over_time({app="api"}[10s] offset 1.5s)"#,
-        ),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/format_query?query={query}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-        assert!(
-            json_body(response).await
-                == json!({
-                    "status": "success",
-                    "data": expected
-                })
-        );
-    }
+    assert_formats(&[
+        FormatCase {
+            encoded_query: "count_over_time%28%7Bapp%3D%22api%22%7D%5B10s%5D%20offset%205m%29",
+            expected: r#"count_over_time({app="api"}[10s] offset 5m0s)"#,
+        },
+        FormatCase {
+            encoded_query: "count_over_time%28%7Bapp%3D%22api%22%7D%5B10s%5D%20offset%201h%29",
+            expected: r#"count_over_time({app="api"}[10s] offset 1h0m0s)"#,
+        },
+        FormatCase {
+            encoded_query: "count_over_time%28%7Bapp%3D%22api%22%7D%5B10s%5D%20offset%201500ms%29",
+            expected: r#"count_over_time({app="api"}[10s] offset 1.5s)"#,
+        },
+    ])
+    .await;
 }
 
 #[tokio::test]
@@ -1946,6 +1745,24 @@ async fn format_query_endpoint_returns_loki_error_for_missing_query() {
             == json!({
                 "status": "invalid-query",
                 "error": "parse error : syntax error: unexpected $end"
+            })
+    );
+}
+
+/// Checks that `format_query` refuses `uri` as Loki's parser does a query
+/// that starts with a function it does not know.
+async fn assert_rejects_leading_identifier(uri: &str) {
+    let response = loki_router(fixture())
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert!(response.status() == StatusCode::BAD_REQUEST);
+    assert!(
+        json_body(response).await
+            == json!({
+                "status": "invalid-query",
+                "error": "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER"
             })
     );
 }

@@ -1,32 +1,8 @@
-use super::{
-    Bytes, HeaderMap, Instant, IntoResponse, QuerierState, QueryKind, RawQuery, RequestSecurity,
-    Response, State, handle_query, post_query_params_body_first,
-};
+use super::{PostedQueryRequest, QuerierState, QueryKind, Response, State, handle_posted_query};
 
 pub(crate) async fn query_post(
     State(state): State<QuerierState>,
-    security: RequestSecurity,
-    headers: HeaderMap,
-    RawQuery(raw_query): RawQuery,
-    body: Bytes,
+    request: PostedQueryRequest,
 ) -> Response {
-    let start = Instant::now();
-    let raw_query = match post_query_params_body_first(raw_query.as_deref(), &body) {
-        Ok(raw_query) => raw_query,
-        Err(error) => {
-            let resp = error.into_response();
-            state.record_query("query", resp.status().is_success(), start);
-            return resp;
-        }
-    };
-    let resp = handle_query(
-        state.clone(),
-        security,
-        headers,
-        Some(&raw_query),
-        QueryKind::Instant,
-    )
-    .await;
-    state.record_query("query", resp.status().is_success(), start);
-    resp
+    handle_posted_query(state, request, QueryKind::Instant).await
 }

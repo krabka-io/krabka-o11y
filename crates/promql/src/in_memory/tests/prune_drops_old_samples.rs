@@ -10,7 +10,7 @@ pub(crate) async fn prune_drops_old_samples() {
     store.push_float("t", series.clone(), 9_500, 3.0);
     store.push_float("t", series.clone(), 9_900, 4.0);
     // A histogram sample that is also old.
-    store.push_histogram("t", series.clone(), 200, native_histogram());
+    store.push_histogram("t", series.clone(), 200, count_two_sum_three_histogram());
 
     // now = 10_000, retention = 1_000 -> cutoff = 9_000; ts < 9_000 dropped.
     let stats = store.prune(10_000);

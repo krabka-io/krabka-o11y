@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerHttpSink, AlertmanagerSink, RulerWalError,
-    alertmanager_http_sink::encode_url_component,
+    alertmanager_http_sink::{AlertTemplateDefaults, impl_alertmanager_sink},
 };
 
 type AlertBatch = (Option<String>, Vec<krabka_promql::AlertmanagerAlert>);
@@ -15,8 +15,7 @@ type AlertSender = tokio::sync::mpsc::Sender<AlertBatch>;
 pub struct QueuedAlertmanagerSink {
     sender: std::sync::Arc<tokio::sync::Mutex<Option<AlertSender>>>,
     worker: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    external_labels: std::collections::BTreeMap<String, String>,
-    generator_url_template: Option<String>,
+    alert_templates: AlertTemplateDefaults,
 }
 
 impl QueuedAlertmanagerSink {
@@ -26,8 +25,7 @@ impl QueuedAlertmanagerSink {
         capacity: usize,
         resend_delay: std::time::Duration,
     ) -> Self {
-        let external_labels = sink.external_labels.clone();
-        let generator_url_template = sink.generator_url_template.clone();
+        let alert_templates = sink.alert_templates.clone();
         let (sender, mut receiver) = tokio::sync::mpsc::channel::<(
             Option<String>,
             Vec<krabka_promql::AlertmanagerAlert>,
@@ -52,8 +50,7 @@ impl QueuedAlertmanagerSink {
         Self {
             sender: std::sync::Arc::new(tokio::sync::Mutex::new(Some(sender))),
             worker: std::sync::Arc::new(tokio::sync::Mutex::new(Some(worker))),
-            external_labels,
-            generator_url_template,
+            alert_templates,
         }
     }
 
@@ -78,24 +75,10 @@ impl QueuedAlertmanagerSink {
         }
         Ok(())
     }
-}
 
-#[async_trait::async_trait]
-impl AlertmanagerSink for QueuedAlertmanagerSink {
-    fn template_external_labels(&self) -> krabka_blockstore::Labels {
-        krabka_blockstore::Labels::from_pairs(self.external_labels.clone())
-    }
-
-    fn template_external_url(&self, alert_name: &str) -> String {
-        self.generator_url_template
-            .as_ref()
-            .map_or_else(String::new, |template| {
-                template.replace("{alertname}", &encode_url_component(alert_name))
-            })
-    }
-
-    async fn dispatch_alerts(
+    async fn dispatch_batch(
         &self,
+        tenant: Option<&str>,
         alerts: Vec<krabka_promql::AlertmanagerAlert>,
     ) -> Result<(), RulerWalError> {
         if alerts.is_empty() {
@@ -105,25 +88,10 @@ impl AlertmanagerSink for QueuedAlertmanagerSink {
             RulerWalError::Append("alertmanager delivery queue stopped".to_string())
         })?;
         sender
-            .send((None, alerts))
-            .await
-            .map_err(|_| RulerWalError::Append("alertmanager delivery queue stopped".to_string()))
-    }
-
-    async fn dispatch_alerts_for_tenant(
-        &self,
-        tenant: &krabka_blockstore::TenantId,
-        alerts: Vec<krabka_promql::AlertmanagerAlert>,
-    ) -> Result<(), RulerWalError> {
-        if alerts.is_empty() {
-            return Ok(());
-        }
-        let sender = self.sender.lock().await.clone().ok_or_else(|| {
-            RulerWalError::Append("alertmanager delivery queue stopped".to_string())
-        })?;
-        sender
-            .send((Some(tenant.as_str().to_owned()), alerts))
+            .send((tenant.map(str::to_owned), alerts))
             .await
             .map_err(|_| RulerWalError::Append("alertmanager delivery queue stopped".to_string()))
     }
 }
+
+impl_alertmanager_sink!(QueuedAlertmanagerSink);

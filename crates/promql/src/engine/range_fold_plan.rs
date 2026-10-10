@@ -4,14 +4,15 @@ use promql_parser::parser::{Call, SubqueryExpr};
 #[cfg(feature = "experimental-functions")]
 use super::range_functions::validate_smoothing_factor;
 use super::{
-    PromqlEngine, RangeEval,
-    annotations::{emit_warning, invalid_quantile_warning, is_valid_quantile},
+    PromqlEngine, RangeEval, RangeWindow,
+    annotations::{TypeAndUnitLabels, emit_warning, invalid_quantile_warning, is_valid_quantile},
     apply_selector_time_modifier,
     planned::PlannedInstant,
-    planner_support::{SubqueryOuterFn, instant_expr_is_plannable, range_fold_range_arg_index},
-    range_functions::{
-        IrateFn, OuterRangeFn, OverTimeFn, RangeFn, align_subquery_start, apply_outer_range_fn,
+    planner_support::{
+        SubqueryOuterFn, instant_expr_is_plannable, no_param_outer_range_fn,
+        range_fold_range_arg_index,
     },
+    range_functions::{OuterRangeFn, align_subquery_start, apply_outer_range_fn},
     selector_duration,
 };
 use crate::{
@@ -97,35 +98,6 @@ impl<S: MetricStore> PromqlEngine<S> {
         // Resolve the function's outer fold, plus any scalar parameter, exactly as
         // the oracle's matching `eval_*_call` does.
         let outer = match call.func.name {
-            "rate" => OuterRangeFn::Range(RangeFn::Rate),
-            "increase" => OuterRangeFn::Range(RangeFn::Increase),
-            "delta" => OuterRangeFn::Range(RangeFn::Delta),
-            "changes" => OuterRangeFn::Range(RangeFn::Changes),
-            "resets" => OuterRangeFn::Range(RangeFn::Resets),
-            "irate" => OuterRangeFn::InstantDelta(IrateFn::Irate),
-            "idelta" => OuterRangeFn::InstantDelta(IrateFn::Idelta),
-            "deriv" => OuterRangeFn::Deriv,
-            "sum_over_time" => OuterRangeFn::OverTime(OverTimeFn::Sum),
-            "avg_over_time" => OuterRangeFn::OverTime(OverTimeFn::Avg),
-            "count_over_time" => OuterRangeFn::OverTime(OverTimeFn::Count),
-            "min_over_time" => OuterRangeFn::OverTime(OverTimeFn::Min),
-            "max_over_time" => OuterRangeFn::OverTime(OverTimeFn::Max),
-            "stddev_over_time" => OuterRangeFn::OverTime(OverTimeFn::Stddev),
-            "stdvar_over_time" => OuterRangeFn::OverTime(OverTimeFn::Stdvar),
-            "last_over_time" => OuterRangeFn::OverTime(OverTimeFn::Last),
-            "present_over_time" => OuterRangeFn::OverTime(OverTimeFn::Present),
-            #[cfg(feature = "experimental-functions")]
-            "mad_over_time" => OuterRangeFn::OverTime(OverTimeFn::Mad),
-            #[cfg(feature = "experimental-functions")]
-            "first_over_time" => OuterRangeFn::OverTime(OverTimeFn::First),
-            #[cfg(feature = "experimental-functions")]
-            "ts_of_first_over_time" => OuterRangeFn::OverTime(OverTimeFn::TsOfFirst),
-            #[cfg(feature = "experimental-functions")]
-            "ts_of_last_over_time" => OuterRangeFn::OverTime(OverTimeFn::TsOfLast),
-            #[cfg(feature = "experimental-functions")]
-            "ts_of_min_over_time" => OuterRangeFn::OverTime(OverTimeFn::TsOfMin),
-            #[cfg(feature = "experimental-functions")]
-            "ts_of_max_over_time" => OuterRangeFn::OverTime(OverTimeFn::TsOfMax),
             "quantile_over_time" => {
                 let quantile = match self
                     .plan_and_resolve(tenant, &call.args.args[0], time_ms)
@@ -180,9 +152,25 @@ impl<S: MetricStore> PromqlEngine<S> {
                 }
             }
             other => {
-                return Err(PromqlError::Plan(format!(
-                    "`{other}` is not a range-vector fold call"
-                )));
+                let experimental = matches!(
+                    other,
+                    "mad_over_time"
+                        | "first_over_time"
+                        | "ts_of_first_over_time"
+                        | "ts_of_last_over_time"
+                        | "ts_of_min_over_time"
+                        | "ts_of_max_over_time"
+                );
+                match no_param_outer_range_fn(other) {
+                    Some(outer) if cfg!(feature = "experimental-functions") || !experimental => {
+                        outer
+                    }
+                    _ => {
+                        return Err(PromqlError::Plan(format!(
+                            "`{other}` is not a range-vector fold call"
+                        )));
+                    }
+                }
             }
         };
         let range = self
@@ -324,11 +312,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         // `anchored`/`smoothed` modifiers attach to a matrix selector, never a
         // subquery), matching `eval_range_arg`'s subquery arm.
         let range = RangeEval {
-            enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
             series,
-            end_ms,
-            range,
-            modifier: None,
+            window: RangeWindow {
+                end_ms,
+                range,
+                modifier: None,
+                type_and_unit_labels: TypeAndUnitLabels::from_engine_opts(&self.opts),
+            },
         };
         Ok(Some(PlannedInstant::Precomputed(apply_outer_range_fn(
             range, outer, time_ms,

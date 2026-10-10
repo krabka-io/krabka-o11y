@@ -16,10 +16,7 @@ mod tests {
     use prost::Message;
 
     use super::*;
-
-    fn snappy(body: &[u8]) -> Vec<u8> {
-        snap::raw::Encoder::new().compress_vec(body).unwrap()
-    }
+    use crate::wire::test_support::{check_up_sample_with_trace_exemplar, snappy, up_v2_request};
 
     #[test]
     fn decodes_v2_symbols_samples_exemplars_and_counts() {
@@ -49,10 +46,7 @@ mod tests {
 
         let (decoded, counts) = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
 
-        assert!(decoded.len() == 1);
-        check!(decoded[0].labels.get("__name__") == Some("up"));
-        check!(decoded[0].samples == vec![DecodedSample::new(1000, 1.0)]);
-        check!(decoded[0].exemplars[0].labels.get("trace_id") == Some("abc"));
+        check_up_sample_with_trace_exemplar(&decoded);
         check!(
             counts
                 == WrittenCounts {
@@ -130,18 +124,11 @@ mod tests {
 
     #[test]
     fn decodes_v2_sample_start_timestamp() {
-        let req = pb::v2::Request {
-            symbols: vec![String::new(), "__name__".into(), "up".into()],
-            timeseries: vec![pb::v2::TimeSeries {
-                labels_refs: vec![1, 2],
-                samples: vec![pb::v2::Sample {
-                    value: 1.0,
-                    timestamp: 1000,
-                    start_timestamp: 500,
-                }],
-                ..Default::default()
-            }],
-        };
+        let req = up_v2_request(pb::v2::Sample {
+            value: 1.0,
+            timestamp: 1000,
+            start_timestamp: 500,
+        });
 
         let (decoded, _) = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
 

@@ -71,6 +71,7 @@ mod tests {
 
         use crate::{
             IndexShardRange,
+            awkward_tenants::AWKWARD_TENANTS,
             index::shard_bound_key,
             index_snapshot::{
                 MAX_SHARD_SLOTS_PER_RECORD, SnapshotManifest, UNBOUNDED_SHARD_RANGE,
@@ -296,26 +297,11 @@ mod tests {
         /// from that key alone whether an object is the index's to delete.
         #[test]
         fn a_tenant_never_widens_a_payload_key_past_its_own_segment() {
-            let awkward = [
-                ("plain", "tenant-a"),
-                ("separator", "a/b"),
-                ("relative", ".."),
-                ("current", "."),
-                ("traversal", "../../etc"),
-                ("absolute", "/etc/passwd"),
-                ("space", "a b"),
-                ("star", "a*b"),
-                ("marker", "a!b"),
-                ("quote", "a'b"),
-                ("brackets", "(a)"),
-                ("backslash", "a\\b"),
-                ("non ASCII", "\u{e9}"),
-            ];
             let prefix = shard_payload_prefix_for_key(KEY);
             let range = IndexShardRange::new(10, 20);
             let content = shard_payload_content_hash(b"payload");
 
-            for (name, tenant) in awkward {
+            for (name, tenant) in AWKWARD_TENANTS {
                 let key = shard_payload_object_key(KEY, tenant, range, &content);
                 let rest = key
                     .strip_prefix(&prefix)
@@ -380,18 +366,24 @@ mod read_index_snapshot_bytes;
 mod read_latest_snapshot_manifest;
 mod read_manifest_snapshot_base;
 mod read_shard_payload;
+mod read_window_shards;
 mod shard_payload_content_hash;
 mod shard_payload_object_key;
 mod shard_payload_prefix_for_key;
 mod shard_payload_sweep_grace;
 mod shard_range_of_slot;
 mod shard_ranges_for_span;
+mod snapshot_contribution;
 mod snapshot_generation_from_path;
 mod snapshot_key_for_generation;
 mod snapshot_manifest;
 mod snapshot_manifest_version;
+mod snapshot_persistence_methods;
+mod snapshot_persistence_requests;
 mod snapshot_sweep_interval;
 mod sweep_orphan_shard_payloads;
+mod tenant_shard_merge;
+mod touched_shard_ranges;
 mod unbounded_shard_range;
 
 pub use default_index_snapshot_max::DEFAULT_INDEX_SNAPSHOT_MAX;
@@ -415,6 +407,7 @@ pub(crate) use read_index_snapshot_bytes::{IndexSnapshotBytes, read_index_snapsh
 pub(crate) use read_latest_snapshot_manifest::read_latest_snapshot_manifest;
 pub(crate) use read_manifest_snapshot_base::read_manifest_snapshot_base;
 pub(crate) use read_shard_payload::read_shard_payload;
+pub(crate) use read_window_shards::{LatestSnapshotRead, ManifestRead, ShardWindow};
 pub(crate) use shard_payload_content_hash::shard_payload_content_hash;
 pub(crate) use shard_payload_object_key::shard_payload_object_key;
 pub(crate) use shard_payload_prefix_for_key::shard_payload_prefix_for_key;
@@ -422,11 +415,32 @@ pub(crate) use shard_payload_sweep_grace::{
     SHARD_PAYLOAD_PUBLISH_TIMEOUT, SHARD_PAYLOAD_SWEEP_GRACE,
 };
 pub(crate) use shard_range_of_slot::shard_range_of_slot;
+pub use snapshot_persistence_requests::{IndexSnapshotPublish, TenantSnapshotRangeRead};
+
+/// Counts every object under the snapshot prefix of `key`, whatever its kind.
+#[cfg(test)]
+pub(crate) async fn count_snapshot_prefix_objects(
+    store: &Arc<dyn ObjectStore>,
+    key: &str,
+) -> usize {
+    let prefix = Path::from(index_snapshot_prefix_for_key(key));
+    let mut stream = store.list(Some(&prefix));
+    let mut count = 0;
+    while let Some(meta) = stream.next().await {
+        meta.unwrap();
+        count += 1;
+    }
+    count
+}
 pub(crate) use shard_ranges_for_span::shard_ranges_for_span;
+pub(crate) use snapshot_contribution::SnapshotContribution;
 pub(crate) use snapshot_generation_from_path::snapshot_generation_from_path;
 pub(crate) use snapshot_key_for_generation::snapshot_key_for_generation;
 pub(crate) use snapshot_manifest::SnapshotManifest;
 pub(crate) use snapshot_manifest_version::SNAPSHOT_MANIFEST_VERSION;
+pub(crate) use snapshot_persistence_methods::snapshot_persistence_methods;
 pub(crate) use snapshot_sweep_interval::SNAPSHOT_SWEEP_INTERVAL;
 pub(crate) use sweep_orphan_shard_payloads::sweep_orphan_shard_payloads;
+pub(crate) use tenant_shard_merge::TenantShardMerge;
+pub(crate) use touched_shard_ranges::touched_shard_ranges;
 pub(crate) use unbounded_shard_range::UNBOUNDED_SHARD_RANGE;

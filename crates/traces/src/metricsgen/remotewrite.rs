@@ -107,6 +107,22 @@ mod tests {
         Gauge = 3,
     }
 
+    fn test_label(name: &str, value: &str) -> TestLabel {
+        TestLabel {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+
+    // Encodes `rows` as a remote-write body, then decodes it back.
+    fn encode_and_decode(rows: &[WireTimeSeries]) -> TestWriteRequest {
+        let compressed = encode_write_request(rows).unwrap();
+        let decoded = snap::raw::Decoder::new()
+            .decompress_vec(&compressed)
+            .unwrap();
+        TestWriteRequest::decode(decoded.as_slice()).unwrap()
+    }
+
     fn has_label(ts: &WireTimeSeries, k: &str, v: &str) -> bool {
         ts.labels.iter().any(|(lk, lv)| lk == k && lv == v)
     }
@@ -128,35 +144,22 @@ mod tests {
             native_histogram: None,
         }];
 
-        let compressed = encode_write_request(&rows).unwrap();
-        let decoded = snap::raw::Decoder::new()
-            .decompress_vec(&compressed)
-            .unwrap();
-        let request = TestWriteRequest::decode(decoded.as_slice()).unwrap();
+        let request = encode_and_decode(&rows);
 
         assert2::assert!(
             request
                 == TestWriteRequest {
                     timeseries: vec![TestTimeSeries {
                         labels: vec![
-                            TestLabel {
-                                name: "__name__".into(),
-                                value: "traces_spanmetrics_calls_total".into(),
-                            },
-                            TestLabel {
-                                name: "service".into(),
-                                value: "api".into(),
-                            },
+                            test_label("__name__", "traces_spanmetrics_calls_total"),
+                            test_label("service", "api"),
                         ],
                         samples: vec![TestSample {
                             value: 7.0,
                             timestamp: 1_234,
                         }],
                         exemplars: vec![TestExemplar {
-                            labels: vec![TestLabel {
-                                name: "trace_id".into(),
-                                value: "0abc".into(),
-                            }],
+                            labels: vec![test_label("trace_id", "0abc")],
                             value: 0.042,
                             timestamp: 1_235,
                         }],
@@ -270,32 +273,19 @@ mod tests {
             timestamp_ms: 1_234,
         }]);
 
-        let compressed = encode_write_request(&rows).unwrap();
-        let decoded = snap::raw::Decoder::new()
-            .decompress_vec(&compressed)
-            .unwrap();
-        let request = TestWriteRequest::decode(decoded.as_slice()).unwrap();
+        let request = encode_and_decode(&rows);
 
         assert2::assert!(
             request
                 == TestWriteRequest {
                     timeseries: vec![TestTimeSeries {
                         labels: vec![
-                            TestLabel {
-                                name: "__name__".into(),
-                                value: "traces_spanmetrics_latency".into(),
-                            },
-                            TestLabel {
-                                name: "service".into(),
-                                value: "api".into(),
-                            },
+                            test_label("__name__", "traces_spanmetrics_latency"),
+                            test_label("service", "api"),
                         ],
                         samples: vec![],
                         exemplars: vec![TestExemplar {
-                            labels: vec![TestLabel {
-                                name: "trace_id".into(),
-                                value: "abc".into(),
-                            }],
+                            labels: vec![test_label("trace_id", "abc")],
                             value: 0.12,
                             timestamp: 1_235,
                         }],

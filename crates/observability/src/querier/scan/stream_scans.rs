@@ -1,10 +1,10 @@
 use crate::{
     ActiveLogDeleteFilter, Arc, BTreeMap, BlockDescriptor, CompactionFrontier, FsPath, LabelIndex,
     Labels, LineFilter, LineFilterOp, LokiDirection, LokiStreamEncoding, LokiStreamEntry,
-    MetricQuery, NonZeroUsize, ObjectPath, ObjectStore, PipelineStage, QueryError, RecordBatch,
-    SessionContext, StreamPlan, TimeRange, Value, WalLogRecord, append_matching_hot_log_record,
-    append_matching_log_batches, apply_distinct_to_streams, loki_streams_response,
-    loki_streams_response_with_warnings, register_log_blocks,
+    LokiStreamOptions, MetricQuery, NonZeroUsize, ObjectPath, ObjectStore, PipelineStage,
+    QueryError, RecordBatch, SessionContext, StreamPlan, TimeRange, Value, WalLogRecord,
+    append_matching_hot_log_record, append_matching_log_batches, apply_distinct_to_streams,
+    loki_streams_response, loki_streams_response_with_warnings, register_log_blocks,
     register_log_blocks_from_object_store, sort_loki_stream_values,
 };
 

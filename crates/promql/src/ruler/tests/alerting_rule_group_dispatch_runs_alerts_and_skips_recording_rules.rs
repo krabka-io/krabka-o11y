@@ -2,24 +2,8 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn alerting_rule_group_dispatch_runs_alerts_and_skips_recording_rules() {
-    let group: serde_yaml::Value = serde_yaml::from_str(
-        r"
-name: mixed
-interval: 30s
-rules:
-  - record: job:up:current
-    expr: up
-  - alert: InstanceUp
-    expr: up > 0
-    for: 5m
-",
-    )
-    .expect("rule group yaml");
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels("up", "api"), 60_000, 1.0);
-    store.push_float("tenant-a", labels("up", "api"), 360_000, 1.0);
-    let store = Arc::new(store);
-    let engine = PromqlEngine::new(store, EngineOpts::default());
+    let group = mixed_rule_group();
+    let engine = up_api_engine(&[60_000, 360_000]);
     let sink = RecordingAlertmanagerSink::default();
     let mut state = super::super::RulerAlertState::default();
 
@@ -47,17 +31,5 @@ rules:
     .await
     .expect("firing group alert evaluation");
     assert2::assert!(firing == 1);
-    assert2::assert!(
-        sink.alerts()
-            == vec![super::super::AlertmanagerAlert {
-                labels: BTreeMap::from([
-                    ("alertname".to_string(), "InstanceUp".to_string()),
-                    ("job".to_string(), "api".to_string()),
-                ]),
-                annotations: BTreeMap::new(),
-                starts_at_ms: 60_000,
-                ends_at_ms: None,
-                generator_url: String::new(),
-            }]
-    );
+    assert2::assert!(sink.alerts() == vec![instance_up_alert(60_000)]);
 }

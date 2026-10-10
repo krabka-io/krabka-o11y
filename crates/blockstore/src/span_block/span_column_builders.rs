@@ -3,34 +3,61 @@ use super::{
     SpanRow, StringBuilder, TimeExt,
 };
 
-pub(crate) struct SpanColumnBuilders {
-    pub(crate) trace_id: FixedSizeBinaryBuilder,
-    pub(crate) span_id: FixedSizeBinaryBuilder,
-    pub(crate) parent_span_id: FixedSizeBinaryBuilder,
-    pub(crate) ns_left: Int32Builder,
-    pub(crate) ns_right: Int32Builder,
-    pub(crate) parent_id: Int32Builder,
-    pub(crate) child_count: Int32Builder,
-    pub(crate) root_svc: StringBuilder,
-    pub(crate) root_name: StringBuilder,
-    pub(crate) trace_start: Int64Builder,
-    pub(crate) trace_dur: Int64Builder,
-    pub(crate) name: StringBuilder,
-    pub(crate) kind: Int32Builder,
-    pub(crate) start: Int64Builder,
-    pub(crate) dur: Int64Builder,
-    pub(crate) status: Int32Builder,
-    pub(crate) status_msg: StringBuilder,
-    pub(crate) instrumentation_name: StringBuilder,
-    pub(crate) instrumentation_version: StringBuilder,
+/// Arrow builders for the fixed span-block columns, in schema order.
+///
+/// [`SpanColumnBuilders::finish`] returns the arrays in the order of the
+/// leading fixed columns of the span schema: identity, nested set, trace-level
+/// root metadata, then the per-span fields. Callers that append rows from a
+/// source other than [`SpanRow`] fill the public builders directly.
+pub struct SpanColumnBuilders {
+    /// 16-byte trace ID.
+    pub trace_id: FixedSizeBinaryBuilder,
+    /// 8-byte span ID.
+    pub span_id: FixedSizeBinaryBuilder,
+    /// 8-byte parent span ID; null for a root span.
+    pub parent_span_id: FixedSizeBinaryBuilder,
+    /// Nested-set left bound.
+    pub ns_left: Int32Builder,
+    /// Nested-set right bound.
+    pub ns_right: Int32Builder,
+    /// Nested-set left bound of the parent; `-1` for a root span.
+    pub parent_id: Int32Builder,
+    /// Number of direct children.
+    pub child_count: Int32Builder,
+    /// Service name of the trace's root span.
+    pub root_svc: StringBuilder,
+    /// Name of the trace's root span.
+    pub root_name: StringBuilder,
+    /// Trace start, Unix nanoseconds.
+    pub trace_start: Int64Builder,
+    /// Trace duration, nanoseconds.
+    pub trace_dur: Int64Builder,
+    /// Span name.
+    pub name: StringBuilder,
+    /// Span kind code.
+    pub kind: Int32Builder,
+    /// Span start, Unix nanoseconds.
+    pub start: Int64Builder,
+    /// Span duration, nanoseconds.
+    pub dur: Int64Builder,
+    /// Span status code.
+    pub status: Int32Builder,
+    /// Span status message.
+    pub status_msg: StringBuilder,
+    /// Instrumentation scope name.
+    pub instrumentation_name: StringBuilder,
+    /// Instrumentation scope version.
+    pub instrumentation_version: StringBuilder,
 }
 
 impl SpanColumnBuilders {
-    pub(crate) fn new() -> Self {
+    /// Creates empty builders with room for `row_count` IDs.
+    #[must_use]
+    pub fn with_capacity(row_count: usize) -> Self {
         Self {
-            trace_id: FixedSizeBinaryBuilder::new(16),
-            span_id: FixedSizeBinaryBuilder::new(8),
-            parent_span_id: FixedSizeBinaryBuilder::new(8),
+            trace_id: FixedSizeBinaryBuilder::with_capacity(row_count, 16),
+            span_id: FixedSizeBinaryBuilder::with_capacity(row_count, 8),
+            parent_span_id: FixedSizeBinaryBuilder::with_capacity(row_count, 8),
             ns_left: Int32Builder::new(),
             ns_right: Int32Builder::new(),
             parent_id: Int32Builder::new(),
@@ -86,7 +113,9 @@ impl SpanColumnBuilders {
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> Vec<ArrayRef> {
+    /// Finishes every builder into its array, in schema order.
+    #[must_use]
+    pub fn finish(mut self) -> Vec<ArrayRef> {
         vec![
             Arc::new(self.trace_id.finish()),
             Arc::new(self.span_id.finish()),

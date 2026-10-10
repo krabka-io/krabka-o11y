@@ -14,19 +14,23 @@
 //! A process a signal killed reports `None`, which is exactly what the
 //! unfixed WAL tail left behind.
 
+#[path = "../../../../observability/tests/support/sigterm_child.rs"]
+mod sigterm_child;
+
 use std::{
-    collections::BTreeMap,
     process::Command,
     time::{Duration, Instant},
 };
 
 use assert2::assert;
 use clap::Parser as _;
-use krabka_broker::{Broker, BrokerConfig};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
-use krabka_profiles::PROFILES_WAL_TOPIC;
 
-use super::{Cli, run};
+use self::sigterm_child::terminate_and_wait_for_exit;
+use super::{
+    Cli, run,
+    sigterm_child_runtime::{SigtermChildRuntime, free_loopback_addr},
+    wal_topic::WalTopicBroker,
+};
 
 /// Set on the child re-execution of this test binary, and carries the broker
 /// the child's WAL tail reads.
@@ -55,14 +59,8 @@ fn sigterm_makes_the_querier_process_exit() {
         .enable_all()
         .build()
         .expect("parent runtime");
-    let broker = runtime.block_on(async {
-        let broker = Broker::start(BrokerConfig::for_tests(dir.path().join("broker")))
-            .await
-            .expect("broker start");
-        create_wal_topic(&broker.listen_addr().to_string()).await;
-        broker
-    });
-    let bootstrap = broker.listen_addr().to_string();
+    let broker = runtime.block_on(WalTopicBroker::start());
+    let bootstrap = broker.bootstrap.clone();
 
     let listen = free_loopback_addr();
     let admin = free_loopback_addr();
@@ -81,17 +79,7 @@ fn sigterm_makes_the_querier_process_exit() {
     // would test a tail that never reached its loop.
     wait_for_wal_tail_poll(&runtime, &admin, Duration::from_secs(45));
 
-    // Through `sh` rather than a `kill` binary: the shell builtin is always
-    // there, including inside a Bazel test sandbox, and `unsafe_code` is
-    // forbidden workspace-wide so `libc::kill` is not an option.
-    let signalled = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(format!("kill -TERM {}", child.id()))
-        .status()
-        .expect("send SIGTERM");
-    assert!(signalled.success());
-
-    let status = wait_for_exit(&mut child, Duration::from_secs(30));
+    let status = terminate_and_wait_for_exit(&mut child, Duration::from_secs(30));
 
     // `code()` is `None` for a process a signal killed, which is what a role
     // that never returns from its shutdown leaves an orchestrator holding.
@@ -100,19 +88,7 @@ fn sigterm_makes_the_querier_process_exit() {
 
 /// The role under test: the binary's own `run`, on the real querier arm.
 fn run_querier_child(bootstrap: &str) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("child runtime");
-    // Registered before the parent can see anything this process exports, so
-    // the parent's `kill` cannot land in the window before the role installs
-    // its own. Tokio's handlers are process-wide and refcounted, so the one
-    // the role installs later is this same registration.
-    let _terminate = runtime
-        .block_on(async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        })
-        .expect("install SIGTERM handler");
+    let runtime = SigtermChildRuntime::start();
 
     let listen = std::env::var(CHILD_LISTEN).expect("child listen address");
     let admin = std::env::var(CHILD_ADMIN).expect("child admin address");
@@ -135,37 +111,6 @@ fn run_querier_child(bootstrap: &str) {
     runtime.block_on(async { run(cli).await.expect("the querier role returns on SIGTERM") });
 }
 
-async fn create_wal_topic(bootstrap: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: PROFILES_WAL_TOPIC.into(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
-        )
-        .await
-        .expect("create the profiles WAL topic");
-}
-
-/// An address nothing is listening on yet.
-///
-/// The child needs its ports named before it starts, because the parent scrapes
-/// one of them.
-fn free_loopback_addr() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a free port");
-    listener
-        .local_addr()
-        .expect("the bound address")
-        .to_string()
-}
-
 /// Blocks until the child's admin port reports at least one WAL poll.
 fn wait_for_wal_tail_poll(runtime: &tokio::runtime::Runtime, admin: &str, within: Duration) {
     let url = format!("http://{admin}/metrics");
@@ -183,17 +128,4 @@ fn wait_for_wal_tail_poll(runtime: &tokio::runtime::Runtime, admin: &str, within
         std::thread::sleep(Duration::from_millis(100));
     }
     panic!("the querier's WAL tail never polled within {within:?}");
-}
-
-fn wait_for_exit(child: &mut std::process::Child, within: Duration) -> std::process::ExitStatus {
-    let deadline = Instant::now() + within;
-    while Instant::now() < deadline {
-        match child.try_wait().expect("poll the child") {
-            Some(status) => return status,
-            None => std::thread::sleep(Duration::from_millis(20)),
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("the querier did not exit within {within:?} of SIGTERM");
 }

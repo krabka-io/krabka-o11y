@@ -1,7 +1,5 @@
 use super::{
-    BTreeSet, HeaderMap, HttpQueryError, QuerierState, RequestSecurity, SeriesParams,
-    TenantErrorSurface, authorized_tenant, metadata_index_range, metadata_label_sets,
-    metadata_time_range,
+    BTreeSet, HeaderMap, HttpQueryError, QuerierState, RequestSecurity, SeriesParams, series_data,
 };
 
 pub(crate) async fn label_names_data(
@@ -10,20 +8,8 @@ pub(crate) async fn label_names_data(
     headers: &HeaderMap,
     params: &SeriesParams,
 ) -> Result<Vec<String>, HttpQueryError> {
-    let tenant = authorized_tenant(state, security, headers, TenantErrorSurface::Read).await?;
-    // One resolution for the whole request: every check below reads the
-    // tenant's limits from this state.
-    let state = &state.with_tenant_limits(&tenant);
-    let tenant = tenant.as_str();
-    let state = state
-        .with_request_tenant_index_and_hot_range(
-            tenant,
-            metadata_index_range(state, params)?,
-            metadata_time_range(params)?,
-        )
-        .await?;
     let mut names = BTreeSet::new();
-    for labels in metadata_label_sets(&state, tenant, params).await? {
+    for labels in series_data(state, security, headers, params).await? {
         names.extend(labels.keys().cloned());
     }
 

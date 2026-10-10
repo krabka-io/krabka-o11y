@@ -1,6 +1,13 @@
 use super::parse_decimal_exponent;
 
-pub(crate) fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> {
+/// Parses a decimal sample literal, such as `-1.25e3`, into an exact
+/// `(numerator, denominator)` ratio.
+///
+/// The literal is an optional sign, ASCII digits with at most one `.`, and an
+/// optional `e`/`E` exponent. Returns `None` for anything else, or when the
+/// ratio overflows `i128`/`u128`.
+#[must_use]
+pub fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> {
     if value.is_empty() {
         return None;
     }
@@ -9,9 +16,6 @@ pub(crate) fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> 
         Some(b'+') => (false, &value[1..]),
         _ => (false, value),
     };
-    if value.starts_with('+') || value.starts_with('-') {
-        return None;
-    }
     if value.is_empty() {
         return None;
     }
@@ -37,6 +41,12 @@ pub(crate) fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> 
     if whole.is_empty() && fractional.is_empty() {
         return None;
     }
+    if !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || !fractional.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+
     let mut digits = String::with_capacity(whole.len() + fractional.len());
     digits.push_str(whole);
     digits.push_str(fractional);

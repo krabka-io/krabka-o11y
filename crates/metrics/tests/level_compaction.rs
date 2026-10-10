@@ -138,6 +138,17 @@ async fn run_pass(
     .expect("one compaction pass")
 }
 
+/// One pass of the default policy (8 blocks per job, 1M target rows, up to
+/// level 4) with nothing deferred from an earlier pass.
+async fn run_default_pass(store: &Arc<dyn ObjectStore>) -> MetricCompactionPass {
+    run_pass(
+        store,
+        policy(8, 1_000_000, 4),
+        &mut DeferredBlockDeletions::new(),
+    )
+    .await
+}
+
 async fn exists(store: &Arc<dyn ObjectStore>, key: &str) -> bool {
     store.head(&Path::from(key)).await.is_ok()
 }
@@ -179,16 +190,21 @@ fn manifest(
     }
 }
 
-#[tokio::test]
-async fn two_level_zero_blocks_in_one_window_become_one_level_one_block() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let first = write_float_block(
-        &store,
+// `tenant-a`'s block from offset 1: series 7 at `NOW_MS` and one second on.
+async fn write_first_tenant_a_block(store: &Arc<dyn ObjectStore>) -> CompactionIndexManifest {
+    write_float_block(
+        store,
         "tenant-a",
         1,
         &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)],
     )
-    .await;
+    .await
+}
+
+#[tokio::test]
+async fn two_level_zero_blocks_in_one_window_become_one_level_one_block() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let first = write_first_tenant_a_block(&store).await;
     let second = write_float_block(
         &store,
         "tenant-a",
@@ -196,9 +212,8 @@ async fn two_level_zero_blocks_in_one_window_become_one_level_one_block() {
         &[(7, NOW_MS + 2_000, 3.0), (9, NOW_MS + 500, 4.0)],
     )
     .await;
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     assert!(pass.outputs.len() == 1);
     let output = &pass.outputs[0];
@@ -256,9 +271,8 @@ async fn duplicate_samples_across_two_inputs_appear_once_in_the_merged_block() {
     let overlap = [(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)];
     write_float_block(&store, "tenant-a", 1, &overlap).await;
     write_float_block(&store, "tenant-a", 3, &overlap).await;
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     assert!(pass.outputs.len() == 1);
     let output = &pass.outputs[0];
@@ -446,9 +460,8 @@ async fn a_pass_merges_exemplars_without_dropping_shared_timestamp_rows() {
         );
     }
     assert!(exemplars.len() == 2);
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     check!(
         pass.outputs
@@ -518,9 +531,8 @@ async fn metadata_and_disjoint_clock_dictionaries_merge() {
             .await
             .expect("write metadata and clock blocks");
     }
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     for kind in [MetricBlockKind::Metadata, MetricBlockKind::ClockReadings] {
         let output = pass
@@ -605,7 +617,6 @@ async fn a_merge_does_not_delete_its_inputs_until_a_later_pass() {
     let first = write_float_block(&store, "tenant-a", 1, &[(7, NOW_MS, 1.0)]).await;
     let second = write_float_block(&store, "tenant-a", 3, &[(7, NOW_MS + 1_000, 2.0)]).await;
     let mut deferred = DeferredBlockDeletions::new();
-
     let merging = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
 
     assert!(merging.outputs.len() == 1);
@@ -648,8 +659,7 @@ async fn retention_expires_a_compacted_block_as_readily_as_a_level_zero_one() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     write_float_block(&store, "tenant-a", 1, &[(7, NOW_MS - 10_000, 1.0)]).await;
     write_float_block(&store, "tenant-a", 3, &[(7, NOW_MS - 9_000, 2.0)]).await;
-    let mut deferred = DeferredBlockDeletions::new();
-    let merged = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let merged = run_default_pass(&store).await;
     assert!(merged.outputs.len() == 1);
     let compacted = merged.outputs[0].clone();
     check!(compacted.block_key.contains("/float/compacted/l1-"));
@@ -746,9 +756,8 @@ async fn two_merges_over_one_range_write_to_different_keys() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         write_float_block(&store, tenant, 1, &[(7, NOW_MS, 1.0)]).await;
         write_float_block(&store, tenant, 3, &[(7, NOW_MS + 1_000, 2.0)]).await;
-        let mut deferred = DeferredBlockDeletions::new();
 
-        let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+        let pass = run_default_pass(&store).await;
 
         assert!(pass.outputs.len() == 1);
         keys.insert(tenant, pass.outputs[0].block_key.clone());
@@ -802,9 +811,8 @@ async fn two_native_histogram_blocks_merge_into_one() {
             .await
             .expect("write a native-histogram block");
     }
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     assert!(pass.outputs.len() == 1);
     let output = &pass.outputs[0];
@@ -1073,13 +1081,7 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
 #[tokio::test]
 async fn compaction_keeps_complete_samples_tenants_and_deferred_deletion() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let first = write_float_block(
-        &store,
-        "tenant-a",
-        1,
-        &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)],
-    )
-    .await;
+    let first = write_first_tenant_a_block(&store).await;
     let second = write_float_block(&store, "tenant-a", 3, &[(7, NOW_MS + 2_000, 3.0)]).await;
     let untouched = write_float_block(&store, "tenant-b", 5, &[(9, NOW_MS, 90.0)]).await;
     let mut deferred = DeferredBlockDeletions::new();

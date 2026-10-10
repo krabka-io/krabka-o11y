@@ -10,27 +10,27 @@
 //! This bundle has the same shape as the bundle of the ingest crate
 //! (`krabka_metrics::metrics`). Both processes export under the same
 //! `krabka_metrics` prefix, but they run in separate binaries.
+//! [`krabka_observability::service_metrics`] holds the parts that every signal
+//! shares.
 
-use std::sync::Arc;
-
-use krabka_units::prelude::*;
+pub use krabka_observability::service_metrics::{
+    RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, metrics_router,
+};
+use krabka_units::{Time, convert::TimeExt};
 use prometheus_client::{
     encoding::EncodeLabelSet,
     metrics::{counter::Counter, family::Family, gauge::Gauge, histogram::Histogram},
     registry::Registry,
 };
-use tokio::sync::Mutex;
 
 #[cfg(test)]
 mod tests {
-    use assert2::check;
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
+    use krabka_observability::service_metrics::{
+        IngestRequest, QueryRequest, RequestOutcome, encode_registry,
     };
-    use tower::ServiceExt as _;
+    use krabka_units::prelude::*;
 
-    use super::*;
+    use super::{RuleEvaluationOutcome, ServiceMetrics};
 
     #[tokio::test]
     async fn registry_has_metrics_prefix_and_all_metrics() {
@@ -38,21 +38,34 @@ mod tests {
         // Exercise the ingest helpers too so every counter family materializes
         // a sample line (an empty Family emits only # HELP/# TYPE metadata,
         // which carry the name WITHOUT the `_total` suffix).
-        m.record_ingest(true, kibibytes(1), 5, millis(12));
-        m.wal_append_failures.inc();
-        m.record_query("query", true, millis(50));
-        m.record_query("query_range", false, millis(1500));
-        m.record_query("series", true, millis(200));
-        m.record_query("labels", true, millis(100));
-        m.record_query("label_values", true, millis(100));
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Ok,
+            body: kibibytes(1),
+            items: 5,
+            elapsed: millis(12),
+        });
+        m.ingest.wal_append_failures.inc();
+        for (route, outcome, elapsed) in [
+            ("query", RequestOutcome::Ok, millis(50)),
+            ("query_range", RequestOutcome::Error, millis(1500)),
+            ("series", RequestOutcome::Ok, millis(200)),
+            ("labels", RequestOutcome::Ok, millis(100)),
+            ("label_values", RequestOutcome::Ok, millis(100)),
+        ] {
+            m.record_query(QueryRequest {
+                route,
+                outcome,
+                elapsed,
+            });
+        }
         // Engine-eval metrics: an instant success, a range failure, and some
         // in-flight tracking so every new metric materializes a sample line.
-        m.record_eval("instant", true, millis(20));
-        m.record_eval("range", false, millis(1200));
+        m.record_eval("instant", RequestOutcome::Ok, millis(20));
+        m.record_eval("range", RequestOutcome::Error, millis(1200));
         m.query_started();
         m.query_started();
         m.query_finished();
-        m.record_ruler_rule(false);
+        m.record_ruler_rule(RuleEvaluationOutcome::Failed);
         m.record_ruler_group(0.25);
         m.ruler_owner.set(1);
         m.ruler_producer_id.set(42);
@@ -63,9 +76,7 @@ mod tests {
             .record_retry(krabka_blockstore::ObjectStoreOperation::Get);
         m.wal_consumer.record_partition_assigned("metrics", 0);
 
-        let mut buf = String::new();
-        let r = m.registry.lock().await;
-        prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
+        let buf = encode_registry(&m.registry).await.unwrap();
         for needle in [
             "krabka_metrics_ingest_requests_total",
             "krabka_metrics_ingest_bytes_total",
@@ -98,45 +109,13 @@ mod tests {
             assert2::assert!(buf.contains(needle));
         }
     }
-
-    #[tokio::test]
-    async fn metrics_route_returns_openmetrics() {
-        let m = ServiceMetrics::new();
-        m.record_query("query", true, millis(10));
-        let app = metrics_router(m.registry);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/metrics")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        check!(resp.status() == StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), kibibytes(64).bytes_usize())
-            .await
-            .unwrap();
-        let s = std::str::from_utf8(&body).unwrap();
-        check!(s.contains("krabka_metrics_query_requests_total"), "{s}");
-        check!(s.contains("# EOF"), "{s}");
-    }
 }
 
-mod export;
-mod metrics_router;
 mod query_type_label;
-mod route_label;
-mod route_status_label;
+mod rule_evaluation_outcome;
 mod service_metrics;
-mod shared_registry;
-mod status_label;
 
-use export::export;
-pub use metrics_router::metrics_router;
-pub use query_type_label::QueryTypeLabel;
-pub use route_label::RouteLabel;
-pub use route_status_label::RouteStatusLabel;
-pub use service_metrics::ServiceMetrics;
-pub use shared_registry::SharedRegistry;
-pub use status_label::StatusLabel;
+pub use self::{
+    query_type_label::QueryTypeLabel, rule_evaluation_outcome::RuleEvaluationOutcome,
+    service_metrics::ServiceMetrics,
+};

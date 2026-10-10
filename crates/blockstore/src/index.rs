@@ -36,6 +36,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        awkward_tenants::AWKWARD_TENANTS,
         block::BlockMeta,
         labels::Labels,
         matcher::{LabelMatcher, MatchOp},
@@ -58,6 +59,23 @@ mod tests {
         idx.add_series("t", api_dev.fingerprint(), &api_dev);
         idx.add_series("t", web_prod.fingerprint(), &web_prod);
         idx
+    }
+
+    /// The fingerprints of the three series that [`seed`] indexes.
+    struct SeededFingerprints {
+        api_prod: SeriesFingerprint,
+        api_dev: SeriesFingerprint,
+        web_prod: SeriesFingerprint,
+    }
+
+    impl SeededFingerprints {
+        fn new() -> Self {
+            Self {
+                api_prod: labels(&[("app", "api"), ("env", "prod")]).fingerprint(),
+                api_dev: labels(&[("app", "api"), ("env", "dev")]).fingerprint(),
+                web_prod: labels(&[("app", "web"), ("env", "prod")]).fingerprint(),
+            }
+        }
     }
 
     #[test]
@@ -126,9 +144,11 @@ mod tests {
     #[test]
     fn resolve_matcher_cases() {
         let idx = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
-        let api_dev = labels(&[("app", "api"), ("env", "dev")]).fingerprint();
-        let web_prod = labels(&[("app", "web"), ("env", "prod")]).fingerprint();
+        let SeededFingerprints {
+            api_prod,
+            api_dev,
+            web_prod,
+        } = SeededFingerprints::new();
         for (_name, tenant, matchers, expected) in [
             (
                 "equal intersection",
@@ -355,9 +375,11 @@ mod tests {
     #[test]
     fn absent_labels_match_empty_string_semantics() {
         let idx = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
-        let api_dev = labels(&[("app", "api"), ("env", "dev")]).fingerprint();
-        let web_prod = labels(&[("app", "web"), ("env", "prod")]).fingerprint();
+        let SeededFingerprints {
+            api_prod,
+            api_dev,
+            web_prod,
+        } = SeededFingerprints::new();
         let all = BTreeSet::from([api_prod, api_dev, web_prod]);
 
         // The empty-string matchers below all match the absent label, so each is
@@ -425,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_query_shard_matcher_filters_by_series_fingerprint_modulo() {
+    fn resolve_query_shard_selects_by_series_fingerprint_modulo() {
         let mut idx = Index::new();
         let series = (0..12)
             .map(|id| labels(&[("app", "api"), ("series", &id.to_string())]))
@@ -434,62 +456,37 @@ mod tests {
             idx.add_series("t", labels.fingerprint(), labels);
         }
 
-        let expected = series
-            .iter()
-            .map(Labels::fingerprint)
-            .filter(|fp| fp % 2 == 0)
-            .collect::<BTreeSet<_>>();
-        let got = idx
-            .resolve(
-                "t",
-                &[
-                    LabelMatcher::new("app", MatchOp::Eq, "api"),
-                    LabelMatcher::new("__query_shard__", MatchOp::Eq, "1_of_2"),
-                ],
-            )
-            .unwrap();
+        // `=` keeps the shard's own series; `!=` returns the complement.
+        for (op, keep_remainder) in [(MatchOp::Eq, 0), (MatchOp::Neq, 1)] {
+            let expected = series
+                .iter()
+                .map(Labels::fingerprint)
+                .filter(|fp| fp % 2 == keep_remainder)
+                .collect::<BTreeSet<_>>();
+            let got = idx
+                .resolve(
+                    "t",
+                    &[
+                        LabelMatcher::new("app", MatchOp::Eq, "api"),
+                        LabelMatcher::new("__query_shard__", op, "1_of_2"),
+                    ],
+                )
+                .unwrap();
 
-        assert2::assert!(!expected.is_empty());
-        assert2::assert!(expected.len() < series.len());
-        assert2::assert!(got == expected);
-    }
-
-    #[test]
-    fn resolve_query_shard_not_equal_returns_complement() {
-        let mut idx = Index::new();
-        let series = (0..12)
-            .map(|id| labels(&[("app", "api"), ("series", &id.to_string())]))
-            .collect::<Vec<_>>();
-        for labels in &series {
-            idx.add_series("t", labels.fingerprint(), labels);
+            assert2::assert!(!expected.is_empty());
+            assert2::assert!(expected.len() < series.len());
+            assert2::assert!(got == expected);
         }
-
-        let expected = series
-            .iter()
-            .map(Labels::fingerprint)
-            .filter(|fp| fp % 2 != 0)
-            .collect::<BTreeSet<_>>();
-        let got = idx
-            .resolve(
-                "t",
-                &[
-                    LabelMatcher::new("app", MatchOp::Eq, "api"),
-                    LabelMatcher::new("__query_shard__", MatchOp::Neq, "1_of_2"),
-                ],
-            )
-            .unwrap();
-
-        assert2::assert!(!expected.is_empty());
-        assert2::assert!(expected.len() < series.len());
-        assert2::assert!(got == expected);
     }
 
     #[test]
     fn matching_fingerprints_returns_matched_set() {
         let idx = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
-        let api_dev = labels(&[("app", "api"), ("env", "dev")]).fingerprint();
-        let web_prod = labels(&[("app", "web"), ("env", "prod")]).fingerprint();
+        let SeededFingerprints {
+            api_prod,
+            api_dev,
+            web_prod,
+        } = SeededFingerprints::new();
         for (_name, tenant, matchers, expected) in [
             (
                 "specific matcher",
@@ -1438,22 +1435,6 @@ mod tests {
             .expect("a saved index has at least one shard")
     }
 
-    const AWKWARD_TENANTS: [(&str, &str); 13] = [
-        ("plain", "tenant-a"),
-        ("separator", "a/b"),
-        ("relative", ".."),
-        ("current", "."),
-        ("traversal", "../../etc"),
-        ("absolute", "/etc/passwd"),
-        ("space", "a b"),
-        ("star", "a*b"),
-        ("marker", "a!b"),
-        ("quote", "a'b"),
-        ("brackets", "(a)"),
-        ("backslash", "a\\b"),
-        ("non ASCII", "\u{e9}"),
-    ];
-
     /// A tenant reaches an index key from an untrusted header, and the key is
     /// what separates one tenant's shards from another's.
     #[test]
@@ -1549,7 +1530,10 @@ mod max_index_snapshot_bytes;
 mod parse_index_shard_location;
 mod parse_shard_bound_key;
 mod plan_tenant_index_shards;
+mod push_dictionary_id;
 mod push_ivarint;
+mod push_len;
+mod push_string;
 mod push_uvarint;
 mod read_index_shard;
 mod resolve_selective;
@@ -1561,8 +1545,8 @@ use anchored_regex::anchored_regex;
 use block_entry::BlockEntry;
 use block_list::BlockList;
 use block_list_repr::BlockListRepr;
-pub(crate) use byte_reader::ByteReader;
-pub(crate) use decode_index_shard::decode_index_shard;
+pub(crate) use byte_reader::{ByteReader, ShardBlockBounds};
+pub(crate) use decode_index_shard::{decode_index_shard, dictionary_entry};
 pub use default_index_shard_width::DEFAULT_INDEX_SHARD_WIDTH;
 pub(crate) use encode_index_shard::encode_index_shard;
 use fingerprint_set_digest::fingerprint_set_digest;
@@ -1583,9 +1567,12 @@ pub use max_index_snapshot_bytes::MAX_INDEX_SNAPSHOT_BYTES;
 pub(crate) use parse_index_shard_location::parse_index_shard_location;
 pub(crate) use parse_shard_bound_key::parse_shard_bound_key;
 use plan_tenant_index_shards::plan_tenant_index_shards;
+pub(crate) use push_dictionary_id::push_dictionary_id;
 pub(crate) use push_ivarint::push_ivarint;
+pub(crate) use push_len::push_len;
+pub(crate) use push_string::push_string;
 pub(crate) use push_uvarint::push_uvarint;
 use read_index_shard::read_index_shard;
-use save_index_shards::save_index_shards;
+pub(crate) use read_index_shard::{CappedObject, capped_read_error, oversized_object_error};
 pub(crate) use shard_bound_key::shard_bound_key;
 use tenant_index::TenantIndex;

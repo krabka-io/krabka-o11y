@@ -2,23 +2,25 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{
     body::Bytes,
-    extract::{Path, RawQuery, State},
+    extract::{Path, State},
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
 
 use super::{
-    ApiError, DiscoveryParams, Extension, Principal, PrometheusApiState, apply_limit,
-    authorized_tenant_from_headers, discovery_matchers, discovery_window,
+    ApiError, DiscoveryParams, Extension, ParsedForm, ParsedQuery, Principal, PrometheusApiState,
+    Rejection, RequestAuth, RequestCaller, apply_limit, discovery_matchers, discovery_window,
     enforce_query_range_limit, enforce_selected_series_limit, labels_json, labels_key,
-    parse_discovery_form, parse_discovery_params, record_query_response, success_data_response,
+    parse_discovery_form, record_query_response, success_data_response,
 };
 use crate::MetricStore;
 
+mod discovery_scope;
 mod label_values;
 mod label_values_dispatch;
 mod label_values_inner;
 mod label_values_post;
+mod label_values_query;
 mod labels;
 mod labels_dispatch;
 mod labels_inner;
@@ -28,10 +30,12 @@ mod series_dispatch;
 mod series_inner;
 mod series_post;
 
+use discovery_scope::{discovery_response, discovery_scope, limit_discovery_results};
 pub(super) use label_values::label_values;
 use label_values_dispatch::label_values_dispatch;
 use label_values_inner::label_values_inner;
 pub(super) use label_values_post::label_values_post;
+use label_values_query::LabelValuesQuery;
 pub(super) use labels::labels;
 use labels_dispatch::labels_dispatch;
 use labels_inner::labels_inner;

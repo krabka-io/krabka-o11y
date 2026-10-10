@@ -32,6 +32,16 @@ mod tests {
         }
     }
 
+    /// The election record of `replica` for cluster `c1` of tenant `tenant`.
+    fn tenant_c1_record(replica: &str, lease_timestamp_ms: i64) -> HaElectionRecord {
+        HaElectionRecord {
+            tenant: "tenant".to_string(),
+            cluster: "c1".to_string(),
+            replica: replica.to_string(),
+            lease_timestamp_ms,
+        }
+    }
+
     #[test]
     fn elected_replica_accepts() {
         let tracker = HaTracker::default();
@@ -69,34 +79,19 @@ mod tests {
 
         assert!(
             ha_election_at(&tracker, "tenant", &series, 42_000)
-                == HaElection::Update(HaElectionRecord {
-                    tenant: "tenant".to_string(),
-                    cluster: "c1".to_string(),
-                    replica: "r1".to_string(),
-                    lease_timestamp_ms: 42_000,
-                })
+                == HaElection::Update(tenant_c1_record("r1", 42_000))
         );
     }
 
     #[test]
     fn stale_elected_replica_can_fail_over() {
         let tracker = HaTracker::default();
-        tracker.persist_elected(&HaElectionRecord {
-            tenant: "tenant".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 10_000,
-        });
+        tracker.persist_elected(&tenant_c1_record("r1", 10_000));
         let replacement = [series_with("c1", "r2")];
 
         assert!(
             ha_election_at_with_timeout(&tracker, "tenant", &replacement, 45_001, secs(30))
-                == HaElection::Elect(HaElectionRecord {
-                    tenant: "tenant".to_string(),
-                    cluster: "c1".to_string(),
-                    replica: "r2".to_string(),
-                    lease_timestamp_ms: 45_001,
-                })
+                == HaElection::Elect(tenant_c1_record("r2", 45_001))
         );
     }
 
@@ -105,12 +100,7 @@ mod tests {
         // A negative extent is the "never fail over" sentinel: however stale the
         // lease, the incumbent keeps it and the challenger is dropped.
         let tracker = HaTracker::default();
-        tracker.persist_elected(&HaElectionRecord {
-            tenant: "tenant".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 10_000,
-        });
+        tracker.persist_elected(&tenant_c1_record("r1", 10_000));
         let replacement = [series_with("c1", "r2")];
 
         assert!(
@@ -128,12 +118,7 @@ mod tests {
     fn configured_failover_timeout_controls_takeover() {
         let tracker = || {
             let tracker = HaTracker::default();
-            tracker.persist_elected(&HaElectionRecord {
-                tenant: "tenant".to_owned(),
-                cluster: "c1".to_owned(),
-                replica: "r1".to_owned(),
-                lease_timestamp_ms: 1_000,
-            });
+            tracker.persist_elected(&tenant_c1_record("r1", 1_000));
             tracker
         };
         let replacement = [series_with("c1", "r2")];
@@ -148,12 +133,7 @@ mod tests {
         ));
         check!(
             tracker().elect("tenant", &replacement, 2_000, millis(999))
-                == HaElection::Elect(HaElectionRecord {
-                    tenant: "tenant".to_owned(),
-                    cluster: "c1".to_owned(),
-                    replica: "r2".to_owned(),
-                    lease_timestamp_ms: 2_000,
-                })
+                == HaElection::Elect(tenant_c1_record("r2", 2_000))
         );
 
         // The takeover needs the lease to be stale by MORE than the timeout,

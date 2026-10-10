@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc};
 
 use axum::{
     Router,
@@ -13,6 +13,10 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 use tokio::sync::Mutex;
+
+mod captured_requests;
+
+use self::captured_requests::expect_seen;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -145,16 +149,7 @@ async fn alloy_sends_every_public_protocol_without_a_krabka_adapter() -> TestRes
         .error_for_status()?;
 
     let expected = BTreeSet::from(["logs", "metrics-v1", "metrics-v2", "profiles", "traces"]);
-    tokio::time::timeout(Duration::from_secs(45), async {
-        loop {
-            if *seen.lock().await == expected {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await?;
-    assert2::assert!(*seen.lock().await == expected);
+    expect_seen(&seen, &expected).await?;
     Ok(())
 }
 

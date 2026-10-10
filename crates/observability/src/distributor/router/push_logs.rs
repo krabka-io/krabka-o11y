@@ -1,9 +1,8 @@
 use super::{
-    ByteSizeExt, Bytes, DistributorState, HeaderMap, Instant, Instrument, IntoResponse,
-    RequestSecurity, Response, State, StatusCode, TenantErrorSurface,
-    append_distributor_wal_records, measured_size, normalize_loki_http_push,
-    record_ingest_response, resolve_single_tenant, tenant_error_response, tenant_header_value,
-    validate_ingest_body_limit,
+    ByteSizeExt, Bytes, DistributorState, HeaderMap, IngestPushMeasurement, Instant, Instrument,
+    IntoResponse, NormalizedPush, RequestSecurity, Response, State, TenantErrorSurface,
+    append_and_record_push, measured_size, normalize_loki_http_push, record_ingest_response,
+    resolve_single_tenant, tenant_error_response, tenant_header_value, validate_ingest_body_limit,
 };
 
 pub(crate) async fn push_logs(
@@ -14,17 +13,18 @@ pub(crate) async fn push_logs(
 ) -> Response {
     let start = Instant::now();
     let body_size = measured_size(body.len());
+    let measurement = IngestPushMeasurement::before_decode(body_size, start);
     // The tenant is resolved before anything reads the body, so a malformed
     // tenant never picks limits and never reaches the WAL.
     let tenant = match resolve_single_tenant(tenant_header_value(&headers)) {
         Ok(tenant) => tenant,
         Err(error) => {
             let response = tenant_error_response(&error, TenantErrorSurface::Push);
-            return record_ingest_response(&state, response, body_size, 0, start);
+            return record_ingest_response(&state, response, measurement);
         }
     };
     if let Err(denied) = security.authorize_tenant(&tenant) {
-        return record_ingest_response(&state, denied.into_response(), body_size, 0, start);
+        return record_ingest_response(&state, denied.into_response(), measurement);
     }
     // ONE server span per push request (not per log line): wraps the whole
     // ingest body so the produce-side WAL append (which injects `traceparent`)
@@ -44,24 +44,25 @@ pub(crate) async fn push_logs(
         // label caps and the two timestamp windows all come from this set.
         let limits = state.limits_for(&tenant).clone();
         if let Err(error) = validate_ingest_body_limit(&limits, body_size) {
-            return record_ingest_response(&state, error.into_response(), body_size, 0, start);
+            return record_ingest_response(&state, error.into_response(), measurement);
         }
         let resp = match normalize_loki_http_push(&tenant, &headers, &body, &limits) {
             Ok(records) => {
-                let items = records.len() as u64;
-                tracing::Span::current().record("krabka.ingest.lines", items);
-                state.metrics.record_ingest_lines(tenant.as_str(), items);
-                let resp = match append_distributor_wal_records(&state, &security, &tenant, records)
-                    .await
-                {
-                    Ok(()) => StatusCode::NO_CONTENT.into_response(),
-                    Err(error) => error.into_response(),
-                };
-                return record_ingest_response(&state, resp, body_size, items, start);
+                return append_and_record_push(
+                    NormalizedPush {
+                        state: &state,
+                        security: &security,
+                        tenant: &tenant,
+                        measurement,
+                    },
+                    records,
+                    |_| {},
+                )
+                .await;
             }
             Err(error) => error.into_response(),
         };
-        record_ingest_response(&state, resp, body_size, 0, start)
+        record_ingest_response(&state, resp, measurement)
     }
     .instrument(span)
     .await

@@ -1,0 +1,20 @@
+/// Looks up one Prometheus duration unit.
+///
+/// Returns the unit's rank from largest (`y`, 0) to smallest (`ns`, 8), a bit
+/// that is unique to the unit, and the unit's length in nanoseconds. A year is
+/// 365 days, as in Prometheus `model.ParseDuration`. Units are case-sensitive.
+#[must_use]
+pub fn prometheus_duration_unit(unit: &str) -> Option<(u8, u16, i128)> {
+    match unit {
+        "y" => Some((0, 0x001, 31_536_000_000_000_000)),
+        "w" => Some((1, 0x002, 604_800_000_000_000)),
+        "d" => Some((2, 0x004, 86_400_000_000_000)),
+        "h" => Some((3, 0x008, 3_600_000_000_000)),
+        "m" => Some((4, 0x010, 60_000_000_000)),
+        "s" => Some((5, 0x020, 1_000_000_000)),
+        "ms" => Some((6, 0x040, 1_000_000)),
+        "us" => Some((7, 0x080, 1_000)),
+        "ns" => Some((8, 0x100, 1)),
+        _ => None,
+    }
+}

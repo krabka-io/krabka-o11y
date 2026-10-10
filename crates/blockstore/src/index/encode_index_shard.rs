@@ -1,6 +1,6 @@
 use super::{
     BTreeMap, INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, IndexShardPayload, Labels,
-    push_ivarint, push_uvarint,
+    push_dictionary_id, push_ivarint, push_len, push_string, push_uvarint,
 };
 
 /// Encodes one shard.
@@ -54,8 +54,8 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
         push_len(&mut out, count);
         if let Some(labels) = labels {
             for (name, value) in labels.iter() {
-                push_id(&mut out, &dictionary, name);
-                push_id(&mut out, &dictionary, value);
+                push_dictionary_id(&mut out, &dictionary, name);
+                push_dictionary_id(&mut out, &dictionary, value);
             }
         }
     }
@@ -85,24 +85,4 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
     }
 
     out
-}
-
-fn push_len(out: &mut Vec<u8>, len: usize) {
-    push_uvarint(
-        out,
-        u64::try_from(len).expect("a length in memory fits a u64"),
-    );
-}
-
-fn push_string(out: &mut Vec<u8>, text: &str) {
-    push_len(out, text.len());
-    out.extend_from_slice(text.as_bytes());
-}
-
-fn push_id(out: &mut Vec<u8>, dictionary: &BTreeMap<String, usize>, text: &str) {
-    let id = dictionary
-        .get(text)
-        .copied()
-        .expect("every label name and value was put in the dictionary");
-    push_len(out, id);
 }

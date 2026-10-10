@@ -1,13 +1,8 @@
 use super::TagScope;
 
 pub(crate) fn scoped_attribute_tag(tag: &str) -> (&str, Option<TagScope>) {
-    if let Some(tag) = tag.strip_prefix("resource.") {
-        (tag, Some(TagScope::Resource))
-    } else if let Some(tag) = tag.strip_prefix("span.") {
-        (tag, Some(TagScope::Span))
-    } else if let Some(tag) = tag.strip_prefix("instrumentation.") {
-        (tag, Some(TagScope::Instrumentation))
-    } else {
-        (tag, None)
+    match tag.strip_prefix("instrumentation.") {
+        Some(tag) => (tag, Some(TagScope::Instrumentation)),
+        None => TagScope::split_resource_or_span_prefix(tag),
     }
 }

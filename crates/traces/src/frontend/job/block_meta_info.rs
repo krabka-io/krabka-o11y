@@ -1,3 +1,5 @@
+use krabka_blockstore::TimeRange;
+
 use super::{ByteSize, ByteSizeExt, RowGroupInfo};
 
 /// Block metadata the planner needs, from the querier's block catalog.
@@ -12,6 +14,27 @@ pub struct BlockMetaInfo {
 }
 
 impl BlockMetaInfo {
+    /// A block spanning `window` whose row-groups, in order, have the
+    /// compressed sizes `row_group_bytes`. Its size is their sum.
+    #[must_use]
+    pub fn with_row_groups(block_id: &str, window: TimeRange, row_group_bytes: &[u64]) -> Self {
+        let row_groups = row_group_bytes
+            .iter()
+            .enumerate()
+            .map(|(index, &bytes)| RowGroupInfo {
+                index: u32::try_from(index).unwrap_or(u32::MAX),
+                compressed: ByteSize::from_bytes(bytes),
+            })
+            .collect();
+        Self {
+            block_id: block_id.to_string(),
+            start_ns: window.start_ns,
+            end_ns: window.end_ns,
+            size: ByteSize::from_bytes(row_group_bytes.iter().sum()),
+            row_groups,
+        }
+    }
+
     /// Total compressed size across this block's row-groups. It falls back to
     /// [`Self::size`] when the row-group sizes are not available.
     #[must_use]

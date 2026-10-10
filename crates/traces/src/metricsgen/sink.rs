@@ -193,7 +193,6 @@ mod tests {
     }
 }
 
-mod attr_value_to_string;
 mod decode_consumer_records;
 mod kafka_span_source;
 mod mock_remote_write_sink;
@@ -204,7 +203,6 @@ mod service_name;
 mod sink_error;
 mod span_source;
 
-use attr_value_to_string::attr_value_to_string;
 pub use decode_consumer_records::decode_consumer_records;
 pub use kafka_span_source::KafkaSpanSource;
 pub use mock_remote_write_sink::MockRemoteWriteSink;
@@ -214,3 +212,5 @@ pub use remote_write_sink::RemoteWriteSink;
 use service_name::service_name;
 pub use sink_error::SinkError;
 pub use span_source::SpanSource;
+
+use crate::blockbuilder::attr_value_string;

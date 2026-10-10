@@ -1,4 +1,4 @@
-use super::Time;
+use super::{Time, TimeExt as _};
 
 /// How long each tenant's blocks are kept.
 ///
@@ -23,4 +23,12 @@ pub trait RetentionWindows: Send + Sync {
     /// unconfigured tenant lose every block it has. A negative window is read
     /// the same way as zero.
     fn block_retention(&self, tenant: &str) -> Time;
+}
+
+/// A fixed per-tenant window table. A tenant the table does not name keeps
+/// its blocks forever, as an unconfigured tenant does.
+impl RetentionWindows for std::collections::BTreeMap<String, Time> {
+    fn block_retention(&self, tenant: &str) -> Time {
+        self.get(tenant).copied().unwrap_or(Time::ZERO)
+    }
 }

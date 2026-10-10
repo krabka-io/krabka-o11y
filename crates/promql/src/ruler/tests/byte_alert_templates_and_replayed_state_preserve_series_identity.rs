@@ -39,7 +39,7 @@ annotations:
     let alerts = RecordingAlertmanagerSink::default();
     let states = RecordingRulerStateSink::default();
     let mut state = super::super::RulerAlertState::default();
-    let pending = super::super::alerting::evaluate_and_persist_alerting_rule_with_state_and_wal(
+    let pending = super::super::alerting::evaluate_alerting_rule_with_state_and_sink(
         &engine,
         (&wal, &alerts, &states),
         &mut state,
@@ -84,7 +84,7 @@ annotations:
         .collect::<Vec<_>>();
     let mut restarted = super::super::RulerAlertState::default();
     restarted.apply_records(restored);
-    let firing = super::super::alerting::evaluate_and_persist_alerting_rule_with_state_and_wal(
+    let firing = super::super::alerting::evaluate_alerting_rule_with_state_and_sink(
         &engine,
         (&wal, &alerts, &states),
         &mut restarted,
@@ -151,7 +151,7 @@ annotations:
     let prior_alerts = alerts.alerts();
     let before = restarted.active_since_ms.clone();
     let before_keep_firing = restarted.keep_firing_until_ms.clone();
-    let error = super::super::alerting::evaluate_and_persist_alerting_rule_with_state_and_wal(
+    let error = super::super::alerting::evaluate_alerting_rule_with_state_and_sink(
         &engine,
         (&wal, &alerts, &states),
         &mut restarted,

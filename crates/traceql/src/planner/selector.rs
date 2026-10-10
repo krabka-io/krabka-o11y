@@ -610,11 +610,24 @@ mod tests {
             ),
         ];
         for (op, value, expected) in cases {
-            let sql = comparison_to_sql_qualified(&field, op, &value, "s", "p").unwrap();
+            let sql = comparison_to_sql_qualified(&QualifiedComparison {
+                field: &field,
+                op,
+                operand: &value,
+                span_alias: "s",
+                parent_alias: "p",
+            })
+            .unwrap();
             assert!(sql == expected, "{op:?} {value:?} -> {sql}");
         }
         // regex against non-string errors
-        let err = comparison_to_sql_qualified(&field, ComparisonOp::Re, &Value::Int(1), "s", "p");
+        let err = comparison_to_sql_qualified(&QualifiedComparison {
+            field: &field,
+            op: ComparisonOp::Re,
+            operand: &Value::Int(1),
+            span_alias: "s",
+            parent_alias: "p",
+        });
         assert!(matches!(err, Err(TraceqlError::Plan(_))));
     }
 
@@ -827,27 +840,12 @@ mod tests {
 
     #[test]
     fn matcher_key_uses_intrinsic_canonical_names() {
+        // `Intrinsic::tag_name` pins every variant's name; the key delegates to it.
         let cases = [
             (Intrinsic::Name, "span:name"),
-            (Intrinsic::Duration, "span:duration"),
-            (Intrinsic::Kind, "span:kind"),
-            (Intrinsic::Status, "span:status"),
-            (Intrinsic::StatusMessage, "span:statusMessage"),
-            (Intrinsic::Id, "span:id"),
             (Intrinsic::ParentId, "span:parentID"),
-            (Intrinsic::TraceDuration, "trace:duration"),
-            (Intrinsic::TraceRootName, "trace:rootName"),
             (Intrinsic::TraceRootService, "trace:rootService"),
-            (Intrinsic::TraceId, "trace:id"),
-            (Intrinsic::NestedSetLeft, "span:nestedSetLeft"),
-            (Intrinsic::NestedSetRight, "span:nestedSetRight"),
             (Intrinsic::NestedSetParent, "span:nestedSetParent"),
-            (Intrinsic::ChildCount, "span:childCount"),
-            (Intrinsic::InstrumentationName, "instrumentation:name"),
-            (Intrinsic::InstrumentationVersion, "instrumentation:version"),
-            (Intrinsic::EventName, "event:name"),
-            (Intrinsic::EventTimeSinceStart, "event:timeSinceStart"),
-            (Intrinsic::LinkTraceId, "link:traceID"),
             (Intrinsic::LinkSpanId, "link:spanID"),
         ];
         for (intrinsic, expected) in cases {
@@ -936,6 +934,7 @@ mod tests {
 
 mod anchored;
 mod collect_table;
+mod column_comparison_sql;
 mod comparison_to_sql;
 mod comparison_to_sql_qualified;
 mod comparison_value_sql;
@@ -950,9 +949,7 @@ mod fixed_hex_lit;
 mod has_nested_scope;
 mod has_parent_scope;
 mod ident;
-mod intrinsic_match_key;
 mod intrinsic_name;
-mod kind_enum_value;
 mod match_cmp;
 mod match_scope;
 mod match_value;
@@ -967,14 +964,14 @@ mod qualified_field_ident;
 mod register_unfiltered_parent_table;
 mod selector_sql;
 mod selector_sql_with_parent_table;
-mod status_enum_value;
 mod string_lit;
 mod value_sql;
 
 use anchored::anchored;
 use collect_table::collect_table;
+use column_comparison_sql::{ColumnComparison, column_comparison_sql};
 pub(crate) use comparison_to_sql::comparison_to_sql;
-use comparison_to_sql_qualified::comparison_to_sql_qualified;
+use comparison_to_sql_qualified::{QualifiedComparison, comparison_to_sql_qualified};
 use comparison_value_sql::comparison_value_sql;
 use enum_value_sql::enum_value_sql;
 pub(crate) use field_expr_to_matcher_disjuncts::field_expr_to_matcher_disjuncts;
@@ -987,9 +984,7 @@ use fixed_hex_lit::fixed_hex_lit;
 pub(crate) use has_nested_scope::has_nested_scope;
 pub(crate) use has_parent_scope::has_parent_scope;
 pub(crate) use ident::ident;
-use intrinsic_match_key::intrinsic_match_key;
 use intrinsic_name::intrinsic_name;
-use kind_enum_value::kind_enum_value;
 use match_cmp::match_cmp;
 use match_scope::match_scope;
 use match_value::match_value;
@@ -1004,6 +999,7 @@ use qualified_field_ident::qualified_field_ident;
 use register_unfiltered_parent_table::register_unfiltered_parent_table;
 pub(crate) use selector_sql::selector_sql;
 pub(crate) use selector_sql_with_parent_table::selector_sql_with_parent_table;
-use status_enum_value::status_enum_value;
 use string_lit::string_lit;
 use value_sql::value_sql;
+
+use crate::span_enum_codes::{kind_enum_value, status_enum_value};

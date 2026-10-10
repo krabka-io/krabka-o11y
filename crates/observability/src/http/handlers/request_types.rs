@@ -1,12 +1,13 @@
 use axum::response::IntoResponse;
 
 use crate::{
-    BTreeSet, Bytes, HeaderMap, Instant, Path, QuerierState, QueryKind, RawQuery, RequestSecurity,
-    Response, State, StatusCode, Value, execute_detected_field_values_query,
+    BTreeSet, Bytes, HeaderMap, HttpQueryError, Instant, Path, QuerierState, QueryKind, RawQuery,
+    RequestSecurity, Response, State, StatusCode, Value, execute_detected_field_values_query,
     execute_detected_fields_query, execute_detected_labels_query, execute_format_query,
     execute_label_names_query, execute_patterns_query, handle_api_prom_query,
     handle_api_prom_query_range, handle_query, json, json_response, loki_success,
-    parse_series_params, post_query_params, post_query_params_body_first,
+    parse_posted_series_params, parse_series_params, post_query_params,
+    post_query_params_body_first,
 };
 
 mod api_prom_query;
@@ -31,6 +32,7 @@ mod label_names_post;
 mod patterns;
 mod patterns_params;
 mod patterns_post;
+mod posted_query;
 mod query;
 mod query_params;
 mod query_post;
@@ -64,6 +66,8 @@ pub(crate) use label_names_post::label_names_post;
 pub(crate) use patterns::patterns;
 pub(crate) use patterns_params::PatternsParams;
 pub(crate) use patterns_post::patterns_post;
+pub(crate) use posted_query::PostedQueryRequest;
+use posted_query::handle_posted_query;
 pub(crate) use query::query;
 pub(crate) use query_params::QueryParams;
 pub(crate) use query_post::query_post;

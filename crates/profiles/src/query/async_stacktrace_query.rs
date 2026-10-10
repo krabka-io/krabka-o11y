@@ -778,17 +778,17 @@ mod tests {
         let second = Arc::new(QuerierState::empty().with_admin_store(store.clone()));
         let tenant: TenantId = "tenant-a".parse().unwrap();
         let id = "88888888-8888-4888-8888-888888888888";
-        publish_pending(&first, &tenant, id, 1, 0).await;
-        let (mut initial, version) = record::load(&first, &tenant, id).await.unwrap();
-        initial.owner.clone_from(&first.async_runtime.owner);
-        check!(
-            record::write(&first, &initial, PutMode::Update(version))
-                .await
-                .unwrap()
-        );
         // Force the TOCTOU interleaving: A reads, B takes ownership, then A
         // stages its answer and tries to publish the old metadata generation.
-        let (observed_by_first, first_version) = record::load(&first, &tenant, id).await.unwrap();
+        let (observed_by_first, first_version) = claimed_pending(
+            &first,
+            &tenant,
+            StalePending {
+                id,
+                heartbeat_ms: 1,
+            },
+        )
+        .await;
         let (mut adopted, second_version) = record::load(&second, &tenant, id).await.unwrap();
         adopted.owner.clone_from(&second.async_runtime.owner);
         adopted.adoptions += 1;
@@ -852,9 +852,66 @@ mod tests {
         inner: Arc<dyn object_store::ObjectStore>,
         location: Path,
         armed: std::sync::atomic::AtomicBool,
-        fail_put: bool,
+        resumed: ResumedPut,
         entered: tokio::sync::Notify,
         resume: tokio::sync::Notify,
+    }
+
+    /// What the one put a [`SuspendedPutStore`] holds back does once resumed.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum ResumedPut {
+        /// It reaches the inner store.
+        Lands,
+        /// It fails with an injected error, and the inner store never sees it.
+        Fails,
+    }
+
+    /// Which generation-2 object of a query a [`SuspendedPutStore`] holds
+    /// back.
+    #[derive(Clone, Copy)]
+    enum GatedObject {
+        Completed,
+        Metadata,
+    }
+
+    /// The generation-2 publication of query `id` that a
+    /// [`SuspendedPutStore`] holds back, and how its held put ends.
+    struct GenerationTwoGate<'a> {
+        tenant: &'a TenantId,
+        id: &'a str,
+        object: GatedObject,
+        resumed: ResumedPut,
+    }
+
+    impl SuspendedPutStore {
+        /// A store over `inner` that suspends the first put to `location`
+        /// until `resume` is notified, and ends it as `resumed` says.
+        fn armed_at(
+            inner: Arc<dyn object_store::ObjectStore>,
+            location: Path,
+            resumed: ResumedPut,
+        ) -> Self {
+            Self {
+                inner,
+                location,
+                armed: std::sync::atomic::AtomicBool::new(true),
+                resumed,
+                entered: tokio::sync::Notify::new(),
+                resume: tokio::sync::Notify::new(),
+            }
+        }
+
+        /// A store over `inner` that holds back the object `gate` names.
+        fn gating_generation_two(
+            inner: Arc<dyn object_store::ObjectStore>,
+            gate: &GenerationTwoGate<'_>,
+        ) -> Self {
+            let location = match gate.object {
+                GatedObject::Completed => completed_path(gate.tenant, gate.id, 2),
+                GatedObject::Metadata => record::metadata_path(gate.tenant, gate.id, 2),
+            };
+            Self::armed_at(inner, location, gate.resumed)
+        }
     }
 
     impl std::fmt::Display for SuspendedPutStore {
@@ -876,7 +933,7 @@ mod tests {
             {
                 self.entered.notify_one();
                 self.resume.notified().await;
-                if self.fail_put {
+                if self.resumed == ResumedPut::Fails {
                     return Err(object_store::Error::Generic {
                         store: "suspended conditional put",
                         source: Box::new(std::io::Error::other("injected publication failure")),
@@ -937,25 +994,22 @@ mod tests {
     #[tokio::test]
     async fn expiry_fences_uploads_suspended_before_and_after_the_generation_seal_check() {
         use futures::TryStreamExt as _;
-        for gate_metadata in [false, true] {
+        for object in [GatedObject::Completed, GatedObject::Metadata] {
             let directory = tempfile::tempdir().unwrap();
             let backend: Arc<dyn object_store::ObjectStore> = Arc::new(
                 object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
             );
             let tenant: TenantId = "tenant-a".parse().unwrap();
             let id = "88888888-8888-4888-8888-888888888888";
-            let gate = Arc::new(SuspendedPutStore {
-                inner: Arc::clone(&backend),
-                location: if gate_metadata {
-                    record::metadata_path(&tenant, id, 2)
-                } else {
-                    completed_path(&tenant, id, 2)
+            let gate = Arc::new(SuspendedPutStore::gating_generation_two(
+                Arc::clone(&backend),
+                &GenerationTwoGate {
+                    tenant: &tenant,
+                    id,
+                    object,
+                    resumed: ResumedPut::Lands,
                 },
-                armed: std::sync::atomic::AtomicBool::new(true),
-                fail_put: false,
-                entered: tokio::sync::Notify::new(),
-                resume: tokio::sync::Notify::new(),
-            });
+            ));
             let first = Arc::new(QuerierState::empty().with_admin_store(gate.clone()));
             let second = Arc::new(QuerierState::empty().with_admin_store(Arc::clone(&backend)));
             publish_pending(&first, &tenant, id, 1, 0).await;
@@ -1011,7 +1065,10 @@ mod tests {
                 + 1_800_001;
             check!(
                 maintenance::cleanup(&second, expiry).await.unwrap()
-                    == if gate_metadata { 7 } else { 6 }
+                    == match object {
+                        GatedObject::Completed => 6,
+                        GatedObject::Metadata => 7,
+                    }
             );
             let seal_path = record::expiry_path(&tenant, id);
             let seal_bytes = backend
@@ -1149,8 +1206,21 @@ mod tests {
         check!(record::load(&state, &tenant, id).await.unwrap_err().code() == Code::NotFound);
     }
 
-    async fn owned_pending(state: &QuerierState, tenant: &TenantId, id: &str) -> record::Record {
-        publish_pending(state, tenant, id, record::now_ms(), 0).await;
+    /// A pending query to publish, and the heartbeat its lost owner last wrote.
+    struct StalePending<'a> {
+        id: &'a str,
+        heartbeat_ms: i64,
+    }
+
+    /// Publishes `pending` under a lost owner, has `state` claim it, and
+    /// loads the claimed record with its version.
+    async fn claimed_pending(
+        state: &QuerierState,
+        tenant: &TenantId,
+        pending: StalePending<'_>,
+    ) -> (record::Record, object_store::UpdateVersion) {
+        let StalePending { id, heartbeat_ms } = pending;
+        publish_pending(state, tenant, id, heartbeat_ms, 0).await;
         let (mut metadata, version) = record::load(state, tenant, id).await.unwrap();
         metadata.owner.clone_from(&state.async_runtime.owner);
         check!(
@@ -1158,7 +1228,15 @@ mod tests {
                 .await
                 .unwrap()
         );
-        record::load(state, tenant, id).await.unwrap().0
+        record::load(state, tenant, id).await.unwrap()
+    }
+
+    async fn owned_pending(state: &QuerierState, tenant: &TenantId, id: &str) -> record::Record {
+        let pending = StalePending {
+            id,
+            heartbeat_ms: record::now_ms(),
+        };
+        claimed_pending(state, tenant, pending).await.0
     }
 
     fn prepared_success(id: &str) -> SelectMergeStacktracesResponse {
@@ -1206,23 +1284,24 @@ mod tests {
     async fn shutdown_joins_suspended_publication_and_relinquishes_failed_publication() {
         let tenant: TenantId = "tenant-a".parse().unwrap();
         let id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-        for (gate_metadata, fail_put) in [(false, false), (true, false), (false, true)] {
+        for (object, resumed) in [
+            (GatedObject::Completed, ResumedPut::Lands),
+            (GatedObject::Metadata, ResumedPut::Lands),
+            (GatedObject::Completed, ResumedPut::Fails),
+        ] {
             let directory = tempfile::tempdir().unwrap();
             let backend: Arc<dyn object_store::ObjectStore> = Arc::new(
                 object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
             );
-            let gate = Arc::new(SuspendedPutStore {
-                inner: Arc::clone(&backend),
-                location: if gate_metadata {
-                    record::metadata_path(&tenant, id, 2)
-                } else {
-                    completed_path(&tenant, id, 2)
+            let gate = Arc::new(SuspendedPutStore::gating_generation_two(
+                Arc::clone(&backend),
+                &GenerationTwoGate {
+                    tenant: &tenant,
+                    id,
+                    object,
+                    resumed,
                 },
-                armed: std::sync::atomic::AtomicBool::new(true),
-                fail_put,
-                entered: tokio::sync::Notify::new(),
-                resume: tokio::sync::Notify::new(),
-            });
+            ));
             let state = Arc::new(QuerierState::empty().with_admin_store(gate.clone()));
             let initial = owned_pending(&state, &tenant, id).await;
             check!(reserve(&state, &tenant, id).await);
@@ -1257,7 +1336,7 @@ mod tests {
             let reopened = Arc::new(QuerierState::empty().with_admin_store(Arc::new(
                 object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
             )));
-            if fail_put {
+            if resumed == ResumedPut::Fails {
                 let mut relinquished = initial;
                 relinquished.generation = 2;
                 relinquished.heartbeat_ms = 1;
@@ -1329,6 +1408,18 @@ mod tests {
         inner: super::super::InMemoryProfileStore,
         entered: std::sync::atomic::AtomicUsize,
         permit: tokio::sync::Semaphore,
+    }
+
+    impl GatedStore {
+        /// An empty store whose gate holds every query until a test adds a
+        /// permit.
+        fn closed() -> Self {
+            Self {
+                inner: super::super::InMemoryProfileStore::new(),
+                entered: std::sync::atomic::AtomicUsize::new(0),
+                permit: tokio::sync::Semaphore::new(0),
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -1422,19 +1513,12 @@ mod tests {
     async fn shutdown_finishes_the_in_flight_heartbeat_before_relinquishing_ownership() {
         let tenant: TenantId = "tenant-a".parse().unwrap();
         let id = "99999999-9999-4999-8999-999999999999";
-        let gate = Arc::new(SuspendedPutStore {
-            inner: Arc::new(object_store::memory::InMemory::new()),
-            location: record::metadata_path(&tenant, id, 1),
-            armed: std::sync::atomic::AtomicBool::new(true),
-            fail_put: false,
-            entered: tokio::sync::Notify::new(),
-            resume: tokio::sync::Notify::new(),
-        });
-        let store = Arc::new(GatedStore {
-            inner: super::super::InMemoryProfileStore::new(),
-            entered: std::sync::atomic::AtomicUsize::new(0),
-            permit: tokio::sync::Semaphore::new(0),
-        });
+        let gate = Arc::new(SuspendedPutStore::armed_at(
+            Arc::new(object_store::memory::InMemory::new()),
+            record::metadata_path(&tenant, id, 1),
+            ResumedPut::Lands,
+        ));
+        let store = Arc::new(GatedStore::closed());
         let state = Arc::new(QuerierState::new(Arc::clone(&store)).with_admin_store(gate.clone()));
         state
             .admin_store
@@ -1493,11 +1577,7 @@ mod tests {
         let admin: Arc<dyn object_store::ObjectStore> = Arc::new(
             object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
         );
-        let store = Arc::new(GatedStore {
-            inner: super::super::InMemoryProfileStore::new(),
-            entered: std::sync::atomic::AtomicUsize::new(0),
-            permit: tokio::sync::Semaphore::new(0),
-        });
+        let store = Arc::new(GatedStore::closed());
         let policy = AsyncQueryPolicy {
             heartbeat_interval: Duration::from_millis(5),
             lease_timeout: Duration::from_secs(1),
@@ -1595,11 +1675,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrency_slots_are_per_tenant_and_are_released_on_shutdown() {
-        let store = Arc::new(GatedStore {
-            inner: super::super::InMemoryProfileStore::new(),
-            entered: std::sync::atomic::AtomicUsize::new(0),
-            permit: tokio::sync::Semaphore::new(0),
-        });
+        let store = Arc::new(GatedStore::closed());
         let state = Arc::new(QuerierState::new_with_limits(
             Arc::clone(&store),
             super::super::Limits {

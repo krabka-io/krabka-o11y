@@ -18,6 +18,6 @@ pub(crate) async fn query(
         QueryKind::Instant,
     )
     .await;
-    state.record_query("query", resp.status().is_success(), start);
+    state.record_query("query", resp.status(), start);
     resp
 }

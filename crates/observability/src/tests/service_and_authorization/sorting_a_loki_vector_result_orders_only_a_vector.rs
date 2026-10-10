@@ -27,10 +27,16 @@ pub(crate) fn sorting_a_loki_vector_result_orders_only_a_vector() {
     let mut vector = serde_json::json!({
         "data": { "resultType": "vector", "result": [sample("3"), sample("1"), sample("2")] }
     });
-    super::super::prelude::sort_loki_vector_result(&mut vector, false);
+    super::super::prelude::sort_loki_vector_result(
+        &mut vector,
+        super::super::prelude::SampleOrder::Ascending,
+    );
     check!(order(&vector) == vec!["1", "2", "3"], "ascending");
 
-    super::super::prelude::sort_loki_vector_result(&mut vector, true);
+    super::super::prelude::sort_loki_vector_result(
+        &mut vector,
+        super::super::prelude::SampleOrder::Descending,
+    );
     check!(
         order(&vector) == vec!["3", "2", "1"],
         "descending reverses it"
@@ -40,7 +46,10 @@ pub(crate) fn sorting_a_loki_vector_result_orders_only_a_vector() {
     let mut matrix = serde_json::json!({
         "data": { "resultType": "matrix", "result": [sample("3"), sample("1")] }
     });
-    super::super::prelude::sort_loki_vector_result(&mut matrix, false);
+    super::super::prelude::sort_loki_vector_result(
+        &mut matrix,
+        super::super::prelude::SampleOrder::Ascending,
+    );
     check!(
         order(&matrix) == vec!["3", "1"],
         "a matrix is not reordered"

@@ -203,21 +203,32 @@ impl<S: MetricStore> PromqlEngine<S> {
         let Some(samples) = self.label_ops_inner_vector(tenant, arg, time_ms).await? else {
             return Ok(None);
         };
-        let out = samples
-            .into_iter()
-            .filter_map(|sample| {
-                let SampleValue::Float(value) = sample.value else {
-                    return None;
-                };
-                Some(InstantSample {
-                    labels: labels_without_metric_name(&sample.labels),
-                    ts_ms: time_ms,
-                    value: SampleValue::Float(kind.apply(value)),
-                    drop_name: true,
-                })
-            })
-            .collect();
+        let out = kind.apply_to_samples(samples, time_ms);
         Ok(Some(PlannedInstant::Precomputed(out)))
+    }
+
+    /// Plans and assembles the lone argument of a one-argument call.
+    ///
+    /// `None` falls back to the interpreter: for a wrong arity, a non-plannable
+    /// argument, or one that does not assemble to an instant vector.
+    async fn plan_lone_vector_arg<'call>(
+        &self,
+        tenant: &str,
+        call: &'call Call,
+        time_ms: i64,
+    ) -> Result<Option<(&'call Expr, Vec<InstantSample>)>> {
+        let [arg] = call.args.args.as_slice() else {
+            return Ok(None);
+        };
+        let Some(planned) = self.plan_instant_expr(tenant, arg, time_ms).await? else {
+            return Ok(None);
+        };
+        let QueryResult::InstantVector(samples) =
+            self.assemble_planned_instant(planned, time_ms).await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((arg, samples)))
     }
 
     /// Plans `scalar(v)`.
@@ -233,15 +244,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
-        let [arg] = call.args.args.as_slice() else {
-            return Ok(None);
-        };
-        let Some(planned) = self.plan_instant_expr(tenant, arg, time_ms).await? else {
-            return Ok(None);
-        };
-        let QueryResult::InstantVector(samples) =
-            self.assemble_planned_instant(planned, time_ms).await?
-        else {
+        let Some((_, samples)) = self.plan_lone_vector_arg(tenant, call, time_ms).await? else {
             return Ok(None);
         };
         // `funcScalar` counts only the float samples: a vector of one float and
@@ -302,15 +305,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
-        let [arg] = call.args.args.as_slice() else {
-            return Ok(None);
-        };
-        let Some(planned) = self.plan_instant_expr(tenant, arg, time_ms).await? else {
-            return Ok(None);
-        };
-        let QueryResult::InstantVector(samples) =
-            self.assemble_planned_instant(planned, time_ms).await?
-        else {
+        let Some((arg, samples)) = self.plan_lone_vector_arg(tenant, call, time_ms).await? else {
             return Ok(None);
         };
         if !samples.is_empty() {
@@ -377,7 +372,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         if range
             .series
             .iter()
-            .any(|series| range_has_samples(series, range.end_ms, range.range))
+            .any(|series| range_has_samples(series, range.window.end_ms, range.window.range))
         {
             return Ok(Some(PlannedInstant::Precomputed(Vec::new())));
         }
@@ -398,7 +393,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// identical, and so is the per-shape or wrong-arity error. The planner
     /// stays self-recursive and does not re-enter the interpreter dispatch, and
     /// these shapes still go through `Precomputed`.
-    async fn absent_over_time_via_interpreter(
+    pub(super) async fn absent_over_time_via_interpreter(
         &self,
         tenant: &str,
         call: &Call,
@@ -418,7 +413,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         if range
             .series
             .iter()
-            .any(|series| range_has_samples(series, range.end_ms, range.range))
+            .any(|series| range_has_samples(series, range.window.end_ms, range.window.range))
         {
             return Ok(Vec::new());
         }

@@ -90,20 +90,24 @@ mod tests {
         });
         let normalize = LogicalPlan::Extension(Extension {
             node: Arc::new(SeriesNormalize {
-                offset_ms: 0,
-                time_index: "timestamp".to_string(),
-                need_filter_out_nan: false,
+                settings: crate::SeriesNormalizeSettings {
+                    offset_ms: 0,
+                    time_index: "timestamp".to_string(),
+                    nan_samples: crate::NanSamples::Keep,
+                },
                 input: divide,
             }),
         });
         let instant = LogicalPlan::Extension(Extension {
             node: Arc::new(InstantManipulate {
-                start_ms: 120_000,
-                end_ms: 120_000,
-                step_ms: 300_000,
-                lookback_delta_ms: 300_000,
-                time_index: "timestamp".to_string(),
-                field_column: "value".to_string(),
+                settings: crate::InstantManipulateSettings {
+                    start_ms: 120_000,
+                    end_ms: 120_000,
+                    step_ms: 300_000,
+                    lookback_delta_ms: 300_000,
+                    time_index: "timestamp".to_string(),
+                    field_column: "value".to_string(),
+                },
                 input: normalize,
             }),
         });

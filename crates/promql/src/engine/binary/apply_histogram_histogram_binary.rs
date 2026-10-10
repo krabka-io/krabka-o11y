@@ -1,9 +1,7 @@
-use std::cmp::Ordering;
-
 use super::{
     BinModifier, BinaryOp, NativeHistogram, ResetHint, Result, SampleValue,
     add_compatible_native_histogram, binary_returns_bool, emit_info,
-    incompatible_types_in_binop_info, mismatched_custom_buckets_info,
+    incompatible_types_in_binop_info, mismatched_custom_buckets_info, native_histograms_equal,
     scale_native_histogram_values,
 };
 
@@ -60,25 +58,4 @@ fn note_custom_reconciliation(left: &NativeHistogram, right: &NativeHistogram, o
     if left.is_nhcb() && right.is_nhcb() && left.custom_values != right.custom_values {
         emit_info(mismatched_custom_buckets_info(operation));
     }
-}
-
-fn native_histograms_equal(left: &NativeHistogram, right: &NativeHistogram) -> bool {
-    left.schema == right.schema
-        && left.count.to_bits() == right.count.to_bits()
-        && left.sum.to_bits() == right.sum.to_bits()
-        && left.zero_threshold.partial_cmp(&right.zero_threshold) == Some(Ordering::Equal)
-        && left.zero_count.to_bits() == right.zero_count.to_bits()
-        && left.custom_values == right.custom_values
-        && left.positive_spans == right.positive_spans
-        && left.negative_spans == right.negative_spans
-        && counts_equal(&left.positive_counts, &right.positive_counts)
-        && counts_equal(&left.negative_counts, &right.negative_counts)
-}
-
-fn counts_equal(left: &[f64], right: &[f64]) -> bool {
-    left.len() == right.len()
-        && left
-            .iter()
-            .zip(right)
-            .all(|(left, right)| left.to_bits() == right.to_bits())
 }

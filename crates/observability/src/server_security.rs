@@ -127,6 +127,7 @@ mod server_security_error;
 mod server_security_settings;
 mod server_stream;
 mod server_tls;
+mod spawn_router_server;
 mod tenant_denied;
 mod tenant_grant;
 #[cfg(test)]
@@ -138,17 +139,34 @@ mod unauthorized_response;
 mod warn_about_posture;
 
 pub use self::{
-    admin_denied::AdminDenied, auth_failure_reason::AuthFailureReason, auth_method::AuthMethod,
-    authenticate_requests::authenticate_requests, authorize_admin::authorize_admin,
-    authorize_tenant::authorize_tenant, client_auth::ClientAuth, client_identity::ClientIdentity,
-    credentials_error::CredentialsError, grpc_authentication::GrpcAuthentication,
-    grpc_authentication_layer::GrpcAuthenticationLayer, grpc_connection::GrpcConnection,
-    grpc_incoming::grpc_incoming, install_crypto_provider::install_crypto_provider,
-    internal_client::InternalClient, no_security_events::NoSecurityEvents, peer_addr::PeerAddr,
-    principal::Principal, security_event_sink::SecurityEventSink, security_events::SecurityEvents,
-    serve_router::serve_router, server_listener::ServerListener,
-    server_security_args::ServerSecurityArgs, server_security_error::ServerSecurityError,
-    server_security_settings::ServerSecurity, server_stream::ServerStream,
-    tenant_denied::TenantDenied, tenant_grant::TenantGrant,
+    admin_denied::AdminDenied,
+    auth_failure_reason::AuthFailureReason,
+    auth_method::AuthMethod,
+    authenticate_requests::authenticate_requests,
+    authorize_admin::authorize_admin,
+    authorize_tenant::authorize_tenant,
+    client_auth::ClientAuth,
+    client_identity::ClientIdentity,
+    credentials_error::CredentialsError,
+    grpc_authentication::GrpcAuthentication,
+    grpc_authentication_layer::GrpcAuthenticationLayer,
+    grpc_connection::GrpcConnection,
+    grpc_incoming::grpc_incoming,
+    install_crypto_provider::install_crypto_provider,
+    internal_client::InternalClient,
+    no_security_events::NoSecurityEvents,
+    peer_addr::PeerAddr,
+    principal::Principal,
+    security_event_sink::SecurityEventSink,
+    security_events::SecurityEvents,
+    serve_router::serve_router,
+    server_listener::ServerListener,
+    server_security_args::ServerSecurityArgs,
+    server_security_error::ServerSecurityError,
+    server_security_settings::ServerSecurity,
+    server_stream::ServerStream,
+    spawn_router_server::{RouterServer, spawn_router_server},
+    tenant_denied::TenantDenied,
+    tenant_grant::TenantGrant,
     unauthenticated_routes::UnauthenticatedRoutes,
 };

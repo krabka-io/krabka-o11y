@@ -17,6 +17,7 @@ use super::{
     labels::{
         float_sample_value, is_result_metadata_label, labels_key, labels_without_metric_name,
     },
+    range_functions::native_histograms_equal,
 };
 use crate::{
     PromqlError, PromqlLabels as Labels,
@@ -38,6 +39,8 @@ mod eval_one_to_many_vector_binary;
 mod eval_one_to_one_vector_binary;
 mod eval_vector_set_binary;
 mod eval_vector_vector_binary;
+mod fill_missing_right;
+mod index_by_match_key;
 mod instant_value;
 mod missing_side;
 mod one_to_one_binary_result_labels;
@@ -45,6 +48,7 @@ mod scalar_side;
 mod set_op;
 mod validate_binary_modifier;
 mod validate_set_modifier;
+mod vector_operands;
 
 use apply_binary_fill_value::apply_binary_fill_value;
 use apply_binary_sample_value::apply_binary_sample_value;
@@ -60,6 +64,8 @@ use eval_one_to_many_vector_binary::eval_one_to_many_vector_binary;
 use eval_one_to_one_vector_binary::eval_one_to_one_vector_binary;
 use eval_vector_set_binary::eval_vector_set_binary;
 use eval_vector_vector_binary::eval_vector_vector_binary;
+use fill_missing_right::fill_missing_right;
+use index_by_match_key::index_by_match_key;
 pub(super) use instant_value::InstantValue;
 use missing_side::MissingSide;
 use one_to_one_binary_result_labels::one_to_one_binary_result_labels;
@@ -67,3 +73,5 @@ use scalar_side::ScalarSide;
 use set_op::SetOp;
 use validate_binary_modifier::validate_binary_modifier;
 use validate_set_modifier::validate_set_modifier;
+pub(super) use vector_operands::InstantOperands;
+use vector_operands::{VectorMatching, VectorOperands};

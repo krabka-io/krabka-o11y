@@ -31,9 +31,7 @@ mod tests {
     use krabka_units::{bytes, millis};
 
     use super::*;
-    use crate::frontend::wire::{
-        OtlpSpanJson, ResourceSpansJson, ScopeSpansJson, SpanJson, TraceEnvelopeJson,
-    };
+    use crate::frontend::wire::{OtlpSpanJson, SpanJson, TraceEnvelopeJson};
 
     fn span(id: &str, start: u64, dur: u64) -> SpanJson {
         SpanJson {
@@ -361,15 +359,9 @@ mod tests {
 
     fn by_id_body(span_ids: &[&str], status: &str) -> TraceByIdResponseJson {
         TraceByIdResponseJson {
-            trace: TraceEnvelopeJson {
-                resource_spans: vec![ResourceSpansJson {
-                    resource: serde_json::Value::Null,
-                    scope_spans: vec![ScopeSpansJson {
-                        scope: serde_json::Value::Null,
-                        spans: span_ids.iter().map(|id| otlp_span(id)).collect(),
-                    }],
-                }],
-            },
+            trace: TraceEnvelopeJson::of_unscoped_spans(
+                span_ids.iter().map(|id| otlp_span(id)).collect(),
+            ),
             status: status.to_string(),
             message: String::new(),
         }

@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use arrow::{
-    array::{ArrayRef, Float64Builder, Int64Builder, MapBuilder, StringBuilder, UInt64Builder},
-    datatypes::{DataType, Field, SchemaRef},
-    record_batch::RecordBatch,
-};
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use assert2::check;
 use axum::{
     body::{Body, to_bytes},
@@ -12,8 +8,9 @@ use axum::{
 };
 use krabka_blockstore::{BlockStore, Labels};
 use krabka_metrics::{
-    CompactionIndexManifest, CompactionObjectPlan, CompactionSeriesLabels, MetricBlockKind,
-    encode_float_samples, exemplar_schema, float_sample_schema, metadata_schema,
+    CompactionIndexManifest, CompactionObjectPlan, CompactionSeriesLabels, ExemplarRow,
+    MetadataRow, MetricBlockKind, encode_exemplar_rows, encode_float_samples, encode_metadata_rows,
+    exemplar_schema, float_sample_schema, metadata_schema,
 };
 use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use object_store::{
@@ -38,8 +35,8 @@ mod an_instant_query_reads_each_float_block_a_fixed_number_of_times;
 mod byte_recording_rules_survive_wal_compaction_and_restart;
 mod cold_series_labels;
 mod counting_object_store;
+mod deleted_api_block_store;
 mod exemplar_batch;
-mod exemplar_batch_from_rows;
 mod exemplars_answer_around_a_deleted_block_and_warn;
 mod exemplars_include_closed_range_boundaries_and_filter_outside_rows;
 mod exemplars_reads_compacted_exemplar_sidecar_blocks;
@@ -47,9 +44,10 @@ mod expected_stats;
 mod histogram_blocks_answer_count_over_time_and_rate;
 mod index_metadata_methods_report_float_and_histogram_series;
 mod instant_offset_and_at_selectors_read_the_right_blocks;
+mod instant_up_query;
 mod labels;
+mod manifest_store;
 mod metadata_answers_around_a_deleted_block_and_warns;
-mod metadata_batch;
 mod metadata_reads_compacted_metadata_sidecar_blocks;
 mod prometheus_query_reads_float_samples_from_blockstore;
 mod prometheus_query_rebuilds_float_index_from_compaction_manifest;
@@ -59,11 +57,12 @@ mod tsdb_blocks_reports_compaction_manifest_blocks;
 mod write_float_block;
 
 use counting_object_store::CountingObjectStore;
+use deleted_api_block_store::deleted_api_block_store;
 use exemplar_batch::exemplar_batch;
-use exemplar_batch_from_rows::exemplar_batch_from_rows;
 use expected_stats::expected_stats;
+use instant_up_query::{InstantUpQuery, instant_up_query};
 use labels::labels;
-use metadata_batch::metadata_batch;
+use manifest_store::{ManifestBlock, api_exemplars, assert_up_is_one, manifest_store};
 use request_counts::RequestCounts;
 use sidecar_manifest::sidecar_manifest;
 use write_float_block::write_float_block;

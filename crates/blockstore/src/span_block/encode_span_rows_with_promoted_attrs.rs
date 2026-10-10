@@ -14,7 +14,7 @@ pub fn encode_span_rows_with_promoted_attrs(
     rows: &[SpanRow],
     promoted_attrs: &[PromotedSpanAttr],
 ) -> Result<RecordBatch> {
-    let mut span_columns = SpanColumnBuilders::new();
+    let mut span_columns = SpanColumnBuilders::with_capacity(rows.len());
     let mut promoted = promoted_attrs
         .iter()
         .map(PromotedAttrBuilder::new)

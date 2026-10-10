@@ -51,17 +51,16 @@ use krabka_traces::metricsgen::{
 use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 use tower::ServiceExt as _;
 
+// The id under test is the whole point of the suite: it is written by
+// `krabka-traces` and has to be readable, unchanged, out of `krabka-promql`.
+use crate::correlated_span::{SPAN_ID, TRACE_ID};
+
+mod correlated_span;
+
 /// The tenant both halves are driven under. The distributor takes it from the
 /// `X-Scope-OrgID` header the traces sink sets from `SeriesPayload::tenant`,
 /// and the query API takes it from the same header on the way out.
 const TENANT: &str = "tenant-a";
-
-/// The id under test. It is the whole point of the suite: it is written by
-/// `krabka-traces` and has to be readable, unchanged, out of `krabka-promql`.
-const TRACE_ID: [u8; 16] = [
-    0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36,
-];
-const SPAN_ID: [u8; 8] = [0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7];
 
 /// A wall-clock-free base for every timestamp in the suite. The distributor
 /// rejects a sample that goes backwards within a series, and the query API

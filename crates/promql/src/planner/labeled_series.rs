@@ -15,3 +15,28 @@ pub struct LabeledSeries {
     /// The series' samples, ascending by timestamp.
     pub samples: Vec<TimedValue>,
 }
+
+#[cfg(test)]
+impl LabeledSeries {
+    /// A float series labelled only with `job` and holding no samples yet, for
+    /// the range-leaf tests.
+    pub(crate) fn with_job(job: &str) -> Self {
+        let mut labels = Labels::new();
+        labels.insert("job", job);
+        Self {
+            fp: labels.fingerprint(),
+            labels: Arc::new(labels),
+            samples: Vec::new(),
+        }
+    }
+
+    /// Appends a float sample; callers append in timestamp order.
+    pub(crate) fn at(mut self, ts_ms: i64, sample_value: f64) -> Self {
+        self.samples.push(TimedValue {
+            ts_ms,
+            value: sample_value,
+            start_timestamp_ms: None,
+        });
+        self
+    }
+}

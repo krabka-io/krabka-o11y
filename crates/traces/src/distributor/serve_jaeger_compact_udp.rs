@@ -1,7 +1,4 @@
-use super::{
-    Arc, CancellationToken, DistributorState, ServerSecurity, SocketAddr,
-    handle_jaeger_compact_datagram,
-};
+use super::{ReceiverEndpoint, SocketAddr, handle_jaeger_compact_datagram};
 
 /// Serve the Jaeger compact-Thrift UDP receiver until cancelled, returning the
 /// bound address and the receive loop's handle, or `None` when `security`
@@ -22,11 +19,14 @@ use super::{
 /// # Errors
 /// Returns an error when the socket cannot be bound.
 pub async fn serve_jaeger_compact_udp(
-    addr: SocketAddr,
-    state: Arc<DistributorState>,
-    security: &ServerSecurity,
-    shutdown: CancellationToken,
+    endpoint: ReceiverEndpoint<'_>,
 ) -> std::io::Result<Option<(SocketAddr, tokio::task::JoinHandle<()>)>> {
+    let ReceiverEndpoint {
+        addr,
+        state,
+        security,
+        shutdown,
+    } = endpoint;
     if security.authentication_enabled() {
         tracing::warn!(
             %addr,

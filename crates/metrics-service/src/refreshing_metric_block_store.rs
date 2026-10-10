@@ -13,6 +13,13 @@ use super::{
 
 pub(crate) const MIMIR_TENANT_DELETION_PREFIX: &str = "mimir-tenant-deletions";
 
+/// A requested query range in Unix milliseconds.
+#[derive(Clone, Copy)]
+struct MillisRange {
+    start_ms: i64,
+    end_ms: i64,
+}
+
 pub struct RefreshingMetricBlockStore {
     pub(crate) store: Arc<dyn ObjectStore>,
     // Index snapshots change with the window; block caches belong to the service.
@@ -28,6 +35,19 @@ pub struct RefreshingMetricBlockStore {
 }
 
 impl RefreshingMetricBlockStore {
+    /// Returns the cached cold store merged with the hot store when the cache
+    /// is fresh and covers `requested`.
+    async fn fresh_cached_store(
+        &self,
+        requested: MillisRange,
+    ) -> Option<MergedMetricStore<MetricBlockStore, WalHead>> {
+        let guard = self.cold_cache.read().await;
+        let entry = guard.as_ref()?;
+        entry
+            .covers(requested.start_ms, requested.end_ms, self.cold_cache_ttl)
+            .then(|| MergedMetricStore::new(entry.cold.clone(), self.hot_store.clone()))
+    }
+
     #[must_use]
     pub fn new(
         store: Arc<dyn ObjectStore>,
@@ -109,29 +129,14 @@ impl RefreshingMetricBlockStore {
             unix_time_ms(),
         );
 
-        {
-            let guard = self.cold_cache.read().await;
-            if let Some(entry) = guard.as_ref()
-                && entry.covers(start_ms, end_ms, self.cold_cache_ttl)
-            {
-                return Ok(MergedMetricStore::new(
-                    entry.cold.clone(),
-                    self.hot_store.clone(),
-                ));
-            }
+        let requested = MillisRange { start_ms, end_ms };
+        if let Some(store) = self.fresh_cached_store(requested).await {
+            return Ok(store);
         }
 
         let _refresh_guard = self.cold_refresh.lock().await;
-        {
-            let guard = self.cold_cache.read().await;
-            if let Some(entry) = guard.as_ref()
-                && entry.covers(start_ms, end_ms, self.cold_cache_ttl)
-            {
-                return Ok(MergedMetricStore::new(
-                    entry.cold.clone(),
-                    self.hot_store.clone(),
-                ));
-            }
+        if let Some(store) = self.fresh_cached_store(requested).await {
+            return Ok(store);
         }
 
         let manifests = load_compaction_manifests_for_range_with_cache(

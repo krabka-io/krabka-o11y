@@ -17,24 +17,17 @@ pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes
         BlockKey::new(tenant, 0, 42, 43, shard_range),
         BTreeSet::from([api]),
     ));
-    krabka_blockstore::write_tenant_log_index_shards_to_object_store(
+    let state = querier_state_over_index_shards(
         &store,
-        &prefix,
-        tenant,
-        &[shard_range],
-        &labels_index,
-        &block_index,
+        TenantIndexShards {
+            prefix: &prefix,
+            tenant,
+            shard_ranges: &[shard_range],
+            labels_index: &labels_index,
+            block_index: &block_index,
+        },
     )
-    .await
-    .unwrap();
-    store.clear_recorded_paths();
-
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    )
-    .with_dynamic_tenant_object_store_shards(Arc::new(store.clone()), prefix.clone());
+    .await;
 
     let first = state
         .with_request_tenant_index(tenant, query_range)
@@ -64,28 +57,15 @@ pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes
     assert!(moving.label_index.as_ref() == &labels_index);
     assert!(moving.block_index.as_ref() == &block_index);
 
-    let shard_prefix =
-        krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
-    let shard_manifest = krabka_blockstore::log_tenant_index_shard_manifest_object_path(
-        &prefix,
-        tenant,
-        shard_range,
-    )
-    .to_string();
-    let shard_snapshot = format!(
-        "{}/00000000000000000000.json",
-        krabka_blockstore::index_snapshot_prefix_for_key(&shard_manifest)
+    let list_count = shard_prefix_list_count(&store, &prefix, tenant);
+    let shard_get_count = shard_snapshot_get_count(
+        &store,
+        TenantIndexShard {
+            prefix: &prefix,
+            tenant,
+            shard_range,
+        },
     );
-    let list_count = store
-        .list_prefixes()
-        .into_iter()
-        .filter(|prefix| prefix == &shard_prefix)
-        .count();
-    let shard_get_count = store
-        .get_paths()
-        .into_iter()
-        .filter(|path| path == &shard_snapshot)
-        .count();
 
     assert!(list_count == 1, "shard prefix should be listed once");
     assert!(

@@ -47,6 +47,7 @@ mod remote_read_labels;
 mod remote_read_matchers;
 mod remote_read_reset_hint;
 mod remote_read_response;
+mod remote_read_sample_sink;
 mod remote_read_series;
 mod require_remote_read_headers;
 
@@ -64,7 +65,8 @@ use remote_read_histogram_deltas::remote_read_histogram_deltas;
 use remote_read_histogram_zero_count::remote_read_histogram_zero_count;
 use remote_read_labels::remote_read_labels;
 use remote_read_matchers::remote_read_matchers;
-use remote_read_reset_hint::remote_read_reset_hint;
+pub use remote_read_reset_hint::remote_read_reset_hint;
 use remote_read_response::remote_read_response;
+use remote_read_sample_sink::{RemoteReadSampleSink, collect_remote_read_batches};
 use remote_read_series::remote_read_series;
 use require_remote_read_headers::require_remote_read_headers;

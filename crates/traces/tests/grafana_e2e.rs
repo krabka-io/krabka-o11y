@@ -51,39 +51,27 @@
 //! `tempo_differential.rs` LEG 5.
 
 use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use assert2::check;
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
+use axum::{body::Body, http::StatusCode};
 use base64::Engine as _;
-use http_body_util::BodyExt as _;
-use krabka_traceql::{
-    AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
-};
+use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
-    AttrValue, Span, SpanRecord, TracesError,
-    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, WalSink},
+    SpanRecord,
+    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService},
     metricsgen::{
         MetricsGenConfig, MetricsGenService, MockSpanSource, PrometheusRemoteWriteSink,
-        SpanKind as MetricsSpanKind, SpanRecord as MetricsSpanRecord,
-        StatusCode as MetricsStatusCode, SystemClock,
+        SpanKind as MetricsSpanKind, StatusCode as MetricsStatusCode, SystemClock,
     },
     querier::http::{HttpConfig, router_with_config},
     wire::jaeger_grpc::api_v2::collector_service_server::CollectorService,
 };
-use krabka_units::{
-    ByteSize, Time,
-    convert::{ByteSizeExt as _, TimeExt as _},
-};
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{ExportTraceServiceRequest, trace_service_server::TraceService},
-    common::v1::{AnyValue, InstrumentationScope, KeyValue as OtlpKeyValue, any_value::Value},
+    common::v1::InstrumentationScope,
     resource::v1::Resource,
     trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan, Status as OtlpStatus, TracesData},
 };
@@ -97,7 +85,29 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 use tonic::Request as GrpcRequest;
-use tower::ServiceExt as _;
+
+mod container_url;
+mod ingest_capture;
+mod metrics_span;
+#[path = "../../metrics-service/tests/support/pinned_grafana_image.rs"]
+mod pinned_grafana_image;
+#[path = "../../metrics-service/tests/support/pinned_prometheus_image.rs"]
+mod pinned_prometheus_image;
+mod search_json;
+mod span_store;
+#[path = "../src/wire/jaeger/thrift_fixture.rs"]
+mod thrift_fixture;
+
+use self::{
+    container_url::mapped_base_url,
+    ingest_capture::{CapturingSink, DoorPush, push_to_door, serve_until_shutdown, string_kv},
+    metrics_span::MetricsSpan,
+    pinned_grafana_image::pinned_grafana_image,
+    pinned_prometheus_image::pinned_prometheus_image,
+    search_json::search_contains_span_id_hex,
+    span_store::{resource_attr, span_store_from_records},
+    thrift_fixture::{CompactStructWriter, encode_binary_sample_batch},
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -143,22 +153,6 @@ const PROM_CONFIG: &str = "global:\n  scrape_interval: 15s\nscrape_configs: []\n
 // ---------------------------------------------------------------------------
 // Recording sink (capture WAL appends in-process instead of going to Kafka).
 // ---------------------------------------------------------------------------
-
-#[derive(Clone, Default)]
-struct CapturingSink {
-    records: Arc<Mutex<Vec<SpanRecord>>>,
-}
-
-#[async_trait::async_trait]
-impl WalSink for CapturingSink {
-    async fn append(&self, rec: SpanRecord) -> Result<(), TracesError> {
-        self.records
-            .lock()
-            .map_err(|_| TracesError::Wal("capturing sink lock poisoned".into()))?
-            .push(rec);
-        Ok(())
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Fixture traces.
@@ -343,97 +337,6 @@ fn grpc_otlp_bytes() -> Vec<u8> {
     .encode_to_vec()
 }
 
-fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
-    OtlpKeyValue {
-        key: key.into(),
-        value: Some(AnyValue {
-            value: Some(Value::StringValue(value.into())),
-        }),
-        ..OtlpKeyValue::default()
-    }
-}
-
-/// Self-contained Jaeger binary-thrift batch, ported verbatim from
-/// `distributor::tests::jaeger_binary_batch`.
-///
-/// It yields one span named `GET /binary`, with service `checkout` from its
-/// embedded process.
-fn jaeger_binary_batch() -> Vec<u8> {
-    const T_STOP: u8 = 0;
-    const T_BOOL: u8 = 2;
-    const T_I32: u8 = 8;
-    const T_I64: u8 = 10;
-    const T_BINARY: u8 = 11;
-    const T_STRUCT: u8 = 12;
-    const T_LIST: u8 = 15;
-
-    fn field(out: &mut Vec<u8>, type_: u8, id: i16) {
-        out.push(type_);
-        out.extend_from_slice(&id.to_be_bytes());
-    }
-    fn string(out: &mut Vec<u8>, value: &str) {
-        out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
-        out.extend_from_slice(value.as_bytes());
-    }
-    fn string_field(out: &mut Vec<u8>, id: i16, value: &str) {
-        field(out, T_BINARY, id);
-        string(out, value);
-    }
-    fn i32_field(out: &mut Vec<u8>, id: i16, value: i32) {
-        field(out, T_I32, id);
-        out.extend_from_slice(&value.to_be_bytes());
-    }
-    fn i64_field(out: &mut Vec<u8>, id: i16, value: i64) {
-        field(out, T_I64, id);
-        out.extend_from_slice(&value.to_be_bytes());
-    }
-    fn bool_field(out: &mut Vec<u8>, id: i16, value: bool) {
-        field(out, T_BOOL, id);
-        out.push(u8::from(value));
-    }
-    fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-        string_field(out, 1, key);
-        i32_field(out, 2, 0);
-        string_field(out, 3, value);
-        out.push(T_STOP);
-    }
-    fn key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-        string_field(out, 1, key);
-        i32_field(out, 2, 3);
-        bool_field(out, 5, value);
-        out.push(T_STOP);
-    }
-
-    let mut out = Vec::new();
-    field(&mut out, T_STRUCT, 1);
-    string_field(&mut out, 1, "checkout");
-    field(&mut out, T_LIST, 2);
-    out.push(T_STRUCT);
-    out.extend_from_slice(&1_i32.to_be_bytes());
-    key_value_string(&mut out, "process.tag", "present");
-    out.push(T_STOP);
-
-    field(&mut out, T_LIST, 2);
-    out.push(T_STRUCT);
-    out.extend_from_slice(&1_i32.to_be_bytes());
-    i64_field(&mut out, 1, 2);
-    i64_field(&mut out, 2, 1);
-    i64_field(&mut out, 3, 3);
-    i64_field(&mut out, 4, 0);
-    string_field(&mut out, 5, "GET /binary");
-    i64_field(&mut out, 8, 1_000);
-    i64_field(&mut out, 9, 25);
-    field(&mut out, T_LIST, 10);
-    out.push(T_STRUCT);
-    out.extend_from_slice(&3_i32.to_be_bytes());
-    key_value_string(&mut out, "span.kind", "server");
-    key_value_string(&mut out, "http.method", "GET");
-    key_value_bool(&mut out, "error", true);
-    out.push(T_STOP);
-    out.push(T_STOP);
-    out
-}
-
 /// Self-contained Jaeger **compact**-thrift batch.
 ///
 /// The compact protocol uses field-delta headers and zig-zag varints. This
@@ -445,96 +348,30 @@ fn jaeger_binary_batch() -> Vec<u8> {
 /// It yields one span `compact thrift op`, service `compact-svc`, with the
 /// `error` tag set so the decoded status is ERROR.
 fn jaeger_compact_batch() -> Vec<u8> {
-    fn write_varint(out: &mut Vec<u8>, mut value: u64) {
-        while value >= 0x80 {
-            out.push(u8::try_from(value & 0x7f).unwrap() | 0x80);
-            value >>= 7;
-        }
-        out.push(u8::try_from(value).unwrap());
-    }
-    fn zigzag_i32(value: i32) -> u64 {
-        u64::from(((value << 1) ^ (value >> 31)).cast_unsigned())
-    }
-    fn zigzag_i64(value: i64) -> u64 {
-        ((value << 1) ^ (value >> 63)).cast_unsigned()
-    }
-    fn field_header(out: &mut Vec<u8>, type_id: u8, id: i16, last: &mut i16) {
-        let delta = id - *last;
-        if (1..=15).contains(&delta) {
-            out.push((u8::try_from(delta).unwrap() << 4) | type_id);
-        } else {
-            out.push(type_id);
-            write_varint(out, zigzag_i32(i32::from(id)));
-        }
-        *last = id;
-    }
-    fn list_header(out: &mut Vec<u8>, element_type: u8, size: usize) {
-        if size < 15 {
-            out.push((u8::try_from(size).unwrap() << 4) | element_type);
-        } else {
-            out.push(0xF0 | element_type);
-            write_varint(out, u64::try_from(size).unwrap());
-        }
-    }
-    fn string_field(out: &mut Vec<u8>, id: i16, value: &str, last: &mut i16) {
-        field_header(out, 8, id, last); // compact BINARY/STRING = 8
-        write_varint(out, u64::try_from(value.len()).unwrap());
-        out.extend_from_slice(value.as_bytes());
-    }
-    fn i32_field(out: &mut Vec<u8>, id: i16, value: i32, last: &mut i16) {
-        field_header(out, 5, id, last); // compact I32 = 5
-        write_varint(out, zigzag_i32(value));
-    }
-    fn i64_field(out: &mut Vec<u8>, id: i16, value: i64, last: &mut i16) {
-        field_header(out, 6, id, last); // compact I64 = 6
-        write_varint(out, zigzag_i64(value));
-    }
-    fn bool_field(out: &mut Vec<u8>, id: i16, value: bool, last: &mut i16) {
-        // compact bool is encoded directly in the field header: TRUE=1, FALSE=2.
-        field_header(out, if value { 1 } else { 2 }, id, last);
-    }
-    fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-        let mut last = 0;
-        string_field(out, 1, key, &mut last);
-        i32_field(out, 2, 0, &mut last); // value_type = STRING
-        string_field(out, 3, value, &mut last);
-        out.push(0);
-    }
-    fn key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-        let mut last = 0;
-        string_field(out, 1, key, &mut last);
-        i32_field(out, 2, 3, &mut last); // value_type = BOOL
-        bool_field(out, 5, value, &mut last);
-        out.push(0);
-    }
-
     let mut out = Vec::new();
+    let mut batch = CompactStructWriter::new(&mut out);
     // Batch.process (struct, field 1).
-    field_header(&mut out, 12, 1, &mut 0);
-    {
-        let mut last = 0;
-        string_field(&mut out, 1, "compact-svc", &mut last); // Process.service_name
-        out.push(0);
-    }
+    batch.field_header(12, 1);
+    let mut process = batch.nested_struct();
+    process.string_field(1, "compact-svc"); // Process.service_name
+    process.stop();
     // Batch.spans (list<struct>, field 2).
-    field_header(&mut out, 9, 2, &mut 1);
-    list_header(&mut out, 12, 1);
-    {
-        let mut last = 0;
-        i64_field(&mut out, 1, 4, &mut last); // trace_id_low
-        i64_field(&mut out, 2, 3, &mut last); // trace_id_high
-        i64_field(&mut out, 3, 9, &mut last); // span_id
-        i64_field(&mut out, 4, 0, &mut last); // parent_span_id
-        string_field(&mut out, 5, "compact thrift op", &mut last); // operation_name
-        i64_field(&mut out, 8, 1_000, &mut last); // start_time (micros)
-        i64_field(&mut out, 9, 25, &mut last); // duration (micros)
-        field_header(&mut out, 9, 10, &mut last); // tags (list<struct>)
-        list_header(&mut out, 12, 2);
-        key_value_string(&mut out, "span.kind", "server");
-        key_value_bool(&mut out, "error", true);
-        out.push(0); // end span struct
-    }
-    out.push(0); // end batch struct
+    batch.field_header(9, 2);
+    batch.list_header(12, 1);
+    let mut span = batch.nested_struct();
+    span.i64_field(1, 4); // trace_id_low
+    span.i64_field(2, 3); // trace_id_high
+    span.i64_field(3, 9); // span_id
+    span.i64_field(4, 0); // parent_span_id
+    span.string_field(5, "compact thrift op"); // operation_name
+    span.i64_field(8, 1_000); // start_time (micros)
+    span.i64_field(9, 25); // duration (micros)
+    span.field_header(9, 10); // tags (list<struct>)
+    span.list_header(12, 2);
+    span.string_tag("span.kind", "server");
+    span.true_tag("error");
+    span.stop(); // end span struct
+    batch.stop(); // end batch struct
     out
 }
 
@@ -552,64 +389,60 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
     let state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
 
     // D1 — OTLP HTTP `POST /v1/traces` (Trace A).
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/traces")
-                .header("content-type", "application/x-protobuf")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(trace_a_otlp_bytes()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::OK);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/v1/traces",
+            content_type: "application/x-protobuf",
+            tenant: TENANT,
+            body: Body::from(trace_a_otlp_bytes()),
+            expected_status: StatusCode::OK,
+        },
+    )
+    .await?;
 
     // D2 — Tempo push `POST /api/push` (Trace B, the PARTIAL trace).
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/push")
-                .header("content-type", "application/x-protobuf")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(trace_b_otlp_bytes()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::OK);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/api/push",
+            content_type: "application/x-protobuf",
+            tenant: TENANT,
+            body: Body::from(trace_b_otlp_bytes()),
+            expected_status: StatusCode::OK,
+        },
+    )
+    .await?;
 
     // D3 — Zipkin v2 `POST /api/v2/spans`.
     let zipkin = r#"[{"traceId":"33333333333333333333333333333333","id":"0000000000000033",
         "name":"zipkin op","timestamp":1000,"duration":2000,"kind":"SERVER",
         "localEndpoint":{"serviceName":"zipkin-svc"},
         "tags":{"http.method":"GET","error":"boom"}}]"#;
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v2/spans")
-                .header("content-type", "application/json")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(zipkin))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::ACCEPTED);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/api/v2/spans",
+            content_type: "application/json",
+            tenant: TENANT,
+            body: Body::from(zipkin),
+            expected_status: StatusCode::ACCEPTED,
+        },
+    )
+    .await?;
 
     // D4 — Jaeger binary thrift `POST /api/traces`.
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/traces")
-                .header("content-type", "application/vnd.apache.thrift.binary")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(jaeger_binary_batch()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::ACCEPTED);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/api/traces",
+            content_type: "application/vnd.apache.thrift.binary",
+            tenant: TENANT,
+            body: Body::from(encode_binary_sample_batch()),
+            expected_status: StatusCode::ACCEPTED,
+        },
+    )
+    .await?;
 
     // D5 — OTLP gRPC, in-process via the production service struct.
     let otlp_grpc = OtlpGrpcService::new(state.clone());
@@ -674,25 +507,19 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
     // `application/x-thrift` selects the compact decoder, distinct from D4's
     // binary decoder). This is the same `decode_jaeger_thrift` path the compact
     // UDP datagram receiver uses.
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/traces")
-                .header("content-type", "application/x-thrift")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(jaeger_compact_batch()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::ACCEPTED);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/api/traces",
+            content_type: "application/x-thrift",
+            tenant: TENANT,
+            body: Body::from(jaeger_compact_batch()),
+            expected_status: StatusCode::ACCEPTED,
+        },
+    )
+    .await?;
 
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
-    Ok(records)
+    sink.snapshot()
 }
 
 /// Assert that every door's contribution landed in the captured records.
@@ -773,130 +600,6 @@ fn assert_all_doors_present(records: &[SpanRecord]) {
 }
 
 // ---------------------------------------------------------------------------
-// Querier-building helpers (copied + extended from tempo_differential.rs).
-// ---------------------------------------------------------------------------
-
-fn span_store_from_records(records: &[SpanRecord]) -> InMemorySpanStore {
-    let mut grouped: BTreeMap<(String, [u8; 16]), Vec<Span>> = BTreeMap::new();
-    for record in records {
-        grouped
-            .entry((record.tenant.clone(), record.span.trace_id))
-            .or_default()
-            .push(record.span.clone());
-    }
-
-    let mut store = InMemorySpanStore::new();
-    for ((tenant, _), spans) in grouped {
-        let root = spans
-            .iter()
-            .find(|span| span.parent_span_id.is_none())
-            .unwrap_or(&spans[0]);
-        let root_service = resource_attr(root, "service.name")
-            .unwrap_or("unknown")
-            .to_string();
-        let root_name = root.name.clone();
-        store.push_trace(
-            &tenant,
-            &root_service,
-            &root_name,
-            spans.into_iter().map(input_span).collect(),
-        );
-    }
-    store
-}
-
-fn input_span(span: Span) -> InputSpan {
-    let mut attrs = span.resource_attrs;
-    attrs.extend(span.span_attrs);
-    InputSpan {
-        trace_id: span.trace_id,
-        span_id: span.span_id,
-        parent_span_id: span.parent_span_id,
-        name: span.name,
-        kind: span.kind.as_i32(),
-        start_unix_nano: span.start_ns,
-        duration: Time::from_nanos(span.duration_ns),
-        status_code: span.status.as_i32(),
-        status_message: span.status_message,
-        instrumentation_name: span.instrumentation_scope,
-        instrumentation_version: span.instrumentation_version,
-        attrs: attrs
-            .into_iter()
-            .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
-            .collect(),
-        events: Vec::new(),
-        links: Vec::new(),
-    }
-}
-
-fn traceql_attr(value: AttrValue) -> Option<TraceqlAttrValue> {
-    if let AttrValue::Array(values) = &value
-        && values.iter().any(|element| {
-            matches!(
-                element,
-                AttrValue::Array(_) | AttrValue::Bytes(_) | AttrValue::Unsupported(_)
-            ) || values.first().is_some_and(|first| {
-                std::mem::discriminant(first) != std::mem::discriminant(element)
-            })
-        })
-    {
-        return Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()));
-    }
-    match value {
-        AttrValue::Unsupported(value) => Some(TraceqlAttrValue::Unsupported(value)),
-        AttrValue::Array(values) => Some(TraceqlAttrValue::Array(
-            values
-                .into_iter()
-                .map(traceql_attr)
-                .collect::<Option<Vec<_>>>()?,
-        )),
-        AttrValue::Str(value) => Some(TraceqlAttrValue::Str(value)),
-        AttrValue::Int(value) => Some(TraceqlAttrValue::Int(value)),
-        AttrValue::Double(value) => Some(TraceqlAttrValue::Float(value)),
-        AttrValue::Bool(value) => Some(TraceqlAttrValue::Bool(value)),
-        value @ AttrValue::Bytes(_) => {
-            Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()))
-        }
-    }
-}
-
-fn resource_attr<'a>(span: &'a Span, key: &str) -> Option<&'a str> {
-    span.resource_attrs
-        .iter()
-        .find_map(|attr| match &attr.value {
-            AttrValue::Str(value) if attr.key == key => Some(value.as_str()),
-            _ => None,
-        })
-}
-
-/// Metrics-generator span record helper, the service-graph loop input.
-fn metrics_span(
-    service: &str,
-    span_id: [u8; 8],
-    parent: [u8; 8],
-    kind: MetricsSpanKind,
-    status: MetricsStatusCode,
-    duration_ns: i64,
-) -> MetricsSpanRecord {
-    MetricsSpanRecord {
-        tenant: TENANT.into(),
-        trace_id: [0x11; 16],
-        span_id,
-        parent_span_id: parent,
-        name: "op".into(),
-        kind,
-        start_ns: 0,
-        duration_ns,
-        status,
-        status_message: String::new(),
-        service_name: service.into(),
-        attributes: vec![],
-        resource_attributes: vec![],
-        size: ByteSize::from_bytes(0),
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Krabka querier pair (bound on 0.0.0.0, reachable from containers).
 // ---------------------------------------------------------------------------
 
@@ -931,14 +634,7 @@ async fn start_krabka_querier(records: &[SpanRecord]) -> TestResult<KrabkaPair> 
     ));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
     let port = listener.local_addr()?.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, app);
 
     // Grafana reaches the querier through the proxy (container_base_url); the
     // test process can also hit it directly on loopback (local_base_url).
@@ -954,19 +650,9 @@ async fn start_krabka_querier(records: &[SpanRecord]) -> TestResult<KrabkaPair> 
 // ---------------------------------------------------------------------------
 
 async fn start_grafana() -> TestResult<ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite compared
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+        pinned_grafana_image()
             .with_exposed_port(GRAFANA_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::seconds(5))
             .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
@@ -978,16 +664,9 @@ async fn start_grafana() -> TestResult<ContainerAsync<GenericImage>> {
 }
 
 async fn start_prometheus() -> TestResult<ContainerAsync<GenericImage>> {
-    // Set by //bazel/defs.bzl; see the note above.
-    let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG")
-        .expect(
-            "KRABKA_PROMETHEUS_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-        );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/prom/prometheus".to_string(), tag)
+        pinned_prometheus_image()
             .with_exposed_port(PROM_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stderr(
                 "Server is ready to receive web requests",
@@ -1004,14 +683,6 @@ async fn start_prometheus() -> TestResult<ContainerAsync<GenericImage>> {
             .start(),
     )
     .await??)
-}
-
-async fn mapped_base_url(
-    container: &ContainerAsync<GenericImage>,
-    port: u16,
-) -> TestResult<String> {
-    let mapped = container.get_host_port_ipv4(port).await?;
-    Ok(format!("http://127.0.0.1:{mapped}"))
 }
 
 async fn wait_for_http_ok(client: &reqwest::Client, base: &str, paths: &[&str]) -> TestResult {
@@ -1134,22 +805,22 @@ fn metric_points_total_sums_tempo_samples() {
 }
 
 /// Percent-encode a `TraceQL` query so it survives the Grafana proxy query string.
+/// Every span of a trace-by-id JSON body, across its resource and scope spans.
+fn trace_json_spans(trace_by_id: &JsonValue) -> impl Iterator<Item = &JsonValue> {
+    trace_by_id["trace"]["resourceSpans"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|rs| rs["scopeSpans"].as_array().into_iter().flatten())
+        .flat_map(|ss| ss["spans"].as_array().into_iter().flatten())
+}
+
 fn enc(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
 fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-fn search_contains_span_id_hex(search: &JsonValue, span_id_hex: &str) -> bool {
-    search["traces"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|trace| trace["spanSets"].as_array().into_iter().flatten())
-        .flat_map(|span_set| span_set["spans"].as_array().into_iter().flatten())
-        .any(|span| span["spanID"].as_str() == Some(span_id_hex))
 }
 
 // ---------------------------------------------------------------------------
@@ -1161,6 +832,16 @@ struct QueryWindow {
     metric_start: u64,
     metric_end: u64,
     range: String,
+}
+
+/// What each stage of the full-surface test drives, and hands on to the next:
+/// the HTTP client, the Krabka pair, and the Grafana container with its base
+/// URL.
+struct GrafanaStack {
+    client: reqwest::Client,
+    krabka: KrabkaPair,
+    grafana: ContainerAsync<GenericImage>,
+    grafana_base: String,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1258,22 +939,11 @@ async fn grafana_e2e_full_surface() -> TestResult {
         trace_a["trace"]["resourceSpans"].as_array().map(Vec::len) == Some(1),
         "expected one resourceSpan (root service): {trace_a}"
     );
-    let trace_a_spans = trace_a["trace"]["resourceSpans"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|rs| rs["scopeSpans"].as_array().into_iter().flatten())
-        .flat_map(|ss| ss["spans"].as_array().into_iter().flatten())
-        .count();
+    let trace_a_spans = trace_json_spans(&trace_a).count();
     assert2::assert!(trace_a_spans == 4);
     let root_b64 = b64(&ROOT_SPAN_ID);
-    let has_root = trace_a["trace"]["resourceSpans"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|rs| rs["scopeSpans"].as_array().into_iter().flatten())
-        .flat_map(|ss| ss["spans"].as_array().into_iter().flatten())
-        .any(|span| span["spanId"].as_str() == Some(root_b64.as_str()));
+    let has_root =
+        trace_json_spans(&trace_a).any(|span| span["spanId"].as_str() == Some(root_b64.as_str()));
     assert2::assert!(has_root);
 
     // E5 — trace-by-id, Trace B: PARTIAL, truncated to MAX_TRACE_SPANS.
@@ -1284,13 +954,7 @@ async fn grafana_e2e_full_surface() -> TestResult {
     .await?;
     assert2::assert!(trace_b["status"].as_str() == Some("PARTIAL"));
     assert2::assert!(trace_b["message"].as_str() == Some("trace truncated after 4 spans"));
-    let returned_spans: usize = trace_b["trace"]["resourceSpans"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|rs| rs["scopeSpans"].as_array().into_iter().flatten())
-        .flat_map(|ss| ss["spans"].as_array().into_iter().flatten())
-        .count();
+    let returned_spans: usize = trace_json_spans(&trace_b).count();
     assert2::assert!(returned_spans == MAX_TRACE_SPANS);
 
     // E4b — trace-by-id PROTOBUF, the format Grafana's Tempo *backend* uses for
@@ -1344,10 +1008,12 @@ async fn grafana_e2e_full_surface() -> TestResult {
     assert2::assert!(body.contains("trace not found"));
 
     grafana_e2e_search(
-        client,
-        krabka,
-        grafana,
-        grafana_base,
+        GrafanaStack {
+            client,
+            krabka,
+            grafana,
+            grafana_base,
+        },
         QueryWindow {
             now_secs,
             metric_start,
@@ -1358,13 +1024,13 @@ async fn grafana_e2e_full_surface() -> TestResult {
     .await
 }
 
-async fn grafana_e2e_search(
-    client: reqwest::Client,
-    krabka: KrabkaPair,
-    grafana: ContainerAsync<GenericImage>,
-    grafana_base: String,
-    window: QueryWindow,
-) -> TestResult {
+async fn grafana_e2e_search(stack: GrafanaStack, window: QueryWindow) -> TestResult {
+    let GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    } = stack;
     let QueryWindow {
         now_secs,
         metric_start,
@@ -1452,10 +1118,12 @@ async fn grafana_e2e_search(
     assert2::assert!(search_contains_span_id_hex(&search, ERROR_SPAN_ID_HEX));
 
     grafana_e2e_tags(
-        client,
-        krabka,
-        grafana,
-        grafana_base,
+        GrafanaStack {
+            client,
+            krabka,
+            grafana,
+            grafana_base,
+        },
         QueryWindow {
             now_secs,
             metric_start,
@@ -1466,13 +1134,13 @@ async fn grafana_e2e_search(
     .await
 }
 
-async fn grafana_e2e_tags(
-    client: reqwest::Client,
-    krabka: KrabkaPair,
-    grafana: ContainerAsync<GenericImage>,
-    grafana_base: String,
-    window: QueryWindow,
-) -> TestResult {
+async fn grafana_e2e_tags(stack: GrafanaStack, window: QueryWindow) -> TestResult {
+    let GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    } = stack;
     let QueryWindow {
         now_secs,
         metric_start,
@@ -1590,10 +1258,12 @@ async fn grafana_e2e_tags(
     assert2::assert!(plain.contains(&"checkout-frontend"));
 
     grafana_e2e_metrics(
-        client,
-        krabka,
-        grafana,
-        grafana_base,
+        GrafanaStack {
+            client,
+            krabka,
+            grafana,
+            grafana_base,
+        },
         QueryWindow {
             now_secs,
             metric_start,
@@ -1604,13 +1274,13 @@ async fn grafana_e2e_tags(
     .await
 }
 
-async fn grafana_e2e_metrics(
-    client: reqwest::Client,
-    krabka: KrabkaPair,
-    grafana: ContainerAsync<GenericImage>,
-    grafana_base: String,
-    window: QueryWindow,
-) -> TestResult {
+async fn grafana_e2e_metrics(stack: GrafanaStack, window: QueryWindow) -> TestResult {
+    let GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    } = stack;
     let QueryWindow {
         now_secs,
         metric_start,
@@ -1754,15 +1424,22 @@ async fn grafana_e2e_metrics(
     assert2::assert!(status == ReqwestStatusCode::BAD_REQUEST);
     assert2::assert!(body.contains("end must be >= start"));
 
-    grafana_e2e_service_graph(client, krabka, grafana, grafana_base).await
+    grafana_e2e_service_graph(GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    })
+    .await
 }
 
-async fn grafana_e2e_service_graph(
-    client: reqwest::Client,
-    krabka: KrabkaPair,
-    grafana: ContainerAsync<GenericImage>,
-    grafana_base: String,
-) -> TestResult {
+async fn grafana_e2e_service_graph(stack: GrafanaStack) -> TestResult {
+    let GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    } = stack;
     // ----- §5: Service Graph full loop through real Prometheus. -----
     let prom = start_prometheus().await?;
     let prom_mapped = mapped_base_url(&prom, PROM_HTTP_PORT).await?;
@@ -1775,22 +1452,24 @@ async fn grafana_e2e_service_graph(
     // Only the WAL consumer is mocked (MockSpanSource).
     let source = Arc::new(MockSpanSource::default());
     source.push_batch(vec![
-        metrics_span(
-            "checkout-frontend",
-            [0x0A; 8],
-            [0; 8],
-            MetricsSpanKind::Client,
-            MetricsStatusCode::Ok,
-            20_000_000,
-        ),
-        metrics_span(
-            "cart-backend",
-            [0x0B; 8],
-            [0x0A; 8],
-            MetricsSpanKind::Server,
-            MetricsStatusCode::Ok,
-            15_000_000,
-        ),
+        MetricsSpan {
+            service: "checkout-frontend",
+            span_id: [0x0A; 8],
+            parent: [0; 8],
+            kind: MetricsSpanKind::Client,
+            status: MetricsStatusCode::Ok,
+            duration_ns: 20_000_000,
+        }
+        .record(),
+        MetricsSpan {
+            service: "cart-backend",
+            span_id: [0x0B; 8],
+            parent: [0x0A; 8],
+            kind: MetricsSpanKind::Server,
+            status: MetricsStatusCode::Ok,
+            duration_ns: 15_000_000,
+        }
+        .record(),
     ]);
     let sink = Arc::new(PrometheusRemoteWriteSink::new(
         rw_url,

@@ -15,6 +15,39 @@ use krabka_blockstore::{
 };
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 
+fn series(app: &str) -> u64 {
+    series_fingerprint(&labels([("app", app), ("env", "prod")]))
+}
+
+fn planned_key() -> BlockKey {
+    BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap())
+}
+
+fn planned_rows() -> Vec<LogRow> {
+    let api = series("api");
+    vec![
+        LogRow::new(api, 10, "api ok", BTreeMap::new()),
+        LogRow::new(api, 19, "api error", BTreeMap::new()),
+    ]
+}
+
+fn worker_key() -> BlockKey {
+    BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap())
+}
+
+fn worker_rows() -> Vec<LogRow> {
+    vec![LogRow::new(
+        series("worker"),
+        25,
+        "worker error",
+        BTreeMap::new(),
+    )]
+}
+
+async fn run_sql(session: &SessionContext, sql: &str) -> Vec<RecordBatch> {
+    session.sql(sql).await.unwrap().collect().await.unwrap()
+}
+
 fn assert_single_api_error(batches: &[RecordBatch]) {
     let [batch] = batches else {
         panic!("expected one result batch, got {}", batches.len());
@@ -38,40 +71,21 @@ fn assert_single_api_error(batches: &[RecordBatch]) {
 #[tokio::test]
 async fn datafusion_table_scans_only_planned_log_blocks() {
     let dir = tempfile::tempdir().unwrap();
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
-    let worker = series_fingerprint(&labels([("app", "worker"), ("env", "prod")]));
 
-    let planned = write_log_block(
-        dir.path(),
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-    write_log_block(
-        dir.path(),
-        &BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(worker, 25, "worker error", BTreeMap::new())],
-    )
-    .unwrap();
+    let planned = write_log_block(dir.path(), &planned_key(), planned_rows()).unwrap();
+    write_log_block(dir.path(), &worker_key(), worker_rows()).unwrap();
 
     let ctx = SessionContext::new();
     register_log_blocks(&ctx, "logs", dir.path(), &[planned]).unwrap();
 
-    let batches = ctx
-        .sql(
-            "select timestamp_ns, line \
+    let batches = run_sql(
+        &ctx,
+        "select timestamp_ns, line \
              from logs \
              where line like '%error%' \
              order by timestamp_ns",
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+    )
+    .await;
 
     assert_single_api_error(&batches);
 }
@@ -79,24 +93,10 @@ async fn datafusion_table_scans_only_planned_log_blocks() {
 #[tokio::test]
 async fn log_block_table_provider_exposes_planned_filter_pushdown() {
     let dir = tempfile::tempdir().unwrap();
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
-    let worker = series_fingerprint(&labels([("app", "worker"), ("env", "prod")]));
+    let api = series("api");
 
-    let planned = write_log_block(
-        dir.path(),
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-    write_log_block(
-        dir.path(),
-        &BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(worker, 25, "worker error", BTreeMap::new())],
-    )
-    .unwrap();
+    let planned = write_log_block(dir.path(), &planned_key(), planned_rows()).unwrap();
+    write_log_block(dir.path(), &worker_key(), worker_rows()).unwrap();
 
     let provider = LogBlockTableProvider::try_new(dir.path(), &[planned]).unwrap();
     let timestamp_filter = col("timestamp_ns").gt_eq(lit(19_i64));
@@ -124,18 +124,16 @@ async fn log_block_table_provider_exposes_planned_filter_pushdown() {
     let ctx = SessionContext::new();
     ctx.register_table("logs", std::sync::Arc::new(provider))
         .unwrap();
-    let batches = ctx
-        .sql(&format!(
+    let batches = run_sql(
+        &ctx,
+        &format!(
             "select timestamp_ns, line \
              from logs \
              where timestamp_ns >= 19 and series_fingerprint = {api} \
              order by timestamp_ns"
-        ))
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+        ),
+    )
+    .await;
 
     assert_single_api_error(&batches);
 }
@@ -145,28 +143,15 @@ async fn log_block_table_provider_scans_planned_object_store_blocks() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     let prefix = ObjectPath::from("logs");
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
-    let worker = series_fingerprint(&labels([("app", "worker"), ("env", "prod")]));
+    let api = series("api");
 
-    let planned = write_log_block_to_object_store(
-        store.as_ref(),
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
-    write_log_block_to_object_store(
-        store.as_ref(),
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(worker, 25, "worker error", BTreeMap::new())],
-    )
-    .await
-    .unwrap();
+    let planned =
+        write_log_block_to_object_store(store.as_ref(), &prefix, &planned_key(), planned_rows())
+            .await
+            .unwrap();
+    write_log_block_to_object_store(store.as_ref(), &prefix, &worker_key(), worker_rows())
+        .await
+        .unwrap();
 
     let provider =
         LogBlockTableProvider::try_new_object_store(store, &prefix, std::slice::from_ref(&planned))
@@ -175,18 +160,16 @@ async fn log_block_table_provider_scans_planned_object_store_blocks() {
 
     let ctx = SessionContext::new();
     ctx.register_table("logs", Arc::new(provider)).unwrap();
-    let batches = ctx
-        .sql(&format!(
+    let batches = run_sql(
+        &ctx,
+        &format!(
             "select timestamp_ns, line \
              from logs \
              where line like '%error%' and series_fingerprint = {api} \
              order by timestamp_ns"
-        ))
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+        ),
+    )
+    .await;
 
     assert_single_api_error(&batches);
 }
@@ -196,34 +179,22 @@ async fn registers_planned_object_store_blocks_as_datafusion_table() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     let prefix = ObjectPath::from("logs");
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
 
-    let planned = write_log_block_to_object_store(
-        store.as_ref(),
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
+    let planned =
+        write_log_block_to_object_store(store.as_ref(), &prefix, &planned_key(), planned_rows())
+            .await
+            .unwrap();
 
     let ctx = SessionContext::new();
     register_log_blocks_from_object_store(&ctx, "logs", store, &prefix, &[planned]).unwrap();
-    let batches = ctx
-        .sql(
-            "select timestamp_ns, line \
+    let batches = run_sql(
+        &ctx,
+        "select timestamp_ns, line \
              from logs \
              where line like '%error%' \
              order by timestamp_ns",
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+    )
+    .await;
 
     assert_single_api_error(&batches);
 }

@@ -1,37 +1,38 @@
 use super::{
-    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Path, Principal, QuerierBackend,
-    QueryFrontend, Response, State, StatusCode, TraceStatus, Uri, backend_error_response, json,
-    optional_time_bounds, parse_hex16, request_tenant,
+    ApiVersion, BlockCatalog, FrontendRequest, IntoResponse, Json, Path, QuerierBackend, Response,
+    RouteVariant, StatusCode, TraceStatus, backend_error_response, json, optional_time_bounds,
+    parse_hex16, tenant_and_bounds, trace_v1_response,
 };
 
-pub(crate) async fn trace_by_id<B, C>(
-    State(qf): State<Arc<QueryFrontend<B, C>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+/// The v2 trace-by-id envelope at `/api/v2/traces/{id}`, or for
+/// [`ApiVersion::V1`] the bare trace that `/api/traces/{id}` answers.
+pub(crate) async fn trace_by_id<B, C, V>(
+    request: FrontendRequest<B, C>,
     Path(trace_id): Path<String>,
-    uri: Uri,
 ) -> Response
 where
     B: QuerierBackend + 'static,
     C: BlockCatalog + 'static,
+    V: RouteVariant<ApiVersion>,
 {
     if trace_id.len() != 32 || hex::decode(&trace_id).is_err() {
         return (StatusCode::BAD_REQUEST, "trace id must be 32 hex chars").into_response();
     }
-    let tenant = match request_tenant(&headers, &principal, &qf.cfg.tenant_policy) {
-        Ok(tenant) => tenant,
-        Err(rejection) => return *rejection,
-    };
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
+    let (tenant, start_ns, end_ns) =
+        match tenant_and_bounds(request.tenant_request(), optional_time_bounds) {
+            Ok(request) => request,
+            Err(rejection) => return *rejection,
+        };
+    let FrontendRequest { qf, headers, .. } = request;
     let tid = parse_hex16(&trace_id);
     let (trace, _metrics, status, warnings) =
         match qf.trace_by_id(&tenant, tid, start_ns, end_ns).await {
             Ok(out) => out,
             Err(err) => return backend_error_response(&err),
         };
+    if matches!(V::VARIANT, ApiVersion::V1) {
+        return trace_v1_response(&headers, trace);
+    }
 
     let Some(trace) = trace else {
         // 404 asserts the trace does not exist. With a querier out of the

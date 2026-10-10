@@ -48,6 +48,7 @@ mod decode_tsdb_block;
 mod decode_xor_chunk;
 mod decoded_tsdb_block;
 mod format_labels;
+mod histogram_chunk_state;
 mod histogram_layout;
 mod i64_to_f64;
 mod import_commit;
@@ -79,17 +80,35 @@ mod xor_state;
 
 pub(crate) use self::tsdb_import_keys::TsdbImportKeys;
 use self::{
-    bit_reader::BitReader, byte_reader::ByteReader, checked_section::checked_section,
-    chunk_encoding::ChunkEncoding, chunk_error::ChunkError, chunk_meta::ChunkMeta,
-    chunk_samples::ChunkSamples, chunk_segments::ChunkSegments,
-    counter_reset_hint::counter_reset_hint, create_import_json::create_import_json,
+    bit_reader::BitReader,
+    byte_reader::ByteReader,
+    checked_section::checked_section,
+    chunk_encoding::ChunkEncoding,
+    chunk_error::ChunkError,
+    chunk_meta::ChunkMeta,
+    chunk_samples::ChunkSamples,
+    chunk_segments::ChunkSegments,
+    counter_reset_hint::counter_reset_hint,
+    create_import_json::create_import_json,
     decode_float_histogram_chunk::decode_float_histogram_chunk,
-    decode_histogram_chunk::decode_histogram_chunk, decode_xor_chunk::decode_xor_chunk,
-    format_labels::format_labels, histogram_layout::HistogramLayout, i64_to_f64::i64_to_f64,
-    import_commit::ImportCommit, index_series::IndexSeries, index_toc::IndexToc,
-    put_import_json::put_import_json, read_import_json::read_import_json, read_series::read_series,
-    read_symbols::read_symbols, stale_histogram::stale_histogram, tombstones::Tombstones,
-    u64_to_f64::u64_to_f64, validate_postings::validate_postings, xor_state::XorState,
+    decode_histogram_chunk::decode_histogram_chunk,
+    decode_xor_chunk::decode_xor_chunk,
+    format_labels::format_labels,
+    histogram_chunk_state::{HistogramChunkState, decode_histogram_samples},
+    histogram_layout::HistogramLayout,
+    i64_to_f64::i64_to_f64,
+    import_commit::ImportCommit,
+    index_series::IndexSeries,
+    index_toc::IndexToc,
+    put_import_json::put_import_json,
+    read_import_json::read_import_json,
+    read_series::read_series,
+    read_symbols::read_symbols,
+    stale_histogram::stale_histogram,
+    tombstones::Tombstones,
+    u64_to_f64::u64_to_f64,
+    validate_postings::validate_postings,
+    xor_state::XorState,
 };
 pub use self::{
     decode_tsdb_block::decode_tsdb_block, decoded_tsdb_block::DecodedTsdbBlock,

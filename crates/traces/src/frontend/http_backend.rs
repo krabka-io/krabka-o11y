@@ -51,34 +51,6 @@ use crate::frontend::{
 #[cfg(test)]
 mod tests {
 
-    /// `scope_param` is the inverse of `parse_scope`: it names a scope for a
-    /// query string. The six names are asserted to be distinct, so a scope
-    /// borrowed from a neighbouring arm cannot pass unnoticed.
-    #[test]
-    fn every_tag_scope_has_its_own_query_parameter_name() {
-        use krabka_traceql::TagScope;
-        let name = super::scope_param;
-
-        check!(name(TagScope::Resource) == "resource");
-        check!(name(TagScope::Span) == "span");
-        check!(name(TagScope::Intrinsic) == "intrinsic");
-        check!(name(TagScope::Event) == "event");
-        check!(name(TagScope::Link) == "link");
-        check!(name(TagScope::Instrumentation) == "instrumentation");
-
-        let mut names = vec![
-            name(TagScope::Resource),
-            name(TagScope::Span),
-            name(TagScope::Intrinsic),
-            name(TagScope::Event),
-            name(TagScope::Link),
-            name(TagScope::Instrumentation),
-        ];
-        names.sort_unstable();
-        names.dedup();
-        check!(names.len() == 6, "the six names must all differ: {names:?}");
-    }
-
     /// `parse_scope` defaults to the span scope rather than refusing, so
     /// "span" and an unknown name reach the same answer by different routes.
     /// Every named scope is checked so none of them can quietly fall through
@@ -135,29 +107,33 @@ mod tests {
 }
 
 mod build_url;
+mod decode_json_body;
 mod error_for_status;
 mod http_querier;
 mod instant_metrics_response_json;
+mod internal_http_client;
 mod ns_to_seconds;
 mod parse_scope;
 mod push_shard_params;
 mod run_query_frontend;
-mod scope_param;
 mod scope_tags_json;
 mod tag_values_body;
 mod tags_body;
 mod typed_value_json;
 
 use build_url::build_url;
+use decode_json_body::decode_json_body;
 use error_for_status::error_for_status;
 pub use http_querier::HttpQuerier;
 use instant_metrics_response_json::InstantMetricsResponseJson;
+pub(crate) use internal_http_client::internal_http_client;
 use ns_to_seconds::ns_to_seconds;
 use parse_scope::parse_scope;
 use push_shard_params::push_shard_params;
 pub use run_query_frontend::run_query_frontend;
-use scope_param::scope_param;
 use scope_tags_json::ScopeTagsJson;
 use tag_values_body::TagValuesBody;
 use tags_body::TagsBody;
 use typed_value_json::TypedValueJson;
+
+use crate::querier::http::tag_scope_name;

@@ -1,9 +1,8 @@
 use crate::{
-    ActiveLogDeleteFilter, BTreeMap, Int64Array, LabelIndex, Labels, MapArray, MatchOp,
-    MetricQuery, MetricSampleState, Ordering, PipelineStage, QueryError, QueryRow,
-    RangeAggregation, StreamPlan, StringArray, UInt64Array, VectorAggregation, VectorAggregationOp,
-    VectorAggregationState, VectorGrouping, append_matching_metric_row, format_metric_value,
-    parse_metric_sample_value, rate_metric_value, structured_metadata_value,
+    ActiveLogDeleteFilter, BTreeMap, LabelIndex, Labels, MatchOp, MetricQuery, MetricSampleState,
+    Ordering, PipelineStage, QueryError, RangeAggregation, StreamPlan, VectorAggregation,
+    VectorAggregationOp, VectorAggregationState, VectorGrouping, append_matching_metric_row,
+    for_each_query_row, format_metric_value, parse_metric_sample_value, rate_metric_value,
 };
 
 mod absent_metric_labels;

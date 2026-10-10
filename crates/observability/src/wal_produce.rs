@@ -48,6 +48,8 @@
 
 use std::{collections::VecDeque, future::Future, num::NonZeroUsize};
 
+use axum::body::Bytes;
+use krabka_client_producer::Header as ProducerHeader;
 use prometheus_client::{metrics::counter::Counter, registry::Registry};
 
 #[cfg(test)]
@@ -56,11 +58,15 @@ mod tests;
 mod produce_window;
 mod wal_batch_error;
 mod wal_produce_metrics;
+mod wal_record_headers;
 mod write_batch_pipelined;
+mod write_batch_serially;
 
 pub use self::{
     produce_window::{DEFAULT_PRODUCE_WINDOW, ProduceWindow},
     wal_batch_error::WalBatchError,
     wal_produce_metrics::WalProduceMetrics,
+    wal_record_headers::wal_record_headers,
     write_batch_pipelined::write_batch_pipelined,
+    write_batch_serially::write_batch_serially,
 };

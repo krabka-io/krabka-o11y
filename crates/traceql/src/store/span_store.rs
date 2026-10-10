@@ -1,10 +1,10 @@
 use super::{
-    Result, ScanOptions, ScanResult, ScopedTag, SpanMatcher, TagScope, TraceSpans, TypedValue,
+    Result, ScanOptions, ScanResult, SpanMatcher, TagCatalog, TraceSpans,
     filter_trace_spans_by_time,
 };
 
 #[async_trait::async_trait]
-pub trait SpanStore: Send + Sync {
+pub trait SpanStore: TagCatalog {
     async fn scan(
         &self,
         tenant: &str,
@@ -39,20 +39,4 @@ pub trait SpanStore: Send + Sync {
             .await?
             .map(|trace| filter_trace_spans_by_time(trace, start_ns, end_ns)))
     }
-
-    async fn tag_names(
-        &self,
-        tenant: &str,
-        scope: Option<TagScope>,
-        start_ns: i64,
-        end_ns: i64,
-    ) -> Result<Vec<ScopedTag>>;
-
-    async fn tag_values(
-        &self,
-        tenant: &str,
-        tag: &str,
-        start_ns: i64,
-        end_ns: i64,
-    ) -> Result<Vec<TypedValue>>;
 }

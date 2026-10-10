@@ -1,7 +1,9 @@
 use super::{Deserialize, EventRecord, KeyValue, LinkRecord, Serialize, SpanKind, StatusCode};
 
 /// One internal span. The WAL carries one record per span.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The default is an empty, unset span with all-zero ids, which fixtures
+/// fill in with struct-update syntax.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Span {
     pub trace_id: [u8; 16],
     pub span_id: [u8; 8],

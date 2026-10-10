@@ -1,19 +1,21 @@
 use super::{
-    AppState, Bytes, Extension, HeaderMap, Method, Principal, Response, SpanStore, State, Uri,
-    overrides_api_response, request_tenant,
+    Bytes, Method, QuerierRequest, Response, SpanStore, overrides_api_response, request_tenant,
 };
 
 pub(crate) async fn overrides<S>(
-    State(state): State<AppState<S>>,
-    Extension(principal): Extension<Principal>,
+    request: QuerierRequest<S>,
     method: Method,
-    uri: Uri,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Response
 where
     S: SpanStore + 'static,
 {
+    let QuerierRequest {
+        state,
+        principal,
+        headers,
+        uri,
+    } = request;
     let tenant = match request_tenant(&headers, &principal, &state.cfg.tenant_policy) {
         Ok(tenant) => tenant,
         Err(rejection) => return *rejection,

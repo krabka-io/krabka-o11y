@@ -29,7 +29,14 @@ pub(crate) async fn created_timestamps_inject_counter_zeros_in_planner_and_inter
         let (selector, kind) = match_rate_range_call(&expr).unwrap();
         let interpreter = engine.eval_instant_call("t", call, 300_000).await.unwrap();
         let planner = engine
-            .eval_rate_range_via_planner("t", selector, 300_000, kind)
+            .eval_rate_range_via_planner(
+                "t",
+                MatrixSelectorAt {
+                    selector,
+                    time_ms: 300_000,
+                },
+                kind,
+            )
             .await
             .unwrap();
 

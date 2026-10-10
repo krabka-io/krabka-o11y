@@ -54,12 +54,12 @@ use support::{
 #[ignore = "soak: needs a MinIO container and a wall-clock budget"]
 async fn operating_envelope() {
     let config = Arc::new(Config::from_env());
-    let (_container, backing) = minio::start().await;
+    let minio = minio::start().await;
     let started = Instant::now();
 
     let mut entries = Vec::new();
     for kind in SignalKind::ALL {
-        let (stores, meters) = StoreMeters::wrap(&backing, &format!("soak/{}", kind.name()));
+        let (stores, meters) = StoreMeters::wrap(&minio.store, &format!("soak/{}", kind.name()));
         let ctx = phases::context(kind, &stores, meters, &config).await;
         entries.extend(phases::run_signal(kind, &ctx, &stores).await);
     }

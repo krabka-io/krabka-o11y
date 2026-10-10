@@ -2,16 +2,20 @@
 
 mod support;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+};
 
 use assert2::assert;
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
 };
 use krabka_blockstore::{
-    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels,
-    log_block_object_path, write_log_block, write_log_block_to_object_store,
+    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogLabels, LogRow,
+    TimeRange, labels, log_block_object_path, write_log_block, write_log_block_to_object_store,
     write_log_index_manifest, write_tenant_log_index_manifest_to_object_store,
     write_tenant_log_index_shard_to_object_store, write_tenant_log_index_shards_to_object_store,
 };
@@ -21,121 +25,164 @@ use krabka_observability::{
 };
 use krabka_units::convert::ByteSizeExt as _;
 use object_store::{ObjectStoreExt as _, local::LocalFileSystem, path::Path as ObjectPath};
-use serde_json::json;
+use serde_json::{Value, json};
 use support::{
-    expected_loki_forwarded_api_error as expected_api_error, expected_loki_mixed_stats_with,
-    expected_loki_stats_with, json_body, tenant_object_store_shard_catalog_config_fixture,
+    BlockSpan, LogEntry, LokiStatsCounts, LokiSuccess, Tenant,
+    expected_loki_forwarded_api_error as expected_api_error, json_body, log_entry,
+    loki_forwarded_tenant_object_store_shard_catalog_service_fixture, send,
+    tenant_object_store_shard_catalog_config_fixture,
 };
-use tower::ServiceExt as _;
+
+const API_PROD: [(&str, &str); 2] = [("app", "api"), ("env", "prod")];
+const API_STAGE: [(&str, &str); 2] = [("app", "api"), ("env", "stage")];
+const ERROR_QUERY_RANGE: &str = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000";
+const MISSING_BLOCK_WARNING: &str =
+    "failed to read block tenant=tenant-a/partition=0/offsets=20-29/time=20-29.parquet";
+const SECONDS: i64 = 1_000_000_000;
+
+async fn assert_query_range_reads_api_error(state: QuerierState) {
+    let (status, body) = Tenant("tenant-a")
+        .get_json(&loki_router(state), ERROR_QUERY_RANGE)
+        .await;
+
+    assert!(status == StatusCode::OK);
+    assert!(body == expected_api_error());
+}
 
 #[tokio::test]
 async fn query_endpoint_can_load_indexes_from_persisted_manifest() {
-    let state = persisted_fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert_query_range_reads_api_error(persisted_fixture()).await;
 }
 
 #[tokio::test]
 async fn query_endpoint_can_load_tenant_index_from_object_store_manifest() {
-    let state = tenant_object_store_fixture().await;
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert_query_range_reads_api_error(tenant_object_store_fixture().await).await;
 }
 
 #[tokio::test]
 async fn query_endpoint_can_load_tenant_index_from_object_store_shard() {
-    let state = tenant_object_store_shard_fixture().await;
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert_query_range_reads_api_error(tenant_object_store_shard_fixture().await).await;
 }
 
 #[tokio::test]
 async fn query_endpoint_can_load_tenant_index_from_object_store_shard_catalog() {
-    let state = tenant_object_store_shard_catalog_fixture().await;
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert_query_range_reads_api_error(tenant_object_store_shard_catalog_fixture().await).await;
 }
 
 #[tokio::test]
 async fn query_endpoint_can_build_querier_from_object_store_shard_catalog_config() {
     let (state, _dir) = tenant_object_store_shard_catalog_config_fixture().await;
-    let app = loki_router(state);
+    assert_query_range_reads_api_error(state).await;
+}
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+/// A querier over a tenant manifest in an object store, with a hot tail of
+/// the same rows, and one cold block fetch at a time.
+/// A querier over a tenant-a manifest in a local object store, and a hot
+/// tail.
+struct HotAndColdQuerier<'a> {
+    object_dir: &'a Path,
+    data_root: &'a Path,
+    prefix: &'a ObjectPath,
+    /// The indexes the manifest is written from.
+    label_index: &'a LabelIndex,
+    block_index: &'a BlockIndex,
+    /// The hot tail's lines, each at 30 ns.
+    hot_lines: Vec<HotLine<'a>>,
+}
 
+async fn hot_and_cold_router(querier: HotAndColdQuerier<'_>) -> Router {
+    let HotAndColdQuerier {
+        object_dir,
+        data_root,
+        prefix,
+        label_index,
+        block_index,
+        hot_lines,
+    } = querier;
+    let hot_tail = hot_tail_at_30ns(hot_lines).await;
+    write_tenant_log_index_manifest_to_object_store(
+        &LocalFileSystem::new_with_prefix(object_dir).unwrap(),
+        prefix,
+        "tenant-a",
+        label_index,
+        block_index,
+    )
+    .await
+    .unwrap();
+    let config = ServiceConfig {
+        target: Role::Querier,
+        object_store_url: Some(format!("file://{}", object_dir.display())),
+        data_root: data_root.into(),
+        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
+        tenant: Some("tenant-a".into()),
+        index_prefix: Some(prefix.to_string()),
+        querier_cold_block_fetch_concurrency: std::num::NonZeroUsize::MIN,
+        ..ServiceConfig::default()
+    };
+    build_service_router(
+        &config,
+        ServiceDependencies::default().with_hot_tail(hot_tail, 0),
+        None,
+    )
+    .await
+    .unwrap()
+}
+
+/// A tenant-a hot line at 30 ns, with its `user` structured metadata.
+struct HotLine<'a> {
+    source: &'a LogLabels,
+    line: &'a str,
+    user: &'a str,
+}
+
+/// A hot tail that holds `hot_lines`, each at 30 ns.
+async fn hot_tail_at_30ns<'a>(hot_lines: impl IntoIterator<Item = HotLine<'a>>) -> InMemoryWalSink {
+    let hot_tail = InMemoryWalSink::default();
+    for hot_line in hot_lines {
+        hot_tail
+            .append(WalLogRecord {
+                tenant: "tenant-a".into(),
+                labels: hot_line.source.clone(),
+                timestamp_ns: 30,
+                line: hot_line.line.into(),
+                structured_metadata: labels([("user", hot_line.user)]),
+                position: None,
+            })
+            .await
+            .unwrap();
+    }
+    hot_tail
+}
+
+/// How a query response encodes stream labels and structured metadata.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LabelEncoding {
+    /// Structured metadata folded into the stream labels.
+    Flat,
+    /// Structured metadata beside each entry, as
+    /// `X-Loki-Response-Encoding-Flags: categorize-labels` asks.
+    Categorized,
+}
+
+async fn query_streams(app: &Router, uri: &str, encoding: LabelEncoding) -> Value {
+    let response = send(
+        app,
+        Request::builder()
+            .uri(uri)
+            .header("X-Scope-OrgID", "tenant-a")
+            .header(
+                "X-Loki-Response-Encoding-Flags",
+                match encoding {
+                    LabelEncoding::Categorized => "categorize-labels",
+                    LabelEncoding::Flat => "",
+                },
+            )
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
     assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    json_body(response).await["data"]["result"].clone()
 }
 
 #[tokio::test]
@@ -172,12 +219,12 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
             write_log_block_to_object_store(
                 &store,
                 &prefix,
-                &BlockKey::new(
+                &block_key(
                     "tenant-a",
-                    0,
-                    start,
-                    end,
-                    TimeRange::new(start, end).unwrap(),
+                    BlockSpan {
+                        first: start,
+                        last: end,
+                    },
                 ),
                 rows,
             )
@@ -185,47 +232,24 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
             .unwrap(),
         );
     }
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let hot_tail = InMemoryWalSink::default();
-    for (source, _) in &sources {
-        hot_tail
-            .append(WalLogRecord {
-                tenant: "tenant-a".into(),
-                labels: source.clone(),
-                timestamp_ns: 30,
-                line: "line-30".into(),
-                structured_metadata: labels([("user", "alice")]),
-                position: None,
+    let app = hot_and_cold_router(HotAndColdQuerier {
+        object_dir: object_dir.path(),
+        data_root: data_root.path(),
+        prefix: &prefix,
+        label_index: &label_index,
+        block_index: &block_index,
+        hot_lines: sources
+            .iter()
+            .map(|(source, _)| HotLine {
+                source,
+                line: "line-30",
+                user: "alice",
             })
-            .await
-            .unwrap();
-    }
-    let config = ServiceConfig {
-        target: Role::Querier,
-        object_store_url: Some(format!("file://{}", object_dir.path().display())),
-        data_root: data_root.path().into(),
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: Some("tenant-a".into()),
-        index_prefix: Some(prefix.to_string()),
-        querier_cold_block_fetch_concurrency: std::num::NonZeroUsize::MIN,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
-        ServiceDependencies::default().with_hot_tail(hot_tail, 0),
-        None,
-    )
-    .await
-    .unwrap();
-    for categorized in [false, true] {
+            .collect(),
+    })
+    .await;
+    for encoding in [LabelEncoding::Flat, LabelEncoding::Categorized] {
+        let categorized = encoding == LabelEncoding::Categorized;
         for direction in ["forward", "backward"] {
             for (limit, end, interval, expected_rows) in [
                 (2, 40, None, 1),
@@ -237,21 +261,10 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
                 let interval_query = interval
                     .map(|interval| format!("&interval=0.{interval:09}"))
                     .unwrap_or_default();
-                let response = app
-                    .clone()
-                    .oneshot(
-                        Request::builder()
-                            .uri(format!(
-                                "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.{end:09}&direction={direction}&limit={limit}{interval_query}"
-                            ))
-                            .header("X-Scope-OrgID", "tenant-a")
-                            .header("X-Loki-Response-Encoding-Flags", if categorized { "categorize-labels" } else { "" })
-                            .body(Body::empty())
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
-                assert!(response.status() == StatusCode::OK);
+                let result = query_streams(&app, &format!(
+                        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.{end:09}&direction={direction}&limit={limit}{interval_query}"
+                    ), encoding)
+                .await;
                 let expected = sources.iter().map(|(source, _)| {
                     let mut stream = source.clone();
                     if !categorized { stream.insert("user".into(), "alice".into()); }
@@ -270,7 +283,7 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
                     }).collect::<Vec<_>>();
                     json!({"stream": stream, "values": values})
                 }).collect::<Vec<_>>();
-                assert!(json_body(response).await["data"]["result"] == json!(expected));
+                assert!(result == json!(expected));
             }
         }
     }
@@ -296,12 +309,12 @@ async fn nonadjacent_hot_and_cold_rows_keep_unique_entries_and_metadata() {
                 write_log_block_to_object_store(
                     &store,
                     &prefix,
-                    &BlockKey::new(
+                    &block_key(
                         "tenant-a",
-                        0,
-                        timestamp,
-                        timestamp,
-                        TimeRange::new(timestamp, timestamp).unwrap(),
+                        BlockSpan {
+                            first: timestamp,
+                            last: timestamp,
+                        },
                     ),
                     entries
                         .into_iter()
@@ -314,59 +327,32 @@ async fn nonadjacent_hot_and_cold_rows_keep_unique_entries_and_metadata() {
                 .unwrap(),
             );
         }
-        write_tenant_log_index_manifest_to_object_store(
-            &store,
-            &prefix,
-            "tenant-a",
-            &label_index,
-            &block_index,
-        )
-        .await
-        .unwrap();
-        let hot_tail = InMemoryWalSink::default();
-        for (line, user) in newest_rows {
-            hot_tail
-                .append(WalLogRecord {
-                    tenant: "tenant-a".into(),
-                    labels: source.clone(),
-                    timestamp_ns: 30,
-                    line: line.into(),
-                    structured_metadata: labels([("user", user)]),
-                    position: None,
+        let app = hot_and_cold_router(HotAndColdQuerier {
+            object_dir: object_dir.path(),
+            data_root: data_root.path(),
+            prefix: &prefix,
+            label_index: &label_index,
+            block_index: &block_index,
+            hot_lines: newest_rows
+                .into_iter()
+                .map(|(line, user)| HotLine {
+                    source: &source,
+                    line,
+                    user,
                 })
-                .await
-                .unwrap();
-        }
-        let config = ServiceConfig {
-            target: Role::Querier,
-            object_store_url: Some(format!("file://{}", object_dir.path().display())),
-            data_root: data_root.path().into(),
-            querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-            tenant: Some("tenant-a".into()),
-            index_prefix: Some(prefix.to_string()),
-            querier_cold_block_fetch_concurrency: std::num::NonZeroUsize::MIN,
-            ..ServiceConfig::default()
-        };
-        let app = build_service_router(
-            &config,
-            ServiceDependencies::default().with_hot_tail(hot_tail, 0),
-            None,
-        )
-        .await
-        .unwrap();
-        for categorized in [false, true] {
+                .collect(),
+        })
+        .await;
+        for encoding in [LabelEncoding::Flat, LabelEncoding::Categorized] {
+            let categorized = encoding == LabelEncoding::Categorized;
             for direction in ["forward", "backward"] {
                 let limit = if distinct_metadata || direction == "forward" {
                     4
                 } else {
                     3
                 };
-                let response = app.clone().oneshot(Request::builder()
-                .uri(format!("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000040&direction={direction}&limit={limit}"))
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("X-Loki-Response-Encoding-Flags", if categorized { "categorize-labels" } else { "" })
-                .body(Body::empty()).unwrap()).await.unwrap();
-                assert!(response.status() == StatusCode::OK);
+                let actual = query_streams(&app, &format!("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000040&direction={direction}&limit={limit}"), encoding)
+                .await;
                 let expected = if categorized {
                     let mut values = vec![
                         json!(["30", "B", {"structuredMetadata": {"user": "alice"}}]),
@@ -401,7 +387,6 @@ async fn nonadjacent_hot_and_cold_rows_keep_unique_entries_and_metadata() {
                     }
                     streams
                 };
-                let actual = json_body(response).await["data"]["result"].clone();
                 let expected = if direction == "forward" {
                     let mut expected = expected;
                     for stream in expected.as_array_mut().unwrap() {
@@ -417,238 +402,279 @@ async fn nonadjacent_hot_and_cold_rows_keep_unique_entries_and_metadata() {
     }
 }
 
-#[tokio::test]
-async fn configured_object_store_query_returns_partial_warning_for_missing_block() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let readable_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![LogRow::new(api, 19, "api error", BTreeMap::new())],
+fn block_key(tenant: &str, span: BlockSpan) -> BlockKey {
+    BlockKey::new(
+        tenant,
+        0,
+        span.first,
+        span.last,
+        TimeRange::new(span.first, span.last).unwrap(),
     )
-    .await
-    .unwrap();
-    let readable_block_bytes = readable_block.size.bytes_u64();
-    let missing_block = BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        BTreeSet::from([api]),
-    );
-    let mut block_index = BlockIndex::default();
-    block_index.insert(readable_block);
-    block_index.insert(missing_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: Some("tenant-a".to_string()),
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+}
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+/// Blocks and tenant indexes written to an object store in a kept directory,
+/// which a configured querier then reads.
+struct ObjectStoreIndex {
+    object_dir: PathBuf,
+    data_root: PathBuf,
+    store: LocalFileSystem,
+    prefix: ObjectPath,
+    label_index: LabelIndex,
+    block_index: BlockIndex,
+}
+
+impl ObjectStoreIndex {
+    fn new() -> Self {
+        let object_dir = tempfile::tempdir().unwrap().keep();
+        let data_root = tempfile::tempdir().unwrap().keep();
+        let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
+        Self {
+            object_dir,
+            data_root,
+            store,
+            prefix: ObjectPath::from("indexes"),
+            label_index: LabelIndex::default(),
+            block_index: BlockIndex::default(),
+        }
+    }
+
+    fn series(&mut self, tenant: &str, series_labels: LogLabels) -> u64 {
+        self.label_index.insert_series(tenant, series_labels)
+    }
+
+    /// Writes one block to the object store and returns its size in bytes.
+    async fn block(&mut self, key: &BlockKey, rows: Vec<LogRow>) -> u64 {
+        let block = write_log_block_to_object_store(&self.store, &self.prefix, key, rows)
+            .await
+            .unwrap();
+        let bytes = block.size.bytes_u64();
+        self.block_index.insert(block);
+        bytes
+    }
+
+    fn missing_block(&mut self, span: BlockSpan, series: u64) {
+        self.block_index.insert(BlockDescriptor::new(
+            block_key("tenant-a", span),
+            BTreeSet::from([series]),
+        ));
+    }
+
+    async fn write_manifest(&self, tenant: &str) {
+        write_tenant_log_index_manifest_to_object_store(
+            &self.store,
+            &self.prefix,
+            tenant,
+            &self.label_index,
+            &self.block_index,
         )
         .await
         .unwrap();
+    }
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
+    async fn write_shard(&self, tenant: &str, shard: TimeRange) {
+        write_tenant_log_index_shards_to_object_store(
+            &self.store,
+            &self.prefix,
+            tenant,
+            &[shard],
+            &self.label_index,
+            &self.block_index,
+        )
+        .await
+        .unwrap();
+    }
 
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["19", "api error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(readable_block_bytes, 1, 2)
+    fn config(&self, tenant: Option<&str>, source: QuerierIndexSource) -> ServiceConfig {
+        ServiceConfig {
+            target: Role::Querier,
+            listen_addr: "127.0.0.1:0".parse().unwrap(),
+            object_store_url: Some(format!("file://{}", self.object_dir.display())),
+            wal_bootstrap_server: None,
+            wal_topic: "__krabka_observability_logs_wal".to_string(),
+            wal_group_id: "krabka-observability-querier-tail".to_string(),
+            data_root: self.data_root.clone(),
+            querier_index_source: source,
+            tenant: tenant.map(str::to_string),
+            index_prefix: Some(self.prefix.to_string()),
+            query_start_ns: None,
+            query_end_ns: None,
+            max_query_range: None,
+            max_query_series: None,
+            max_query_read: None,
+            max_query_string_bytes: None,
+            max_ingest_body: None,
+            wal_append_timeout: None,
+            ..ServiceConfig::default()
+        }
+    }
+
+    async fn router_with(
+        &self,
+        config: &ServiceConfig,
+        dependencies: ServiceDependencies,
+    ) -> Router {
+        build_service_router(config, dependencies, None)
+            .await
+            .unwrap()
+    }
+
+    async fn router(&self, tenant: Option<&str>, source: QuerierIndexSource) -> Router {
+        self.router_with(&self.config(tenant, source), ServiceDependencies::default())
+            .await
+    }
+}
+
+fn one_stream(env: &str, values: Value) -> Value {
+    let mut stream = json!({ "stream": { "app": "api", "env": env } });
+    stream["values"] = values;
+    Value::Array(vec![stream])
+}
+
+fn with_missing_block_warning(mut response: Value) -> Value {
+    response["warnings"] = json!([MISSING_BLOCK_WARNING]);
+    response
+}
+
+/// A tenant-a manifest whose `api` block at 10-19 holds `lines`, and that also
+/// names a block at 20-29 whose object was never written.
+async fn manifest_with_missing_block(entries: &[LogEntry<'_>]) -> (Router, u64) {
+    let mut index = ObjectStoreIndex::new();
+    let api = index.series("tenant-a", labels(API_PROD));
+    let readable_block_bytes = index
+        .block(
+            &block_key(
+                "tenant-a",
+                BlockSpan {
+                    first: 10,
+                    last: 19,
                 },
-                "warnings": [
-                    "failed to read block tenant=tenant-a/partition=0/offsets=20-29/time=20-29.parquet"
-                ]
-            })
+            ),
+            entries
+                .iter()
+                .map(|entry| LogRow::new(api, entry.timestamp_ns, entry.line, BTreeMap::new()))
+                .collect(),
+        )
+        .await;
+    index.missing_block(
+        BlockSpan {
+            first: 20,
+            last: 29,
+        },
+        api,
+    );
+    index.write_manifest("tenant-a").await;
+    let app = index
+        .router(
+            Some("tenant-a"),
+            QuerierIndexSource::TenantObjectStoreManifest,
+        )
+        .await;
+    (app, readable_block_bytes)
+}
+
+#[tokio::test]
+async fn configured_object_store_query_returns_partial_warning_for_missing_block() {
+    let (app, readable_block_bytes) =
+        manifest_with_missing_block(&[log_entry(19, "api error")]).await;
+
+    let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+
+    assert!(status == StatusCode::OK);
+    assert!(
+        body == with_missing_block_warning(
+            LokiSuccess {
+                result_type: "streams",
+                data_result: one_stream("prod", json!([["19", "api error"]])),
+                stats: LokiStatsCounts {
+                    store_bytes: readable_block_bytes,
+                    store_lines: 1,
+                    chunks: 2,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
+            }
+            .json()
+        )
     );
 }
 
 #[tokio::test]
 async fn configured_object_store_backward_limited_query_stops_after_newest_block() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let missing_old_block = BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        BTreeSet::from([api]),
+    let mut index = ObjectStoreIndex::new();
+    let api = index.series("tenant-a", labels(API_PROD));
+    index.missing_block(
+        BlockSpan {
+            first: 10,
+            last: 19,
+        },
+        api,
     );
-    let newest_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![
-            LogRow::new(api, 20, "api older error", BTreeMap::new()),
-            LogRow::new(api, 29, "api newest error", BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
-    let newest_block_bytes = newest_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(missing_old_block);
-    block_index.insert(newest_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: Some("tenant-a".to_string()),
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=backward&limit=1",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let newest_block_bytes = index
+        .block(
+            &block_key(
+                "tenant-a",
+                BlockSpan {
+                    first: 20,
+                    last: 29,
+                },
+            ),
+            vec![
+                LogRow::new(api, 20, "api older error", BTreeMap::new()),
+                LogRow::new(api, 29, "api newest error", BTreeMap::new()),
+            ],
         )
-        .await
-        .unwrap();
+        .await;
+    index.write_manifest("tenant-a").await;
+    let app = index
+        .router(
+            Some("tenant-a"),
+            QuerierIndexSource::TenantObjectStoreManifest,
+        )
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
+    let (status, body) = Tenant("tenant-a").get_json(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=backward&limit=1")
+    .await;
+
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["29", "api newest error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(newest_block_bytes, 1, 1)
-                }
-            })
+        body == LokiSuccess {
+            result_type: "streams",
+            data_result: one_stream("prod", json!([["29", "api newest error"]])),
+            stats: LokiStatsCounts {
+                store_bytes: newest_block_bytes,
+                store_lines: 1,
+                chunks: 1,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats(),
+        }
+        .json()
     );
 }
 
 #[tokio::test]
 async fn configured_object_store_query_merges_hot_tail_with_source_split_stats() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let cold_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![LogRow::new(api, 19, "api cold error", BTreeMap::new())],
-    )
-    .await
-    .unwrap();
-    let cold_block_bytes = cold_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(cold_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
+    let mut index = ObjectStoreIndex::new();
+    let api = index.series("tenant-a", labels(API_PROD));
+    let cold_block_bytes = index
+        .block(
+            &block_key(
+                "tenant-a",
+                BlockSpan {
+                    first: 10,
+                    last: 19,
+                },
+            ),
+            vec![LogRow::new(api, 19, "api cold error", BTreeMap::new())],
+        )
+        .await;
+    index.write_manifest("tenant-a").await;
 
     let hot_tail = InMemoryWalSink::default();
     hot_tail
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
+            labels: labels(API_PROD),
             timestamp_ns: 20,
             line: "api hot error".to_string(),
             structured_metadata: BTreeMap::new(),
@@ -658,1008 +684,473 @@ async fn configured_object_store_query_merges_hot_tail_with_source_split_stats()
         .unwrap();
 
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
         wal_group_id: "krabka-observability-querier-object-hot-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: Some("tenant-a".to_string()),
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
-        ServiceDependencies::default().with_hot_tail(hot_tail, 19),
-        None,
-    )
-    .await
-    .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000&direction=forward",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+        ..index.config(
+            Some("tenant-a"),
+            QuerierIndexSource::TenantObjectStoreManifest,
         )
-        .await
-        .unwrap();
+    };
+    let app = index
+        .router_with(
+            &config,
+            ServiceDependencies::default().with_hot_tail(hot_tail, 19),
+        )
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
+    let (status, body) = Tenant("tenant-a")
+        .get_json(&app, &format!("{ERROR_QUERY_RANGE}&direction=forward"))
+        .await;
+
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["19", "api cold error"],
-                                ["20", "api hot error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_mixed_stats_with(cold_block_bytes, 1, 1, 1)
-                }
-            })
+        body == LokiSuccess {
+            result_type: "streams",
+            data_result: one_stream(
+                "prod",
+                json!([["19", "api cold error"], ["20", "api hot error"]])
+            ),
+            stats: LokiStatsCounts {
+                store_bytes: cold_block_bytes,
+                store_lines: 1,
+                ingester_lines: 1,
+                chunks: 1
+            }
+            .expected_stats(),
+        }
+        .json()
     );
 }
 
 #[tokio::test]
 async fn configured_object_store_metric_query_returns_partial_warning_for_missing_block() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let readable_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
-    let readable_block_bytes = readable_block.size.bytes_u64();
-    let missing_block = BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        BTreeSet::from([api]),
-    );
-    let mut block_index = BlockIndex::default();
-    block_index.insert(readable_block);
-    block_index.insert(missing_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: Some("tenant-a".to_string()),
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let (app, readable_block_bytes) =
+        manifest_with_missing_block(&[log_entry(10, "api ok"), log_entry(19, "api error")]).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=count_over_time(%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D)&start=0.000000030&end=0.000000030&step=1ns",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, body) = Tenant("tenant-a").get_json(&app, "/loki/api/v1/query_range?query=count_over_time(%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D)&start=0.000000030&end=0.000000030&step=1ns")
+    .await;
 
-    assert!(response.status() == StatusCode::OK);
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "matrix",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-
-                                "env": "prod"
-                            },
-                            "values": [
-                                [0.000_000_03, "1"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(readable_block_bytes, 1, 2)
-                },
-                "warnings": [
-                    "failed to read block tenant=tenant-a/partition=0/offsets=20-29/time=20-29.parquet"
-                ]
-            })
+        body == with_missing_block_warning(
+            LokiSuccess {
+                result_type: "matrix",
+                data_result: json!([{
+                    "metric": { "app": "api", "env": "prod" },
+                    "values": [[0.000_000_03, "1"]]
+                }]),
+                stats: LokiStatsCounts {
+                    store_bytes: readable_block_bytes,
+                    store_lines: 1,
+                    chunks: 2,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
+            }
+            .json()
+        )
     );
 }
 
 #[tokio::test]
 async fn configured_object_store_index_stats_endpoint_counts_entries_from_object_store_blocks() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
-    let expected_block_bytes = api_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: Some("tenant-a".to_string()),
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let mut index = ObjectStoreIndex::new();
+    let api = index.series("tenant-a", labels(API_PROD));
+    let expected_block_bytes = index
+        .block(
+            &block_key(
+                "tenant-a",
+                BlockSpan {
+                    first: 10,
+                    last: 19,
+                },
+            ),
+            vec![
+                LogRow::new(api, 10, "api ok", BTreeMap::new()),
+                LogRow::new(api, 19, "api error", BTreeMap::new()),
+            ],
         )
-        .await
-        .unwrap();
+        .await;
+    index.write_manifest("tenant-a").await;
+    let app = index
+        .router(
+            Some("tenant-a"),
+            QuerierIndexSource::TenantObjectStoreManifest,
+        )
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
+    let (status, body) = Tenant("tenant-a").get_json(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019")
+    .await;
+
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "streams": 1,
-                "chunks": 1,
-                "entries": 2,
-                "bytes": expected_block_bytes,
-            })
+        body == json!({
+            "streams": 1,
+            "chunks": 1,
+            "entries": 2,
+            "bytes": expected_block_bytes,
+        })
     );
+}
+
+/// A manifest for tenant-b alone, with one `api` row at 29, served by a
+/// querier that takes the tenant from each request.
+async fn tenant_b_manifest(line: &str, metadata: BTreeMap<String, String>) -> (Router, u64) {
+    let mut index = ObjectStoreIndex::new();
+    let tenant_b_api = index.series("tenant-b", labels(API_STAGE));
+    let bytes = index
+        .block(
+            &block_key(
+                "tenant-b",
+                BlockSpan {
+                    first: 20,
+                    last: 29,
+                },
+            ),
+            vec![LogRow::new(tenant_b_api, 29, line, metadata)],
+        )
+        .await;
+    index.write_manifest("tenant-b").await;
+    let app = index
+        .router(None, QuerierIndexSource::TenantObjectStoreManifest)
+        .await;
+    (app, bytes)
 }
 
 #[tokio::test]
 async fn configured_object_store_index_stats_endpoint_loads_request_tenant_manifest() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let tenant_b_api =
-        label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "stage")]));
-    let tenant_b_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-b", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(
-            tenant_b_api,
-            29,
-            "tenant-b api error",
-            BTreeMap::new(),
-        )],
-    )
-    .await
-    .unwrap();
-    let expected_block_bytes = tenant_b_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(tenant_b_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-b",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: None,
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let (app, expected_block_bytes) =
+        tenant_b_manifest("tenant-b api error", BTreeMap::new()).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029")
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, body) = Tenant("tenant-b").get_json(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029")
+    .await;
 
-    assert!(response.status() == StatusCode::OK);
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "streams": 1,
-                "chunks": 1,
-                "entries": 1,
-                "bytes": expected_block_bytes,
-            })
+        body == json!({
+            "streams": 1,
+            "chunks": 1,
+            "entries": 1,
+            "bytes": expected_block_bytes,
+        })
     );
 }
 
 #[tokio::test]
 async fn configured_object_store_index_volume_endpoint_loads_request_tenant_manifest() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let tenant_b_api =
-        label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "stage")]));
-    let tenant_b_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-b", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(
-            tenant_b_api,
-            29,
-            "tenant-b api error",
-            BTreeMap::new(),
-        )],
-    )
-    .await
-    .unwrap();
-    let expected_block_bytes = tenant_b_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(tenant_b_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-b",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: None,
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let (app, expected_block_bytes) =
+        tenant_b_manifest("tenant-b api error", BTreeMap::new()).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029")
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, body) = Tenant("tenant-b").get_json(&app, "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029")
+    .await;
 
-    assert!(response.status() == StatusCode::OK);
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "stage"
-                            },
-                            "value": [0.000_000_029, expected_block_bytes.to_string()]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
-                }
-            })
+        body == LokiSuccess {
+            result_type: "vector",
+            data_result: json!([{
+                "metric": { "app": "api", "env": "stage" },
+                "value": [0.000_000_029, expected_block_bytes.to_string()]
+            }]),
+            stats: LokiStatsCounts {
+                store_bytes: expected_block_bytes,
+                store_lines: 0,
+                chunks: 1,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats(),
+        }
+        .json()
     );
 }
 
 #[tokio::test]
 async fn configured_object_store_patterns_endpoint_loads_request_tenant_manifest() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let tenant_b_api =
-        label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "stage")]));
-    let tenant_b_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new(
-            "tenant-b",
-            0,
-            100_000_000,
-            1_100_000_000,
-            TimeRange::new(100_000_000, 1_100_000_000).unwrap(),
-        ),
-        vec![
-            LogRow::new(
-                tenant_b_api,
-                100_000_000,
-                "status=500 user=123 route=/checkout",
-                BTreeMap::new(),
+    let mut index = ObjectStoreIndex::new();
+    let tenant_b_api = index.series("tenant-b", labels(API_STAGE));
+    index
+        .block(
+            &block_key(
+                "tenant-b",
+                BlockSpan {
+                    first: 100_000_000,
+                    last: 1_100_000_000,
+                },
             ),
-            LogRow::new(
-                tenant_b_api,
-                1_100_000_000,
-                "status=503 user=456 route=/checkout",
-                BTreeMap::new(),
-            ),
-        ],
-    )
-    .await
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(tenant_b_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-b",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: None,
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2.0&step=1s")
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
+            vec![
+                LogRow::new(
+                    tenant_b_api,
+                    100_000_000,
+                    "status=500 user=123 route=/checkout",
+                    BTreeMap::new(),
+                ),
+                LogRow::new(
+                    tenant_b_api,
+                    1_100_000_000,
+                    "status=503 user=456 route=/checkout",
+                    BTreeMap::new(),
+                ),
+            ],
         )
-        .await
-        .unwrap();
+        .await;
+    index.write_manifest("tenant-b").await;
+    let app = index
+        .router(None, QuerierIndexSource::TenantObjectStoreManifest)
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
+    let (status, body) = Tenant("tenant-b")
+        .get_json(
+            &app,
+            "/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2.0&step=1s",
+        )
+        .await;
+
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "pattern": "status=<_> user=<_> route=/checkout",
-                        "samples": [
-                            [0, 1],
-                            [1, 1]
-                        ]
-                    }
-                ]
-            })
+        body == json!({
+            "status": "success",
+            "data": [
+                {
+                    "pattern": "status=<_> user=<_> route=/checkout",
+                    "samples": [
+                        [0, 1],
+                        [1, 1]
+                    ]
+                }
+            ]
+        })
     );
 }
 
 #[tokio::test]
 async fn configured_object_store_detected_fields_endpoint_loads_request_tenant_manifest() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let tenant_b_api =
-        label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "stage")]));
-    let tenant_b_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-b", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(
-            tenant_b_api,
-            29,
-            r#"{"status":500}"#,
-            BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
-        )],
+    let (app, _) = tenant_b_manifest(
+        r#"{"status":500}"#,
+        BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
     )
-    .await
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(tenant_b_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-b",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: None,
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029&limit=10")
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, body) = Tenant("tenant-b").get_json(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029&limit=10")
+    .await;
 
-    assert!(response.status() == StatusCode::OK);
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "fields": [
-
-                    {
-                        "label": "status",
-                        "type": "int",
-                        "cardinality": 1,
-                        "parsers": ["json"],
-                        "jsonPath": ["status"]
-                    },
-                    {
-                        "label": "trace_id",
-                        "type": "string",
-                        "cardinality": 1,
-                        "parsers": null
-                    }
-                ],
-                "limit": 10
-            })
+        body == json!({
+            "fields": [
+                {
+                    "label": "status",
+                    "type": "int",
+                    "cardinality": 1,
+                    "parsers": ["json"],
+                    "jsonPath": ["status"]
+                },
+                {
+                    "label": "trace_id",
+                    "type": "string",
+                    "cardinality": 1,
+                    "parsers": null
+                }
+            ],
+            "limit": 10
+        })
     );
 }
 
 #[tokio::test]
 async fn configured_object_store_querier_loads_manifest_for_request_tenant_header() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let prod_api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let stage_api =
-        label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "stage")]));
-    let prod_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![LogRow::new(
-            prod_api,
-            19,
-            "tenant-a api error",
-            BTreeMap::new(),
-        )],
-    )
-    .await
-    .unwrap();
-    let stage_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new(
-            "tenant-b",
-            0,
-            20_000_000_000,
-            29_000_000_000,
-            TimeRange::new(20_000_000_000, 29_000_000_000).unwrap(),
-        ),
-        vec![LogRow::new(
-            stage_api,
-            29_000_000_000,
-            "tenant-b api error",
-            BTreeMap::new(),
-        )],
-    )
-    .await
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    let stage_block_bytes = stage_block.size.bytes_u64();
-    block_index.insert(prod_block);
-    block_index.insert(stage_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-b",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: None,
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
+    let mut index = ObjectStoreIndex::new();
+    let prod_api = index.series("tenant-a", labels(API_PROD));
+    let stage_api = index.series("tenant-b", labels(API_STAGE));
+    index
+        .block(
+            &block_key(
+                "tenant-a",
+                BlockSpan {
+                    first: 10,
+                    last: 19,
+                },
+            ),
+            vec![LogRow::new(
+                prod_api,
+                19,
+                "tenant-a api error",
+                BTreeMap::new(),
+            )],
         )
-        .await
-        .unwrap();
+        .await;
+    let stage_block_bytes = index
+        .block(
+            &block_key(
+                "tenant-b",
+                BlockSpan {
+                    first: 20 * SECONDS,
+                    last: 29 * SECONDS,
+                },
+            ),
+            vec![LogRow::new(
+                stage_api,
+                29 * SECONDS,
+                "tenant-b api error",
+                BTreeMap::new(),
+            )],
+        )
+        .await;
+    index.write_manifest("tenant-a").await;
+    index.write_manifest("tenant-b").await;
+    let app = index
+        .router(None, QuerierIndexSource::TenantObjectStoreManifest)
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
+    assert_tenant_b_reads_stage_error(&app, stage_block_bytes).await;
+}
+
+async fn assert_tenant_b_reads_stage_error(app: &Router, stage_block_bytes: u64) {
+    let (status, body) = Tenant("tenant-b").get_json(app, ERROR_QUERY_RANGE).await;
+
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-
-                                "env": "stage"
-                            },
-                            "values": [
-                                ["29000000000", "tenant-b api error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(stage_block_bytes, 1, 1)
-                }
-            })
+        body == LokiSuccess {
+            result_type: "streams",
+            data_result: one_stream("stage", json!([["29000000000", "tenant-b api error"]])),
+            stats: LokiStatsCounts {
+                store_bytes: stage_block_bytes,
+                store_lines: 1,
+                chunks: 1,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats(),
+        }
+        .json()
     );
+}
+
+async fn assert_tenant_b_labels(app: &Router, uri: &str) {
+    let (status, body) = Tenant("tenant-b").get_json(app, uri).await;
+
+    assert!(status == StatusCode::OK);
+    assert!(body == json!({"status": "success", "data": ["app", "env"]}));
 }
 
 #[tokio::test]
 async fn configured_object_store_labels_endpoint_loads_manifest_for_request_tenant_header() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "stage")]));
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-b",
-        &label_index,
-        &BlockIndex::default(),
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: None,
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let mut index = ObjectStoreIndex::new();
+    index.series("tenant-b", labels(API_STAGE));
+    index.write_manifest("tenant-b").await;
+    let app = index
+        .router(None, QuerierIndexSource::TenantObjectStoreManifest)
+        .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/labels")
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == json!({"status": "success", "data": ["app", "env"]}));
+    assert_tenant_b_labels(&app, "/loki/api/v1/labels").await;
 }
 
 #[tokio::test]
 async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_tenant_header() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let tenant_b_api =
-        label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "stage")]));
-    let tenant_b_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new(
-            "tenant-b",
-            0,
-            20_000_000_000,
-            29_000_000_000,
-            TimeRange::new(20_000_000_000, 29_000_000_000).unwrap(),
-        ),
-        vec![LogRow::new(
-            tenant_b_api,
-            29_000_000_000,
-            "tenant-b api error",
-            BTreeMap::new(),
-        )],
-    )
-    .await
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    let tenant_b_block_bytes = tenant_b_block.size.bytes_u64();
-    block_index.insert(tenant_b_block);
-    write_tenant_log_index_shards_to_object_store(
-        &store,
-        &prefix,
-        "tenant-b",
-        &[TimeRange::new(20_000_000_000, 29_000_000_000).unwrap()],
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
-        tenant: None,
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
+    let mut index = ObjectStoreIndex::new();
+    let tenant_b_api = index.series("tenant-b", labels(API_STAGE));
+    let tenant_b_block_bytes = index
+        .block(
+            &block_key(
+                "tenant-b",
+                BlockSpan {
+                    first: 20 * SECONDS,
+                    last: 29 * SECONDS,
+                },
+            ),
+            vec![LogRow::new(
+                tenant_b_api,
+                29 * SECONDS,
+                "tenant-b api error",
+                BTreeMap::new(),
+            )],
         )
-        .await
-        .unwrap();
+        .await;
+    index
+        .write_shard(
+            "tenant-b",
+            TimeRange::new(20 * SECONDS, 29 * SECONDS).unwrap(),
+        )
+        .await;
+    let app = index
+        .router(None, QuerierIndexSource::TenantObjectStoreShards)
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-
-                                "env": "stage"
-                            },
-                            "values": [
-                                ["29000000000", "tenant-b api error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(tenant_b_block_bytes, 1, 1)
-                }
-            })
-    );
+    assert_tenant_b_reads_stage_error(&app, tenant_b_block_bytes).await;
 }
 
 #[tokio::test]
 async fn configured_object_store_shard_catalog_labels_endpoint_loads_request_tenant_shards() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let tenant_b_api =
-        label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "stage")]));
-    let tenant_b_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-b", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(
-            tenant_b_api,
-            29,
-            "tenant-b api error",
-            BTreeMap::new(),
-        )],
-    )
-    .await
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(tenant_b_block);
-    write_tenant_log_index_shards_to_object_store(
-        &store,
-        &prefix,
-        "tenant-b",
-        &[TimeRange::new(20, 29).unwrap()],
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{}", object_dir.display())),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
-        tenant: None,
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/labels?start=0.000000020&end=0.000000029")
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
+    let mut index = ObjectStoreIndex::new();
+    let tenant_b_api = index.series("tenant-b", labels(API_STAGE));
+    index
+        .block(
+            &block_key(
+                "tenant-b",
+                BlockSpan {
+                    first: 20,
+                    last: 29,
+                },
+            ),
+            vec![LogRow::new(
+                tenant_b_api,
+                29,
+                "tenant-b api error",
+                BTreeMap::new(),
+            )],
         )
-        .await
-        .unwrap();
+        .await;
+    index
+        .write_shard("tenant-b", TimeRange::new(20, 29).unwrap())
+        .await;
+    let app = index
+        .router(None, QuerierIndexSource::TenantObjectStoreShards)
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == json!({"status": "success", "data": ["app", "env"]}));
+    assert_tenant_b_labels(
+        &app,
+        "/loki/api/v1/labels?start=0.000000020&end=0.000000029",
+    )
+    .await;
 }
 
-fn persisted_fixture() -> QuerierState {
-    let dir = tempfile::tempdir().unwrap().keep();
+/// Whether the indexes also name a `tenant-b` series.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TenantB {
+    Absent,
+    Present,
+}
+
+/// Writes the `api` block at 10-19 s to `dir`, with a `tenant-b` series
+/// beside it when `tenant_b` says so, and returns the indexes that name it.
+fn api_seconds_block(dir: &Path, tenant_b: TenantB) -> (LabelIndex, BlockIndex) {
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api = label_index.insert_series("tenant-a", labels(API_PROD));
+    if tenant_b == TenantB::Present {
+        label_index.insert_series("tenant-b", labels(API_PROD));
+    }
 
     let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
+        dir,
+        &block_key(
             "tenant-a",
-            0,
-            10_000_000_000,
-            19_000_000_000,
-            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
+            BlockSpan {
+                first: 10 * SECONDS,
+                last: 19 * SECONDS,
+            },
         ),
         vec![
-            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
+            LogRow::new(api, 10 * SECONDS, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19 * SECONDS, "api error", BTreeMap::new()),
         ],
     )
     .unwrap();
 
     let mut block_index = BlockIndex::default();
     block_index.insert(api_block);
+    (label_index, block_index)
+}
+
+fn persisted_fixture() -> QuerierState {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let (label_index, block_index) = api_seconds_block(&dir, TenantB::Absent);
     write_log_index_manifest(&dir, &label_index, &block_index).unwrap();
 
     QuerierState::from_manifest(dir).unwrap()
@@ -1669,28 +1160,7 @@ async fn tenant_object_store_fixture() -> QuerierState {
     let dir = tempfile::tempdir().unwrap().keep();
     let store = LocalFileSystem::new_with_prefix(&dir).unwrap();
     let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "prod")]));
-
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            0,
-            10_000_000_000,
-            19_000_000_000,
-            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
-        ),
-        vec![
-            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
+    let (label_index, block_index) = api_seconds_block(&dir, TenantB::Present);
     write_tenant_log_index_manifest_to_object_store(
         &store,
         &prefix,
@@ -1710,29 +1180,8 @@ async fn tenant_object_store_shard_fixture() -> QuerierState {
     let dir = tempfile::tempdir().unwrap().keep();
     let store = LocalFileSystem::new_with_prefix(&dir).unwrap();
     let prefix = ObjectPath::from("indexes");
-    let shard_range = TimeRange::new(0, 30_000_000_000).unwrap();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "prod")]));
-
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            0,
-            10_000_000_000,
-            19_000_000_000,
-            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
-        ),
-        vec![
-            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
+    let shard_range = TimeRange::new(0, 30 * SECONDS).unwrap();
+    let (label_index, block_index) = api_seconds_block(&dir, TenantB::Present);
     write_tenant_log_index_shard_to_object_store(
         &store,
         &prefix,
@@ -1750,92 +1199,12 @@ async fn tenant_object_store_shard_fixture() -> QuerierState {
 }
 
 async fn tenant_object_store_shard_catalog_fixture() -> QuerierState {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            0,
-            10_000_000_000,
-            19_000_000_000,
-            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
-        ),
-        vec![
-            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-    write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &api_block.key,
-        vec![
-            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
-    let worker_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            1,
-            20_000_000_000,
-            29_000_000_000,
-            TimeRange::new(20_000_000_000, 29_000_000_000).unwrap(),
-        ),
-        vec![LogRow::new(
-            worker,
-            25_000_000_000,
-            "worker error",
-            BTreeMap::new(),
-        )],
-    )
-    .unwrap();
-    write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &worker_block.key,
-        vec![LogRow::new(
-            worker,
-            25_000_000_000,
-            "worker error",
-            BTreeMap::new(),
-        )],
-    )
-    .await
-    .unwrap();
-
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    block_index.insert(worker_block);
-    write_tenant_log_index_shards_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &[
-            TimeRange::new(0, 19_000_000_000).unwrap(),
-            TimeRange::new(20_000_000_000, 29_000_000_000).unwrap(),
-        ],
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
+    let (_, store, dir) = loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
 
     QuerierState::from_tenant_object_store_shards(
         dir,
         &store,
-        &prefix,
+        &ObjectPath::from("indexes"),
         "tenant-a",
         TimeRange::new(0, 19).unwrap(),
     )
@@ -1850,94 +1219,56 @@ async fn tenant_object_store_shard_catalog_fixture() -> QuerierState {
 /// object is then deleted, which is what a sweep does to a live querier: the
 /// index is unchanged, and the bytes are gone. Both blocks hold the `api`
 /// series, so every query for `api` plans both and meets the gap.
-async fn retention_swept_fixture() -> (axum::Router, u64, u64) {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let web = label_index.insert_series("tenant-a", labels([("app", "web"), ("env", "prod")]));
+async fn retention_swept_fixture() -> (Router, u64, u64) {
+    let mut index = ObjectStoreIndex::new();
+    let api = index.series("tenant-a", labels(API_PROD));
+    let web = index.series("tenant-a", labels([("app", "web"), ("env", "prod")]));
 
-    let surviving_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![LogRow::new(api, 10, r#"{"status":200}"#, BTreeMap::new())],
-    )
-    .await
-    .unwrap();
+    let surviving_bytes = index
+        .block(
+            &block_key(
+                "tenant-a",
+                BlockSpan {
+                    first: 10,
+                    last: 19,
+                },
+            ),
+            vec![LogRow::new(api, 10, r#"{"status":200}"#, BTreeMap::new())],
+        )
+        .await;
 
-    let swept_key = BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap());
-    let swept_block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &swept_key,
-        vec![
-            LogRow::new(api, 20, r#"{"status":500}"#, BTreeMap::new()),
-            LogRow::new(web, 29, r#"{"status":503}"#, BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
-
-    let surviving_bytes = surviving_block.size.bytes_u64();
-    let swept_bytes = swept_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(surviving_block);
-    block_index.insert(swept_block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
+    let swept_key = block_key(
         "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
+        BlockSpan {
+            first: 20,
+            last: 29,
+        },
+    );
+    let swept_bytes = index
+        .block(
+            &swept_key,
+            vec![
+                LogRow::new(api, 20, r#"{"status":500}"#, BTreeMap::new()),
+                LogRow::new(web, 29, r#"{"status":503}"#, BTreeMap::new()),
+            ],
+        )
+        .await;
+    index.write_manifest("tenant-a").await;
 
     // The sweep itself. The manifest still names the block.
-    store
-        .delete(&log_block_object_path(&prefix, &swept_key))
+    index
+        .store
+        .delete(&log_block_object_path(&index.prefix, &swept_key))
         .await
         .unwrap();
 
-    let app = build_service_router(
-        &retention_config(&object_dir.display().to_string(), data_root, &prefix),
-        ServiceDependencies::default(),
-        None,
-    )
-    .await
-    .unwrap();
+    let app = index
+        .router(
+            Some("tenant-a"),
+            QuerierIndexSource::TenantObjectStoreManifest,
+        )
+        .await;
     (app, surviving_bytes, swept_bytes)
-}
-
-fn retention_config(
-    object_dir: &str,
-    data_root: std::path::PathBuf,
-    prefix: &ObjectPath,
-) -> ServiceConfig {
-    ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: Some(format!("file://{object_dir}")),
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root,
-        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
-        tenant: Some("tenant-a".to_string()),
-        index_prefix: Some(prefix.to_string()),
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    }
 }
 
 /// A retention sweep deletes block objects while queriers run, so every read
@@ -2011,23 +1342,13 @@ async fn a_retention_swept_block_degrades_every_read_surface_instead_of_failing(
     ];
 
     for (uri, expected) in cases {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let (status, body) = Tenant("tenant-a").get_json(&app, uri).await;
 
         assert!(
-            response.status() == StatusCode::OK,
+            status == StatusCode::OK,
             "{uri} answers 200 despite the swept block"
         );
-        assert!(json_body(response).await == expected, "{uri}");
+        assert!(body == expected, "{uri}");
     }
 }
 
@@ -2043,61 +1364,43 @@ async fn a_retention_swept_block_degrades_every_read_surface_instead_of_failing(
 /// a malformed stored block is a server-side fault and not a client error.
 #[tokio::test]
 async fn a_present_but_malformed_block_still_fails_the_request() {
-    let object_dir = tempfile::tempdir().unwrap().keep();
-    let data_root = tempfile::tempdir().unwrap().keep();
-    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
-    let prefix = ObjectPath::from("indexes");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let mut index = ObjectStoreIndex::new();
+    let api = index.series("tenant-a", labels(API_PROD));
 
-    let key = BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap());
-    let block = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &key,
-        vec![LogRow::new(api, 10, r#"{"status":200}"#, BTreeMap::new())],
-    )
-    .await
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(block);
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
+    let key = block_key(
         "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
+        BlockSpan {
+            first: 10,
+            last: 19,
+        },
+    );
+    index
+        .block(
+            &key,
+            vec![LogRow::new(api, 10, r#"{"status":200}"#, BTreeMap::new())],
+        )
+        .await;
+    index.write_manifest("tenant-a").await;
 
     // The object stays, and its bytes stop being a block.
-    store
+    index
+        .store
         .put(
-            &log_block_object_path(&prefix, &key),
+            &log_block_object_path(&index.prefix, &key),
             b"not a parquet block".to_vec().into(),
         )
         .await
         .unwrap();
 
-    let app = build_service_router(
-        &retention_config(&object_dir.display().to_string(), data_root, &prefix),
-        ServiceDependencies::default(),
-        None,
-    )
-    .await
-    .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let app = index
+        .router(
+            Some("tenant-a"),
+            QuerierIndexSource::TenantObjectStoreManifest,
         )
-        .await
-        .unwrap();
+        .await;
+
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019")
+    .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
 }

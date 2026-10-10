@@ -27,20 +27,13 @@ pub(crate) async fn instant_quantile_aggregation_ignores_histograms() {
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "quantile by (job) (0.5, latency_seconds)",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
-    assert2::assert!(samples.len() == 1);
-    assert2::assert!(samples[0].labels.get("__name__") == None);
-    assert2::assert!(samples[0].labels.get("job") == Some("api"));
-    assert2::assert!(approx_eq(float_value(&samples[0].value), 4.0));
+    let samples = instant_vector(&engine, "quantile by (job) (0.5, latency_seconds)", 10_000).await;
+    assert_one_unnamed_float(
+        &samples,
+        ExpectedLabel {
+            name: "job",
+            label_value: "api",
+        },
+        4.0,
+    );
 }

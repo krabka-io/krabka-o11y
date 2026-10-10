@@ -1,25 +1,12 @@
 use super::{
-    Bytes, HeaderMap, IntoResponse, QuerierState, RawQuery, RequestSecurity, Response, State,
-    execute_api_prom_series_query, parse_series_params, post_query_params_body_first,
+    HttpQueryError, PostedQueryRequest, QuerierState, Response, State,
+    execute_api_prom_series_query,
 };
 
 pub(crate) async fn api_prom_series_post(
     State(state): State<QuerierState>,
-    security: RequestSecurity,
-    headers: HeaderMap,
-    RawQuery(raw_query): RawQuery,
-    body: Bytes,
-) -> Response {
-    let raw_query = match post_query_params_body_first(raw_query.as_deref(), &body) {
-        Ok(raw_query) => raw_query,
-        Err(error) => return error.into_response(),
-    };
-    let params = match parse_series_params(Some(&raw_query)) {
-        Ok(params) => params,
-        Err(error) => return error.into_response(),
-    };
-    match execute_api_prom_series_query(&state, &security, &headers, &params).await {
-        Ok(response) => response,
-        Err(error) => error.into_response(),
-    }
+    request: PostedQueryRequest,
+) -> Result<Response, HttpQueryError> {
+    let params = request.series_params()?;
+    execute_api_prom_series_query(&state, &request.security, &request.headers, &params).await
 }

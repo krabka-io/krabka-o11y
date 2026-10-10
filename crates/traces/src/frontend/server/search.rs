@@ -1,35 +1,34 @@
 use super::{
-    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Principal, QuerierBackend,
-    QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, bounded_count,
-    request_tenant, required_time_bounds, search_query,
+    BlockCatalog, FrontendRequest, IntoResponse, Json, QuerierBackend, Response, RouteVariant,
+    SearchDelivery, StatusCode, backend_error_response, bounded_count, ndjson_search_stream,
+    search_request,
 };
 
-pub(crate) async fn search<B, C>(
-    State(qf): State<Arc<QueryFrontend<B, C>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response
+/// `/api/search`, or for [`SearchDelivery::Streamed`] the NDJSON stream of
+/// cumulative responses that `/api/search/stream` sends as shards complete.
+pub(crate) async fn search<B, C, D>(request: FrontendRequest<B, C>) -> Response
 where
     B: QuerierBackend + 'static,
     C: BlockCatalog + 'static,
+    D: RouteVariant<SearchDelivery>,
 {
-    let tenant = match request_tenant(&headers, &principal, &qf.cfg.tenant_policy) {
-        Ok(tenant) => tenant,
+    let (tenant, query, start_ns, end_ns) = match search_request(request.tenant_request()) {
+        Ok(search) => search,
         Err(rejection) => return *rejection,
     };
-    let query = match search_query(&uri) {
-        Ok(Some(q)) => q,
-        Ok(None) => return (StatusCode::BAD_REQUEST, "missing query parameter q").into_response(),
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let (start_ns, end_ns) = match required_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
+    let FrontendRequest { qf, uri, .. } = request;
     let limit = bounded_count(&uri, "limit", qf.default_limit());
     let spss = bounded_count(&uri, "spss", qf.default_spss());
 
+    if matches!(D::VARIANT, SearchDelivery::Streamed) {
+        return match qf
+            .search_stream(&tenant, &query, start_ns, end_ns, limit, spss)
+            .await
+        {
+            Ok(receiver) => ndjson_search_stream(receiver),
+            Err(error) => (StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
+        };
+    }
     match qf
         .search(&tenant, &query, start_ns, end_ns, limit, spss)
         .await

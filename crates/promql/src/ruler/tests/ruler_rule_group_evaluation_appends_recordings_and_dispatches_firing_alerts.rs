@@ -2,24 +2,8 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn ruler_rule_group_evaluation_appends_recordings_and_dispatches_firing_alerts() {
-    let group: serde_yaml::Value = serde_yaml::from_str(
-        r"
-name: mixed
-interval: 30s
-rules:
-  - record: job:up:current
-    expr: up
-  - alert: InstanceUp
-    expr: up > 0
-    for: 5m
-",
-    )
-    .expect("rule group yaml");
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels("up", "api"), 60_000, 1.0);
-    store.push_float("tenant-a", labels("up", "api"), 360_000, 1.0);
-    let store = Arc::new(store);
-    let engine = PromqlEngine::new(store, EngineOpts::default());
+    let group = mixed_rule_group();
+    let engine = up_api_engine(&[60_000, 360_000]);
     let wal_sink = RecordingSink::default();
     let alert_sink = RecordingAlertmanagerSink::default();
     let mut state = super::super::RulerAlertState::default();
@@ -55,57 +39,11 @@ rules:
     )
     .await
     .expect("firing group evaluation");
-
-    assert2::assert!(
-        firing
-            == super::super::RulerGroupEvaluation {
-                recording_records: 1,
-                alerts_dispatched: 1,
-                last_eval_ms: 360_000,
-            }
-    );
-    assert2::assert!(
-        wal_sink.records()
-            == vec![
-                WalRecord {
-                    tenant: "tenant-a".to_string(),
-                    labels: vec![
-                        ("__name__".to_string(), "job:up:current".into()),
-                        ("job".to_string(), "api".into()),
-                    ],
-                    payload: SamplePayload::Float {
-                        timestamp_ms: 60_000,
-                        value: 1.0,
-                        start_timestamp_ms: None,
-                    },
-                    exemplars: Vec::new(),
-                },
-                WalRecord {
-                    tenant: "tenant-a".to_string(),
-                    labels: vec![
-                        ("__name__".to_string(), "job:up:current".into()),
-                        ("job".to_string(), "api".into()),
-                    ],
-                    payload: SamplePayload::Float {
-                        timestamp_ms: 360_000,
-                        value: 1.0,
-                        start_timestamp_ms: None,
-                    },
-                    exemplars: Vec::new(),
-                },
-            ]
-    );
-    assert2::assert!(
-        alert_sink.alerts()
-            == vec![super::super::AlertmanagerAlert {
-                labels: BTreeMap::from([
-                    ("alertname".to_string(), "InstanceUp".into()),
-                    ("job".to_string(), "api".into()),
-                ]),
-                annotations: BTreeMap::new(),
-                starts_at_ms: 60_000,
-                ends_at_ms: None,
-                generator_url: String::new(),
-            }]
+    assert_up_rules_fired_at_six_minutes(
+        &firing,
+        &UpRuleSinks {
+            wal_sink: &wal_sink,
+            alert_sink: &alert_sink,
+        },
     );
 }

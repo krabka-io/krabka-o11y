@@ -1,30 +1,14 @@
-use super::{ParseError, template_parse_error};
+use super::{ParseError, template_parse_error, template_quote_scanner::TemplateQuoteScanner};
 
 pub(crate) fn parse_template_parenthesized_token(
     command: &str,
     start: usize,
 ) -> Result<(String, usize), ParseError> {
     let mut depth = 0usize;
-    let mut quote = None;
-    let mut escaped = false;
+    let mut quotes = TemplateQuoteScanner::default();
     for (offset, ch) in command[start..].char_indices() {
         let index = start + offset;
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if matches!(quote, Some('"' | '\'')) && ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if let Some(quote_ch) = quote {
-            if ch == quote_ch {
-                quote = None;
-            }
-            continue;
-        }
-        if matches!(ch, '"' | '\'' | '`') {
-            quote = Some(ch);
+        if quotes.consume_quoted(ch) {
             continue;
         }
         match ch {

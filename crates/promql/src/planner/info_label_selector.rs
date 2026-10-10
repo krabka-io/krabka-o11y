@@ -2,6 +2,8 @@ use std::fmt::Write as _;
 
 use promql_parser::parser::Expr;
 
+use super::skip_literal_or_comment;
+
 // An info() data-label selector can match empty strings. The dependency applies
 // ordinary vector-selector validation before it sees the enclosing function.
 pub(crate) fn normalize_info_selectors(query: &str) -> (String, String) {
@@ -18,23 +20,11 @@ pub(crate) fn normalize_info_selectors(query: &str) -> (String, String) {
     let mut brackets = 0_u32;
     let mut calls = Vec::<(bool, usize)>::new();
     while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            if byte == b'\\' && delimiter != b'`' {
-                index += 2;
-                continue;
-            }
-            if byte == delimiter {
-                quote = None;
-            }
-        } else if matches!(byte, b'"' | b'\'' | b'`') {
-            quote = Some(byte);
-        } else if byte == b'#' {
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
+        if skip_literal_or_comment(&mut quote, bytes, &mut index) {
             continue;
-        } else if byte == b'(' {
+        }
+        let byte = bytes[index];
+        if byte == b'(' {
             let prefix = query[..index].trim_end();
             let name = prefix
                 .rsplit(|character: char| !character.is_ascii_alphanumeric() && character != '_')

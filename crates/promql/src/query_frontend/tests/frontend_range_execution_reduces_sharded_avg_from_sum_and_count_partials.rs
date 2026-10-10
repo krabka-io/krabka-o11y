@@ -5,42 +5,17 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_avg_from_sum_and_co
     let cache = QueryFrontendCache::default();
     let executor = AvgPartialRecordingExecutor::default();
 
-    let result = execute_range_query_frontend(
-        &executor,
-        &cache,
-        &FrontendRangeRequest {
-            tenant: tenant_id("tenant-a"),
-            query: "avg(up)".into(),
-            start_ms: 0,
-            end_ms: 0,
-            step: millis(60_000),
-            admission_limits: krabka_query_frontend::AdmissionLimits::default(),
-            opts: QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        },
-    )
-    .await
-    .unwrap();
+    let result =
+        execute_range_query_frontend(&executor, &cache, &two_shard_instant_request("avg(up)"))
+            .await
+            .unwrap();
 
     let calls = executor
         .calls
         .lock()
         .expect("avg partial executor calls poisoned")
         .clone();
-    assert2::assert!(
-        calls
-            .iter()
-            .map(|query| (query.query.as_str(), query.shard))
-            .collect::<Vec<_>>()
-            == vec![
-                ("sum(up)", Some(QueryShard { index: 1, total: 2 })),
-                ("sum(up)", Some(QueryShard { index: 2, total: 2 })),
-                ("count(up)", Some(QueryShard { index: 1, total: 2 })),
-                ("count(up)", Some(QueryShard { index: 2, total: 2 })),
-            ]
-    );
+    assert2::assert!(shard_calls(&calls) == on_both_shards(&["sum(up)", "count(up)"]));
     assert2::assert!(
         result
             == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {

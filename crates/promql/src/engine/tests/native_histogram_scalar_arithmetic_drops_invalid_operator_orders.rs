@@ -7,14 +7,7 @@ pub(crate) async fn native_histogram_scalar_arithmetic_drops_invalid_operator_or
         "histogram_count(2 / request_duration_seconds)",
         "histogram_count(request_duration_seconds + 2)",
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
-            .await
-            .unwrap();
-
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(&engine, query, 10_000).await;
         assert2::assert!(samples.is_empty());
     }
 }

@@ -11,9 +11,7 @@ use super::*;
 ///   2. planner (public range path) == interpreter byte-for-byte.
 #[tokio::test]
 pub(crate) async fn range_at_start_end_selector_planner_matches_interpreter() {
-    use promql_parser::parser::Expr;
-
-    use crate::{DurationExprContext, parse_promql_with_duration_context};
+    use crate::DurationExprContext;
 
     let mut store = InMemoryMetricStore::new();
     for (job, samples) in [
@@ -39,14 +37,10 @@ pub(crate) async fn range_at_start_end_selector_planner_matches_interpreter() {
         ("m @ start() offset 1m", false),
     ] {
         // (1) the gate routes the `@ start()/end()` selector through the planner.
-        let expr =
-            parse_promql_with_duration_context(query, DurationExprContext::range(start, end, step))
-                .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-        let mut probe = &expr;
-        while let Expr::Paren(paren) = probe {
-            probe = &paren.expr;
-        }
-        assert2::assert!(super::super::range_expr_routes_through_planner(probe));
+        assert2::assert!(range_query_routes_through_planner(
+            query,
+            DurationExprContext::range(start, end, step)
+        ));
 
         // (2) the planner resolves `@ start()`/`@ end()` to a FIXED eval
         // instant repeated across every grid step, so each surviving series

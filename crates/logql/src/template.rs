@@ -562,6 +562,7 @@ mod parse_template_assignment;
 mod parse_template_bound;
 mod parse_template_conditional;
 mod parse_template_control_assignment;
+mod parse_template_else_body;
 mod parse_template_float;
 #[cfg(test)]
 mod parse_template_fractional_nanoseconds;
@@ -604,6 +605,7 @@ mod template_json_value_to_string;
 mod template_json_value_truthy;
 mod template_parse_error;
 mod template_part;
+mod template_quote_scanner;
 mod template_range;
 mod template_range_binding;
 mod template_render_context;
@@ -687,6 +689,7 @@ use parse_template_assignment::parse_template_assignment;
 use parse_template_bound::parse_template_bound;
 use parse_template_conditional::parse_template_conditional;
 use parse_template_control_assignment::parse_template_control_assignment;
+use parse_template_else_body::parse_template_else_body;
 use parse_template_float::parse_template_float;
 #[cfg(test)]
 use parse_template_fractional_nanoseconds::parse_template_fractional_nanoseconds;

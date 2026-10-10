@@ -12,20 +12,73 @@ use krabka_observability::{
 };
 use serde_json::json;
 
-#[test]
-fn kafka_wal_record_encodes_tenant_series_key_headers_and_json_payload() {
-    let labels = labels([("app", "api"), ("env", "prod")]);
-    let record = WalLogRecord {
+/// A Kafka header with a UTF-8 value.
+fn wal_header(key: &str, header_value: &str) -> KafkaWalHeader {
+    KafkaWalHeader {
+        key: key.to_string(),
+        value: Some(header_value.as_bytes().to_vec()),
+    }
+}
+
+/// A native Kafka log record of tenant-a at partition 3, offset 42, whose
+/// headers follow the type and tenant headers with `headers_after_tenant`.
+fn native_tenant_a_record(
+    timestamp_ms: Option<i64>,
+    headers_after_tenant: Vec<KafkaWalHeader>,
+) -> KafkaWalRecord {
+    KafkaWalRecord {
+        value: b"api error".to_vec(),
+        partition: PartitionIndex(3),
+        offset: Offset(42),
+        timestamp_ms,
+        headers: [
+            wal_header("krabka-wal-record-type", "log-line"),
+            wal_header("krabka-tenant", "tenant-a"),
+        ]
+        .into_iter()
+        .chain(headers_after_tenant)
+        .collect(),
+    }
+}
+
+/// A native Kafka log record of tenant-a's `app="api"` stream at partition 3,
+/// offset 42, whose headers follow the type, tenant and label headers with
+/// `extra_headers`.
+fn native_api_record(
+    timestamp_ms: Option<i64>,
+    extra_headers: Vec<KafkaWalHeader>,
+) -> KafkaWalRecord {
+    native_tenant_a_record(
+        timestamp_ms,
+        [wal_header("krabka-log-label-app", "api")]
+            .into_iter()
+            .chain(extra_headers)
+            .collect(),
+    )
+}
+
+// `tenant-a`'s `api error` line at 1.9 ms, with a `trace_id` and no position.
+fn api_error_record() -> WalLogRecord {
+    WalLogRecord {
         tenant: "tenant-a".to_string(),
-        labels: labels.clone(),
+        labels: labels([("app", "api"), ("env", "prod")]),
         timestamp_ns: 1_900_000,
         line: "api error".to_string(),
         structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+        position: None,
+    }
+}
+
+#[test]
+fn kafka_wal_record_encodes_tenant_series_key_headers_and_json_payload() {
+    let record = WalLogRecord {
         position: Some(WalPosition {
             partition: PartitionIndex(3),
             offset: Offset(42),
         }),
+        ..api_error_record()
     };
+    let labels = record.labels.clone();
 
     let producer_record = build_kafka_wal_record("__krabka_observability_logs_wal", &record)
         .expect("producer record");
@@ -68,15 +121,7 @@ fn kafka_wal_record_encodes_tenant_series_key_headers_and_json_payload() {
 
 #[test]
 fn kafka_wal_record_decodes_payload_with_consumed_position() {
-    let labels = labels([("app", "api"), ("env", "prod")]);
-    let record = WalLogRecord {
-        tenant: "tenant-a".to_string(),
-        labels: labels.clone(),
-        timestamp_ns: 1_900_000,
-        line: "api error".to_string(),
-        structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
-        position: None,
-    };
+    let record = api_error_record();
 
     let producer_record = build_kafka_wal_record("__krabka_observability_logs_wal", &record)
         .expect("producer record");
@@ -165,26 +210,10 @@ fn a_kafka_wal_record_without_a_version_header_decodes_only_as_a_native_record()
 
 #[test]
 fn native_kafka_log_record_rejects_invalid_label_header_name() {
-    let error = decode_kafka_wal_record_envelope(KafkaWalRecord {
-        value: b"api error".to_vec(),
-        partition: PartitionIndex(3),
-        offset: Offset(42),
-        timestamp_ms: Some(1),
-        headers: vec![
-            KafkaWalHeader {
-                key: "krabka-wal-record-type".to_string(),
-                value: Some(b"log-line".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-tenant".to_string(),
-                value: Some(b"tenant-a".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-label-9bad".to_string(),
-                value: Some(b"api".to_vec()),
-            },
-        ],
-    })
+    let error = decode_kafka_wal_record_envelope(native_tenant_a_record(
+        Some(1),
+        vec![wal_header("krabka-log-label-9bad", "api")],
+    ))
     .unwrap_err();
 
     assert!(error.to_string().contains("invalid native Kafka label"));
@@ -192,30 +221,10 @@ fn native_kafka_log_record_rejects_invalid_label_header_name() {
 
 #[test]
 fn native_kafka_log_record_rejects_invalid_metadata_header_name() {
-    let error = decode_kafka_wal_record_envelope(KafkaWalRecord {
-        value: b"api error".to_vec(),
-        partition: PartitionIndex(3),
-        offset: Offset(42),
-        timestamp_ms: Some(1),
-        headers: vec![
-            KafkaWalHeader {
-                key: "krabka-wal-record-type".to_string(),
-                value: Some(b"log-line".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-tenant".to_string(),
-                value: Some(b"tenant-a".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-label-app".to_string(),
-                value: Some(b"api".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-metadata-9bad".to_string(),
-                value: Some(b"metadata".to_vec()),
-            },
-        ],
-    })
+    let error = decode_kafka_wal_record_envelope(native_api_record(
+        Some(1),
+        vec![wal_header("krabka-log-metadata-9bad", "metadata")],
+    ))
     .unwrap_err();
 
     assert!(error.to_string().contains("invalid native Kafka metadata"));
@@ -223,30 +232,10 @@ fn native_kafka_log_record_rejects_invalid_metadata_header_name() {
 
 #[test]
 fn native_kafka_log_record_rejects_duplicate_label_header_name() {
-    let error = decode_kafka_wal_record_envelope(KafkaWalRecord {
-        value: b"api error".to_vec(),
-        partition: PartitionIndex(3),
-        offset: Offset(42),
-        timestamp_ms: Some(1),
-        headers: vec![
-            KafkaWalHeader {
-                key: "krabka-wal-record-type".to_string(),
-                value: Some(b"log-line".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-tenant".to_string(),
-                value: Some(b"tenant-a".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-label-app".to_string(),
-                value: Some(b"api".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-label-app".to_string(),
-                value: Some(b"worker".to_vec()),
-            },
-        ],
-    })
+    let error = decode_kafka_wal_record_envelope(native_api_record(
+        Some(1),
+        vec![wal_header("krabka-log-label-app", "worker")],
+    ))
     .unwrap_err();
 
     assert!(error.to_string().contains("duplicate native Kafka label"));
@@ -254,34 +243,13 @@ fn native_kafka_log_record_rejects_duplicate_label_header_name() {
 
 #[test]
 fn native_kafka_log_record_rejects_duplicate_metadata_header_name() {
-    let error = decode_kafka_wal_record_envelope(KafkaWalRecord {
-        value: b"api error".to_vec(),
-        partition: PartitionIndex(3),
-        offset: Offset(42),
-        timestamp_ms: Some(1),
-        headers: vec![
-            KafkaWalHeader {
-                key: "krabka-wal-record-type".to_string(),
-                value: Some(b"log-line".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-tenant".to_string(),
-                value: Some(b"tenant-a".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-label-app".to_string(),
-                value: Some(b"api".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-metadata-trace_id".to_string(),
-                value: Some(b"abc".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-metadata-trace_id".to_string(),
-                value: Some(b"def".to_vec()),
-            },
+    let error = decode_kafka_wal_record_envelope(native_api_record(
+        Some(1),
+        vec![
+            wal_header("krabka-log-metadata-trace_id", "abc"),
+            wal_header("krabka-log-metadata-trace_id", "def"),
         ],
-    })
+    ))
     .unwrap_err();
 
     assert!(
@@ -293,30 +261,13 @@ fn native_kafka_log_record_rejects_duplicate_metadata_header_name() {
 
 #[test]
 fn native_kafka_log_record_rejects_negative_timestamp_header() {
-    let error = decode_kafka_wal_record_envelope(KafkaWalRecord {
-        value: b"api error".to_vec(),
-        partition: PartitionIndex(3),
-        offset: Offset(42),
-        timestamp_ms: Some(1),
-        headers: vec![
-            KafkaWalHeader {
-                key: "krabka-wal-record-type".to_string(),
-                value: Some(b"log-line".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-tenant".to_string(),
-                value: Some(b"tenant-a".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-timestamp-ns".to_string(),
-                value: Some(b"-1".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-label-app".to_string(),
-                value: Some(b"api".to_vec()),
-            },
+    let error = decode_kafka_wal_record_envelope(native_tenant_a_record(
+        Some(1),
+        vec![
+            wal_header("krabka-log-timestamp-ns", "-1"),
+            wal_header("krabka-log-label-app", "api"),
         ],
-    })
+    ))
     .unwrap_err();
 
     assert!(error.to_string().contains("invalid native Kafka timestamp"));
@@ -324,54 +275,15 @@ fn native_kafka_log_record_rejects_negative_timestamp_header() {
 
 #[test]
 fn native_kafka_log_record_rejects_negative_broker_timestamp() {
-    let error = decode_kafka_wal_record_envelope(KafkaWalRecord {
-        value: b"api error".to_vec(),
-        partition: PartitionIndex(3),
-        offset: Offset(42),
-        timestamp_ms: Some(-1),
-        headers: vec![
-            KafkaWalHeader {
-                key: "krabka-wal-record-type".to_string(),
-                value: Some(b"log-line".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-tenant".to_string(),
-                value: Some(b"tenant-a".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-label-app".to_string(),
-                value: Some(b"api".to_vec()),
-            },
-        ],
-    })
-    .unwrap_err();
+    let error = decode_kafka_wal_record_envelope(native_api_record(Some(-1), vec![])).unwrap_err();
 
     assert!(error.to_string().contains("invalid native Kafka timestamp"));
 }
 
 #[test]
 fn native_kafka_log_record_rejects_broker_timestamp_overflow() {
-    let error = decode_kafka_wal_record_envelope(KafkaWalRecord {
-        value: b"api error".to_vec(),
-        partition: PartitionIndex(3),
-        offset: Offset(42),
-        timestamp_ms: Some(i64::MAX),
-        headers: vec![
-            KafkaWalHeader {
-                key: "krabka-wal-record-type".to_string(),
-                value: Some(b"log-line".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-tenant".to_string(),
-                value: Some(b"tenant-a".to_vec()),
-            },
-            KafkaWalHeader {
-                key: "krabka-log-label-app".to_string(),
-                value: Some(b"api".to_vec()),
-            },
-        ],
-    })
-    .unwrap_err();
+    let error =
+        decode_kafka_wal_record_envelope(native_api_record(Some(i64::MAX), vec![])).unwrap_err();
 
     assert!(error.to_string().contains("invalid native Kafka timestamp"));
 }

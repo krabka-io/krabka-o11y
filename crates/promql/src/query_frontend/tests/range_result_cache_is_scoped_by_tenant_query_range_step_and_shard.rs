@@ -3,19 +3,8 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn range_result_cache_is_scoped_by_tenant_query_range_step_and_shard() {
     let cache = QueryFrontendCache::default();
-    let query = FrontendRangeQuery {
-        query: "up".into(),
-        start_ms: 0,
-        end_ms: 60_000,
-        step: millis(60_000),
-        shard: Some(QueryShard { index: 1, total: 2 }),
-    };
-    let result = unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-        drop_name: false,
-        start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
-        samples: vec![(0, SampleValue::Float(1.0))],
-    }]));
+    let query = up_range_query(60_000, Some(QueryShard { index: 1, total: 2 }));
+    let result = one_sample_matrix(labels(&[("__name__", "up"), ("job", "api")]));
 
     cache
         .insert("tenant-a", &query, result.clone())

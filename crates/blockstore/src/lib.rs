@@ -8,10 +8,13 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+mod awkward_tenants;
 mod block;
 mod block_index;
 mod bloom;
 mod compaction;
+mod delegate_object_store;
 mod erasure;
 mod error;
 mod index;
@@ -19,10 +22,14 @@ mod index_snapshot;
 mod labels;
 mod lifecycle;
 mod log_blockstore;
+#[cfg(test)]
+mod log_line_schema;
+mod lower_hex;
 mod matcher;
 mod merge;
 mod metrics;
 mod nested_set;
+mod object_store_provider;
 mod object_store_semantics;
 mod path_escape;
 mod persisted_format;
@@ -62,8 +69,9 @@ pub use index::{
     index_shards_prefix_for_key, index_unbound_series_object_key,
 };
 pub use index_snapshot::{
-    DEFAULT_INDEX_SNAPSHOT_MAX, DEFAULT_INDEX_SNAPSHOT_RETAIN, IndexSnapshotRetain,
-    index_snapshot_prefix_for_key, list_index_object_keys,
+    DEFAULT_INDEX_SNAPSHOT_MAX, DEFAULT_INDEX_SNAPSHOT_RETAIN, IndexSnapshotPublish,
+    IndexSnapshotRetain, TenantSnapshotRangeRead, index_snapshot_prefix_for_key,
+    list_index_object_keys,
 };
 pub use labels::{Labels, SeriesFingerprint};
 pub use lifecycle::{
@@ -88,6 +96,7 @@ pub use log_blockstore::{
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
     read_tenant_log_index_shard_ranges_from_object_store,
+    read_tenant_log_index_shard_ranges_or_empty_from_object_store,
     read_tenant_log_index_shards_from_object_store, register_log_blocks,
     register_log_blocks_from_object_store, series_fingerprint,
     update_tenant_log_index_shard_to_object_store, write_log_block,
@@ -96,6 +105,7 @@ pub use log_blockstore::{
     write_tenant_log_index_shard_catalog_to_object_store,
     write_tenant_log_index_shard_to_object_store, write_tenant_log_index_shards_to_object_store,
 };
+pub use lower_hex::encode_lower_hex;
 pub use matcher::{
     LabelMatcher, MatchOp, QUERY_SHARD_LABEL, QueryShardSelector, parse_query_shard_selector,
 };
@@ -106,7 +116,8 @@ pub use merge::{
 pub use metrics::{
     MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreOperationLabel,
 };
-pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
+pub use nested_set::{CycleSpans, NestedSet, SpanNode, assign_nested_set};
+pub use object_store_provider::{object_store_cloud, object_store_endpoint_host};
 pub use object_store_semantics::{
     ConditionalUpdateRequirement, OBJECT_STORE_PROBE_PREFIX, ObjectStoreAccess,
     ObjectStoreCapabilities, ObjectStoreSemanticsError, verify_object_store_access,
@@ -134,14 +145,14 @@ pub use recovery::{
     DeploymentBackupPlan, DeploymentBackupReport, DeploymentCut, DeploymentPart,
     DeploymentRestoreReport, DrainedGroup, GroupOffset, RecoveryError, RestoreReport, WalOffset,
     audit_backup, audit_deployment_backup, audit_recovery_target, backup_deployment, create_backup,
-    load_backup_manifest, restore_backup, restore_deployment_backup,
+    load_backup_manifest, restore_backup, restore_deployment_backup, sorted_object_paths,
 };
 pub use retry::{
     ObjectStoreRetryPolicy, RetryingObjectStore, is_transient_object_store_error,
     retry_object_store, transient_object_store_error,
 };
 pub use span_block::{
-    AttrValue, SpanAttr, SpanEvent, SpanLink, SpanRow, encode_span_rows,
+    AttrValue, SpanAttr, SpanColumnBuilders, SpanEvent, SpanLink, SpanRow, encode_span_rows,
     encode_span_rows_with_promoted_attrs,
 };
 pub use span_id::{

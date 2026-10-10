@@ -1,5 +1,6 @@
 use super::{
-    AclSet, IngestLimitError, PermissionType, Principal, TenantId, acl_matches_tenant_wal_write,
+    AclSet, IngestLimitError, Principal, TenantId, TenantWalAclCheck, WalTopicAccess,
+    tenant_wal_acl_refusal,
 };
 
 /// Allows `principal` to write the data of `tenant` to the WAL topic when the
@@ -24,38 +25,17 @@ pub(crate) fn check_tenant_wal_write_acl(
     wal_topic: &str,
     acls: &AclSet,
 ) -> Result<(), IngestLimitError> {
-    let entries = match acls {
-        AclSet::SecurityDisabled => return Ok(()),
-        AclSet::Configured(entries)
-            if entries.is_empty() && matches!(principal, Principal::Unauthenticated) =>
-        {
-            return Ok(());
-        }
-        AclSet::Configured(entries) => entries,
-    };
-    let acl_principal = principal.acl_principal(tenant);
-    let mut allowed = false;
-    for acl in entries {
-        if !acl_matches_tenant_wal_write(acl, &acl_principal, wal_topic) {
-            continue;
-        }
-        match acl.permission_type {
-            PermissionType::Deny => {
-                return Err(IngestLimitError::Unauthorized {
-                    tenant: tenant.to_string(),
-                    reason: format!("tenant write ACL denied for WAL topic `{wal_topic}`"),
-                });
-            }
-            PermissionType::Allow => allowed = true,
-        }
-    }
-
-    if allowed {
-        Ok(())
-    } else {
+    let refusal = tenant_wal_acl_refusal(&TenantWalAclCheck {
+        principal,
+        tenant,
+        wal_topic,
+        acls,
+        access: WalTopicAccess::Write,
+    });
+    refusal.map_or(Ok(()), |reason| {
         Err(IngestLimitError::Unauthorized {
             tenant: tenant.to_string(),
-            reason: format!("missing tenant write ACL for WAL topic `{wal_topic}`"),
+            reason,
         })
-    }
+    })
 }

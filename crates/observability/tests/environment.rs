@@ -3,10 +3,15 @@ use std::num::NonZeroUsize;
 use assert2::assert;
 use clap::Parser;
 use krabka_observability::{
-    QuerierIndexSource, Role, ServiceConfig, audit::AuditArgs, server_security::ServerSecurityArgs,
+    ServiceConfig, audit::AuditArgs, server_security::ServerSecurityArgs,
     wal_client_security::WalClientSecurityArgs,
 };
-use krabka_units::{bytes, days, hours, kibibytes, mebibytes, millis, minutes, nanos, secs};
+use krabka_units::{days, hours, kibibytes, mebibytes, millis, minutes, secs};
+
+#[path = "support/scoped_querier_config.rs"]
+mod scoped_querier_config;
+
+use scoped_querier_config::scoped_querier_config;
 
 #[test]
 fn service_config_reads_environment() {
@@ -158,28 +163,15 @@ fn assert_environment_config(config: &ServiceConfig) {
     assert!(
         config
             == &ServiceConfig {
-                target: Role::Querier,
-                listen_addr: "127.0.0.1:3200".parse().unwrap(),
-                object_store_url: Some("s3://krabka-observability".to_string()),
                 wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
                 wal_topic: "logs-wal".to_string(),
                 wal_group_id: "logs-querier".to_string(),
-                data_root: "/var/lib/krabka-observability".into(),
-                querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
-                tenant: Some("tenant-a".to_string()),
-                index_prefix: Some("observability/logs".to_string()),
-                query_start_ns: Some(10),
-                query_end_ns: Some(30),
-                max_query_range: Some(nanos(20)),
-                max_query_series: Some(10),
                 discover_log_levels: false,
                 log_level_fields: vec!["priority".into(), "SeverityText".into()],
                 log_level_from_json_max_depth: -2,
                 enable_multi_variant_queries: false,
                 shard_aggregations: Vec::new(),
                 max_count_min_sketch_heap_size: 10_000,
-                max_query_read: Some(kibibytes(1)),
-                max_query_string_bytes: Some(bytes(64)),
                 retention_period: Some(days(30)),
                 logs_limits_overrides_config: None,
                 max_ingest_body: Some(kibibytes(2)),
@@ -220,6 +212,7 @@ fn assert_environment_config(config: &ServiceConfig) {
                 server_security: ServerSecurityArgs::default(),
                 audit: AuditArgs::default(),
                 wal_client_security: WalClientSecurityArgs::default(),
+                ..scoped_querier_config()
             }
     );
 }

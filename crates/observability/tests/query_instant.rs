@@ -4,24 +4,23 @@ mod support;
 
 use std::collections::BTreeMap;
 
-use assert2::{assert, check};
+use assert2::assert;
 use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use krabka_blockstore::{
-    BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels, write_log_block,
-};
+use krabka_blockstore::labels;
 use krabka_observability::{
-    CompactionFrontier, InMemoryWalSink, Limits, LogWalSink, Offset, PartitionIndex, QuerierState,
+    CompactionFrontier, InMemoryWalSink, Limits, LogWalSink, Offset, PartitionIndex,
     SharedCompactionFrontier, WalLogRecord, WalPosition, loki_router,
 };
-use krabka_units::{bytes, convert::ByteSizeExt as _};
+use krabka_units::bytes;
 use serde_json::{Value, json};
 use support::{
-    DenyingQueryAuthorizer, assert_loki_error, expected_loki_forwarded_api_error,
-    expected_loki_mixed_stats_with, expected_loki_stats_with, fixture, json_body,
-    loki_forwarded_fixture, loki_forwarded_multi_tenant_fixture, text_body,
+    DenyingQueryAuthorizer, LokiStatsCounts, LokiSuccess, Tenant, api_prod_streams,
+    api_prod_wal_record, api_seconds_block_app, assert_json_ok, assert_loki_error,
+    check_one_stored_line_stats, expected_loki_forwarded_api_error, fixture, json_body,
+    loki_forwarded_fixture, loki_forwarded_multi_tenant_fixture, send, tenant_a_post, text_body,
 };
 use tower::ServiceExt as _;
 
@@ -30,21 +29,9 @@ async fn query_endpoint_returns_loki_streams_json_for_tenant() {
     let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_loki_forwarded_api_error());
+    assert_json_ok(response, &expected_loki_forwarded_api_error()).await;
 }
 
 #[tokio::test]
@@ -52,54 +39,43 @@ async fn query_endpoint_fans_out_pipe_separated_tenant_header() {
     let (state, prod_bytes, stage_bytes) = loki_forwarded_multi_tenant_fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a|tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a|tenant-b").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["29000000000", "tenant-a api error"]
-                            ]
-                        },
-                        {
-                            "stream": {
-                                "app": "api",
-                                "env": "stage"
-                            },
-                            "values": [
-                                ["29000000000", "tenant-b api error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(
-                        prod_bytes + stage_bytes,
-                        2,
-                        2
-                    )
+    assert_json_ok(
+        response,
+        &LokiSuccess {
+            result_type: "streams",
+            data_result: json!([
+                {
+                    "stream": {
+                        "app": "api",
+                        "env": "prod"
+                    },
+                    "values": [
+                        ["29000000000", "tenant-a api error"]
+                    ]
+                },
+                {
+                    "stream": {
+                        "app": "api",
+                        "env": "stage"
+                    },
+                    "values": [
+                        ["29000000000", "tenant-b api error"]
+                    ]
                 }
-            })
-    );
+            ]),
+            stats: LokiStatsCounts {
+                store_bytes: prod_bytes + stage_bytes,
+                store_lines: 2,
+                chunks: 2,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats(),
+        }
+        .json(),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -107,23 +83,9 @@ async fn query_endpoint_accepts_form_encoded_post_body() {
     let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(&app, tenant_a_post("/loki/api/v1/query_range").header("content-type", "application/x-www-form-urlencoded").body(Body::from("query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000")).unwrap()).await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_loki_forwarded_api_error());
+    assert_json_ok(response, &expected_loki_forwarded_api_error()).await;
 }
 
 #[tokio::test]
@@ -131,19 +93,9 @@ async fn deprecated_api_prom_query_endpoint_returns_loki_streams_json() {
     let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/prom/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/api/prom/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_loki_forwarded_api_error());
+    assert_json_ok(response, &expected_loki_forwarded_api_error()).await;
 }
 
 #[tokio::test]
@@ -151,23 +103,9 @@ async fn deprecated_api_prom_query_endpoint_accepts_form_encoded_post_body() {
     let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/prom/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(&app, tenant_a_post("/api/prom/query_range").header("content-type", "application/x-www-form-urlencoded").body(Body::from("query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000")).unwrap()).await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_loki_forwarded_api_error());
+    assert_json_ok(response, &expected_loki_forwarded_api_error()).await;
 }
 
 #[tokio::test]
@@ -175,16 +113,7 @@ async fn deprecated_api_prom_query_endpoint_rejects_metric_results_like_loki() {
     let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/prom/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B5s%5D%29&start=0.000000000&end=30.000000000")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/api/prom/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B5s%5D%29&start=0.000000000&end=30.000000000").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -198,21 +127,9 @@ async fn query_endpoint_accepts_fractional_unix_seconds_time() {
     let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_loki_forwarded_api_error());
+    assert_json_ok(response, &expected_loki_forwarded_api_error()).await;
 }
 
 #[tokio::test]
@@ -220,18 +137,7 @@ async fn query_endpoint_includes_loki_stats_object() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
 
     assert!(response.status() == StatusCode::OK);
     let body = json_body(response).await;
@@ -244,117 +150,47 @@ async fn query_endpoint_includes_loki_stats_object() {
 
 #[tokio::test]
 async fn query_endpoint_populates_loki_stats_from_planned_cold_blocks() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            0,
-            10_000_000_000,
-            19_000_000_000,
-            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
-        ),
-        vec![
-            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-    let expected_block_bytes = api_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let app = loki_router(QuerierState::new(dir, label_index, block_index));
+    let (app, expected_block_bytes) = api_seconds_block_app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
 
     assert!(response.status() == StatusCode::OK);
     let body = json_body(response).await;
-    check!(body["data"]["stats"]["store"]["compressedBytes"] == expected_block_bytes);
-    check!(body["data"]["stats"]["store"]["decompressedBytes"] == expected_block_bytes);
-    check!(body["data"]["stats"]["store"]["decompressedLines"] == 1);
-    check!(body["data"]["stats"]["store"]["totalChunksRef"] == 1);
-    check!(body["data"]["stats"]["store"]["totalChunksDownloaded"] == 1);
-    check!(body["data"]["stats"]["summary"]["totalBytesProcessed"] == expected_block_bytes);
-    check!(body["data"]["stats"]["summary"]["totalLinesProcessed"] == 1);
+    check_one_stored_line_stats(&body, expected_block_bytes);
 }
 
 #[tokio::test]
 async fn query_endpoint_merges_cold_blocks_with_hot_wal_tail() {
     let hot_tail = InMemoryWalSink::default();
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 19,
-            line: "api error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
+        .append(api_prod_wal_record(19, "api error"))
         .await
         .unwrap();
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 20,
-            line: "api hot error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
+        .append(api_prod_wal_record(20, "api hot error"))
         .await
         .unwrap();
     let state = fixture().with_hot_tail(hot_tail, 19);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=forward",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=forward").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["19", "api error"],
-                                ["20", "api hot error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_mixed_stats_with(1846, 1, 1, 1)
-                }
-            })
-    );
+    assert_json_ok(
+        response,
+        &LokiSuccess {
+            result_type: "streams",
+            data_result: api_prod_streams(json!([["19", "api error"], ["20", "api hot error"]])),
+            stats: LokiStatsCounts {
+                store_bytes: 1846,
+                store_lines: 1,
+                ingester_lines: 1,
+                chunks: 1,
+            }
+            .expected_stats(),
+        }
+        .json(),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -382,203 +218,52 @@ async fn query_endpoint_uses_updated_shared_compaction_frontier_for_hot_tail() {
     });
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["19", "api error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    assert_json_ok(
+        response,
+        &LokiSuccess {
+            result_type: "streams",
+            data_result: api_prod_streams(json!([["19", "api error"]])),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+        }
+        .json(),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_limit_to_stream_results() {
     let hot_tail = InMemoryWalSink::default();
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 20,
-            line: "api hot error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
+        .append(api_prod_wal_record(20, "api hot error"))
         .await
         .unwrap();
     let state = fixture().with_hot_tail(hot_tail, 19);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=forward&limit=1",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=forward&limit=1").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["19", "api error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1846, 1, 1)
-                }
-            })
-    );
+    assert_json_ok(
+        response,
+        &LokiSuccess {
+            result_type: "streams",
+            data_result: api_prod_streams(json!([["19", "api error"]])),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+        }
+        .json(),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_backward_direction_before_limit() {
-    let hot_tail = InMemoryWalSink::default();
-    hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 20,
-            line: "api hot error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
-        .await
-        .unwrap();
-    let state = fixture().with_hot_tail(hot_tail, 19);
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=backward&limit=1",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["20", "api hot error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_mixed_stats_with(1846, 0, 1, 1)
-                }
-            })
-    );
+    assert_serves_only_the_hot_error("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=backward&limit=1").await;
 }
 
 #[tokio::test]
 async fn query_endpoint_defaults_to_backward_direction_before_limit() {
-    let hot_tail = InMemoryWalSink::default();
-    hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 20,
-            line: "api hot error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
-        .await
-        .unwrap();
-    let state = fixture().with_hot_tail(hot_tail, 19);
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&limit=1",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["20", "api hot error"]
-                            ]
-                        }
-                    ],
-                    "stats": expected_loki_mixed_stats_with(1846, 0, 1, 1)
-                }
-            })
-    );
+    assert_serves_only_the_hot_error("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&limit=1").await;
 }
 
 #[tokio::test]
@@ -586,16 +271,12 @@ async fn query_endpoint_rejects_invalid_direction() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&direction=sideways")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&direction=sideways",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(text_body(response).await == "invalid direction 'sideways'");
@@ -625,16 +306,9 @@ async fn query_endpoint_rejects_unauthorized_tenant_read() {
     let state = fixture().with_query_authorizer(DenyingQueryAuthorizer);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D")
+        .await;
 
     assert!(response.status() == StatusCode::FORBIDDEN);
     assert_loki_error(
@@ -649,16 +323,9 @@ async fn query_endpoint_returns_loki_error_for_invalid_logql() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D")
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -681,17 +348,7 @@ async fn endpoints_return_loki_error_for_missing_query() {
         "/loki/api/v1/detected_fields?start=0.000000000&end=0.000000001",
         "/loki/api/v1/detected_field/status/values?start=0.000000000&end=0.000000001",
     ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = Tenant("tenant-a").get(&app, uri).await;
 
         assert!(response.status() == StatusCode::BAD_REQUEST);
         assert!(text_body(response).await == "parse error : syntax error: unexpected $end");
@@ -703,16 +360,12 @@ async fn query_endpoint_returns_loki_error_for_invalid_limit() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&limit=not-a-number")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&limit=not-a-number",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(text_body(response).await == "strconv.Atoi: parsing \"not-a-number\": invalid syntax");
@@ -723,16 +376,12 @@ async fn query_endpoint_returns_loki_error_for_negative_limit() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&limit=-1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&limit=-1",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(text_body(response).await == "limit must be a positive value");
@@ -746,16 +395,7 @@ async fn query_endpoint_rejects_series_over_configured_limit() {
     });
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Benv%3D%22prod%22%7D&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Benv%3D%22prod%22%7D&start=0.000000000&end=0.000000030").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "series");
@@ -769,17 +409,39 @@ async fn query_endpoint_rejects_planned_block_bytes_over_configured_limit() {
     });
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "bytes");
+}
+
+/// Checks that `uri`, a stream query with `limit=1`, answers with only the
+/// newest line: `api hot error`, which the hot tail holds at 20 ns, above the
+/// fixture's frontier.
+async fn assert_serves_only_the_hot_error(uri: &str) {
+    let hot_tail = InMemoryWalSink::default();
+    hot_tail
+        .append(api_prod_wal_record(20, "api hot error"))
+        .await
+        .unwrap();
+    let app = loki_router(fixture().with_hot_tail(hot_tail, 19));
+
+    let response = Tenant("tenant-a").get(&app, uri).await;
+
+    assert_json_ok(
+        response,
+        &LokiSuccess {
+            result_type: "streams",
+            data_result: api_prod_streams(json!([["20", "api hot error"]])),
+            stats: LokiStatsCounts {
+                store_bytes: 1846,
+                store_lines: 0,
+                ingester_lines: 1,
+                chunks: 1,
+            }
+            .expected_stats(),
+        }
+        .json(),
+    )
+    .await;
 }

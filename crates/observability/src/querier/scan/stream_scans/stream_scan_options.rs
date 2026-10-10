@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     BTreeMap, BlockDescriptor, Labels, LokiDirection, LokiStreamEncoding, LokiStreamEntry,
-    NonZeroUsize, default_block_fetch_concurrency,
+    LokiStreamOptions, NonZeroUsize, default_block_fetch_concurrency,
 };
 
 #[derive(Clone, Copy)]
@@ -31,11 +31,14 @@ impl StreamScanOptions {
     }
 
     pub(crate) fn from_stream_options(
-        direction: LokiDirection,
-        limit: Option<usize>,
-        interval: Option<i64>,
+        options: LokiStreamOptions,
         end_exclusive: Option<i64>,
     ) -> Self {
+        let LokiStreamOptions {
+            direction,
+            limit,
+            interval,
+        } = options;
         Self {
             direction,
             limit,
@@ -336,7 +339,12 @@ mod tests {
                 (Some(10), Some(7)),
                 (None, None),
             ] {
-                let options = StreamScanOptions::from_stream_options(direction, limit, None, end);
+                let stream_options = LokiStreamOptions {
+                    direction,
+                    limit,
+                    interval: None,
+                };
+                let options = StreamScanOptions::from_stream_options(stream_options, end);
                 for full in [
                     streams(),
                     streams().into_iter().take(1).collect::<BTreeMap<_, _>>(),
@@ -346,18 +354,14 @@ mod tests {
                 ] {
                     let expected = apply_loki_stream_options(
                         loki_streams_response(full.clone(), options.encoding),
-                        direction,
-                        limit,
-                        None,
+                        stream_options,
                         end,
                     );
                     let mut bounded = full;
                     options.trim_before_encoding(&mut bounded);
                     let actual = apply_loki_stream_options(
                         loki_streams_response(bounded, options.encoding),
-                        direction,
-                        limit,
-                        None,
+                        stream_options,
                         end,
                     );
                     assert2::check!(actual == expected);
@@ -368,11 +372,21 @@ mod tests {
 
     #[test]
     fn intervals_and_categorized_labels_keep_every_row_for_later_transforms() {
-        let options =
-            StreamScanOptions::from_stream_options(LokiDirection::Backward, Some(3), None, None);
+        let backward_three = LokiStreamOptions {
+            direction: LokiDirection::Backward,
+            limit: Some(3),
+            interval: None,
+        };
         for options in [
-            options.with_encoding(LokiStreamEncoding::CategorizeLabels),
-            StreamScanOptions::from_stream_options(LokiDirection::Backward, Some(3), Some(2), None),
+            StreamScanOptions::from_stream_options(backward_three, None)
+                .with_encoding(LokiStreamEncoding::CategorizeLabels),
+            StreamScanOptions::from_stream_options(
+                LokiStreamOptions {
+                    interval: Some(2),
+                    ..backward_three
+                },
+                None,
+            ),
         ] {
             let mut bounded = streams();
             options.trim_before_encoding(&mut bounded);
@@ -398,9 +412,11 @@ mod tests {
             (LokiStreamEncoding::CategorizeLabels, Some(1), None, 1, 1),
         ] {
             let options = StreamScanOptions::from_stream_options(
-                LokiDirection::Forward,
-                limit,
-                interval,
+                LokiStreamOptions {
+                    direction: LokiDirection::Forward,
+                    limit,
+                    interval,
+                },
                 None,
             )
             .with_encoding(encoding)
@@ -408,9 +424,15 @@ mod tests {
             assert2::check!(options.block_fetch_concurrency() == expected);
         }
 
-        let mut options =
-            StreamScanOptions::from_stream_options(LokiDirection::Forward, Some(1), None, None)
-                .with_block_fetch_concurrency(NonZeroUsize::new(8).unwrap());
+        let mut options = StreamScanOptions::from_stream_options(
+            LokiStreamOptions {
+                direction: LokiDirection::Forward,
+                limit: Some(1),
+                interval: None,
+            },
+            None,
+        )
+        .with_block_fetch_concurrency(NonZeroUsize::new(8).unwrap());
         options.allow_limit_short_circuit = false;
         assert2::check!(options.block_fetch_concurrency() == 8);
     }

@@ -1,3 +1,5 @@
+use crate::http::params_format::QuotedTextScanner;
+
 pub(crate) fn split_logql_function_arguments<'a>(
     query: &'a str,
     name: &str,
@@ -8,21 +10,12 @@ pub(crate) fn split_logql_function_arguments<'a>(
     let mut arguments = Vec::new();
     let mut start = 0;
     let mut parens = 0_i32;
-    let mut quote = None;
-    let mut escaped = false;
+    let mut quotes = QuotedTextScanner::default();
     for (index, ch) in rest.char_indices() {
-        if let Some(quote_ch) = quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == quote_ch {
-                quote = None;
-            }
+        if quotes.in_quotes(ch) {
             continue;
         }
         match ch {
-            '"' | '`' => quote = Some(ch),
             '(' => parens += 1,
             ')' if parens > 0 => parens -= 1,
             ',' if parens == 0 => {

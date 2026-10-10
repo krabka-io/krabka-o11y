@@ -66,11 +66,13 @@ The shard logs are synthetic, and the block says so.
 
 import argparse
 import json
-import os
 import pathlib
 import re
 import sys
 import tempfile
+
+from ratchet_annotations import annotate, keep_stdout_for_json
+from ratchet_baseline import baseline_fields
 
 # The line //mutants/private/cargo_mutants_runner.rs prints per shard.
 # Leading whitespace is tolerated so the same parser reads a console
@@ -118,24 +120,6 @@ class UsageError(Exception):
 
 class ProofFailed(Exception):
     """`--prove-gate` saw the gate pass a sweep it has to reject."""
-
-
-def annotate(level, message):
-    """Prints a message, as a GitHub annotation when the run is on Actions."""
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        print(f"::{level}::{message}", flush=True)
-    else:
-        print(f"{level}: {message}", flush=True)
-
-
-def keep_stdout_for_json(destination):
-    """Sends every other line to standard error when the JSON goes to stdout.
-
-    `--json -` is for a pipe into another tool, and the annotations would
-    break that JSON.
-    """
-    if destination == "-":
-        sys.stdout = sys.stderr
 
 
 def shard_logs(logs_root, crate):
@@ -269,14 +253,7 @@ def declared_shards(build_file):
 def read_baseline(path):
     """Crate name to survivor count, where `unseeded` reads as None."""
     baseline = {}
-    for number, line in enumerate(pathlib.Path(path).read_text().splitlines(), 1):
-        stripped = line.split("#", 1)[0].strip()
-        if not stripped:
-            continue
-        fields = stripped.split()
-        if len(fields) != 2:
-            raise UsageError(f"{path}:{number}: expected `<crate> <count>`: {line}")
-        crate, count = fields
+    for number, line, crate, count in baseline_fields(path, "<crate> <count>", UsageError):
         if count == UNSEEDED:
             baseline[crate] = None
         elif count.isdigit():

@@ -315,15 +315,7 @@ impl<S: MetricStore> PromqlEngine<S> {
 
             // A nested plannable inner expression: recurse and assemble it,
             // applying that shape's own drop semantics before transforming.
-            let Some(planned) = self.plan_instant_expr(tenant, inner, time_ms).await? else {
-                return Ok(None);
-            };
-            let QueryResult::InstantVector(samples) =
-                self.assemble_planned_instant(planned, time_ms).await?
-            else {
-                return Ok(None);
-            };
-            Ok(Some(samples))
+            self.planned_instant_vector(tenant, inner, time_ms).await
         }
         .boxed()
     }
@@ -383,15 +375,10 @@ impl<S: MetricStore> PromqlEngine<S> {
             // A nested plannable inner expression: recurse, then assemble it to
             // an instant vector (applying that shape's own drop semantics — e.g.
             // rate's no-value suppression) before feeding the values to `f`.
-            let Some(planned) = self.plan_instant_expr(tenant, inner, time_ms).await? else {
-                return Ok(None);
-            };
-            let QueryResult::InstantVector(inner_samples) =
-                self.assemble_planned_instant(planned, time_ms).await?
-            else {
-                return Ok(None);
-            };
-            Ok(Some(float_scalar_math_values(inner_samples)))
+            Ok(self
+                .planned_instant_vector(tenant, inner, time_ms)
+                .await?
+                .map(float_scalar_math_values))
         }
         .boxed()
     }

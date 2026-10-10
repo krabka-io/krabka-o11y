@@ -30,7 +30,7 @@ pub use filters::{
 };
 pub use labels::{
     LabelFormat, LabelFormatAssignment, LabelFormatValue, LabelSelection, LabelSelectionMatcher,
-    LabelSelectionSet, UnwrapConversion, UnwrapExpression,
+    LabelSelectionSet, UnwrapConversion, UnwrapExpression, parse_decimal_sample_literal,
 };
 pub use planner::{PlanError, StreamPlan, plan_stream_query};
 pub use stream::{
@@ -58,6 +58,7 @@ pub use types::{
     DestinationLabel, DurationNanos, JsonExpressionPath, OffsetNanos, QuantileDenominator,
     QuantileNumerator, SourceLabel,
 };
+pub use util::{hex_digit_value, parse_prometheus_duration_literal, prometheus_duration_unit};
 
 mod labels_2;
 mod unwrap_sample_value_label;

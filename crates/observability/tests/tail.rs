@@ -5,67 +5,62 @@ mod support;
 use std::collections::BTreeMap;
 
 use assert2::{assert, check};
-use axum::http::StatusCode;
+use axum::{Router, http::StatusCode};
 use futures_util::{SinkExt as _, StreamExt as _};
 use krabka_blockstore::labels;
 use krabka_observability::{InMemoryWalSink, LogWalSink, WalLogRecord, loki_router};
 use serde_json::{Value, json};
-use support::fixture;
-use tokio::{
-    net::TcpListener,
-    time::{Duration, timeout},
+use support::{
+    LogEntry, fixture, log_entry, next_frame, next_frame_within_two_seconds, open_tail,
+    serve_for_websocket,
 };
-use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest as _};
+use tokio::time::{Duration, timeout};
+use tokio_tungstenite::connect_async;
 
-#[tokio::test]
-async fn tail_endpoint_does_not_resend_records_after_an_idle_poll() {
-    let record = |timestamp_ns, line: &str| WalLogRecord {
+const ERROR_TAIL: &str =
+    "/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000";
+
+fn record(timestamp_ns: i64, line: &str) -> WalLogRecord {
+    WalLogRecord {
         tenant: "tenant-a".to_string(),
         labels: labels([("app", "api"), ("env", "prod")]),
         timestamp_ns,
         line: line.to_string(),
         structured_metadata: BTreeMap::new(),
         position: None,
-    };
-    let frame_of = |timestamp: &str, line: &str| {
-        json!({
-            "streams": [{
-                "stream": {"app": "api", "env": "prod"},
-                "values": [[timestamp, line]]
-            }],
-        })
-    };
+    }
+}
 
+/// The tail frame that carries only `entry` of the `api` prod stream.
+fn frame_of(entry: LogEntry<'_>) -> Value {
+    json!({
+        "streams": [{
+            "stream": {"app": "api", "env": "prod"},
+            "values": [[entry.timestamp_ns.to_string(), entry.line]]
+        }],
+    })
+}
+
+/// A querier over the shared fixture whose hot tail holds `records`, with
+/// everything through 19 ns already compacted.
+async fn hot_tail_app(
+    records: impl IntoIterator<Item = WalLogRecord>,
+) -> (InMemoryWalSink, Router) {
     let hot_tail = InMemoryWalSink::default();
-    hot_tail
-        .append(record(20, "api first error"))
-        .await
-        .unwrap();
-    let state = fixture().with_hot_tail(hot_tail.clone(), 19);
-    let app = loki_router(state);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030"
-    )
-    .into_client_request()
-    .unwrap();
-    request
-        .headers_mut()
-        .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());
+    for record in records {
+        hot_tail.append(record).await.unwrap();
+    }
+    let app = loki_router(fixture().with_hot_tail(hot_tail.clone(), 19));
+    (hot_tail, app)
+}
 
-    let (mut socket, response) = connect_async(request).await.unwrap();
-    assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
-    let message = timeout(Duration::from_secs(2), socket.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    let frame: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
-    assert!(frame == frame_of("20", "api first error"));
+#[tokio::test]
+async fn tail_endpoint_does_not_resend_records_after_an_idle_poll() {
+    let (hot_tail, app) = hot_tail_app([record(20, "api first error")]).await;
+    let (mut socket, server) = open_tail(app, &format!("{ERROR_TAIL}&end=0.000000030")).await;
+
+    let frame = next_frame_within_two_seconds(&mut socket).await;
+    assert!(frame == frame_of(log_entry(20, "api first error")));
 
     // Let the stream poll an unchanged buffer several times over. Only a
     // stream that leaves its cursor alone across those idle polls stays quiet;
@@ -77,68 +72,19 @@ async fn tail_endpoint_does_not_resend_records_after_an_idle_poll() {
         .append(record(21, "api later error"))
         .await
         .unwrap();
-    let message = timeout(Duration::from_secs(2), socket.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    let frame: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+    let frame = next_frame_within_two_seconds(&mut socket).await;
     server.abort();
-    assert!(frame == frame_of("21", "api later error"));
+    assert!(frame == frame_of(log_entry(21, "api later error")));
 }
 
 #[tokio::test]
 async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
-    let hot_tail = InMemoryWalSink::default();
-    hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 20,
-            line: "api hot error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
-        .await
-        .unwrap();
-    let state = fixture().with_hot_tail(hot_tail.clone(), 19);
-    let app = loki_router(state);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030"
-    )
-    .into_client_request()
-    .unwrap();
-    request
-        .headers_mut()
-        .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());
+    let (hot_tail, app) = hot_tail_app([record(20, "api hot error")]).await;
+    let (mut socket, server) = open_tail(app, &format!("{ERROR_TAIL}&end=0.000000030")).await;
 
-    let (mut socket, response) = connect_async(request).await.unwrap();
-    assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
-    let message = socket.next().await.unwrap().unwrap();
-    let frame: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+    let frame = next_frame(&mut socket).await;
 
-    assert!(
-        frame
-            == json!({
-                "streams": [
-                    {
-                        "stream": {
-                            "app": "api",
-
-                            "env": "prod"
-                        },
-                        "values": [
-                            ["20", "api hot error"]
-                        ]
-                    }
-                ],
-            })
-    );
+    assert!(frame == frame_of(log_entry(20, "api hot error")));
 
     socket
         .send(tokio_tungstenite::tungstenite::Message::Ping(
@@ -156,136 +102,38 @@ async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
     );
 
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 21,
-            line: "api later error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
+        .append(record(21, "api later error"))
         .await
         .unwrap();
-    let message = timeout(Duration::from_secs(2), socket.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    let frame: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+    let frame = next_frame_within_two_seconds(&mut socket).await;
     server.abort();
 
-    assert!(
-        frame
-            == json!({
-                    "streams": [
-                        {
-                            "stream": {
-                                "app": "api",
-
-                                "env": "prod"
-                            },
-                            "values": [
-                                ["21", "api later error"]
-                            ]
-                        }
-                    ],
-            })
-    );
+    assert!(frame == frame_of(log_entry(21, "api later error")));
 }
 
 #[tokio::test]
 async fn tail_endpoint_applies_limit_to_hot_wal_tail_frame() {
-    let hot_tail = InMemoryWalSink::default();
-    for (timestamp_ns, line) in [(20, "api first error"), (21, "api second error")] {
-        hot_tail
-            .append(WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("env", "prod")]),
-                timestamp_ns,
-                line: line.to_string(),
-                structured_metadata: BTreeMap::new(),
-                position: None,
-            })
-            .await
-            .unwrap();
-    }
-    let state = fixture().with_hot_tail(hot_tail, 19);
-    let app = loki_router(state);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&limit=1"
-    )
-    .into_client_request()
-    .unwrap();
-    request
-        .headers_mut()
-        .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());
+    let (_, app) = hot_tail_app([
+        record(20, "api first error"),
+        record(21, "api second error"),
+    ])
+    .await;
+    let (mut socket, server) =
+        open_tail(app, &format!("{ERROR_TAIL}&end=0.000000030&limit=1")).await;
 
-    let (mut socket, response) = connect_async(request).await.unwrap();
-    assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
-    let message = socket.next().await.unwrap().unwrap();
-    let frame: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+    let frame = next_frame(&mut socket).await;
     server.abort();
 
-    assert!(
-        frame
-            == json!({
-                "streams": [
-                    {
-                        "stream": {
-                            "app": "api",
-
-                            "env": "prod"
-                        },
-                        "values": [
-                            ["20", "api first error"]
-                        ]
-                    }
-                ],
-            })
-    );
+    assert!(frame == frame_of(log_entry(20, "api first error")));
 }
 
 #[tokio::test]
 async fn tail_endpoint_defaults_limit_to_one_hundred_entries() {
-    let hot_tail = InMemoryWalSink::default();
-    for index in 0..101 {
-        hot_tail
-            .append(WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("env", "prod")]),
-                timestamp_ns: 20 + index,
-                line: format!("api error {index}"),
-                structured_metadata: BTreeMap::new(),
-                position: None,
-            })
-            .await
-            .unwrap();
-    }
-    let state = fixture().with_hot_tail(hot_tail, 19);
-    let app = loki_router(state);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000200"
-    )
-    .into_client_request()
-    .unwrap();
-    request
-        .headers_mut()
-        .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());
+    let (_, app) =
+        hot_tail_app((0..101).map(|index| record(20 + index, &format!("api error {index}")))).await;
+    let (mut socket, server) = open_tail(app, &format!("{ERROR_TAIL}&end=0.000000200")).await;
 
-    let (mut socket, response) = connect_async(request).await.unwrap();
-    assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
-    let message = socket.next().await.unwrap().unwrap();
-    let frame: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+    let frame = next_frame(&mut socket).await;
     server.abort();
     let values = frame
         .pointer("/streams/0/values")
@@ -299,20 +147,11 @@ async fn tail_endpoint_defaults_limit_to_one_hundred_entries() {
 
 #[tokio::test]
 async fn tail_endpoint_rejects_delay_for_over_five_seconds() {
-    let state = fixture();
-    let app = loki_router(state);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let mut request =
-        format!("ws://{addr}/loki/api/v1/tail?delay_for=6&query=%7Bapp%3D%22api%22%7D")
-            .into_client_request()
-            .unwrap();
-    request
-        .headers_mut()
-        .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());
+    let (request, server) = serve_for_websocket(
+        loki_router(fixture()),
+        "/loki/api/v1/tail?delay_for=6&query=%7Bapp%3D%22api%22%7D",
+    )
+    .await;
 
     let error = connect_async(request).await.unwrap_err();
     server.abort();
@@ -328,31 +167,17 @@ async fn tail_endpoint_rejects_delay_for_over_five_seconds() {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.starts_with("text/plain"))
     );
-    assert_eq!(
-        response.body().as_deref(),
-        Some("delay_for can't be greater than 5".as_bytes())
-    );
+    assert!(response.body().as_deref() == Some("delay_for can't be greater than 5".as_bytes()));
 }
 
 #[tokio::test]
 async fn tail_endpoint_accepts_delay_for_at_five_seconds() {
-    let state = fixture();
-    let app = loki_router(state);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let mut request =
-        format!("ws://{addr}/loki/api/v1/tail?delay_for=5&query=%7Bapp%3D%22api%22%7D")
-            .into_client_request()
-            .unwrap();
-    request
-        .headers_mut()
-        .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());
+    let (mut socket, server) = open_tail(
+        loki_router(fixture()),
+        "/loki/api/v1/tail?delay_for=5&query=%7Bapp%3D%22api%22%7D",
+    )
+    .await;
 
-    let (mut socket, response) = connect_async(request).await.unwrap();
-    assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
     let _ = socket.close(None).await;
     server.abort();
 }
@@ -364,36 +189,20 @@ async fn tail_endpoint_delays_fresh_records_when_delay_for_is_set() {
     // long fixture and socket setup take on a loaded runner.
     let timestamp_ns = i64::MAX / 2;
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns,
-            line: "api fresh error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
+        .append(record(timestamp_ns, "api fresh error"))
         .await
         .unwrap();
     let state = fixture().with_hot_tail(hot_tail, timestamp_ns.saturating_sub(1));
-    let app = loki_router(state);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?delay_for=1&query=%7Bapp%3D%22api%22%7D&start={}&end={}",
-        timestamp_ns.saturating_sub(1),
-        timestamp_ns.saturating_add(1),
+    let (mut socket, server) = open_tail(
+        loki_router(state),
+        &format!(
+            "/loki/api/v1/tail?delay_for=1&query=%7Bapp%3D%22api%22%7D&start={}&end={}",
+            timestamp_ns.saturating_sub(1),
+            timestamp_ns.saturating_add(1),
+        ),
     )
-    .into_client_request()
-    .unwrap();
-    request
-        .headers_mut()
-        .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());
+    .await;
 
-    let (mut socket, response) = connect_async(request).await.unwrap();
-    assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
     assert!(
         timeout(Duration::from_millis(150), socket.next())
             .await

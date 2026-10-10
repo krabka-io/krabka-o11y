@@ -1,12 +1,9 @@
-use super::{BTreeMap, MetricValue, Ordering, Quantile};
+use super::{BTreeMap, MetricValue, Ordering, Quantile, VectorAggregationState};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MetricSampleState {
-    pub(crate) count: u64,
-    pub(crate) sum: MetricValue,
-    pub(crate) sum_squares: MetricValue,
-    pub(crate) min: Option<MetricValue>,
-    pub(crate) max: Option<MetricValue>,
+    /// The count, sum, sum of squares and extremes of the window's samples.
+    pub(crate) summary: VectorAggregationState,
     pub(crate) first: Option<(i64, MetricValue)>,
     pub(crate) last: Option<(i64, MetricValue)>,
     pub(crate) values: Vec<MetricValue>,
@@ -15,27 +12,11 @@ pub(crate) struct MetricSampleState {
 
 impl MetricSampleState {
     pub(crate) fn has_samples(&self) -> bool {
-        self.count > 0
+        self.summary.count > 0
     }
 
     pub(crate) fn record(&mut self, timestamp_ns: i64, value: MetricValue) {
-        self.count += 1;
-        self.sum = self.sum.add(value);
-        self.sum_squares = self.sum_squares.add(value.multiply(value));
-        self.min = Some(self.min.map_or(value, |min| {
-            if value.cmp_value(min) == Ordering::Less {
-                value
-            } else {
-                min
-            }
-        }));
-        self.max = Some(self.max.map_or(value, |max| {
-            if value.cmp_value(max) == Ordering::Greater {
-                value
-            } else {
-                max
-            }
-        }));
+        self.summary.record(value);
         self.first = Some(self.first.map_or((timestamp_ns, value), |first| {
             if timestamp_ns < first.0 {
                 (timestamp_ns, value)
@@ -58,27 +39,7 @@ impl MetricSampleState {
     }
 
     pub(crate) fn merge(&mut self, other: Self) {
-        self.count = self.count.saturating_add(other.count);
-        self.sum = self.sum.add(other.sum);
-        self.sum_squares = self.sum_squares.add(other.sum_squares);
-        if let Some(min) = other.min {
-            self.min = Some(self.min.map_or(min, |current| {
-                if min.cmp_value(current) == Ordering::Less {
-                    min
-                } else {
-                    current
-                }
-            }));
-        }
-        if let Some(max) = other.max {
-            self.max = Some(self.max.map_or(max, |current| {
-                if max.cmp_value(current) == Ordering::Greater {
-                    max
-                } else {
-                    current
-                }
-            }));
-        }
+        self.summary.merge(other.summary);
         if let Some(first) = other.first {
             self.first =
                 Some(self.first.map_or(
@@ -107,18 +68,11 @@ impl MetricSampleState {
     }
 
     pub(crate) fn average(self) -> MetricValue {
-        self.sum.divide_by(self.count)
+        self.summary.sum.divide_by(self.summary.count)
     }
 
     pub(crate) fn stdvar(self) -> MetricValue {
-        if self.count == 0 {
-            return MetricValue::zero();
-        }
-
-        let mean = self.sum.divide_by(self.count);
-        self.sum_squares
-            .divide_by(self.count)
-            .saturating_sub(mean.multiply(mean))
+        self.summary.stdvar()
     }
 
     pub(crate) fn stddev(self) -> MetricValue {

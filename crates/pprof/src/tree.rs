@@ -218,7 +218,7 @@ mod bar;
 mod flame_graph;
 mod flame_graph_diff;
 mod level;
-mod name_slot;
+pub(crate) mod name_slot;
 mod node;
 mod other_name;
 mod root_name;

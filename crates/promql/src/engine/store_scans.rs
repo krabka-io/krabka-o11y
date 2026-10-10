@@ -33,6 +33,28 @@ fn emit_scan_warnings(scan: &ScanResult) {
     }
 }
 
+/// What a stale-NaN marker in a scanned window becomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StaleMarkers {
+    /// Leave the markers out, as a matrix selector does.
+    Drop,
+    /// Keep the markers, as an instant selector does.
+    Keep,
+}
+
+/// One scan of [`PromqlEngine::labeled_series_sets`]: every matcher set's
+/// float rows over the half-open window `(after_ms, through_ms]`.
+#[derive(Clone, Copy)]
+pub(super) struct LabeledSeriesScan<'a> {
+    pub(super) tenant: &'a str,
+    pub(super) matcher_sets: &'a [Vec<LabelMatcher>],
+    /// The window's exclusive lower bound, in epoch milliseconds.
+    pub(super) after_ms: i64,
+    /// The window's inclusive upper bound, in epoch milliseconds.
+    pub(super) through_ms: i64,
+    pub(super) stale_markers: StaleMarkers,
+}
+
 impl<S: MetricStore> PromqlEngine<S> {
     pub(super) async fn latest_labeled_series(
         &self,
@@ -295,17 +317,22 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// This is what the three operator leaves consume. Grouping is what keeps
     /// the step loop cheap: the label set is attached once per series rather
     /// than copied onto every sample, and the samples of a series arrive as one
-    /// time-ordered run, so the leaf needs no sort. `drop_stale_nan` follows the
-    /// selector kind — a matrix selector drops the markers, an instant selector
-    /// keeps them so `InstantManipulate` can suppress the series.
+    /// time-ordered run, so the leaf needs no sort. `scan.stale_markers`
+    /// follows the selector kind — a matrix selector drops the markers, an
+    /// instant selector keeps them so `InstantManipulate` can suppress the
+    /// series.
     pub(super) async fn labeled_series_sets(
         &self,
-        tenant: &str,
-        matcher_sets: &[Vec<LabelMatcher>],
-        after_ms: i64,
-        through_ms: i64,
-        drop_stale_nan: bool,
+        scan: LabeledSeriesScan<'_>,
     ) -> Result<Vec<LabeledSeries>> {
+        let LabeledSeriesScan {
+            tenant,
+            matcher_sets,
+            after_ms,
+            through_ms,
+            stale_markers,
+        } = scan;
+        let drop_stale_nan = stale_markers == StaleMarkers::Drop;
         let labels_by_fp = self
             .labels_by_fingerprint_sets(tenant, matcher_sets, after_ms, through_ms)
             .await?;

@@ -1,8 +1,7 @@
 use super::{
-    Arc, BlockCatalog, QuerierBackend, QueryFrontend, RoleReadiness, Router, buildinfo, echo, get,
-    overrides, query_instant, query_range, search, search_stream, search_tag_values,
-    search_tag_values_v2, search_tags, search_tags_v2, tempo_readiness_routes, trace_by_id,
-    trace_by_id_v1,
+    Arc, BlockCatalog, InstantMetrics, QuerierBackend, QueryFrontend, RangeMetrics, RoleReadiness,
+    Router, StreamedSearch, V1Api, V2Api, WholeSearch, buildinfo, echo, get, metrics_query,
+    overrides, search, search_tag_values, search_tags, tempo_readiness_routes, trace_by_id,
 };
 use crate::tempo_query_routes::tempo_query_routes;
 
@@ -22,16 +21,16 @@ where
         echo = get(echo),
         buildinfo = get(buildinfo),
         overrides = get(overrides::<B, C>).post(overrides::<B, C>).patch(overrides::<B, C>).delete(overrides::<B, C>),
-        search = get(search::<B, C>),
-        search_stream = get(search_stream::<B, C>),
-        trace_v1 = get(trace_by_id_v1::<B, C>),
-        trace_v2 = get(trace_by_id::<B, C>),
-        tags_v1 = get(search_tags::<B, C>),
-        tags_v2 = get(search_tags_v2::<B, C>),
-        tag_values_v1 = get(search_tag_values::<B, C>),
-        tag_values_v2 = get(search_tag_values_v2::<B, C>),
-        metrics_range = get(query_range::<B, C>),
-        metrics_instant = get(query_instant::<B, C>),
+        search = get(search::<B, C, WholeSearch>),
+        search_stream = get(search::<B, C, StreamedSearch>),
+        trace_v1 = get(trace_by_id::<B, C, V1Api>),
+        trace_v2 = get(trace_by_id::<B, C, V2Api>),
+        tags_v1 = get(search_tags::<B, C, V1Api>),
+        tags_v2 = get(search_tags::<B, C, V2Api>),
+        tag_values_v1 = get(search_tag_values::<B, C, V1Api>),
+        tag_values_v2 = get(search_tag_values::<B, C, V2Api>),
+        metrics_range = get(metrics_query::<B, C, RangeMetrics>),
+        metrics_instant = get(metrics_query::<B, C, InstantMetrics>),
     )
     .merge(tempo_readiness_routes(readiness))
     .with_state(qf)

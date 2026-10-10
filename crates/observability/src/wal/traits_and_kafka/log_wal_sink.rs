@@ -1,5 +1,5 @@
 use super::{WalLogRecord, WalSinkError, async_trait};
-use crate::wal_produce::WalBatchError;
+use crate::wal_produce::{WalBatchError, write_batch_serially};
 
 #[async_trait]
 pub trait LogWalSink: Send + Sync + 'static {
@@ -21,12 +21,6 @@ pub trait LogWalSink: Send + Sync + 'static {
         &self,
         records: Vec<WalLogRecord>,
     ) -> Result<(), WalBatchError<WalSinkError>> {
-        let total = records.len();
-        for (appended, record) in records.into_iter().enumerate() {
-            if let Err(source) = self.append(record).await {
-                return Err(WalBatchError::new(appended, total, source));
-            }
-        }
-        Ok(())
+        write_batch_serially(records, |record| self.append(record)).await
     }
 }

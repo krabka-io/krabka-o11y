@@ -18,19 +18,9 @@ pub(crate) async fn pruning_a_chunked_head_leaves_open_snapshots_intact() {
     }
     let head = WalHead::from_store(store);
 
-    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
-    let count = async |store: &InMemoryMetricStore| {
-        let scan = store
-            .scan("t", &matchers, i64::MIN, i64::MAX)
-            .await
-            .unwrap();
-        let table = scan.float_table.clone().unwrap();
-        count_rows(&scan, &table).await
-    };
-
     let total = i64::try_from(rows).expect("a row count fits an i64");
     let before = head.snapshot();
-    assert2::assert!(count(&before).await == total);
+    assert2::assert!(count_up_float_rows(&before).await == total);
 
     // Retention is a second and the newest sample sits at `total`, so every
     // sample below `total - 1_000` goes and the thousand-and-one above it stay.
@@ -38,7 +28,7 @@ pub(crate) async fn pruning_a_chunked_head_leaves_open_snapshots_intact() {
     assert2::assert!(stats.samples_dropped == usize::try_from(total - 1_001).unwrap());
     assert2::assert!(stats.series_dropped == 0);
 
-    assert2::assert!(count(&head.snapshot()).await == 1_001);
+    assert2::assert!(count_up_float_rows(&head.snapshot()).await == 1_001);
     // The snapshot predates the prune and is unmoved by it.
-    assert2::assert!(count(&before).await == total);
+    assert2::assert!(count_up_float_rows(&before).await == total);
 }

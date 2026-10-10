@@ -1,6 +1,8 @@
+use axum::{extract::FromRequestParts, http::request::Parts};
+
 use super::{
-    HeaderMap, HttpQueryError, QuerierState, RequestSecurity, TenantErrorSurface, TenantId,
-    resolve_single_tenant, tenant_header_value,
+    HeaderMap, HttpQueryError, IntoResponse, QuerierState, RequestSecurity, Response,
+    TenantErrorSurface, TenantId, authorized_tenant,
 };
 
 /// The one tenant a ruler request names, after the principal's grant and the
@@ -21,16 +23,26 @@ pub(crate) async fn authorized_ruler_tenant(
     headers: &HeaderMap,
     surface: TenantErrorSurface,
 ) -> Result<TenantId, HttpQueryError> {
-    let tenant = resolve_single_tenant(tenant_header_value(headers))
-        .map_err(|source| HttpQueryError::Tenant { source, surface })?;
-    security.authorize_tenant(&tenant)?;
-    state
-        .query_authorizer
-        .check(&security.principal, &tenant)
-        .await
-        .map_err(|error| {
-            security.record_read_refusal(&error);
-            HttpQueryError::from(error)
-        })?;
-    Ok(tenant)
+    authorized_tenant(state, security, headers, surface).await
+}
+
+/// The tenant of a Loki ruler request, authorized as
+/// [`authorized_ruler_tenant`] does with the ruler's tenant-error surface.
+pub(crate) struct RulerTenant(pub(crate) TenantId);
+
+impl FromRequestParts<QuerierState> for RulerTenant {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &QuerierState,
+    ) -> Result<Self, Self::Rejection> {
+        let security = RequestSecurity::from_request_parts(parts, state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        authorized_ruler_tenant(state, &security, &parts.headers, TenantErrorSurface::Ruler)
+            .await
+            .map(Self)
+            .map_err(IntoResponse::into_response)
+    }
 }

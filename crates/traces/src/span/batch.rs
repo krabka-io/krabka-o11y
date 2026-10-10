@@ -257,28 +257,11 @@ mod tests {
     #[test]
     fn explicit_arrays_keep_empty_and_singleton_identity_in_blocks() {
         let mut value = span(1, None, "api");
-        value.span_attrs = vec![
-            KeyValue {
-                key: "empty".into(),
-                value: AttrValue::Array(Vec::new()),
-            },
-            KeyValue {
-                key: "one".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7)]),
-            },
-            KeyValue {
-                key: "many".into(),
-                value: AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
-            },
-            KeyValue {
-                key: "scalar".into(),
-                value: AttrValue::Int(7),
-            },
-            KeyValue {
-                key: "mixed".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
-            },
-        ];
+        value.span_attrs = crate::span::test_span::array_shape_attrs();
+        // A scalar between `many` and `mixed`, so `mixed` stays at index 4.
+        value
+            .span_attrs
+            .insert(3, KeyValue::new("scalar", AttrValue::Int(7)));
         let attrs = span_attrs(&value);
         check!(
             attrs.iter().find(|attr| attr.key == "empty").unwrap().value

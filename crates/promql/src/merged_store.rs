@@ -11,12 +11,13 @@ use krabka_metrics::{float_sample_schema, native_histogram_schema};
 
 use self::{
     scan::{FLOAT_TABLE, HISTOGRAM_TABLE, merge_scan_table},
-    stats::{label_name_cardinality, label_value_cardinality, merge_named_stats, min_present_time},
+    stats::{merge_named_stats, min_present_time},
 };
 use crate::{
     ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataRecord, MetadataScan,
     MetricStore, PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher, ScanResult,
     TsdbBlock, TsdbHeadStats, TsdbStats,
+    series_stats::{SeriesRef, label_name_cardinality, label_value_cardinality},
 };
 
 mod instant_scan;
@@ -273,14 +274,12 @@ where
         tenant: &str,
     ) -> Result<Vec<LabelNameCardinality>, PromqlError> {
         let series = self.cardinality_active_series(tenant).await?;
-        let mut by_name = BTreeMap::<String, BTreeSet<SeriesFingerprint>>::new();
-        for labels in series {
-            let fp = labels.fingerprint();
-            for (name, _) in labels.iter() {
-                by_name.entry(name.clone()).or_default().insert(fp);
+        Ok(label_name_cardinality(series.iter().map(|labels| {
+            SeriesRef {
+                fp: labels.fingerprint(),
+                labels,
             }
-        }
-        Ok(label_name_cardinality(by_name))
+        })))
     }
 
     async fn cardinality_label_values(
@@ -288,18 +287,12 @@ where
         tenant: &str,
     ) -> Result<Vec<LabelValueCardinality>, PromqlError> {
         let series = self.cardinality_active_series(tenant).await?;
-        let mut by_value =
-            BTreeMap::<(String, crate::PromqlString), BTreeSet<SeriesFingerprint>>::new();
-        for labels in series {
-            let fp = labels.fingerprint();
-            for (name, value) in labels.iter() {
-                by_value
-                    .entry((name.clone(), value.clone()))
-                    .or_default()
-                    .insert(fp);
+        Ok(label_value_cardinality(series.iter().map(|labels| {
+            SeriesRef {
+                fp: labels.fingerprint(),
+                labels,
             }
-        }
-        Ok(label_value_cardinality(by_value))
+        })))
     }
 
     async fn cardinality_active_series(&self, tenant: &str) -> Result<Vec<Labels>, PromqlError> {

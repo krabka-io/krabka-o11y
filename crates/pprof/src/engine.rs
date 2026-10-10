@@ -28,6 +28,15 @@ pub enum SampleSelector<'a> {
     Trace(&'a [Vec<u8>]),
 }
 
+/// The samples of one profile scan that a merge keeps.
+#[derive(Clone, Copy)]
+pub(crate) struct ScanMerge<'a> {
+    pub(crate) scan: &'a crate::ProfileScan,
+    pub(crate) sample_selector: SampleSelector<'a>,
+    /// Keeps only stacks that match these call sites; empty keeps every stack.
+    pub(crate) call_sites: &'a [String],
+}
+
 const FRONTEND_RESULT_CACHE_ENTRIES: usize = 256;
 const FRONTEND_RESULT_CACHE_TTL: Duration = Duration::from_secs(30);
 
@@ -212,6 +221,26 @@ mod tests {
             .any(|entry| entry == value)
     }
 
+    /// The ids of the one-frame stacks `a` and `b`, both in partition 0.
+    struct StacksAB {
+        stack_a: u32,
+        stack_b: u32,
+    }
+
+    /// An empty store whose symbol database already holds the stacks `a` and
+    /// `b`.
+    fn store_with_stacks_a_and_b() -> (InMemoryProfileStore, StacksAB) {
+        let mut store = InMemoryProfileStore::new();
+        let db = store.symbols_mut();
+        let a = intern_location(db, "a");
+        let b = intern_location(db, "b");
+        let stacks = StacksAB {
+            stack_a: db.intern_stacktrace(0, &[a]),
+            stack_b: db.intern_stacktrace(0, &[b]),
+        };
+        (store, stacks)
+    }
+
     #[test]
     fn default_max_nodes_is_2048() {
         assert!(EngineOpts::default().default_max_nodes == 2048);
@@ -219,13 +248,7 @@ mod tests {
 
     #[tokio::test]
     async fn engine_diff_two_windows() {
-        let mut store = InMemoryProfileStore::new();
-        let (stack_a, stack_b) = {
-            let db = store.symbols_mut();
-            let a = intern_location(db, "a");
-            let b = intern_location(db, "b");
-            (db.intern_stacktrace(0, &[a]), db.intern_stacktrace(0, &[b]))
-        };
+        let (mut store, StacksAB { stack_a, stack_b }) = store_with_stacks_a_and_b();
         store.push_sample_with_total(
             ("tenant-a", PT),
             vec![("svc".to_string(), "x".to_string())],
@@ -387,15 +410,17 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn span_profile_filters_by_span_id() {
-        let mut store = InMemoryProfileStore::new();
-        let (stack_a, stack_b) = {
-            let db = store.symbols_mut();
-            let a = intern_location(db, "a");
-            let b = intern_location(db, "b");
-            (db.intern_stacktrace(0, &[a]), db.intern_stacktrace(0, &[b]))
-        };
+    /// Where `span_profile_engine` places its second sample.
+    #[derive(Clone, Copy)]
+    struct SecondSample {
+        timestamp_ms: i64,
+        span_id: u64,
+    }
+
+    // Two samples of the same series: stack `a` (6 of 10) at 0 ms under span
+    // 111, and stack `b` (4 of 10) at `second`.
+    fn span_profile_engine(second: SecondSample) -> FlameEngine<InMemoryProfileStore> {
+        let (mut store, StacksAB { stack_a, stack_b }) = store_with_stacks_a_and_b();
         store.push_sample_with_total_and_span(
             ("tenant-a", PT),
             vec![("svc".to_string(), "x".to_string())],
@@ -409,10 +434,18 @@ mod tests {
             vec![("svc".to_string(), "x".to_string())],
             (0, stack_b),
             (4, 10),
-            0,
-            222,
+            second.timestamp_ms,
+            second.span_id,
         );
-        let engine = FlameEngine::new(Arc::new(store), EngineOpts::default());
+        FlameEngine::new(Arc::new(store), EngineOpts::default())
+    }
+
+    #[tokio::test]
+    async fn span_profile_filters_by_span_id() {
+        let engine = span_profile_engine(SecondSample {
+            timestamp_ms: 0,
+            span_id: 222,
+        });
 
         let fg = engine
             .select_merge_span_profile(("tenant-a", PT, "{}"), &[111], (0, 60_000), 0)
@@ -430,43 +463,25 @@ mod tests {
 
     #[tokio::test]
     async fn sharded_span_profile_matches_whole_range() {
-        let mut store = InMemoryProfileStore::new();
-        let (stack_a, stack_b) = {
-            let db = store.symbols_mut();
-            let a = intern_location(db, "a");
-            let b = intern_location(db, "b");
-            (db.intern_stacktrace(0, &[a]), db.intern_stacktrace(0, &[b]))
-        };
-        store.push_sample_with_total_and_span(
-            ("tenant-a", PT),
-            vec![("svc".to_string(), "x".to_string())],
-            (0, stack_a),
-            (6, 10),
-            0,
-            111,
-        );
-        store.push_sample_with_total_and_span(
-            ("tenant-a", PT),
-            vec![("svc".to_string(), "x".to_string())],
-            (0, stack_b),
-            (4, 10),
-            30_000,
-            111,
-        );
-        let engine = FlameEngine::new(Arc::new(store), EngineOpts::default());
+        let engine = span_profile_engine(SecondSample {
+            timestamp_ms: 30_000,
+            span_id: 111,
+        });
         let whole = engine
             .select_merge_span_profile(("tenant-a", PT, "{}"), &[111], (0, 60_000), 0)
             .await
             .unwrap();
         let sharded = engine
-            .select_merge_span_profile_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 10_000), (10_001, 60_000)],
-                0,
-            )
+            .select_merge_span_profile_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 10_000), (10_001, 60_000)],
+                max_nodes: 0,
+            })
             .await
             .unwrap();
 
@@ -500,7 +515,21 @@ mod tests {
         let engine = FlameEngine::new(Arc::new(store), EngineOpts::default());
 
         let heatmap = engine
-            .select_heatmap(("tenant-a", PT, "{}"), (0, 100), 2, 2)
+            .select_heatmap(HeatmapQuery {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                range: MillisRange {
+                    start_ms: 0,
+                    end_ms: 100,
+                },
+                grid: HeatmapGrid {
+                    time_buckets: 2,
+                    value_buckets: 2,
+                },
+            })
             .await
             .unwrap();
 
@@ -737,25 +766,29 @@ mod tests {
             .await
             .unwrap();
         let span_sharded_default = engine
-            .select_merge_span_profile_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 0), (30_000, 30_000)],
-                0,
-            )
+            .select_merge_span_profile_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 0), (30_000, 30_000)],
+                max_nodes: 0,
+            })
             .await
             .unwrap();
         let span_sharded_limited = engine
-            .select_merge_span_profile_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 0), (30_000, 30_000)],
-                16,
-            )
+            .select_merge_span_profile_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 0), (30_000, 30_000)],
+                max_nodes: 16,
+            })
             .await
             .unwrap();
         check!(has_name(&span_default, "other"));
@@ -862,25 +895,29 @@ mod tests {
         check!(!bytes_contain(&span_tree_limited, "other"));
 
         let span_tree_sharded_default = engine
-            .select_merge_span_profile_tree_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 0), (30_000, 30_000)],
-                0,
-            )
+            .select_merge_span_profile_tree_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 0), (30_000, 30_000)],
+                max_nodes: 0,
+            })
             .await
             .unwrap();
         let span_tree_sharded = engine
-            .select_merge_span_profile_tree_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 0), (30_000, 30_000)],
-                16,
-            )
+            .select_merge_span_profile_tree_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 0), (30_000, 30_000)],
+                max_nodes: 16,
+            })
             .await
             .unwrap();
         check!(bytes_contain(&span_tree_sharded_default, "other"));
@@ -979,11 +1016,22 @@ mod tests {
 
         let got = engine
             .select_heatmaps(
-                ("tenant-a", PT, "{}"),
+                HeatmapQuery {
+                    selection: ProfileSelection {
+                        tenant: "tenant-a",
+                        profile_type: PT,
+                        label_selector: "{}",
+                    },
+                    range: MillisRange {
+                        start_ms: 0,
+                        end_ms: 60_000,
+                    },
+                    grid: HeatmapGrid {
+                        time_buckets: 2,
+                        value_buckets: 2,
+                    },
+                },
                 &["service".to_string()],
-                (0, 60_000),
-                2,
-                2,
             )
             .await
             .unwrap();
@@ -1035,6 +1083,20 @@ mod tests {
         FlameEngine::new(Arc::new(store), EngineOpts::default())
     }
 
+    // `series_fixture` summed by `service` at a 15s step.
+    fn series_fixture_by_service() -> Vec<Series> {
+        vec![
+            Series {
+                labels: vec![("service".to_string(), "api".to_string())],
+                points: vec![(0, 100.0), (30_000, 50.0)],
+            },
+            Series {
+                labels: vec![("service".to_string(), "web".to_string())],
+                points: vec![(0, 7.0)],
+            },
+        ]
+    }
+
     #[tokio::test]
     async fn select_series_sum_buckets_by_step_and_counts_total_once_per_profile() {
         let mut got = series_fixture()
@@ -1049,18 +1111,7 @@ mod tests {
             .unwrap();
         got.sort_by(|left, right| left.labels.cmp(&right.labels));
 
-        assert!(
-            got == vec![
-                Series {
-                    labels: vec![("service".to_string(), "api".to_string())],
-                    points: vec![(0, 100.0), (30_000, 50.0)],
-                },
-                Series {
-                    labels: vec![("service".to_string(), "web".to_string())],
-                    points: vec![(0, 7.0)],
-                },
-            ]
-        );
+        assert!(got == series_fixture_by_service());
     }
 
     #[tokio::test]
@@ -1143,18 +1194,7 @@ mod tests {
             .unwrap();
         got.sort_by(|left, right| left.labels.cmp(&right.labels));
 
-        assert!(
-            got == vec![
-                Series {
-                    labels: vec![("service".to_string(), "api".to_string())],
-                    points: vec![(0, 100.0), (30_000, 50.0)],
-                },
-                Series {
-                    labels: vec![("service".to_string(), "web".to_string())],
-                    points: vec![(0, 7.0)],
-                },
-            ]
-        );
+        assert!(got == series_fixture_by_service());
     }
 
     fn fractional_series_fixture() -> FlameEngine<InMemoryProfileStore> {
@@ -1316,6 +1356,7 @@ mod tests {
     }
 }
 
+mod call_site_profile_totals;
 mod covering_range;
 mod engine_opts;
 mod flame_engine;
@@ -1324,20 +1365,27 @@ mod heatmap_points_from_totals;
 mod merge_scan_to_pprof;
 mod merge_scan_to_tree;
 mod merge_sql_to_tree;
+mod sample_selector_sql;
 mod series_buckets_from_stacktrace_selector;
 mod series_buckets_from_totals;
 mod stack_matches_call_sites;
+mod timestamp_total_points;
 mod validate_range;
 
+pub use call_site_profile_totals::call_site_profile_totals;
 use covering_range::covering_range;
 pub use engine_opts::EngineOpts;
-pub use flame_engine::FlameEngine;
+pub use flame_engine::{
+    FlameEngine, HeatmapGrid, HeatmapQuery, MillisRange, ProfileSelection, SpanProfileShards,
+};
 use group_frame_name::group_frame_name;
 use heatmap_points_from_totals::heatmap_points_from_totals;
 use merge_scan_to_pprof::merge_scan_to_pprof;
 use merge_scan_to_tree::merge_scan_to_tree;
 use merge_sql_to_tree::merge_sql_to_tree;
+use sample_selector_sql::sample_selector_sql;
 use series_buckets_from_stacktrace_selector::series_buckets_from_stacktrace_selector;
 use series_buckets_from_totals::series_buckets_from_totals;
 pub use stack_matches_call_sites::stack_matches_call_sites;
+pub use timestamp_total_points::timestamp_total_points;
 use validate_range::validate_range;

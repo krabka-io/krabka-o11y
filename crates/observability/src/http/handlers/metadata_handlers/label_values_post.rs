@@ -1,6 +1,6 @@
 use super::{
-    Bytes, HeaderMap, IntoResponse, Path, QuerierState, RawQuery, RequestSecurity, Response, State,
-    execute_label_values_query, parse_series_params, post_query_params_body_first,
+    Bytes, HeaderMap, IntoResponse, LabelValuesRequest, Path, QuerierState, RawQuery,
+    RequestSecurity, Response, State, execute_label_values_query, parse_posted_series_params,
 };
 
 pub(crate) async fn label_values_post(
@@ -11,15 +11,21 @@ pub(crate) async fn label_values_post(
     RawQuery(raw_query): RawQuery,
     body: Bytes,
 ) -> Response {
-    let raw_query = match post_query_params_body_first(raw_query.as_deref(), &body) {
-        Ok(raw_query) => raw_query,
-        Err(error) => return error.into_response(),
-    };
-    let params = match parse_series_params(Some(&raw_query)) {
+    let params = match parse_posted_series_params(raw_query.as_deref(), &body) {
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    match execute_label_values_query(&state, &security, &headers, &name, &params).await {
+    match execute_label_values_query(
+        &state,
+        LabelValuesRequest {
+            security: &security,
+            headers: &headers,
+            label_name: &name,
+            series_params: &params,
+        },
+    )
+    .await
+    {
         Ok(response) => response,
         Err(error) => error.into_response(),
     }

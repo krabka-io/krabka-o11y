@@ -12,13 +12,6 @@ pub(crate) fn windows_slice_the_backing_array() {
     assert2::assert!(range_array.len() == 2);
 
     for (index, want) in [(0, vec![10.0, 11.0, 12.0]), (1, vec![12.0, 13.0, 14.0])] {
-        let window = range_array.get(index).unwrap();
-        let window = window.as_any().downcast_ref::<Float64Array>().unwrap();
-        assert2::assert!(
-            (0..window.len())
-                .map(|i| window.value(i))
-                .collect::<Vec<_>>()
-                == want
-        );
+        assert2::assert!(window_floats(&range_array, index) == want);
     }
 }

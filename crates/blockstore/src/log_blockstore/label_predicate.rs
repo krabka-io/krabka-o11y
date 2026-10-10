@@ -39,13 +39,11 @@ impl LabelPredicate {
 
     #[must_use]
     pub fn matches(&self, labels: &Labels) -> bool {
-        let candidate = labels.get(&self.name);
-        match self.op {
-            MatchOp::Equal => candidate == Some(&self.value),
-            MatchOp::NotEqual => candidate != Some(&self.value),
-            MatchOp::RegexEqual => self.regex_matches(candidate.map_or("", String::as_str)),
-            MatchOp::RegexNotEqual => candidate.is_none_or(|value| !self.regex_matches(value)),
-        }
+        self.op.accepts(
+            &self.value,
+            labels.get(&self.name).map(String::as_str),
+            |value| self.regex_matches(value),
+        )
     }
 
     pub(crate) fn exact_posting_key(&self) -> Option<(&str, &str)> {

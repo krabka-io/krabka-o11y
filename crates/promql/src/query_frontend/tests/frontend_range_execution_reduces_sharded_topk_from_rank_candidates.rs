@@ -5,24 +5,10 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_topk_from_rank_cand
     let cache = QueryFrontendCache::default();
     let executor = RankRecordingExecutor::default();
 
-    let result = execute_range_query_frontend(
-        &executor,
-        &cache,
-        &FrontendRangeRequest {
-            tenant: tenant_id("tenant-a"),
-            query: "topk(2, up)".into(),
-            start_ms: 0,
-            end_ms: 0,
-            step: millis(60_000),
-            admission_limits: krabka_query_frontend::AdmissionLimits::default(),
-            opts: QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        },
-    )
-    .await
-    .unwrap();
+    let result =
+        execute_range_query_frontend(&executor, &cache, &two_shard_instant_request("topk(2, up)"))
+            .await
+            .unwrap();
 
     let calls = executor
         .calls

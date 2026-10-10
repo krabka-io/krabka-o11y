@@ -37,6 +37,7 @@ pub(crate) use compactor_object_store::compactor_object_store;
 pub(crate) use connect_with_startup_retry::connect_with_startup_retry;
 pub use run_compactor_once::run_compactor_once;
 pub use run_compactor_until_idle::run_compactor_until_idle;
+use run_compactor_until_idle::{CompactorBatches, CompactorRun};
 pub(crate) use validate_compactor_policy::validate_compactor_policy;
 pub(crate) use validate_distributor_policy::validate_distributor_policy;
 pub(crate) use with_block_builder_dependencies::with_block_builder_dependencies;

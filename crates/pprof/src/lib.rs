@@ -29,7 +29,11 @@ pub mod proto {
 }
 
 pub use diff::diff_trees;
-pub use engine::{EngineOpts, FlameEngine, SampleSelector, stack_matches_call_sites};
+pub use engine::{
+    EngineOpts, FlameEngine, HeatmapGrid, HeatmapQuery, MillisRange, ProfileSelection,
+    SampleSelector, SpanProfileShards, call_site_profile_totals, stack_matches_call_sites,
+    timestamp_total_points,
+};
 pub use error::ProfileError;
 pub use frame::{
     Frame, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping, SymbolSource,

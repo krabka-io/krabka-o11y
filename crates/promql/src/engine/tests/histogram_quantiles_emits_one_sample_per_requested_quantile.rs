@@ -4,21 +4,7 @@ use super::*;
 #[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn histogram_quantiles_emits_one_sample_per_requested_quantile() {
-    let mut store = InMemoryMetricStore::new();
-    for (le, value) in [("0.1", 0.0), ("0.2", 1.0), ("0.4", 3.0), ("+Inf", 3.0)] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                ("__name__", "http_request_duration_seconds_bucket"),
-                ("job", "api"),
-                ("le", le),
-            ]),
-            10_000,
-            value,
-        );
-    }
-
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let engine = PromqlEngine::new(Arc::new(classic_bucket_store()), EngineOpts::default());
     let result = engine
         .query_instant(
             &tenant_id("tenant-a"),

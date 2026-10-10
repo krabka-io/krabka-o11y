@@ -16,7 +16,6 @@ use crate::{
 
 mod calendar_fn;
 mod calendar_fn_from_function_name;
-mod clamp_float;
 mod clamp_kind;
 mod days_in_month;
 mod duration_helper;
@@ -31,8 +30,6 @@ mod unary_float_fn;
 
 pub(super) use calendar_fn::CalendarFn;
 pub(super) use calendar_fn_from_function_name::calendar_fn_from_function_name;
-#[cfg(test)]
-pub(super) use clamp_float::clamp_float;
 #[cfg(test)]
 pub(super) use clamp_kind::ClampKind;
 use days_in_month::days_in_month;
@@ -50,3 +47,6 @@ pub(super) use scalar_extrema_fn::ScalarExtremaFn;
 pub(super) use sort_direction::SortDirection;
 #[cfg(test)]
 pub(super) use unary_float_fn::UnaryFloatFn;
+
+#[cfg(test)]
+pub(super) use crate::functions::scalar_math::clamp_float;

@@ -7,9 +7,15 @@
 //! The audit tests read the records from a `krabka_audit::MemorySink` behind a
 //! mock clock, and compare them with the records of the expected events.
 
+#[path = "support/secure_router.rs"]
+mod secure_router;
+#[path = "support/server_security_pki.rs"]
+mod server_security_pki;
 mod support;
+#[path = "support/token_sha256.rs"]
+mod token_sha256;
 
-use std::{fmt::Write as _, future::IntoFuture as _, net::SocketAddr, path::Path, sync::Arc};
+use std::{fmt::Write as _, net::SocketAddr, path::Path, sync::Arc};
 
 use assert2::check;
 use async_trait::async_trait;
@@ -34,22 +40,19 @@ use krabka_observability::{
         unknown_source_endpoint,
     },
     build_service_router, serve_service_listener,
-    server_security::{
-        Principal, ServerListener, ServerSecurity, install_crypto_provider, serve_router,
-    },
+    server_security::{Principal, ServerSecurity, install_crypto_provider},
 };
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
 use qubit_clock::{ManualMonotonicClock, ManualWallClock, MonotonicClock as _};
-use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose,
-};
+use rcgen::{CertifiedIssuer, KeyPair};
+use secure_router::{SecureRouter, serve_secure_router};
 use serde_json::json;
-use sha2::{Digest, Sha256};
+use server_security_pki::{Leaf, Pem, authority};
 use support::{
     DenyingQueryAuthorizer, current_unix_epoch_nanos, proto_logs_request_at_ns, test_service_config,
 };
 use tempfile::TempDir;
+use token_sha256::sha256_hex;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
@@ -65,25 +68,6 @@ const SELECTOR: &str = "%7Bapp%3D%22api%22%7D";
 const JSON: &str = "application/json";
 const YAML: &str = "application/yaml";
 
-fn sha256_hex_for_test(token: &str) -> String {
-    Sha256::digest(token.as_bytes())
-        .iter()
-        .fold(String::new(), |mut hex, byte| {
-            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-            hex
-        })
-}
-
-fn authority_for_test() -> CertifiedIssuer<'static, KeyPair> {
-    let mut params = CertificateParams::new(Vec::<String>::new()).expect("valid parameters");
-    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    params
-        .distinguished_name
-        .push(DnType::CommonName, "krabka logs test ca");
-    CertifiedIssuer::self_signed(params, KeyPair::generate().expect("a key")).expect("a CA")
-}
-
 // A CA, a server certificate for `127.0.0.1` that it signed, and a credentials
 // file, all in one temporary directory.
 struct SecretsForTest {
@@ -95,7 +79,7 @@ impl SecretsForTest {
     fn new() -> Self {
         Self {
             dir: TempDir::new().expect("a temporary directory"),
-            authority: authority_for_test(),
+            authority: authority("krabka logs test ca"),
         }
     }
 
@@ -107,22 +91,15 @@ impl SecretsForTest {
 
     // The flags that turn on TLS with a server certificate that this CA signed.
     fn tls_flags(&self) -> Vec<String> {
-        let mut params =
-            CertificateParams::new(vec!["127.0.0.1".to_owned()]).expect("valid parameters");
-        params.distinguished_name.push(DnType::CommonName, "server");
-        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-        let key = KeyPair::generate().expect("a key");
-        let certificate = params
-            .signed_by(&key, &self.authority)
-            .expect("a signed server certificate");
+        let Pem { certificate, key } = Leaf::LOCAL_SERVER.signed_by(&self.authority);
         vec![
             format!(
                 "--server-tls-cert-path={}",
-                self.write("server.pem", certificate.pem())
+                self.write("server.pem", certificate)
             ),
             format!(
                 "--server-tls-key-path={}",
-                self.write("server-key.pem", key.serialize_pem())
+                self.write("server-key.pem", key)
             ),
         ]
     }
@@ -132,8 +109,8 @@ impl SecretsForTest {
     fn credentials_flags(&self) -> Vec<String> {
         let yaml = format!(
             "principals:\n  - name: grafana\n    token_sha256: [{}]\n    tenants: [tenant-a]\n  - name: ops\n    token_sha256: [{}]\n    tenants: ['*']\n    admin: true\n",
-            sha256_hex_for_test(GRAFANA_TOKEN),
-            sha256_hex_for_test(OPS_TOKEN),
+            sha256_hex(GRAFANA_TOKEN),
+            sha256_hex(OPS_TOKEN),
         );
         vec![format!(
             "--auth-credentials-config={}",
@@ -178,15 +155,7 @@ struct ServedForTest {
 }
 
 async fn serve_for_test(router: Router, security: &ServerSecurity) -> ServedForTest {
-    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
-    let listener = ServerListener::bind(tcp, security).expect("the listener binds");
-    let addr = listener.local_addr();
-    let stop = CancellationToken::new();
-    tokio::spawn(
-        serve_router(listener, router, security)
-            .with_graceful_shutdown(stop.clone().cancelled_owned())
-            .into_future(),
-    );
+    let SecureRouter { addr, stop } = serve_secure_router(router, security).await;
     ServedForTest {
         addr,
         _stop: stop.drop_guard(),

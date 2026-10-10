@@ -1,4 +1,4 @@
-use krabka_units::{Time, convert::TimeExt as _};
+use krabka_observability::compaction_schedule::CompactionSchedule;
 
 use super::{
     CancellationToken, Cli, CompactionPolicy, ConfiguredObjectStore, OverridesProvider,
@@ -20,19 +20,18 @@ pub(crate) async fn compaction_loop(
     metrics: ServiceMetrics,
     shutdown: CancellationToken,
 ) {
-    let mut tick = tokio::time::interval(cli.compaction_interval.to_std());
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        tokio::select! {
-            biased;
-            () = shutdown.cancelled() => return,
-            _ = tick.tick() => {}
-        }
-        let started = std::time::Instant::now();
-        let outcome = run_compactor_once(&cli, &configured, policy, &overrides, &metrics).await;
-        metrics
+    let mut schedule = CompactionSchedule::new(cli.compaction_interval, shutdown);
+    while schedule.next_pass_due().await {
+        let outcome = metrics
             .compaction
-            .record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
+            .time_run(run_compactor_once(
+                &cli,
+                &configured,
+                policy,
+                &overrides,
+                &metrics,
+            ))
+            .await;
         match outcome {
             Ok(compacted_blocks) => {
                 tracing::info!(compacted_blocks, "traces compactor finished one pass");

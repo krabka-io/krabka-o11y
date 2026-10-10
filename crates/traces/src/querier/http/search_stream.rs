@@ -1,18 +1,10 @@
-use super::{
-    AppState, Extension, HeaderMap, IntoResponse, Principal, Response, SpanStore, State, Uri,
-    search_inner,
-};
+use super::{IntoResponse, QuerierRequest, Response, SpanStore, search_inner};
 
-pub(crate) async fn search_stream<S>(
-    State(state): State<AppState<S>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response
+pub(crate) async fn search_stream<S>(request: QuerierRequest<S>) -> Response
 where
     S: SpanStore + 'static,
 {
-    let response = search_inner(&state, &principal, headers, uri).await;
+    let response = search_inner(&request).await;
     let status = response.status();
     let Ok(mut bytes) = axum::body::to_bytes(response.into_body(), usize::MAX).await else {
         return (

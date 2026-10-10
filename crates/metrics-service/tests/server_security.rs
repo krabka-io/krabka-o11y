@@ -8,6 +8,9 @@
 //! Prometheus API share one router, as the Grafana suite serves them, so a
 //! query sees the sample that a push wrote.
 
+#[path = "../../observability/tests/support/server_security_pki.rs"]
+mod server_security_pki;
+
 use std::{
     net::SocketAddr,
     path::PathBuf,
@@ -42,11 +45,8 @@ use opentelemetry_proto::tonic::{
     },
 };
 use prost::Message as _;
-use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose,
-};
 use serde_json::Value;
+use server_security_pki::{Leaf, Pem, authority};
 use tempfile::TempDir;
 
 const TENANT_A: &str = "tenant-a";
@@ -73,32 +73,16 @@ struct Pki {
 impl Pki {
     fn new() -> Self {
         let dir = TempDir::new().expect("a temporary directory");
-        let mut params = CertificateParams::new(Vec::<String>::new()).expect("valid parameters");
-        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        params
-            .distinguished_name
-            .push(DnType::CommonName, "krabka metrics test ca");
-        let authority = CertifiedIssuer::self_signed(params, KeyPair::generate().expect("a key"))
-            .expect("a self-signed CA");
-
-        let mut params =
-            CertificateParams::new(vec!["localhost".to_owned(), "127.0.0.1".to_owned()])
-                .expect("valid parameters");
-        params.distinguished_name.push(DnType::CommonName, "server");
-        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-        let key = KeyPair::generate().expect("a key");
-        let certificate = params
-            .signed_by(&key, &authority)
-            .expect("a signed server certificate");
+        let authority = authority("krabka metrics test ca");
+        let Pem { certificate, key } = Leaf::LOCAL_SERVER.signed_by(&authority);
 
         let pki = Self {
             dir,
             ca_pem: authority.pem(),
         };
         pki.write("ca.pem", &pki.ca_pem);
-        pki.write("server.pem", certificate.pem());
-        pki.write("server-key.pem", key.serialize_pem());
+        pki.write("server.pem", certificate);
+        pki.write("server-key.pem", key);
         pki.write(
             "credentials.yaml",
             format!(

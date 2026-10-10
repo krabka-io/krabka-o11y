@@ -28,14 +28,7 @@ pub(crate) async fn info_function_keeps_base_label_when_info_label_overlaps() {
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "info(http_requests_total)", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "info(http_requests_total)", 10_000).await;
     assert2::assert!(samples.len() == 1);
     assert2::assert!(samples[0].labels.get("region") == Some("base"));
     assert2::assert!(samples[0].labels.get("cluster") == Some("prod"));

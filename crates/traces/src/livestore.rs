@@ -28,51 +28,35 @@ mod tests {
     mod span_batch_packing;
 
     use assert2::check;
-    use krabka_traceql::TagScope;
+    use krabka_traceql::{TagCatalog as _, TagScope};
 
     use super::{LiveSource as _, LiveStore};
     use crate::{
-        span::{AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode},
+        span::{
+            AttrValue, EventRecord, KeyValue, LinkRecord, Span,
+            test_span::{api_server_span, string_attr},
+        },
         wal::SpanRecord,
     };
 
     fn span_with_everything() -> Span {
         Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            parent_span_id: None,
             name: "GET /users".into(),
-            kind: SpanKind::Server,
-            start_ns: 1_000,
             duration_ns: 500,
-            status: StatusCode::Ok,
-            status_message: String::new(),
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
-            span_attrs: vec![KeyValue {
-                key: "http.method".into(),
-                value: AttrValue::Str("GET".into()),
-            }],
+            span_attrs: vec![string_attr("http.method", "GET")],
             events: vec![EventRecord {
                 time_unix_nano: 1_100,
                 name: "exception".into(),
-                attrs: vec![KeyValue {
-                    key: "exception.type".into(),
-                    value: AttrValue::Str("timeout".into()),
-                }],
+                attrs: vec![string_attr("exception.type", "timeout")],
             }],
             links: vec![LinkRecord {
                 trace_id: [9; 16],
                 span_id: [8; 8],
-                attrs: vec![KeyValue {
-                    key: "link.kind".into(),
-                    value: AttrValue::Str("retry".into()),
-                }],
+                attrs: vec![string_attr("link.kind", "retry")],
             }],
             instrumentation_scope: "otel-rust".into(),
             instrumentation_version: "1.2.3".into(),
+            ..api_server_span()
         }
     }
 
@@ -278,7 +262,6 @@ mod tests {
 }
 
 mod attr_string;
-mod bytes_to_hex;
 mod collect_event_values;
 mod collect_link_values;
 mod collect_span_intrinsic_value;
@@ -295,14 +278,11 @@ mod non_negative_u64;
 mod order_spans;
 mod root_span;
 mod run;
-mod scoped_attribute_tag;
 mod span_ref;
 mod trace_spans;
 mod traceql_attr;
-mod typed_value_parts;
 
 use attr_string::attr_string;
-use bytes_to_hex::bytes_to_hex;
 use collect_event_values::collect_event_values;
 use collect_link_values::collect_link_values;
 use collect_span_intrinsic_value::collect_span_intrinsic_value;
@@ -312,6 +292,7 @@ use event_tags::EVENT_TAGS;
 use in_time_range::in_time_range;
 pub use ingest_wal_payloads::ingest_wal_payloads;
 use intrinsic_tags::INTRINSIC_TAGS;
+use krabka_traceql::bytes_to_hex;
 use link_ref::link_ref;
 use link_tags::LINK_TAGS;
 pub use live_store::LiveStore;
@@ -319,8 +300,8 @@ use non_negative_u64::non_negative_u64;
 use order_spans::order_spans;
 use root_span::root_span;
 pub use run::run;
-use scoped_attribute_tag::scoped_attribute_tag;
 use span_ref::span_ref;
 use trace_spans::trace_spans;
 use traceql_attr::traceql_attr;
-use typed_value_parts::typed_value_parts;
+
+use crate::span::typed_value_parts::typed_value_parts;

@@ -31,33 +31,21 @@ impl ExtensionPlanner for PromExtensionPlanner {
         if let Some(normalize) = any.downcast_ref::<SeriesNormalize>() {
             let input = single_input(physical_inputs)?;
             return Ok(Some(Arc::new(SeriesNormalizeExec::new(
-                normalize.offset_ms,
-                normalize.time_index.clone(),
-                normalize.need_filter_out_nan,
+                normalize.settings.clone(),
                 input,
             ))));
         }
         if let Some(instant) = any.downcast_ref::<InstantManipulate>() {
             let input = single_input(physical_inputs)?;
             return Ok(Some(Arc::new(InstantManipulateExec::new(
-                instant.start_ms,
-                instant.end_ms,
-                instant.step_ms,
-                instant.lookback_delta_ms,
-                instant.time_index.clone(),
-                instant.field_column.clone(),
+                instant.settings.clone(),
                 input,
             ))));
         }
         if let Some(range) = any.downcast_ref::<RangeManipulate>() {
             let input = single_input(physical_inputs)?;
             return Ok(Some(Arc::new(RangeManipulateExec::new(
-                range.start_ms,
-                range.end_ms,
-                range.interval_ms,
-                range.range_ms,
-                range.time_index.clone(),
-                range.field_column.clone(),
+                range.settings.clone(),
                 input,
             ))));
         }

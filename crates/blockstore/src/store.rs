@@ -66,45 +66,62 @@ mod tests {
     use super::*;
     use crate::{
         labels::Labels,
+        log_line_schema::log_line_schema,
         matcher::{LabelMatcher, MatchOp},
     };
 
-    fn log_schema() -> SchemaRef {
-        Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]))
+    fn memory_block_store() -> BlockStore {
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        BlockStore::new(object_store, url::Url::parse("memory:///").unwrap())
+    }
+
+    fn app_labels(app: &str) -> Labels {
+        let mut labels = Labels::new();
+        labels.insert("app", app);
+        labels
     }
 
     async fn seeded_store() -> (BlockStore, SchemaRef) {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let base = url::Url::parse("memory:///").unwrap();
-        let mut bs = BlockStore::new(object_store, base);
-        let schema = log_schema();
+        let mut bs = memory_block_store();
+        write_two_line_block(
+            &mut bs,
+            TwoLineBlock {
+                labels: &app_labels("api"),
+                object_key: "blocks/b1.parquet",
+                lines: ["hello", "world"],
+            },
+        )
+        .await;
+        (bs, log_line_schema())
+    }
 
-        let mut api = Labels::new();
-        api.insert("app", "api");
-        let fp = api.fingerprint();
+    /// One indexed block of a single series: two log lines at 100 and 200.
+    struct TwoLineBlock<'a> {
+        labels: &'a Labels,
+        object_key: &'a str,
+        lines: [&'a str; 2],
+    }
 
+    /// Writes `block` for tenant `t` and indexes its series and block.
+    async fn write_two_line_block(bs: &mut BlockStore, block: TwoLineBlock<'_>) {
+        let schema = log_line_schema();
+        let fp = block.labels.fingerprint();
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
                 Arc::new(UInt64Array::from(vec![fp, fp])),
                 Arc::new(Int64Array::from(vec![100_i64, 200])),
-                Arc::new(StringArray::from(vec!["hello", "world"])),
+                Arc::new(StringArray::from(block.lines.to_vec())),
             ],
         )
         .unwrap();
-
         let meta = bs
             .writer()
-            .write_block("t", "blocks/b1.parquet", schema.clone(), &[batch])
+            .write_block("t", block.object_key, schema, &[batch])
             .await
             .unwrap();
-        bs.index_mut().add_series("t", fp, &api);
+        bs.index_mut().add_series("t", fp, block.labels);
         bs.index_mut().add_block(&meta);
-        (bs, schema)
     }
 
     #[tokio::test]
@@ -166,15 +183,11 @@ mod tests {
     /// Two series in one block, spread over four timestamps each, so a scan can
     /// narrow by series, by window, or by both.
     async fn two_series_store() -> (BlockStore, SchemaRef, Labels, Labels) {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let base = url::Url::parse("memory:///").unwrap();
-        let mut bs = BlockStore::new(object_store, base);
-        let schema = log_schema();
+        let mut bs = memory_block_store();
+        let schema = log_line_schema();
 
-        let mut api = Labels::new();
-        api.insert("app", "api");
-        let mut web = Labels::new();
-        web.insert("app", "web");
+        let api = app_labels("api");
+        let web = app_labels("web");
 
         let fps = [api.fingerprint(); 4]
             .into_iter()
@@ -397,9 +410,7 @@ mod tests {
             .unwrap();
         // Table name is the fixed logical name, not a stub string.
         assert2::assert!(table == "logs");
-        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let total = table_line_count(&ctx, &table).await;
         assert2::assert!(total == 2);
     }
 
@@ -435,9 +446,7 @@ mod tests {
             .await
             .unwrap();
         assert2::assert!(table == "logs");
-        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let total = table_line_count(&ctx, &table).await;
         assert2::assert!(total == 2);
     }
 
@@ -540,24 +549,9 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
-    impl ObjectStore for TestStore {
-        async fn put_opts(
-            &self,
-            location: &ObjectPath,
-            payload: object_store::PutPayload,
-            opts: object_store::PutOptions,
-        ) -> object_store::Result<object_store::PutResult> {
-            self.inner.put_opts(location, payload, opts).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &ObjectPath,
-            opts: object_store::PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-            self.inner.put_multipart_opts(location, opts).await
-        }
+    crate::delegate_object_store! {
+        TestStore => inner;
+        forward [put_opts, put_multipart_opts, delete_stream, list, list_with_delimiter, copy_opts];
 
         async fn get_opts(
             &self,
@@ -590,37 +584,6 @@ mod tests {
                 .fetch_add(ranges.len(), Ordering::Relaxed);
             self.inner.get_ranges(location, ranges).await
         }
-
-        fn delete_stream(
-            &self,
-            locations: futures::stream::BoxStream<'static, object_store::Result<ObjectPath>>,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<ObjectPath>> {
-            self.inner.delete_stream(locations)
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
-        {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> object_store::Result<object_store::ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &ObjectPath,
-            to: &ObjectPath,
-            options: object_store::CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
     }
 
     /// One block per series, both indexed, so a test can break one and still
@@ -628,34 +591,25 @@ mod tests {
     async fn two_block_store(object_store: Arc<dyn ObjectStore>) -> (BlockStore, Vec<String>) {
         let base = url::Url::parse("memory:///").unwrap();
         let mut bs = BlockStore::new(object_store, base);
-        let schema = log_schema();
 
         let mut api = Labels::new();
         api.insert("app", "api");
         let mut web = Labels::new();
         web.insert("app", "web");
 
-        for (labels, key, lines) in [
-            (&api, "blocks/b1.parquet", ["a1", "a2"]),
-            (&web, "blocks/b2.parquet", ["w1", "w2"]),
+        for block in [
+            TwoLineBlock {
+                labels: &api,
+                object_key: "blocks/b1.parquet",
+                lines: ["a1", "a2"],
+            },
+            TwoLineBlock {
+                labels: &web,
+                object_key: "blocks/b2.parquet",
+                lines: ["w1", "w2"],
+            },
         ] {
-            let fp = labels.fingerprint();
-            let batch = RecordBatch::try_new(
-                schema.clone(),
-                vec![
-                    Arc::new(UInt64Array::from(vec![fp, fp])),
-                    Arc::new(Int64Array::from(vec![100_i64, 200])),
-                    Arc::new(StringArray::from(lines.to_vec())),
-                ],
-            )
-            .unwrap();
-            let meta = bs
-                .writer()
-                .write_block("t", key, schema.clone(), &[batch])
-                .await
-                .unwrap();
-            bs.index_mut().add_series("t", fp, labels);
-            bs.index_mut().add_block(&meta);
+            write_two_line_block(&mut bs, block).await;
         }
 
         (
@@ -665,6 +619,13 @@ mod tests {
                 "blocks/b2.parquet".to_string(),
             ],
         )
+    }
+
+    /// Counts the rows a `SELECT line` over `table` returns.
+    async fn table_line_count(ctx: &SessionContext, table: &str) -> usize {
+        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
+        let batches = df.collect().await.unwrap();
+        batches.iter().map(RecordBatch::num_rows).sum()
     }
 
     async fn table_lines(ctx: &SessionContext, table: &str) -> Vec<String> {
@@ -730,7 +691,7 @@ mod tests {
             }
 
             let scan = bs
-                .scan_block_keys_skipping_unreadable(&keys, log_schema())
+                .scan_block_keys_skipping_unreadable(&keys, log_line_schema())
                 .await
                 .unwrap();
 
@@ -771,7 +732,7 @@ mod tests {
                     matchers: &[LabelMatcher::new("app", MatchOp::Re, "api|web")],
                     min_ts: 0,
                     max_ts: 1_000,
-                    schema: log_schema(),
+                    schema: log_line_schema(),
                 },
             )
             .await
@@ -803,7 +764,7 @@ mod tests {
             .await
             .unwrap();
 
-        let got = bs.scan_block_keys(&keys, log_schema()).await;
+        let got = bs.scan_block_keys(&keys, log_line_schema()).await;
         let Err(error) = got else {
             panic!("a scan over a missing block must not answer as if it were empty");
         };
@@ -825,7 +786,7 @@ mod tests {
         );
 
         let got = unreachable
-            .scan_block_keys_skipping_unreadable(&keys, log_schema())
+            .scan_block_keys_skipping_unreadable(&keys, log_line_schema())
             .await;
         let Err(error) = got else {
             panic!("an unreachable store must not answer");
@@ -845,7 +806,7 @@ mod tests {
         let (bs, keys) = two_block_store(store).await;
 
         let first = bs
-            .scan_block_keys(&keys, log_schema())
+            .scan_block_keys(&keys, log_line_schema())
             .await
             .unwrap()
             .0
@@ -858,7 +819,7 @@ mod tests {
         let after_first = requests.snapshot();
 
         let second = bs
-            .scan_block_keys(&keys, log_schema())
+            .scan_block_keys(&keys, log_line_schema())
             .await
             .unwrap()
             .0
@@ -903,10 +864,10 @@ mod tests {
         let (bs, _keys) = two_block_store(Arc::clone(&store)).await;
         let keys = vec!["blocks/b1.parquet".to_string()];
 
-        let (ctx, table) = bs.scan_block_keys(&keys, log_schema()).await.unwrap();
+        let (ctx, table) = bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
         assert2::assert!(table_lines(&ctx, &table).await == ["a1", "a2"]);
 
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
@@ -921,7 +882,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (ctx, table) = bs.scan_block_keys(&keys, log_schema()).await.unwrap();
+        let (ctx, table) = bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
         assert2::assert!(table_lines(&ctx, &table).await == ["r1", "r2", "r3"]);
     }
 
@@ -944,7 +905,7 @@ mod tests {
     async fn clones_share_the_footer_cache() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let (bs, keys) = two_block_store(store).await;
-        bs.scan_block_keys(&keys, log_schema()).await.unwrap();
+        bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
 
         let clone = bs.clone();
         assert2::assert!(clone.metadata_cache().len() == bs.metadata_cache().len());
@@ -961,9 +922,7 @@ mod tests {
             .scan_context("t", &matchers, 0, 1_000, schema)
             .await
             .unwrap();
-        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let total = table_line_count(&ctx, &table).await;
         assert2::assert!(total == 0);
     }
 }

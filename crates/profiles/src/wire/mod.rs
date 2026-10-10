@@ -121,17 +121,48 @@ pub mod pb {
 pub(crate) mod test_fixtures {
     use krabka_blockstore::Labels;
     use krabka_pprof::PprofProfile;
+
+    use super::pb::{
+        push::v1::{PushRequest, RawProfileSeries, RawSample},
+        types::v1::LabelPair,
+    };
+
     pub(crate) fn cpu_profile_pprof_bytes() -> Vec<u8> {
         cpu_profile().encode()
     }
 
-    pub(crate) fn raw_profile_cpu() -> crate::ingest::RawProfile {
+    /// A push request with one `process_cpu` series of service `api`, holding
+    /// `raw_profile` as its one sample, with sample id `id`.
+    pub(crate) fn push_request_cpu(raw_profile: Vec<u8>, id: &str) -> PushRequest {
+        PushRequest {
+            series: vec![RawProfileSeries {
+                labels: vec![
+                    LabelPair {
+                        name: "__name__".into(),
+                        value: "process_cpu".into(),
+                    },
+                    LabelPair {
+                        name: "service_name".into(),
+                        value: "api".into(),
+                    },
+                ],
+                samples: vec![RawSample {
+                    raw_profile,
+                    id: id.into(),
+                }],
+                annotations: Vec::new(),
+            }],
+        }
+    }
+
+    /// A non-delta raw profile of service `api` whose `__name__` is `name`.
+    pub(crate) fn api_raw_profile(name: &str, profile: PprofProfile) -> crate::ingest::RawProfile {
         let mut labels = Labels::new();
-        labels.insert("__name__", "process_cpu");
+        labels.insert("__name__", name);
         labels.insert("service_name", "api");
         crate::ingest::RawProfile {
             labels,
-            profile: cpu_profile(),
+            profile,
             delta: false,
             sample_timestamps_ns: Vec::new(),
             sample_span_ids: Vec::new(),
@@ -139,54 +170,83 @@ pub(crate) mod test_fixtures {
         }
     }
 
+    /// A profile of one `samples` sample type holding one sample of value 5
+    /// at `location_id`. Callers fill in its locations, functions, strings
+    /// and period.
+    pub(crate) fn one_sample_profile(location_id: u64) -> krabka_pprof::proto::Profile {
+        krabka_pprof::proto::Profile {
+            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+            sample: vec![krabka_pprof::proto::Sample {
+                location_id: vec![location_id],
+                value: vec![5],
+                label: Vec::new(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn raw_profile_cpu() -> crate::ingest::RawProfile {
+        api_raw_profile("process_cpu", cpu_profile())
+    }
+
     pub(crate) fn raw_profile_2types() -> crate::ingest::RawProfile {
-        let mut labels = Labels::new();
-        labels.insert("__name__", "memory");
-        labels.insert("service_name", "api");
-        crate::ingest::RawProfile {
-            labels,
-            profile: PprofProfile::from(krabka_pprof::proto::Profile {
-                sample_type: vec![
-                    krabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
-                    krabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
-                ],
-                sample: vec![krabka_pprof::proto::Sample {
-                    location_id: vec![1],
-                    value: vec![3, 4096],
-                    label: Vec::new(),
+        let main_frame = main_frame_profile(6);
+        let mut profile = alloc_profile_on(1);
+        profile.string_table.push("main".to_string());
+        profile.location = main_frame.location;
+        profile.function = main_frame.function;
+        api_raw_profile("memory", PprofProfile::from(profile))
+    }
+
+    /// A two-type allocation profile -- `alloc_objects`/`count` and
+    /// `alloc_space`/`bytes`, period `space`/`bytes` -- holding one sample of
+    /// 3 objects and 4096 bytes at `location_id`. String-table entries 1 to 5
+    /// name the types. Callers fill in its locations and functions.
+    pub(crate) fn alloc_profile_on(location_id: u64) -> krabka_pprof::proto::Profile {
+        krabka_pprof::proto::Profile {
+            sample_type: vec![
+                krabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
+                krabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
+            ],
+            sample: vec![krabka_pprof::proto::Sample {
+                location_id: vec![location_id],
+                value: vec![3, 4096],
+                label: Vec::new(),
+            }],
+            string_table: vec![
+                String::new(),
+                "alloc_objects".to_string(),
+                "count".to_string(),
+                "alloc_space".to_string(),
+                "bytes".to_string(),
+                "space".to_string(),
+            ],
+            period_type: Some(krabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
+            ..Default::default()
+        }
+    }
+
+    /// A profile whose one location, at address `0x40`, is line 10 of its
+    /// one function, named by string-table entry `name_ref`.
+    fn main_frame_profile(name_ref: i64) -> krabka_pprof::proto::Profile {
+        krabka_pprof::proto::Profile {
+            location: vec![krabka_pprof::proto::Location {
+                id: 1,
+                address: 0x40,
+                line: vec![krabka_pprof::proto::Line {
+                    function_id: 1,
+                    line: 10,
+                    column: 0,
                 }],
-                string_table: vec![
-                    String::new(),
-                    "alloc_objects".to_string(),
-                    "count".to_string(),
-                    "alloc_space".to_string(),
-                    "bytes".to_string(),
-                    "space".to_string(),
-                    "main".to_string(),
-                ],
-                location: vec![krabka_pprof::proto::Location {
-                    id: 1,
-                    address: 0x40,
-                    line: vec![krabka_pprof::proto::Line {
-                        function_id: 1,
-                        line: 10,
-                        column: 0,
-                    }],
-                    ..Default::default()
-                }],
-                function: vec![krabka_pprof::proto::Function {
-                    id: 1,
-                    name: 6,
-                    system_name: 6,
-                    ..Default::default()
-                }],
-                period_type: Some(krabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
                 ..Default::default()
-            }),
-            delta: false,
-            sample_timestamps_ns: Vec::new(),
-            sample_span_ids: Vec::new(),
-            sample_trace_ids: Vec::new(),
+            }],
+            function: vec![krabka_pprof::proto::Function {
+                id: 1,
+                name: name_ref,
+                system_name: name_ref,
+                ..Default::default()
+            }],
+            ..Default::default()
         }
     }
 
@@ -204,24 +264,8 @@ pub(crate) mod test_fixtures {
                 "nanoseconds".to_string(),
                 "main".to_string(),
             ],
-            location: vec![krabka_pprof::proto::Location {
-                id: 1,
-                address: 0x40,
-                line: vec![krabka_pprof::proto::Line {
-                    function_id: 1,
-                    line: 10,
-                    column: 0,
-                }],
-                ..Default::default()
-            }],
-            function: vec![krabka_pprof::proto::Function {
-                id: 1,
-                name: 3,
-                system_name: 3,
-                ..Default::default()
-            }],
             period_type: Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
-            ..Default::default()
+            ..main_frame_profile(3)
         })
     }
 }

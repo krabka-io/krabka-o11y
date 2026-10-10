@@ -1,8 +1,9 @@
 use super::{Deserialize, Serialize};
 
 /// OTLP status code.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatusCode {
+    #[default]
     Unset,
     Ok,
     Error,

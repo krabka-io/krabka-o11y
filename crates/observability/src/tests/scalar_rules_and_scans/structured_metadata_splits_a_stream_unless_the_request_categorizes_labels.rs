@@ -12,18 +12,11 @@ use super::*;
 /// explicit trace metadata; querying them does not discover additional fields.
 #[test]
 pub(crate) fn structured_metadata_splits_a_stream_unless_the_request_categorizes_labels() {
-    let mut label_index = LabelIndex::default();
-    let mut labels = Labels::default();
-    labels.insert("app".to_string(), "api".to_string());
-    let api = label_index.insert_series("tenant", labels);
-
-    let plan = StreamPlan {
-        tenant: "tenant".to_string(),
-        time_range: TimeRange::new(0, 100).expect("a valid range"),
-        query: parse_query("{app=\"api\"}").expect("the query parses"),
-        fingerprints: [api].into_iter().collect(),
-        blocks: Vec::new(),
-    };
+    let ApiSeriesPlan {
+        label_index,
+        api,
+        plan,
+    } = ApiSeriesPlan::new("{app=\"api\"}");
 
     let mut streams = BTreeMap::new();
     for (timestamp_ns, trace_id) in [(10_i64, "abc"), (20, "def")] {

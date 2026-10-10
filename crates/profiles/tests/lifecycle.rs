@@ -4,6 +4,8 @@
 //! reads the object store back rather than the report: a pass that says it
 //! deleted a block and left the object is the failure these exist to catch.
 
+#[path = "../src/cpu_record.rs"]
+mod cpu_record;
 #[path = "../../blockstore/tests/support/lifecycle_store.rs"]
 mod lifecycle_store;
 
@@ -20,7 +22,7 @@ use krabka_blockstore::{
 };
 use krabka_pprof::{EngineOpts, FlameEngine};
 use krabka_profiles::{
-    ProfileRecord, WalFunction, WalLocation, WalSample, WalSymbolSet,
+    ProfileRecord, WalSample, WalSymbolSet,
     blockbuilder::{BLOCK_OBJECT_PREFIX, STACKTRACE_PARTITION, build_block},
     cold_store::ColdProfileStore,
     lifecycle::{LifecycleOptions, live_object_keys, run_lifecycle_pass, symdb_key},
@@ -29,9 +31,12 @@ use krabka_profiles::{
 use krabka_units::{Time, hours};
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory, path::Path};
 
-use self::lifecycle_store::{LifecycleStep, LifecycleStore};
+use self::{
+    cpu_record::{CPU_PROFILE_TYPE, CpuRecord, cpu_record},
+    lifecycle_store::{LifecycleStep, LifecycleStore},
+};
 
-const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
+const PT: &str = CPU_PROFILE_TYPE;
 const INDEX_KEY: &str = "index/profiles.json";
 /// An epoch-millisecond "now" the tests measure their blocks back from.
 const NOW_MS: i64 = 1_700_000_000_000;
@@ -94,39 +99,16 @@ fn options(
 }
 
 fn record(tenant: &str, function: &str, timestamp_ms: i64) -> ProfileRecord {
-    ProfileRecord {
-        tenant: tenant.to_string(),
-        labels: vec![
-            ("__name__".to_string(), "process_cpu".to_string()),
-            ("__profile_type__".to_string(), PT.to_string()),
-            ("service_name".to_string(), "api".to_string()),
-        ],
-        profile_type: PT.to_string(),
-        samples: vec![WalSample {
-            stacktrace_location_refs: vec![0],
-            value: 1,
-            // A WAL sample is stamped in nanoseconds and a block's bounds are
-            // epoch milliseconds, so the block builder divides on the way in.
-            timestamp_ns: timestamp_ms * NANOS_PER_MILLI,
-            span_id: None,
-            trace_id: None,
-        }],
-        symbols: WalSymbolSet {
-            strings: vec![String::new(), function.to_string()],
-            functions: vec![WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![WalLocation {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![(0, 1)],
-            }],
-            mappings: Vec::new(),
-        },
-    }
+    cpu_record(CpuRecord {
+        tenant,
+        service: "api",
+        stack: vec![0],
+        value: 1,
+        // A WAL sample is stamped in nanoseconds and a block's bounds are
+        // epoch milliseconds, so the block builder divides on the way in.
+        timestamp_ns: timestamp_ms * NANOS_PER_MILLI,
+        function,
+    })
 }
 
 /// Writes one block, its symbol database and its index entry, the way the
@@ -321,9 +303,18 @@ async fn a_merge_deletes_its_inputs_and_their_symbol_databases() {
     check!(block_objects_exist(&store, &merged).await == (true, true));
     check!(block_keys(&index) == vec![merged]);
 
+    check_merged_block_answers_alpha_and_bravo(store, index).await;
+}
+
+/// Checks that the cold store over `store` and `index` answers tenant `t`'s
+/// `api` flame graph as the merge of the two one-sample inputs: two ticks,
+/// over the frames `alpha` and `bravo`.
+async fn check_merged_block_answers_alpha_and_bravo(
+    store: Arc<dyn ObjectStore>,
+    index: ProfileIndex,
+) {
     let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-    let engine = FlameEngine::new(cold, EngineOpts::default());
-    let graph = engine
+    let graph = FlameEngine::new(cold, EngineOpts::default())
         .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
         .await
         .expect("the merged block answers");
@@ -617,15 +608,7 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     let store = lifecycle.restart();
     let index = reload(&store).await;
     check!(block_keys(&index) == vec![merged.clone()]);
-    let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-    let graph = FlameEngine::new(cold, EngineOpts::default())
-        .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
-        .await
-        .expect("the merged block answers");
-    check!(graph.total == 2);
-    for name in ["alpha", "bravo"] {
-        check!(graph.names.iter().any(|frame| frame == name), "{name}");
-    }
+    check_merged_block_answers_alpha_and_bravo(store, index).await;
 
     lifecycle
         .finish(&[

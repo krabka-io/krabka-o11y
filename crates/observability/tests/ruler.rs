@@ -5,33 +5,68 @@ mod support;
 use assert2::{assert, check};
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    http::{Method, Request, StatusCode},
 };
 use krabka_blockstore::{LabelIndex, LogBlockIndex as BlockIndex, write_log_index_manifest};
 use krabka_observability::{Role, ServiceDependencies, build_service_router, loki_router};
 use serde_json::{Value, json};
 use support::{
-    TenantDenyingQueryAuthorizer, assert_loki_error, fixture, json_body, test_service_config,
-    text_body,
+    Tenant, TenantDenyingQueryAuthorizer, assert_loki_error, fixture, json_body,
+    test_service_config, text_body,
 };
 use tower::ServiceExt as _;
+
+/// The templated lines of an `ApiErrors` alert rule, as YAML.
+struct AlertTemplates<'a> {
+    /// The `route` label line.
+    route_label: &'a str,
+    /// The `summary` annotation line.
+    summary_annotation: &'a str,
+}
+
+/// Posts an `ApiErrors` alert rule with `templates`, and checks that the
+/// firing alert expands both.
+async fn assert_templated_alert(templates: AlertTemplates<'_>) {
+    let AlertTemplates {
+        route_label,
+        summary_annotation,
+    } = templates;
+    let app = loki_router(fixture());
+    post_loki_rule_group_for_test(
+        &app,
+        "default",
+        &format!(
+            "\
+name: api-errors
+rules:
+  - alert: ApiErrors
+    expr: count_over_time({{app=\"api\"}} |= \"error\" [30ns]) > 0
+    labels:
+      {route_label}
+    annotations:
+      {summary_annotation}
+"
+        ),
+    )
+    .await;
+
+    let alerts_response = Tenant("tenant-a")
+        .get(&app, "/prometheus/api/v1/alerts?time=0.000000019")
+        .await;
+
+    assert!(alerts_response.status() == StatusCode::OK);
+    let body = json_body(alerts_response).await;
+    check!(body["data"]["alerts"].as_array().unwrap().len() == 1);
+    check!(body["data"]["alerts"][0]["labels"]["route"] == "api-prod");
+    check!(body["data"]["alerts"][0]["annotations"]["summary"] == "service=api value=1");
+}
 
 #[tokio::test]
 async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
     let state = fixture();
     let app = loki_router(state);
 
-    let loki_rules_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let loki_rules_response = Tenant("tenant-a").get(&app, "/loki/api/v1/rules").await;
 
     assert!(loki_rules_response.status() == StatusCode::BAD_REQUEST);
     let content_type = loki_rules_response
@@ -46,17 +81,9 @@ async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
         body == "unable to read rule dir /loki/rules/tenant-a: open /loki/rules/tenant-a: no such file or directory\n"
     );
 
-    let prometheus_rules_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let prometheus_rules_response = Tenant("tenant-a")
+        .get(&app, "/prometheus/api/v1/rules")
+        .await;
 
     assert!(prometheus_rules_response.status() == StatusCode::OK);
     assert!(
@@ -71,17 +98,7 @@ async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
             })
     );
 
-    let api_prom_rules_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/prom/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let api_prom_rules_response = Tenant("tenant-a").get(&app, "/api/prom/rules").await;
 
     assert!(api_prom_rules_response.status() == StatusCode::BAD_REQUEST);
     let content_type = api_prom_rules_response
@@ -96,17 +113,9 @@ async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
         body == "unable to read rule dir /loki/rules/tenant-a: open /loki/rules/tenant-a: no such file or directory\n"
     );
 
-    let prometheus_alerts_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let prometheus_alerts_response = Tenant("tenant-a")
+        .get(&app, "/prometheus/api/v1/alerts")
+        .await;
 
     assert!(prometheus_alerts_response.status() == StatusCode::OK);
     assert!(
@@ -149,17 +158,7 @@ async fn ruler_rule_group_read_endpoints_return_loki_not_found_errors() {
     let app = loki_router(state);
 
     for uri in ["/loki/api/v1/rules/default", "/api/prom/rules/default"] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = Tenant("tenant-a").get(&app, uri).await;
 
         assert!(response.status() == StatusCode::BAD_REQUEST);
         let body = text_body(response).await;
@@ -172,17 +171,7 @@ async fn ruler_rule_group_read_endpoints_return_loki_not_found_errors() {
         "/loki/api/v1/rules/default/api-errors",
         "/api/prom/rules/default/api-errors",
     ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = Tenant("tenant-a").get(&app, uri).await;
 
         assert!(response.status() == StatusCode::BAD_REQUEST);
         let body = text_body(response).await;
@@ -220,7 +209,6 @@ rules:
         )
         .await
         .unwrap();
-
     assert!(create_response.status() == StatusCode::ACCEPTED);
     assert!(
         json_body(create_response).await
@@ -229,17 +217,9 @@ rules:
             })
     );
 
-    let group_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/rules/default/api-errors")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let group_response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/rules/default/api-errors")
+        .await;
 
     assert!(group_response.status() == StatusCode::OK);
     let group_body = text_body(group_response).await;
@@ -251,17 +231,9 @@ rules:
         check!(group_body.contains(needle));
     }
 
-    let namespace_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/rules/default")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let namespace_response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/rules/default")
+        .await;
 
     assert!(namespace_response.status() == StatusCode::OK);
     let namespace_body = text_body(namespace_response).await;
@@ -315,21 +287,7 @@ rules:
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(text_body(response).await == "unable to decoded rule group\n");
 
-    let namespace_response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/rules/default")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(namespace_response.status() == StatusCode::BAD_REQUEST);
-    assert!(
-        text_body(namespace_response).await
-            == "error parsing /loki/rules/tenant-a/default: /loki/rules/tenant-a/default: open /loki/rules/tenant-a/default: no such file or directory\n"
-    );
+    assert_tenant_a_default_namespace_is_missing(app).await;
 }
 
 #[tokio::test]
@@ -394,32 +352,11 @@ rules:
       job: api
 ";
 
-    let create_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/rules/default")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/yaml")
-                .body(Body::from(rule_group))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(create_response.status() == StatusCode::ACCEPTED);
+    post_loki_rule_group_for_test(&app, "default", rule_group).await;
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a")
+        .get(&app, "/prometheus/api/v1/rules")
+        .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -466,17 +403,7 @@ rules:
             })
     );
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/prom/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/api/prom/rules").await;
 
     assert!(response.status() == StatusCode::OK);
     let body = text_body(response).await;
@@ -609,6 +536,26 @@ async fn a_refused_tenant_can_neither_read_nor_create_nor_delete_its_rule_groups
     check!(status == StatusCode::ACCEPTED);
 }
 
+/// Reads tenant-a's `default` rule namespace and checks that Loki's
+/// missing-namespace error comes back.
+async fn assert_tenant_a_default_namespace_is_missing(app: axum::Router) {
+    let namespace_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/loki/api/v1/rules/default")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(namespace_response.status() == StatusCode::BAD_REQUEST);
+    assert!(
+        text_body(namespace_response).await
+            == "error parsing /loki/rules/tenant-a/default: /loki/rules/tenant-a/default: open /loki/rules/tenant-a/default: no such file or directory\n"
+    );
+}
+
 async fn post_loki_rule_group_for_test(app: &axum::Router, namespace: &str, rule_group: &str) {
     let response = app
         .clone()
@@ -627,17 +574,7 @@ async fn post_loki_rule_group_for_test(app: &axum::Router, namespace: &str, rule
 }
 
 async fn prometheus_rules_body_for_test(app: &axum::Router, uri: &str) -> Value {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(app, uri).await;
     assert!(response.status() == StatusCode::OK);
     json_body(response).await
 }
@@ -737,17 +674,9 @@ rules:
     )
     .await;
 
-    let alerts_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let alerts_response = Tenant("tenant-a")
+        .get(&app, "/prometheus/api/v1/alerts?time=0.000000019")
+        .await;
 
     assert!(alerts_response.status() == StatusCode::OK);
     assert!(
@@ -791,80 +720,20 @@ rules:
 
 #[tokio::test]
 async fn prometheus_alerts_endpoint_expands_loki_rule_label_and_annotation_templates() {
-    let state = fixture();
-    let app = loki_router(state);
-    post_loki_rule_group_for_test(
-        &app,
-        "default",
-        "\
-name: api-errors
-rules:
-  - alert: ApiErrors
-    expr: count_over_time({app=\"api\"} |= \"error\" [30ns]) > 0
-    labels:
-      route: '{{ $labels.app }}-{{ $labels.env }}'
-    annotations:
-      summary: 'service={{ $labels.app }} value={{ $value }}'
-",
-    )
+    assert_templated_alert(AlertTemplates {
+        route_label: "route: '{{ $labels.app }}-{{ $labels.env }}'",
+        summary_annotation: "summary: 'service={{ $labels.app }} value={{ $value }}'",
+    })
     .await;
-
-    let alerts_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(alerts_response.status() == StatusCode::OK);
-    let body = json_body(alerts_response).await;
-    check!(body["data"]["alerts"].as_array().unwrap().len() == 1);
-    check!(body["data"]["alerts"][0]["labels"]["route"] == "api-prod");
-    check!(body["data"]["alerts"][0]["annotations"]["summary"] == "service=api value=1");
 }
 
 #[tokio::test]
 async fn prometheus_alerts_endpoint_expands_compact_loki_rule_templates() {
-    let state = fixture();
-    let app = loki_router(state);
-    post_loki_rule_group_for_test(
-        &app,
-        "default",
-        "\
-name: api-errors
-rules:
-  - alert: ApiErrors
-    expr: count_over_time({app=\"api\"} |= \"error\" [30ns]) > 0
-    labels:
-      route: '{{$labels.app}}-{{$labels.env}}'
-    annotations:
-      summary: 'service={{$labels.app}} value={{$value}}'
-",
-    )
+    assert_templated_alert(AlertTemplates {
+        route_label: "route: '{{$labels.app}}-{{$labels.env}}'",
+        summary_annotation: "summary: 'service={{$labels.app}} value={{$value}}'",
+    })
     .await;
-
-    let alerts_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(alerts_response.status() == StatusCode::OK);
-    let body = json_body(alerts_response).await;
-    check!(body["data"]["alerts"].as_array().unwrap().len() == 1);
-    check!(body["data"]["alerts"][0]["labels"]["route"] == "api-prod");
-    check!(body["data"]["alerts"][0]["annotations"]["summary"] == "service=api value=1");
 }
 
 #[tokio::test]
@@ -886,17 +755,9 @@ rules:
     )
     .await;
 
-    let pending_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let pending_response = Tenant("tenant-a")
+        .get(&app, "/prometheus/api/v1/alerts?time=0.000000019")
+        .await;
     assert!(pending_response.status() == StatusCode::OK);
     let pending_body = json_body(pending_response).await;
     check!(pending_body["data"]["alerts"].as_array().unwrap().len() == 1);
@@ -939,34 +800,18 @@ rules:
     .await;
     assert!(firing_body["data"]["groups"][0]["rules"][0]["alerts"][0]["state"] == "firing");
 
-    let retained_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=0.000000080")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let retained_response = Tenant("tenant-a")
+        .get(&app, "/prometheus/api/v1/alerts?time=0.000000080")
+        .await;
     assert!(retained_response.status() == StatusCode::OK);
     let retained_body = json_body(retained_response).await;
     check!(retained_body["data"]["alerts"].as_array().unwrap().len() == 1);
     check!(retained_body["data"]["alerts"][0]["state"] == "firing");
     check!(retained_body["data"]["alerts"][0]["activeAt"] == "1970-01-01T00:00:00.00000004Z");
 
-    let resolved_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=0.000000100")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let resolved_response = Tenant("tenant-a")
+        .get(&app, "/prometheus/api/v1/alerts?time=0.000000100")
+        .await;
     assert!(resolved_response.status() == StatusCode::OK);
     let resolved_body = json_body(resolved_response).await;
     assert!(resolved_body["data"]["alerts"] == json!([]));
@@ -992,18 +837,13 @@ rules:
     .await;
     assert!(first_body["data"]["groups"][0]["rules"][0]["alerts"][0]["state"] == "pending");
 
-    let delete_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri("/loki/api/v1/rules/default/api-errors")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let delete_response = Tenant("tenant-a")
+        .send(
+            &app,
+            Method::DELETE,
+            "/loki/api/v1/rules/default/api-errors",
         )
-        .await
-        .unwrap();
+        .await;
     assert!(delete_response.status() == StatusCode::ACCEPTED);
 
     post_loki_rule_group_for_test(&app, "default", rule_group).await;
@@ -1179,18 +1019,9 @@ rules:
         .expect("expected next page token")
         .to_string();
 
-    let delete_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri("/loki/api/v1/rules/alpha")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let delete_response = Tenant("tenant-a")
+        .send(&app, Method::DELETE, "/loki/api/v1/rules/alpha")
+        .await;
     assert!(delete_response.status() == StatusCode::ACCEPTED);
 
     let response = app
@@ -1216,17 +1047,12 @@ async fn prometheus_rules_endpoint_rejects_group_next_token_without_matching_rul
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/rules?group_limit=1&group_next_token=stale")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/prometheus/api/v1/rules?group_limit=1&group_next_token=stale",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "group_next_token");
@@ -1251,48 +1077,22 @@ rules:
     expr: count_over_time({app=\"worker\"} |= \"error\" [5m]) > 0
 ",
     ] {
-        let create_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/loki/api/v1/rules/default")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .header("content-type", "application/yaml")
-                    .body(Body::from(rule_group))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert!(create_response.status() == StatusCode::ACCEPTED);
+        post_loki_rule_group_for_test(&app, "default", rule_group).await;
     }
 
-    let delete_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri("/loki/api/v1/rules/default/api-errors")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let delete_response = Tenant("tenant-a")
+        .send(
+            &app,
+            Method::DELETE,
+            "/loki/api/v1/rules/default/api-errors",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(delete_response.status() == StatusCode::ACCEPTED);
 
-    let deleted_group_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/rules/default/api-errors")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let deleted_group_response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/rules/default/api-errors")
+        .await;
     assert!(deleted_group_response.status() == StatusCode::NOT_FOUND);
     assert!(text_body(deleted_group_response).await == "group does not exist\n");
 
@@ -1339,48 +1139,18 @@ rules:
 ",
         ),
     ] {
-        let create_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/loki/api/v1/rules/{namespace}"))
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .header("content-type", "application/yaml")
-                    .body(Body::from(rule_group))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert!(create_response.status() == StatusCode::ACCEPTED);
+        post_loki_rule_group_for_test(&app, namespace, rule_group).await;
     }
 
-    let delete_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri("/loki/api/v1/rules/default")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let delete_response = Tenant("tenant-a")
+        .send(&app, Method::DELETE, "/loki/api/v1/rules/default")
+        .await;
 
     assert!(delete_response.status() == StatusCode::ACCEPTED);
 
-    let deleted_namespace_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/rules/default")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let deleted_namespace_response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/rules/default")
+        .await;
     assert!(deleted_namespace_response.status() == StatusCode::NOT_FOUND);
     assert!(text_body(deleted_namespace_response).await == "no rule groups found\n");
 
@@ -1412,51 +1182,18 @@ rules:
     expr: count_over_time({app=\"api\"} |= \"error\" [5m]) > 0
 ";
 
-    let create_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/rules/default")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/yaml")
-                .body(Body::from(rule_group))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(create_response.status() == StatusCode::ACCEPTED);
+    post_loki_rule_group_for_test(&app, "default", rule_group).await;
 
-    let delete_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri("/loki/api/v1/rules/default/api-errors")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let delete_response = Tenant("tenant-a")
+        .send(
+            &app,
+            Method::DELETE,
+            "/loki/api/v1/rules/default/api-errors",
         )
-        .await
-        .unwrap();
+        .await;
     assert!(delete_response.status() == StatusCode::ACCEPTED);
 
-    let namespace_response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/rules/default")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(namespace_response.status() == StatusCode::BAD_REQUEST);
-    assert!(
-        text_body(namespace_response).await
-            == "error parsing /loki/rules/tenant-a/default: /loki/rules/tenant-a/default: open /loki/rules/tenant-a/default: no such file or directory\n"
-    );
+    assert_tenant_a_default_namespace_is_missing(app).await;
 }
 
 #[tokio::test]

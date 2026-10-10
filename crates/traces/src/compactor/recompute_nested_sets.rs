@@ -1,103 +1,29 @@
 use super::{
-    Array, BTreeMap, HashMap, RecordBatch, SCOL_CHILD_COUNT, SCOL_NESTED_SET_LEFT,
-    SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID, SCOL_SPAN_ID, SCOL_TRACE_ID,
-    TracesError, fixed_column, replace_int32_columns,
+    RecordBatch, SCOL_CHILD_COUNT, SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID,
+    SCOL_PARENT_SPAN_ID, SCOL_SPAN_ID, SCOL_TRACE_ID, TracesError, fixed_column,
+    replace_int32_columns,
 };
+use crate::span::nested_set::{BatchNestedSets, SpanIdColumns, batch_nested_sets};
 
 pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, TracesError> {
-    enum Frame {
-        Enter { row: usize, parent_left: i32 },
-        Exit { row: usize },
-    }
-
-    let trace_ids = fixed_column(batch, SCOL_TRACE_ID, 16)?;
-    let span_ids = fixed_column(batch, SCOL_SPAN_ID, 8)?;
-    let parent_span_ids = fixed_column(batch, SCOL_PARENT_SPAN_ID, 8)?;
-    let mut by_trace: BTreeMap<[u8; 16], Vec<usize>> = BTreeMap::new();
-    for row in 0..batch.num_rows() {
-        if trace_ids.is_null(row) {
-            continue;
-        }
-        let mut trace_id = [0_u8; 16];
-        trace_id.copy_from_slice(trace_ids.value(row));
-        by_trace.entry(trace_id).or_default().push(row);
-    }
-
-    let mut left = vec![0_i32; batch.num_rows()];
-    let mut right = vec![0_i32; batch.num_rows()];
-    // Default to the root sentinel (-1, Tempo's no-parent value): a row not
-    // reached by the per-trace DFS has no parent. 0 is an invalid parent (left
-    // values start at 1).
-    let mut parent_id = vec![-1_i32; batch.num_rows()];
+    let BatchNestedSets {
+        left,
+        right,
+        parent_id,
+        children,
+    } = batch_nested_sets(SpanIdColumns {
+        trace: fixed_column(batch, SCOL_TRACE_ID, 16)?,
+        span: fixed_column(batch, SCOL_SPAN_ID, 8)?,
+        parent_span: fixed_column(batch, SCOL_PARENT_SPAN_ID, 8)?,
+    });
+    // Only a parent the walk reaches is credited with its children, and each
+    // trace's children are its own: the `left` numbering restarts at 1 for
+    // every trace, so counting from it would credit one trace's root with
+    // another's children.
     let mut child_count = vec![0_i32; batch.num_rows()];
-
-    for rows in by_trace.values() {
-        let mut pos = HashMap::new();
-        for row in rows {
-            if span_ids.is_null(*row) {
-                continue;
-            }
-            let mut span_id = [0_u8; 8];
-            span_id.copy_from_slice(span_ids.value(*row));
-            pos.insert(span_id, *row);
-        }
-
-        let mut children: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut roots = Vec::new();
-        for row in rows {
-            let parent = (!parent_span_ids.is_null(*row)).then(|| {
-                let mut parent = [0_u8; 8];
-                parent.copy_from_slice(parent_span_ids.value(*row));
-                parent
-            });
-            match parent.and_then(|parent| pos.get(&parent).copied()) {
-                Some(parent_row) if parent_row != *row => {
-                    children.entry(parent_row).or_default().push(*row);
-                }
-                _ => roots.push(*row),
-            }
-        }
-
-        let mut counter = 1_i32;
-        let mut stack = Vec::new();
-        for row in roots.iter().rev() {
-            stack.push(Frame::Enter {
-                row: *row,
-                // Root span: nestedSetParent = -1 (Tempo no-parent sentinel).
-                parent_left: -1,
-            });
-        }
-        while let Some(frame) = stack.pop() {
-            match frame {
-                Frame::Enter {
-                    row,
-                    parent_left: parent,
-                } => {
-                    left[row] = counter;
-                    parent_id[row] = parent;
-                    counter += 1;
-                    stack.push(Frame::Exit { row });
-                    if let Some(children) = children.get(&row) {
-                        // Counted here, where the tree is walked, rather than
-                        // from the `left` numbering afterwards: the counter
-                        // restarts at 1 for every trace, so in a batch holding
-                        // more than one trace their roots share a `left` of 1
-                        // and each would be credited with the other's
-                        // children.
-                        child_count[row] = i32::try_from(children.len()).unwrap_or(i32::MAX);
-                        for child in children.iter().rev() {
-                            stack.push(Frame::Enter {
-                                row: *child,
-                                parent_left: left[row],
-                            });
-                        }
-                    }
-                }
-                Frame::Exit { row } => {
-                    right[row] = counter;
-                    counter += 1;
-                }
-            }
+    for (&parent_row, kids) in &children {
+        if left[parent_row] != 0 {
+            child_count[parent_row] = i32::try_from(kids.len()).unwrap_or(i32::MAX);
         }
     }
 

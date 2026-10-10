@@ -23,10 +23,7 @@ for: 5m
         keep_firing_until_ms: None,
     });
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels("up", "api"), 360_000, 1.0);
-    let store = Arc::new(store);
-    let engine = PromqlEngine::new(store, EngineOpts::default());
+    let engine = up_api_engine(&[360_000]);
     let sink = RecordingAlertmanagerSink::default();
 
     let firing = super::super::evaluate_and_dispatch_alerting_rule_with_state(

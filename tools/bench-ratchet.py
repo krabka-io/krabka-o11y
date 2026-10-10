@@ -90,6 +90,9 @@ import sys
 import tempfile
 import time
 
+from ratchet_annotations import annotate, keep_stdout_for_json
+from ratchet_baseline import baseline_fields
+
 UNSEEDED = "unseeded"
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -145,24 +148,6 @@ DEFAULT_TOLERANCE = 1.5
 # How wide Criterion's 95% confidence interval may be, as a fraction of the
 # mean, before the measurement is treated as too noisy to gate on.
 DEFAULT_NOISE_CEILING = 0.25
-
-
-def annotate(level, message):
-    """Prints a message, as a GitHub annotation when the run is on Actions."""
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        print(f"::{level}::{message}", flush=True)
-    else:
-        print(f"{level}: {message}", flush=True)
-
-
-def keep_stdout_for_json(destination):
-    """Sends every other line to standard error when the JSON goes to stdout.
-
-    `--json -` is for a pipe into another tool, and the annotations would
-    break that JSON.
-    """
-    if destination == "-":
-        sys.stdout = sys.stderr
 
 
 def estimate_files(criterion_root):
@@ -233,14 +218,7 @@ def read_estimate(name, path):
 def read_baseline(path):
     """Benchmark id to allowed nanoseconds, where `unseeded` reads as None."""
     baseline = {}
-    for number, line in enumerate(pathlib.Path(path).read_text().splitlines(), 1):
-        stripped = line.split("#", 1)[0].strip()
-        if not stripped:
-            continue
-        fields = stripped.split()
-        if len(fields) != 2:
-            raise UsageError(f"{path}:{number}: expected `<benchmark> <ns>`: {line}")
-        name, allowed = fields
+    for number, line, name, allowed in baseline_fields(path, "<benchmark> <ns>", UsageError):
         if name in baseline:
             raise UsageError(f"{path}:{number}: {name} is listed twice")
         if allowed == UNSEEDED:

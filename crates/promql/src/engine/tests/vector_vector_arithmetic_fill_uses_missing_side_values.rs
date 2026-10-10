@@ -18,18 +18,7 @@ pub(crate) async fn vector_vector_arithmetic_fill_uses_missing_side_values() {
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "a + on (instance) fill(0) b",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "a + on (instance) fill(0) b", 10_000).await;
     let values = samples
         .iter()
         .map(|sample| {

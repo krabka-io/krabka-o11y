@@ -1,10 +1,11 @@
 use crate::{
     Arc, BTreeMap, BTreeSet, BlockDescriptor, ByteSizeExt, CacheKey, HttpQueryError, LabelIndex,
-    LokiDirection, LokiStreamEncoding, PlannedQuery, QuerierState, QueryFrontend,
-    QueryFrontendAdapter, QueryFrontendError, QueryKind, QueryParams, SeriesFingerprint, TenantId,
-    TimeRange, Value, apply_loki_stream_options, execute_http_query_for_tenant_inner, json,
-    loki_direction, merge_loki_query_stats, parse_query, plan_stream_query, planned_block_bytes,
-    populate_loki_query_execution_stats, transient_object_store_error, validate_loki_interval,
+    LokiDirection, LokiStreamEncoding, LokiStreamOptions, PlannedQuery, QuerierState,
+    QueryFrontend, QueryFrontendAdapter, QueryFrontendError, QueryKind, QueryParams,
+    SeriesFingerprint, TenantId, TimeRange, Value, apply_loki_stream_options,
+    execute_http_query_for_tenant_inner, json, loki_direction, merge_loki_query_stats, parse_query,
+    plan_stream_query, planned_block_bytes, populate_loki_query_execution_stats,
+    transient_object_store_error, validate_loki_interval,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -171,9 +172,11 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
     ) -> Result<Self::Response, Self::Error> {
         Ok(merge_frontend_results(
             results,
-            loki_direction(request.direction.as_deref())?,
-            request.limit,
-            request.interval,
+            LokiStreamOptions {
+                direction: loki_direction(request.direction.as_deref())?,
+                limit: request.limit,
+                interval: request.interval,
+            },
             self.time_range.end_ns,
         ))
     }
@@ -435,13 +438,20 @@ fn state_for_partial_bounds(
     state
 }
 
+/// Merges the planned sub-queries' `results` into one Loki response.
+///
+/// `stream_options.limit` caps the merged response as a whole, not each
+/// sub-query, and `end_exclusive_ns` is the exclusive end of the whole query.
 pub(crate) fn merge_frontend_results(
     results: Vec<Value>,
-    direction: LokiDirection,
-    limit: Option<usize>,
-    interval: Option<i64>,
-    end_exclusive: i64,
+    stream_options: LokiStreamOptions,
+    end_exclusive_ns: i64,
 ) -> Value {
+    let LokiStreamOptions {
+        direction,
+        limit,
+        interval,
+    } = stream_options;
     let mut results = results.into_iter();
     let Some(mut merged) = results.next() else {
         return json!({"status":"success","data":{"resultType":"streams","result":[]}});
@@ -450,8 +460,15 @@ pub(crate) fn merge_frontend_results(
         merge_one_result(&mut merged, source);
     }
     normalize_merged_series(&mut merged);
-    let mut merged =
-        apply_loki_stream_options(merged, direction, None, interval, Some(end_exclusive));
+    let mut merged = apply_loki_stream_options(
+        merged,
+        LokiStreamOptions {
+            direction,
+            limit: None,
+            interval,
+        },
+        Some(end_exclusive_ns),
+    );
     apply_global_stream_limit(&mut merged, direction, limit);
     deduplicate_warnings(&mut merged);
     merged

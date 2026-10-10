@@ -14,6 +14,7 @@ use assert2::{assert, check};
 use axum::{
     body::Body,
     http::{Request, StatusCode},
+    response::Response,
 };
 use krabka_blockstore::validate_against;
 use krabka_metrics::{
@@ -699,20 +700,30 @@ impl WalSink for RecordingSink {
 }
 
 async fn push_clocks(sink: &Arc<RecordingSink>, body: Vec<u8>, tenant: &str) -> StatusCode {
+    send_clocks_request(
+        sink,
+        clocks_request()
+            .header("Content-Encoding", "snappy")
+            .header("X-Scope-OrgID", tenant)
+            .body(Body::from(body))
+            .expect("request"),
+    )
+    .await
+    .status()
+}
+
+/// A `POST /api/v1/clocks` with no headers yet.
+fn clocks_request() -> axum::http::request::Builder {
+    Request::builder().method("POST").uri("/api/v1/clocks")
+}
+
+/// Sends `request` to a distributor that appends into `sink`.
+async fn send_clocks_request(sink: &Arc<RecordingSink>, request: Request<Body>) -> Response {
     let state = Arc::new(DistributorState::new(Arc::clone(sink) as Arc<dyn WalSink>));
     router(state)
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/clocks")
-                .header("Content-Encoding", "snappy")
-                .header("X-Scope-OrgID", tenant)
-                .body(Body::from(body))
-                .expect("request"),
-        )
+        .oneshot(request)
         .await
         .expect("clocks response")
-        .status()
 }
 
 fn now_unix_nanos() -> i64 {
@@ -822,19 +833,15 @@ async fn a_malformed_batch_is_rejected_and_writes_nothing() {
 #[tokio::test]
 async fn a_batch_without_a_tenant_is_rejected() {
     let sink = Arc::new(RecordingSink::default());
-    let state = Arc::new(DistributorState::new(Arc::clone(&sink) as Arc<dyn WalSink>));
 
-    let response = router(state)
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/clocks")
-                .header("Content-Encoding", "snappy")
-                .body(Body::from(snappy_batch(&[ntp_wire()])))
-                .expect("request"),
-        )
-        .await
-        .expect("clocks response");
+    let response = send_clocks_request(
+        &sink,
+        clocks_request()
+            .header("Content-Encoding", "snappy")
+            .body(Body::from(snappy_batch(&[ntp_wire()])))
+            .expect("request"),
+    )
+    .await;
 
     check!(response.status() == StatusCode::UNAUTHORIZED);
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -847,19 +854,15 @@ async fn a_batch_without_a_tenant_is_rejected() {
 #[tokio::test]
 async fn a_batch_without_snappy_encoding_is_rejected() {
     let sink = Arc::new(RecordingSink::default());
-    let state = Arc::new(DistributorState::new(Arc::clone(&sink) as Arc<dyn WalSink>));
 
-    let response = router(state)
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/clocks")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::from(snappy_batch(&[ntp_wire()])))
-                .expect("request"),
-        )
-        .await
-        .expect("clocks response");
+    let response = send_clocks_request(
+        &sink,
+        clocks_request()
+            .header("X-Scope-OrgID", "tenant-a")
+            .body(Body::from(snappy_batch(&[ntp_wire()])))
+            .expect("request"),
+    )
+    .await;
 
     check!(response.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE);
     check!(sink.records.lock().expect("sink").is_empty());

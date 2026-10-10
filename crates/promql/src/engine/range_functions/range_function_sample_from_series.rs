@@ -1,18 +1,25 @@
 use super::{
-    ExtendedSelectorModifier, RangeFn, RangeSeries, SampleValue, Time, TimeExt, count_changes,
-    count_resets, count_step_transitions, emit_warning, extended_float_range_value,
+    ExtendedSelectorModifier, RangeFn, RangeSeries, RangeWindow, SampleValue, TimeExt,
+    count_changes, count_resets, count_step_transitions, emit_warning, extended_float_range_value,
     extended_histogram_range_value, extrapolated_rate_with_starts, mixed_floats_histograms_warning,
     range_histogram_sample,
+};
+use crate::{
+    engine::annotations::TypeAndUnitLabels,
+    functions::extrapolate::{RateWindow, WindowBounds},
 };
 
 pub(crate) fn range_function_sample_from_series(
     series: &RangeSeries,
-    range_end_ms: i64,
-    range: Time,
+    window: &RangeWindow,
     kind: RangeFn,
-    modifier: Option<ExtendedSelectorModifier>,
-    enable_type_and_unit_labels: bool,
 ) -> Option<SampleValue> {
+    let RangeWindow {
+        end_ms: range_end_ms,
+        range,
+        modifier,
+        type_and_unit_labels,
+    } = *window;
     let range_start_ms = range_end_ms.saturating_sub(range.millis_i64());
     // `changes` and `resets` count over the whole plain window, floats and
     // histograms together, so they never meet the float-or-histogram split
@@ -92,7 +99,7 @@ pub(crate) fn range_function_sample_from_series(
             kind,
             smoothed,
         )?;
-        emit_non_counter_info(series, kind, enable_type_and_unit_labels);
+        emit_non_counter_info(series, kind, type_and_unit_labels);
         return Some(SampleValue::Float(value));
     }
 
@@ -132,22 +139,33 @@ pub(crate) fn range_function_sample_from_series(
         RangeFn::Changes => count_changes(&values),
         RangeFn::Resets => count_resets(&values),
         RangeFn::Rate | RangeFn::Increase | RangeFn::Delta => extrapolated_rate_with_starts(
-            &timestamps,
-            &values,
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms,
+                    range_end_ms,
+                },
+                range,
+            },
             &series.start_timestamps_ms,
-            range_start_ms,
-            range_end_ms,
-            range,
             kind,
         ),
     }?;
-    emit_non_counter_info(series, kind, enable_type_and_unit_labels);
+    emit_non_counter_info(series, kind, type_and_unit_labels);
     Some(SampleValue::Float(value))
 }
 
-fn emit_non_counter_info(series: &RangeSeries, kind: RangeFn, enabled: bool) {
+fn emit_non_counter_info(
+    series: &RangeSeries,
+    kind: RangeFn,
+    type_and_unit_labels: TypeAndUnitLabels,
+) {
     if matches!(kind, RangeFn::Rate | RangeFn::Increase) {
-        super::super::annotations::emit_metric_might_not_be_counter_info(&series.labels, enabled);
+        super::super::annotations::emit_metric_might_not_be_counter_info(
+            &series.labels,
+            type_and_unit_labels,
+        );
     }
 }
 

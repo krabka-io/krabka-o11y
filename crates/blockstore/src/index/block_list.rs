@@ -290,6 +290,42 @@ impl BlockList {
         selected
     }
 
+    /// The blocks behind `ordinals` and their postings, renumbered for a shard.
+    ///
+    /// A shard is a document of its own, so its blocks are renumbered from
+    /// zero in `ordinals` order and its postings point at those numbers.
+    pub(crate) fn shard_local(
+        &self,
+        ordinals: &BTreeSet<u32>,
+    ) -> (Vec<&BlockEntry>, BTreeMap<SeriesFingerprint, Vec<u32>>) {
+        let local = ordinals
+            .iter()
+            .enumerate()
+            .map(|(local, ordinal)| {
+                (
+                    *ordinal,
+                    u32::try_from(local).expect("a shard holds fewer blocks than the tenant"),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let postings = self
+            .postings_for(ordinals)
+            .into_iter()
+            .map(|(fingerprint, ordinals)| {
+                let ordinals = ordinals
+                    .iter()
+                    .filter_map(|ordinal| local.get(ordinal).copied())
+                    .collect::<Vec<_>>();
+                (fingerprint, ordinals)
+            })
+            .collect::<BTreeMap<_, _>>();
+        let blocks = ordinals
+            .iter()
+            .map(|ordinal| self.entry(*ordinal))
+            .collect();
+        (blocks, postings)
+    }
+
     /// Every fingerprint the list holds a posting for, live blocks only.
     pub(crate) fn live_fingerprints(&self) -> BTreeSet<SeriesFingerprint> {
         self.postings

@@ -2,34 +2,32 @@ use super::*;
 
 #[test]
 pub(crate) fn ruler_rule_set_filter_keeps_only_groups_due_for_evaluation() {
-    let mut rules = BTreeMap::new();
-    for (namespace, group_name, interval) in [
-        ("team-a", "new", "30s"),
-        ("team-a", "not-yet", "5m"),
-        ("team-b", "due", "1m"),
-    ] {
-        let group = serde_yaml::to_value(BTreeMap::from([
-            ("name", group_name),
-            ("interval", interval),
-        ]))
-        .expect("group yaml");
-        rules
-            .entry(namespace.to_string())
-            .or_insert_with(BTreeMap::new)
-            .insert(group_name.to_string(), group);
-    }
-    let mut state = super::super::RulerGroupState::default();
-    state.apply_records(vec![
-        super::super::RulerGroupStateRecord {
-            tenant: "tenant-a".to_string(),
-            namespace: "team-a".to_string(),
-            group: "not-yet".to_string(),
+    let rules = interval_rule_set(&[
+        IntervalGroup {
+            namespace: "team-a",
+            group_name: "new",
+            interval: "30s",
+        },
+        IntervalGroup {
+            namespace: "team-a",
+            group_name: "not-yet",
+            interval: "5m",
+        },
+        IntervalGroup {
+            namespace: "team-b",
+            group_name: "due",
+            interval: "1m",
+        },
+    ]);
+    let state = group_state(&[
+        GroupLastEval {
+            namespace: "team-a",
+            group: "not-yet",
             last_eval_ms: 120_000,
         },
-        super::super::RulerGroupStateRecord {
-            tenant: "tenant-a".to_string(),
-            namespace: "team-b".to_string(),
-            group: "due".to_string(),
+        GroupLastEval {
+            namespace: "team-b",
+            group: "due",
             last_eval_ms: 60_000,
         },
     ]);

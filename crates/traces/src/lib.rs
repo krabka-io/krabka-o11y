@@ -20,7 +20,9 @@ mod tempo_query_routes;
 pub mod wal;
 pub mod wire;
 
-pub use blockbuilder::{build_blocks, group_by_trace, object_key, prefixed_object_key};
+pub use blockbuilder::{
+    build_blocks, group_by_trace, group_by_trace_in_record_order, object_key, prefixed_object_key,
+};
 pub use error::TracesError;
 pub use limits::{LimitError, Limits};
 pub use livestore::LiveStore;

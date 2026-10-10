@@ -3,9 +3,9 @@ use num_traits::FromPrimitive as _;
 
 use crate::{
     ACCEPT, Arc, ArrayRef, BTreeMap, DataType, Duration, Field, Float64Array,
-    FormattedMetricSeries, HeaderMap, HttpQueryError, Labels, LokiDirection, MetricValue,
-    RecordBatch, Response, Schema, StringArray, TimeUnit, TimestampNanosecondArray, Value, json,
-    loki_parquet_batch_response, loki_parquet_label_array, loki_success_value,
+    FormattedMetricSeries, HeaderMap, HttpQueryError, Labels, LokiDirection, LokiStreamOptions,
+    MetricValue, RecordBatch, Response, Schema, StringArray, TimeUnit, TimestampNanosecondArray,
+    Value, json, loki_parquet_batch_response, loki_parquet_label_array, loki_success_value,
     parse_metric_sample_value, sort_loki_stream_values,
 };
 

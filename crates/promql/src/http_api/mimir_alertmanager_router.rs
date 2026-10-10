@@ -8,20 +8,22 @@ use std::{
 };
 
 use axum::{
-    Extension, Json, Router,
+    Json, Router,
     body::Bytes,
     extract::{Path, RawQuery, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
-use krabka_observability::server_security::Principal;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use xxhash_rust::xxh64::xxh64;
 
-use super::{MetricStore, PrometheusApiState, authorized_tenant_from_headers};
+use super::{
+    AuthorizedTenant, MetricStore, PrometheusApiState, RequestCaller,
+    authorized_tenant_from_headers,
+};
 
 static NEXT_SILENCE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -61,20 +63,16 @@ pub fn mimir_alertmanager_router<S: MetricStore + 'static>(
         .with_state(state)
 }
 
-fn tenant(
-    headers: &HeaderMap,
-    principal: &Principal,
-) -> Result<krabka_blockstore::TenantId, Box<Response>> {
-    authorized_tenant_from_headers(headers, principal)
+fn tenant(caller: &RequestCaller) -> Result<krabka_blockstore::TenantId, Box<Response>> {
+    authorized_tenant_from_headers(&caller.headers, &caller.principal)
         .map_err(|error| Box::new(error.into_response()))
 }
 
 async fn get_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -98,11 +96,10 @@ async fn get_config<S: MetricStore>(
 
 async fn set_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     body: Bytes,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -139,10 +136,9 @@ async fn set_config<S: MetricStore>(
 
 async fn delete_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -164,10 +160,9 @@ async fn delete_config<S: MetricStore>(
 
 async fn status<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -182,22 +177,13 @@ async fn status<S: MetricStore>(
 
 async fn receivers<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
-    let names = state
-        .alertmanager_configs
-        .read()
-        .ok()
-        .and_then(|configs| configs.get(&tenant).cloned())
-        .and_then(|body| serde_yaml::from_str::<AlertmanagerConfig>(&body).ok())
-        .and_then(|wrapper| {
-            serde_yaml::from_str::<serde_yaml::Value>(&wrapper.alertmanager_config).ok()
-        })
+    let names = alertmanager_config_yaml(&state, &tenant)
         .and_then(|config| {
             config
                 .get("receivers")
@@ -218,33 +204,40 @@ async fn receivers<S: MetricStore>(
 
 async fn alerts<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
-    let alerts = state
+    let alerts = filtered_tenant_alerts(&state, &tenant, query.as_deref());
+    no_store(Json(alerts).into_response())
+}
+
+/// The tenant's stored alerts that match the `filter` matchers in `query`.
+fn filtered_tenant_alerts<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    tenant: &krabka_blockstore::TenantId,
+    query: Option<&str>,
+) -> Vec<Value> {
+    state
         .alertmanager_alerts
         .read()
         .ok()
-        .and_then(|alerts| alerts.get(&tenant).cloned())
+        .and_then(|alerts| alerts.get(tenant).cloned())
         .unwrap_or_default()
         .into_iter()
-        .filter(|alert| matches_filters(alert, query.as_deref()))
-        .collect::<Vec<_>>();
-    no_store(Json(alerts).into_response())
+        .filter(|alert| matches_filters(alert, query))
+        .collect()
 }
 
 async fn set_alerts<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     Json(mut new_alerts): Json<Vec<Value>>,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -281,25 +274,15 @@ async fn set_alerts<S: MetricStore>(
 
 async fn alert_groups<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
-    let alerts = state
-        .alertmanager_alerts
-        .read()
-        .ok()
-        .and_then(|all| all.get(&tenant).cloned())
-        .unwrap_or_default();
     let mut groups = std::collections::BTreeMap::<String, Vec<Value>>::new();
-    for alert in alerts
-        .into_iter()
-        .filter(|alert| matches_filters(alert, query.as_deref()))
-    {
+    for alert in filtered_tenant_alerts(&state, &tenant, query.as_deref()) {
         let receiver = alert
             .pointer("/receivers/0/name")
             .and_then(Value::as_str)
@@ -312,11 +295,10 @@ async fn alert_groups<S: MetricStore>(
 
 async fn silences<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -339,11 +321,10 @@ async fn silences<S: MetricStore>(
 
 async fn set_silence<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     Json(mut silence): Json<Value>,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -377,14 +358,9 @@ async fn set_silence<S: MetricStore>(
 
 async fn silence<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
     Path(id): Path<String>,
+    AuthorizedTenant(tenant): AuthorizedTenant,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
     match state
         .alertmanager_silences
         .read()
@@ -402,14 +378,9 @@ async fn silence<S: MetricStore>(
 
 async fn delete_silence<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
     Path(id): Path<String>,
+    AuthorizedTenant(tenant): AuthorizedTenant,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
     let deleted = match state.alertmanager_silences.write() {
         Ok(mut silences) => silences
             .get_mut(&tenant)
@@ -466,10 +437,11 @@ fn validate_alertmanager_config(
     Ok(())
 }
 
-fn default_receiver<S: MetricStore>(
+/// The tenant's stored `alertmanager_config` document, parsed as YAML.
+fn alertmanager_config_yaml<S: MetricStore>(
     state: &PrometheusApiState<S>,
     tenant: &krabka_blockstore::TenantId,
-) -> Option<String> {
+) -> Option<serde_yaml::Value> {
     state
         .alertmanager_configs
         .read()
@@ -479,13 +451,19 @@ fn default_receiver<S: MetricStore>(
         .and_then(|wrapper| {
             serde_yaml::from_str::<serde_yaml::Value>(&wrapper.alertmanager_config).ok()
         })
-        .and_then(|config| {
-            config
-                .get("route")?
-                .get("receiver")?
-                .as_str()
-                .map(str::to_owned)
-        })
+}
+
+fn default_receiver<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    tenant: &krabka_blockstore::TenantId,
+) -> Option<String> {
+    alertmanager_config_yaml(state, tenant).and_then(|config| {
+        config
+            .get("route")?
+            .get("receiver")?
+            .as_str()
+            .map(str::to_owned)
+    })
 }
 
 fn enrich_alert(alert: &mut Value, receiver: Option<&str>) {

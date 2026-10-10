@@ -1,84 +1,60 @@
-use datafusion::{common::tree_node::TreeNodeRecursion, physical_expr::PhysicalExpr};
+use std::{fmt, sync::Arc};
 
-use super::{
-    Arc, ArrayRef, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan,
-    Float64Array, Int64Array, PlanProperties, RecordBatch, RecordBatchStreamAdapter,
-    SendableRecordBatchStream, StreamExt, TaskContext, UInt32Array, fmt, take,
+use arrow::{array::Float64Array, record_batch::RecordBatch};
+use datafusion::{
+    common::{DataFusionError, Result as DfResult},
+    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
 };
 
+use super::InstantManipulateSettings;
+use crate::extension::{RowSelection, TimeColumn, take_rows_with_timestamps};
+
 /// Physical node that emits one selected sample per valid grid step.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InstantManipulateExec {
-    pub(crate) start_ms: i64,
-    pub(crate) end_ms: i64,
-    pub(crate) step_ms: i64,
-    pub(crate) lookback_delta_ms: i64,
-    pub(crate) time_index: String,
-    pub(crate) field_column: String,
+    pub(crate) settings: InstantManipulateSettings,
     pub(crate) input: Arc<dyn ExecutionPlan>,
     pub(crate) properties: Arc<PlanProperties>,
 }
 
 impl InstantManipulateExec {
     #[must_use]
-    pub fn new(
-        start_ms: i64,
-        end_ms: i64,
-        step_ms: i64,
-        lookback_delta_ms: i64,
-        time_index: String,
-        field_column: String,
-        input: Arc<dyn ExecutionPlan>,
-    ) -> Self {
+    pub fn new(settings: InstantManipulateSettings, input: Arc<dyn ExecutionPlan>) -> Self {
         let properties = Arc::clone(input.properties());
         Self {
-            start_ms,
-            end_ms,
-            step_ms,
-            lookback_delta_ms,
-            time_index,
-            field_column,
+            settings,
             input,
             properties,
         }
     }
 
     pub(crate) fn manipulate_batch(&self, batch: &RecordBatch) -> DfResult<RecordBatch> {
-        if self.step_ms <= 0 {
+        if self.settings.step_ms <= 0 {
             return Err(DataFusionError::Execution(format!(
                 "step_ms must be positive, got {}",
-                self.step_ms
+                self.settings.step_ms
             )));
         }
-        let time_column_index = batch
-            .schema()
-            .index_of(&self.time_index)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
-        let timestamps = batch
-            .column(time_column_index)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .ok_or_else(|| {
-                DataFusionError::Execution(format!(
-                    "InstantManipulate time column `{}` must be Int64",
-                    self.time_index
-                ))
-            })?;
+        let (time_column_index, timestamps) = TimeColumn {
+            node: "InstantManipulate",
+            name: &self.settings.time_index,
+        }
+        .find(batch)?;
         let values = batch
-            .column_by_name(&self.field_column)
+            .column_by_name(&self.settings.field_column)
             .and_then(|column| column.as_any().downcast_ref::<Float64Array>())
             .ok_or_else(|| {
                 DataFusionError::Execution(format!(
                     "InstantManipulate field column `{}` must be Float64",
-                    self.field_column
+                    self.settings.field_column
                 ))
             })?;
 
         let mut selected_rows = Vec::new();
         let mut output_timestamps = Vec::new();
         let mut sample_cursor = 0_usize;
-        let mut grid_ts = self.start_ms;
-        while grid_ts <= self.end_ms {
+        let mut grid_ts = self.settings.start_ms;
+        while grid_ts <= self.settings.end_ms {
             while sample_cursor < timestamps.len() && timestamps.value(sample_cursor) <= grid_ts {
                 sample_cursor = sample_cursor.checked_add(1).ok_or_else(|| {
                     DataFusionError::Execution("sample cursor overflow".to_string())
@@ -89,7 +65,7 @@ impl InstantManipulateExec {
                 // Drop the selected sample only when it is Prometheus' stale-NaN
                 // marker (the series has been terminated); a genuine NaN value is
                 // kept as a NaN sample, matching `engine::eval_instant_selector`.
-                if grid_ts - sample_ts < self.lookback_delta_ms
+                if grid_ts - sample_ts < self.settings.lookback_delta_ms
                     && !super::super::is_stale_nan(values.value(row))
                 {
                     selected_rows.push(
@@ -100,24 +76,18 @@ impl InstantManipulateExec {
                 }
             }
             grid_ts = grid_ts
-                .checked_add(self.step_ms)
+                .checked_add(self.settings.step_ms)
                 .ok_or_else(|| DataFusionError::Execution("grid timestamp overflow".to_string()))?;
         }
 
-        let take_indices = UInt32Array::from_iter_values(selected_rows);
-        let mut columns = Vec::with_capacity(batch.num_columns());
-        for (index, column) in batch.columns().iter().enumerate() {
-            if index == time_column_index {
-                columns.push(Arc::new(Int64Array::from_iter_values(
-                    output_timestamps.iter().copied(),
-                )) as ArrayRef);
-            } else {
-                columns.push(take(column.as_ref(), &take_indices, None)?);
-            }
-        }
-
-        RecordBatch::try_new(batch.schema(), columns)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))
+        take_rows_with_timestamps(
+            batch,
+            time_column_index,
+            RowSelection {
+                rows: selected_rows,
+                timestamps: output_timestamps,
+            },
+        )
     }
 }
 
@@ -126,7 +96,10 @@ impl DisplayAs for InstantManipulateExec {
         write!(
             f,
             "PromInstantManipulateExec: start_ms={}, end_ms={}, step_ms={}, lookback_delta_ms={}",
-            self.start_ms, self.end_ms, self.step_ms, self.lookback_delta_ms
+            self.settings.start_ms,
+            self.settings.end_ms,
+            self.settings.step_ms,
+            self.settings.lookback_delta_ms
         )
     }
 }
@@ -136,63 +109,7 @@ impl ExecutionPlan for InstantManipulateExec {
         "InstantManipulateExec"
     }
 
-    fn properties(&self) -> &Arc<PlanProperties> {
-        &self.properties
-    }
+    single_input_exec_plumbing!();
 
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![&self.input]
-    }
-
-    fn maintains_input_order(&self) -> Vec<bool> {
-        vec![false]
-    }
-
-    fn apply_expressions(
-        &self,
-        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DfResult<TreeNodeRecursion>,
-    ) -> DfResult<TreeNodeRecursion> {
-        Ok(TreeNodeRecursion::Continue)
-    }
-
-    fn with_new_children(
-        self: Arc<Self>,
-        mut children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> DfResult<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "InstantManipulateExec expects one child".to_string(),
-            ));
-        }
-        Ok(Arc::new(Self::new(
-            self.start_ms,
-            self.end_ms,
-            self.step_ms,
-            self.lookback_delta_ms,
-            self.time_index.clone(),
-            self.field_column.clone(),
-            children.swap_remove(0),
-        )))
-    }
-
-    fn execute(
-        &self,
-        partition: usize,
-        context: Arc<TaskContext>,
-    ) -> DfResult<SendableRecordBatchStream> {
-        let input = self.input.execute(partition, context)?;
-        let schema = self.schema();
-        let this = Self {
-            start_ms: self.start_ms,
-            end_ms: self.end_ms,
-            step_ms: self.step_ms,
-            lookback_delta_ms: self.lookback_delta_ms,
-            time_index: self.time_index.clone(),
-            field_column: self.field_column.clone(),
-            input: Arc::clone(&self.input),
-            properties: Arc::clone(&self.properties),
-        };
-        let stream = input.map(move |batch| batch.and_then(|batch| this.manipulate_batch(&batch)));
-        Ok(Box::pin(RecordBatchStreamAdapter::new(schema, stream)))
-    }
+    settings_batch_exec_methods!(manipulate_batch);
 }

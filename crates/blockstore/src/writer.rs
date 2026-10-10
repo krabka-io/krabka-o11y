@@ -33,6 +33,10 @@ use crate::{
 };
 
 #[cfg(test)]
+#[path = "../tests/support/flaky_put_store.rs"]
+mod flaky_put_store;
+
+#[cfg(test)]
 mod tests {
     use std::sync::{
         Arc,
@@ -46,10 +50,10 @@ mod tests {
     };
     use async_trait::async_trait;
     use bytes::Bytes;
-    use futures::{FutureExt, StreamExt as _, stream::BoxStream};
+    use futures::{FutureExt, StreamExt as _};
     use object_store::{
-        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-        ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, UploadPart,
+        MultipartUpload, ObjectStore, ObjectStoreExt, PutMultipartOptions, PutPayload, PutResult,
+        UploadPart,
         memory::InMemory,
         path::{Path, Path as ObjectPath},
     };
@@ -62,19 +66,44 @@ mod tests {
         },
     };
 
-    use super::*;
+    use super::{flaky_put_store::flaky_put_store, *};
     use crate::{
         block_index::RequiredColumn,
+        log_line_schema::log_line_schema,
         reader::read_block,
         span_schema::{SCOL_SPAN_ID, SCOL_START_NANO, SCOL_TRACE_ID, span_block_decl},
     };
 
-    fn log_schema() -> Arc<Schema> {
-        Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]))
+    struct LogColumns<'a> {
+        fingerprints: Vec<u64>,
+        timestamps: Vec<i64>,
+        lines: Vec<&'a str>,
+    }
+
+    impl LogColumns<'_> {
+        fn batch(self) -> RecordBatch {
+            RecordBatch::try_new(
+                log_line_schema(),
+                vec![
+                    Arc::new(UInt64Array::from(self.fingerprints)),
+                    Arc::new(Int64Array::from(self.timestamps)),
+                    Arc::new(StringArray::from(self.lines)),
+                ],
+            )
+            .unwrap()
+        }
+    }
+
+    // Writes `batch` as one block and reads the block back as one batch.
+    async fn write_and_read_back(batch: RecordBatch) -> RecordBatch {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let schema = batch.schema();
+        BlockWriter::new(store.clone())
+            .write_block("t", "k.parquet", schema.clone(), &[batch])
+            .await
+            .unwrap();
+        let batches = read_block(store, "k.parquet").await.unwrap();
+        arrow::compute::concat_batches(&schema, &batches).unwrap()
     }
 
     fn sample_batch(schema: &Arc<Schema>) -> RecordBatch {
@@ -101,16 +130,9 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl ObjectStore for AbortStore {
-        async fn put_opts(
-            &self,
-            location: &ObjectPath,
-            payload: PutPayload,
-            options: PutOptions,
-        ) -> object_store::Result<PutResult> {
-            self.inner.put_opts(location, payload, options).await
-        }
+    crate::delegate_object_store! {
+        AbortStore => inner;
+        forward [put_opts, get_opts, list, list_with_delimiter, copy_opts, delete_stream];
 
         async fn put_multipart_opts(
             &self,
@@ -122,44 +144,6 @@ mod tests {
                 aborted: Arc::clone(&self.aborted),
                 fail_parts: self.fail_parts,
             }))
-        }
-
-        async fn get_opts(
-            &self,
-            location: &ObjectPath,
-            options: GetOptions,
-        ) -> object_store::Result<GetResult> {
-            self.inner.get_opts(location, options).await
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> object_store::Result<ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &ObjectPath,
-            to: &ObjectPath,
-            options: CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<ObjectPath>>,
-        ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-            self.inner.delete_stream(locations)
         }
     }
 
@@ -199,7 +183,7 @@ mod tests {
     async fn write_block_persists_object_and_returns_meta() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store.clone());
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = sample_batch(&schema);
 
         let meta = writer
@@ -223,106 +207,6 @@ mod tests {
 
         let head = store.head(&Path::from("blocks/tenant-a/b1.parquet")).await;
         assert2::assert!(head.is_ok());
-    }
-
-    /// A store whose first `failures` puts fail with `error`, counting every
-    /// attempt. Every other operation delegates to an in-memory store, so what
-    /// a retried write actually left behind can be read back.
-    #[derive(Debug)]
-    struct FlakyPutStore {
-        inner: InMemory,
-        remaining_failures: std::sync::atomic::AtomicUsize,
-        attempts: std::sync::atomic::AtomicUsize,
-        error: fn() -> object_store::Error,
-    }
-
-    impl FlakyPutStore {
-        fn new(failures: usize, error: fn() -> object_store::Error) -> Self {
-            Self {
-                inner: InMemory::new(),
-                remaining_failures: std::sync::atomic::AtomicUsize::new(failures),
-                attempts: std::sync::atomic::AtomicUsize::new(0),
-                error,
-            }
-        }
-
-        fn attempts(&self) -> usize {
-            self.attempts.load(Ordering::SeqCst)
-        }
-    }
-
-    impl std::fmt::Display for FlakyPutStore {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("FlakyPutStore")
-        }
-    }
-
-    #[async_trait]
-    impl ObjectStore for FlakyPutStore {
-        async fn put_opts(
-            &self,
-            location: &ObjectPath,
-            payload: PutPayload,
-            options: PutOptions,
-        ) -> object_store::Result<PutResult> {
-            self.attempts.fetch_add(1, Ordering::SeqCst);
-            if self
-                .remaining_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                    (left > 0).then(|| left - 1)
-                })
-                .is_ok()
-            {
-                return Err((self.error)());
-            }
-            self.inner.put_opts(location, payload, options).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &ObjectPath,
-            options: PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn MultipartUpload>> {
-            self.inner.put_multipart_opts(location, options).await
-        }
-
-        async fn get_opts(
-            &self,
-            location: &ObjectPath,
-            options: GetOptions,
-        ) -> object_store::Result<GetResult> {
-            self.inner.get_opts(location, options).await
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> object_store::Result<ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &ObjectPath,
-            to: &ObjectPath,
-            options: CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<ObjectPath>>,
-        ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-            self.inner.delete_stream(locations)
-        }
     }
 
     fn timed_out() -> object_store::Error {
@@ -349,12 +233,12 @@ mod tests {
     /// holds one object.
     #[tokio::test]
     async fn a_block_write_that_fails_transiently_is_retried_into_a_single_block() {
-        let store = Arc::new(FlakyPutStore::new(2, timed_out));
+        let store = Arc::new(flaky_put_store(2, timed_out));
         let writer = BlockWriter::with_retry_policy(
             Arc::clone(&store) as Arc<dyn ObjectStore>,
             crate::ObjectStoreRetryPolicy::immediate(4),
         );
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = sample_batch(&schema);
 
         let meta = writer
@@ -365,7 +249,6 @@ mod tests {
         assert2::check!(meta.row_count == 4);
         assert2::check!(store.attempts() == 3);
         let objects: Vec<String> = store
-            .inner
             .list(None)
             .map(|meta| {
                 meta.expect("listing an in-memory store")
@@ -382,12 +265,12 @@ mod tests {
     /// reported on the first attempt.
     #[tokio::test]
     async fn a_permanently_refused_block_write_is_reported_without_retrying() {
-        let store = Arc::new(FlakyPutStore::new(usize::MAX, forbidden));
+        let store = Arc::new(flaky_put_store(usize::MAX, forbidden));
         let writer = BlockWriter::with_retry_policy(
             Arc::clone(&store) as Arc<dyn ObjectStore>,
             crate::ObjectStoreRetryPolicy::immediate(4),
         );
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = sample_batch(&schema);
 
         let failure = writer
@@ -444,7 +327,7 @@ mod tests {
 
     #[test]
     fn summarize_still_fingerprints_series_blocks() {
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = sample_batch(&schema);
         let (_min, _max, _rows, mut fps) = summarize(&[batch], &SummaryColumns::series()).unwrap();
         fps.sort_unstable();
@@ -504,7 +387,7 @@ mod tests {
     async fn write_block_rejects_batch_schema_mismatch() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store);
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch_schema = Arc::new(Schema::new(vec![
             Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
             Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
@@ -605,7 +488,7 @@ mod tests {
     async fn write_block_compresses_every_column_and_records_the_declared_order() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store.clone());
-        let schema = log_schema();
+        let schema = log_line_schema();
 
         writer
             .write_block("t", "k.parquet", schema.clone(), &[sample_batch(&schema)])
@@ -728,37 +611,23 @@ mod tests {
 
     #[tokio::test]
     async fn write_block_sorts_rows_the_caller_left_out_of_declared_order() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let writer = BlockWriter::new(store.clone());
-        let schema = log_schema();
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(UInt64Array::from(vec![20_u64, 10, 20, 10])),
-                Arc::new(Int64Array::from(vec![300_i64, 100, 400, 200])),
-                Arc::new(StringArray::from(vec!["c", "a", "d", "b"])),
-            ],
+        let written = write_and_read_back(
+            LogColumns {
+                fingerprints: vec![20_u64, 10, 20, 10],
+                timestamps: vec![300_i64, 100, 400, 200],
+                lines: vec!["c", "a", "d", "b"],
+            }
+            .batch(),
         )
-        .unwrap();
-
-        writer
-            .write_block("t", "k.parquet", schema.clone(), &[batch])
-            .await
-            .unwrap();
-
-        let batches = read_block(store, "k.parquet").await.unwrap();
-        let written = arrow::compute::concat_batches(&schema, &batches).unwrap();
+        .await;
         assert2::assert!(
             written
-                == RecordBatch::try_new(
-                    schema,
-                    vec![
-                        Arc::new(UInt64Array::from(vec![10_u64, 10, 20, 20])),
-                        Arc::new(Int64Array::from(vec![100_i64, 200, 300, 400])),
-                        Arc::new(StringArray::from(vec!["a", "b", "c", "d"])),
-                    ],
-                )
-                .unwrap()
+                == LogColumns {
+                    fingerprints: vec![10_u64, 10, 20, 20],
+                    timestamps: vec![100_i64, 200, 300, 400],
+                    lines: vec!["a", "b", "c", "d"],
+                }
+                .batch()
         );
     }
 
@@ -768,37 +637,23 @@ mod tests {
         // not name, so a sort that reshuffled equal keys would silently
         // reorder them. Two rows share a fingerprint and a timestamp here and
         // must come back in the order they were handed over.
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let writer = BlockWriter::new(store.clone());
-        let schema = log_schema();
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(UInt64Array::from(vec![20_u64, 10, 10])),
-                Arc::new(Int64Array::from(vec![1_i64, 5, 5])),
-                Arc::new(StringArray::from(vec!["x", "first", "second"])),
-            ],
+        let written = write_and_read_back(
+            LogColumns {
+                fingerprints: vec![20_u64, 10, 10],
+                timestamps: vec![1_i64, 5, 5],
+                lines: vec!["x", "first", "second"],
+            }
+            .batch(),
         )
-        .unwrap();
-
-        writer
-            .write_block("t", "k.parquet", schema.clone(), &[batch])
-            .await
-            .unwrap();
-
-        let batches = read_block(store, "k.parquet").await.unwrap();
-        let written = arrow::compute::concat_batches(&schema, &batches).unwrap();
+        .await;
         assert2::assert!(
             written
-                == RecordBatch::try_new(
-                    schema,
-                    vec![
-                        Arc::new(UInt64Array::from(vec![10_u64, 10, 20])),
-                        Arc::new(Int64Array::from(vec![5_i64, 5, 1])),
-                        Arc::new(StringArray::from(vec!["first", "second", "x"])),
-                    ],
-                )
-                .unwrap()
+                == LogColumns {
+                    fingerprints: vec![10_u64, 10, 20],
+                    timestamps: vec![5_i64, 5, 1],
+                    lines: vec!["first", "second", "x"],
+                }
+                .batch()
         );
     }
 
@@ -1011,7 +866,7 @@ mod tests {
 
         assert2::assert!(
             block
-                .write_batch(&sample_batch(&log_schema()))
+                .write_batch(&sample_batch(&log_line_schema()))
                 .await
                 .is_err()
         );
