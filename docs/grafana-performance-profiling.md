@@ -1434,5 +1434,57 @@ with median paired ratio 1.0827; empty medians are
 181.0/199.0 microseconds with paired ratio
 1.1992. The slower controls recur. The single-shard
 change is retained for its much larger selective and empty-request gains,
-with this tradeoff explicit. Broad-response profiling and a fresh native
-candidate/upstream comparison remain outstanding.
+with this tradeoff explicit. The following response experiment investigates
+broad-response costs; a fresh native candidate/upstream comparison remains
+outstanding.
+
+## Moving owned stream response JSON
+
+The [broad-control profile](../qualification/manifest-control-profile-2026-10-10.json)
+finds expensive response construction and `serde_json::Value` serialization.
+Its whole-process allocation totals differ by only ten calls between the
+preceding variants, so it does not isolate the earlier control slowdown.
+It supplies a separate hypothesis: `json!` serializes owned, completed JSON
+trees again, copying their strings and allocating replacement containers.
+
+Folded responses now consume each entry's timestamp and line into JSON
+strings. Completed stream results move into the success envelope. Existing
+categorized construction stays intact and also benefits from the outer move.
+The frontend still builds a JSON tree for merging; this is not a streaming
+HTTP encoder.
+
+The [response experiment](../qualification/response-json-moves-2026-10-10.json)
+uses the unmodified preceding candidate executable as its baseline and
+verifies all 96 observations across three alternating pairs. Fixture creation
+and complete ledger verification precede timing. Manifest-index caching lasts
+one hour, result caching is disabled, and local Parquet storage is warmed.
+At 100,000 streams and one million rows:
+
+| Request | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| All streams | 14.067 s | 11.153 s | 0.8391 |
+| All streams with query shards | 16.503 s | 14.089 s | 0.8538 |
+| One stream | 24.0 ms | 19.3 ms | 0.7549 |
+| Empty result | 202 us | 197 us | 1.0085 |
+
+Both largest broad cases improve in every pair with disjoint ranges. The
+ratio is the median of pair ratios, so it can differ from the ratio of
+medians. The largest empty control retains a 0.9% paired regression; at
+1,000 streams, single and empty cases retain 0.4% and 2.8% regressions.
+These control ranges overlap, and all measurements remain in the record.
+
+Whole-process CPU captures include construction, verification and three
+timed broad requests at 20,000 streams. They lose no samples. Response-builder
+cumulative attribution falls from 31.41% to 3.60%; overlapping callers and
+available callchains limit this comparison. It is not a query-only CPU ratio.
+Whole-process allocation captures at 5,000 streams include the same request
+counts: calls fall from 10,392,874 to 8,192,836, while peak heap stays at
+80.42 MB. Instrumented RSS is 216.85/215.75 MB. This does not qualify a
+general memory advantage.
+
+All 585 unit and scoped integration tests, strict production/unit/fixture/
+driver lint and managed formatting checks pass. Benchmark IDs and the 85
+historic numeric budgets remain unchanged. All work runs on this VM;
+temporary verified build dependencies in RAM are removed before timing.
+Fixture storage and WAL locations remain unchanged. A fresh native upstream
+comparison remains unfinished.

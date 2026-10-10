@@ -1,0 +1,562 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "source_commit": "a5e64c438bd43f090ea58c9374a6b0fe7ce639d2",
+  "execution": "Current VM only; no GCP VM launches",
+  "scope": "Owned stream-response JSON construction; overall upstream performance parity remains unqualified",
+  "hypothesis_source": "qualification/manifest-control-profile-2026-10-10.json",
+  "implementation": "Move completed stream result Values into the response envelope and consume folded entries into timestamp/line Value strings. Avoid reserializing owned JSON trees. Categorized results retain existing construction and gain the outer move. HTTP output still uses an intermediate Value tree.",
+  "evidence_directory": "qualification/evidence/response-json-moves-2026-10-10",
+  "host": {
+    "hostname": "bce6f61f7cac",
+    "cpu_quota": 4,
+    "affinity_available": "0-4",
+    "model": "AMD EPYC 9V74",
+    "memory_gib": 17,
+    "filesystem_bytes": 33770192896
+  },
+  "fixture": {
+    "streams": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "rows_per_stream": 10,
+    "seed": "0x10C5_B10C",
+    "metadata_bytes": 64,
+    "storage": "Private local filesystem, real Parquet and tenant manifest",
+    "request_index_cache_ttl_seconds": 3600,
+    "result_cache_ttl_seconds": 0,
+    "cases": [
+      "all",
+      "all_sharded",
+      "single",
+      "none"
+    ],
+    "verification": "Independent complete API envelope, canonical labels and all rows before timing every process; variable statistics omitted",
+    "timing_scope": "Production HTTP preparation, planning, warmed filesystem Parquet reads, response serialization and complete body consumption; excludes fixture construction and verification"
+  },
+  "measurement_plan": {
+    "paired_runs": 3,
+    "alternating_order": true,
+    "affinity": [
+      4
+    ],
+    "measurements": 96,
+    "timeout_seconds": 360
+  },
+  "build": {
+    "rustc": "1.98.1",
+    "opt_level": 3,
+    "debuginfo": "line-tables-only",
+    "force_frame_pointers": true,
+    "codegen_units": 16,
+    "lto": false,
+    "production_and_fixture_metadata_tags": "query_state_candidate for both variants",
+    "baseline": "Reuse unmodified a5e64c43 executable and immutable preceding build evidence",
+    "candidate": "Fresh production library, unchanged fixture library and profiling driver",
+    "commands": "Exact direct compiler, strict Clippy and test commands retained",
+    "cache": "104 verified build-only dependencies temporarily symlinked from /dev/shm and removed before measurements; fixture storage and WAL unchanged",
+    "normal_ci": "Normal Cargo/Bazel PR CI remains separate validation"
+  },
+  "timings": {
+    "measurements": 96,
+    "verified": 96,
+    "censored": 0,
+    "cases": [
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.8383559889691962,
+          1.0009797856362703,
+          0.8802515880637062
+        ],
+        "median_paired_ratio": 0.8802515880637062,
+        "baseline_seconds": {
+          "median": 0.059121590333333335,
+          "min": 0.05634463766666667,
+          "max": 0.05991163933333333
+        },
+        "candidate_seconds": {
+          "median": 0.052737315666666666,
+          "min": 0.049564939333333335,
+          "max": 0.05639984333333333
+        }
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.9048887977166811,
+          1.0251027251534781,
+          0.9513733787257198
+        ],
+        "median_paired_ratio": 0.9513733787257198,
+        "baseline_seconds": {
+          "median": 0.061219566333333336,
+          "min": 0.059950043,
+          "max": 0.06299844566666667
+        },
+        "candidate_seconds": {
+          "median": 0.058242665666666665,
+          "min": 0.054248122333333336,
+          "max": 0.06457987833333333
+        }
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "single",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          1.0180523008587163,
+          1.0041969345090782,
+          0.9122488650275695
+        ],
+        "median_paired_ratio": 1.0041969345090782,
+        "baseline_seconds": {
+          "median": 0.002046589,
+          "min": 0.0018846268,
+          "max": 0.0021545237
+        },
+        "candidate_seconds": {
+          "median": 0.0019654618,
+          "min": 0.0019186486499999998,
+          "max": 0.0020551784
+        }
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "none",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          1.0281156936481985,
+          1.056830503995699,
+          0.8122139075654231
+        ],
+        "median_paired_ratio": 1.0281156936481985,
+        "baseline_seconds": {
+          "median": 4.38972e-05,
+          "min": 4.3703349999999996e-05,
+          "max": 5.3446449999999994e-05
+        },
+        "candidate_seconds": {
+          "median": 4.4932099999999996e-05,
+          "min": 4.340995e-05,
+          "max": 4.63919e-05
+        }
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.7734440331537545,
+          0.7166346354951532,
+          0.7914250474535628
+        ],
+        "median_paired_ratio": 0.7734440331537545,
+        "baseline_seconds": {
+          "median": 0.42753766033333335,
+          "min": 0.42299932433333337,
+          "max": 0.47043202533333334
+        },
+        "candidate_seconds": {
+          "median": 0.33477226033333335,
+          "min": 0.3306764523333333,
+          "max": 0.337127883
+        }
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.8738687522855759,
+          0.9460638393327518,
+          0.8916220241318501
+        ],
+        "median_paired_ratio": 0.8916220241318501,
+        "baseline_seconds": {
+          "median": 0.4618018906666667,
+          "min": 0.4552408513333333,
+          "max": 0.47730618966666666
+        },
+        "candidate_seconds": {
+          "median": 0.4059027693333333,
+          "min": 0.403554242,
+          "max": 0.4515621263333333
+        }
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "single",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.9149681551683821,
+          1.0143709815797959,
+          0.9779314662516897
+        ],
+        "median_paired_ratio": 0.9779314662516897,
+        "baseline_seconds": {
+          "median": 0.00312810995,
+          "min": 0.0030157483999999997,
+          "max": 0.0034045795500000004
+        },
+        "candidate_seconds": {
+          "median": 0.0030590771499999997,
+          "min": 0.00275931375,
+          "max": 0.0034535067
+        }
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "none",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.9232715735602829,
+          0.7295899557805545,
+          0.8769428310784338
+        ],
+        "median_paired_ratio": 0.8769428310784338,
+        "baseline_seconds": {
+          "median": 5.245245e-05,
+          "min": 4.9279650000000005e-05,
+          "max": 7.282995e-05
+        },
+        "candidate_seconds": {
+          "median": 4.59978e-05,
+          "min": 4.54985e-05,
+          "max": 5.3136e-05
+        }
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.8098511489027496,
+          0.9143091077753077,
+          0.8133210631457991
+        ],
+        "median_paired_ratio": 0.8133210631457991,
+        "baseline_seconds": {
+          "median": 2.309139388,
+          "min": 2.296275017,
+          "max": 2.456403861
+        },
+        "candidate_seconds": {
+          "median": 1.989321489,
+          "min": 1.878071702,
+          "max": 2.099505162
+        }
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.9282557068108205,
+          0.7649873079144994,
+          1.0474128795945856
+        ],
+        "median_paired_ratio": 0.9282557068108205,
+        "baseline_seconds": {
+          "median": 2.356701216,
+          "min": 2.292217725,
+          "max": 2.430843615
+        },
+        "candidate_seconds": {
+          "median": 2.187621353,
+          "min": 1.859564513,
+          "max": 2.400898368
+        }
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "single",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.9580561869303101,
+          0.9058882533509859,
+          1.289001346985621
+        ],
+        "median_paired_ratio": 0.9580561869303101,
+        "baseline_seconds": {
+          "median": 0.006996523,
+          "min": 0.006884448,
+          "max": 0.007246551
+        },
+        "candidate_seconds": {
+          "median": 0.006595688,
+          "min": 0.006338068,
+          "max": 0.009340814
+        }
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "none",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.8801903510012563,
+          0.8748089700996678,
+          1.0364046200649115
+        ],
+        "median_paired_ratio": 0.8801903510012563,
+        "baseline_seconds": {
+          "median": 0.000120199,
+          "min": 0.000118007,
+          "max": 0.0001204
+        },
+        "candidate_seconds": {
+          "median": 0.000105798,
+          "min": 0.000105327,
+          "max": 0.000122303
+        }
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.7656022960165444,
+          0.8390894643269073,
+          0.8394456860429342
+        ],
+        "median_paired_ratio": 0.8390894643269073,
+        "baseline_seconds": {
+          "median": 14.067380012,
+          "min": 13.292069578,
+          "max": 14.295965976
+        },
+        "candidate_seconds": {
+          "median": 11.153235542000001,
+          "min": 10.945024375,
+          "max": 11.808801465
+        }
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.8928761731201409,
+          0.7719783266135322,
+          0.8537504388165867
+        ],
+        "median_paired_ratio": 0.8537504388165867,
+        "baseline_seconds": {
+          "median": 16.502617994,
+          "min": 15.917205515,
+          "max": 17.089888216
+        },
+        "candidate_seconds": {
+          "median": 14.089117354,
+          "min": 13.193023307,
+          "max": 14.212093547
+        }
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "single",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.5212942127022823,
+          1.2536371377762887,
+          0.7549390023424949
+        ],
+        "median_paired_ratio": 0.7549390023424949,
+        "baseline_seconds": {
+          "median": 0.023988954,
+          "min": 0.017994163,
+          "max": 0.036998926
+        },
+        "candidate_seconds": {
+          "median": 0.019287326,
+          "min": 0.018110197,
+          "max": 0.022558151
+        }
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "none",
+        "pairs": 3,
+        "paired_candidate_baseline_ratios": [
+          0.755049046493455,
+          1.0992212887374178,
+          1.0085457416957573
+        ],
+        "median_paired_ratio": 1.0085457416957573,
+        "baseline_seconds": {
+          "median": 0.000201872,
+          "min": 0.000195653,
+          "max": 0.000206029
+        },
+        "candidate_seconds": {
+          "median": 0.000197325,
+          "min": 0.000155562,
+          "max": 0.000221902
+        }
+      }
+    ]
+  },
+  "sources_sha256": {
+    "crates/observability/src/http/response/loki_responses/loki_streams_response_with_warnings.rs": "fc7d8b9e801b8a8ecf92e5bdc384561c41eaad0d60d332a7112ac9ec2984150b",
+    "crates/observability/src/http/response/loki_responses/loki_stream_results.rs": "0829bc2f5d7815009e9d9d06b736a50c61b9d793cf83135b9744d89104f75891"
+  },
+  "baseline_sources_sha256": {
+    "crates/observability/src/http/response/loki_responses/loki_streams_response_with_warnings.rs": "3d544c83d8ecc691eca4c5e36c2537847cb233ec80a4e5554c8ca2404027be24",
+    "crates/observability/src/http/response/loki_responses/loki_stream_results.rs": "76485156575b76fee8090a6025fcd2c083a67b3185f085711e8a353f70dede42"
+  },
+  "binaries": {
+    "baseline": {
+      "path": "qualification/evidence/single-shard-index-reuse-2026-10-10/binaries/candidate/log-query-frontend",
+      "sha256": "7c4d73fdee08583a0c3d64bd946a6a2005647dbb7725ce7b50439fab4c5e6e31",
+      "bytes": 226848560
+    },
+    "candidate": {
+      "path": "qualification/evidence/response-json-moves-2026-10-10/binaries/candidate/log-query-frontend",
+      "sha256": "30917f40d8f78654e1ad345e9f13cf1401db6b2892920e0abf1c3df485b04f79",
+      "bytes": 226833144
+    }
+  },
+  "upstream": {
+    "system": "Loki",
+    "source_commit": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+    "url": "https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/util/marshal/query.go#L375",
+    "source_sha256": "8260f46f184a6a06414d4ee35e6c1eed1533dbb0c4952c4fb3f45cdf152f5b69",
+    "finding": "encodeStreams/encodeStream write directly to jsoniter.Stream, including timestamps and escaped lines. Krabka removes redundant intermediate copies but still builds Values for its frontend merge."
+  },
+  "cpu": {
+    "scope": "Whole process: fixture construction, one verification request and three timed all-stream requests at 20000 streams",
+    "event": "cpu-clock:u",
+    "frequency_hz": 199,
+    "stack_bytes": 8192,
+    "mmap_pages": 512,
+    "threshold_percent": 0.5,
+    "captures": {
+      "baseline": {
+        "samples_display": "2K of event 'cpu-clock:u'",
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 11085425750
+      },
+      "candidate": {
+        "samples_display": "1K of event 'cpu-clock:u'",
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 8653265250
+      }
+    },
+    "limitation": "Includes construction and verification; cumulative callers overlap and depend on available callchains. Does not establish a query-only CPU ratio.",
+    "response_builder_cumulative_percent": {
+      "baseline": 31.41,
+      "candidate": 3.6
+    },
+    "interpretation": "Response builder attribution falls; overlapping cumulative frames and whole-process sampling prevent a query-only CPU claim"
+  },
+  "heap": {
+    "scope": "Whole process: fixture construction, one verification request and three timed all-stream requests at 5000 streams",
+    "captures": [
+      {
+        "variant": "baseline",
+        "allocation_calls": 10392874,
+        "temporary_allocations": 622920,
+        "peak_heap": "80.42M",
+        "peak_rss_including_profiler": "216.85M"
+      },
+      {
+        "variant": "candidate",
+        "allocation_calls": 8192836,
+        "temporary_allocations": 622928,
+        "peak_heap": "80.42M",
+        "peak_rss_including_profiler": "215.75M"
+      }
+    ],
+    "limitation": "Includes fixture and verification; RSS includes profiler overhead; no general memory advantage is inferred"
+  },
+  "validation": {
+    "passed_tests": 585,
+    "suites": {
+      "observability_unit": 427,
+      "querier": 70,
+      "querier_object_store": 22,
+      "query_range": 56,
+      "per_tenant_limits": 10
+    },
+    "clippy": "all,pedantic -D warnings: production, full unit source, unchanged fixture library and profiling driver",
+    "format": "Managed Bazel //tools/format passed",
+    "criterion_inventory": "No new IDs; 44 frontend cases and all 85 historic numeric budgets unchanged",
+    "checks": [
+      "git diff --check",
+      "tools/mutants-record.py --check"
+    ],
+    "restored_demo": "All five initially running demo containers verified healthy after runner restoration"
+  },
+  "limitations": [
+    "Synthetic warmed local-filesystem timings with three alternating pairs; no fresh native candidate/upstream comparison",
+    "All control regressions and ranges retained; sub-millisecond control timings are sensitive to fixed overhead",
+    "CPU and heap profiles include fixture construction and verification",
+    "Prior broad-control slowdown remains documented; this round tests a separate response-copying hypothesis"
+  ],
+  "regressions": [
+    {
+      "streams": 1000,
+      "case": "single",
+      "median_paired_ratio": 1.0041969345090782,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 1000,
+      "case": "none",
+      "median_paired_ratio": 1.0281156936481985,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 100000,
+      "case": "none",
+      "median_paired_ratio": 1.0085457416957573,
+      "ranges_overlap": true
+    }
+  ],
+  "reproduction_scripts_sha256": {
+    "archive-response-artifact.py": "3721278ae0783939605850fff47efc0035a28c0ec01af9b50162da7cea404514",
+    "build-response.py": "db31daf96783d63585769bfff6e893c5824695a819faafce0db88745b7eb383a",
+    "clippy-response-fixture.py": "57df0835d7b275cc83d427ee3aff422d5e04423e1e18e6fc8cd7f740c657005d",
+    "clippy-response.py": "05796985998b00de87706968c4762748fc5c3dedc3267e3a67ac1d3ae9d17706",
+    "compact-own-cargo-debug-cache-round2.py": "0e1c38e658fe450c72ce206287984e7a5027942627ade1ad1dc208cb2d897fdf",
+    "finalize-response-record.py": "dcde307bf5ee7e08ed3c33ceb1e5ef39d677253651ff67b0e73b9b8d049672b0",
+    "profile-response.py": "22846fff78cb692a3a215c69bae350562ca6d250e1061daf716ccd31469ad29d",
+    "remove-response-cache.py": "0b1254e3ed9a2e143d937f588f3d842cfab486a7a10ceb685e329ba1722f81f6",
+    "restore-response-cache.py": "62fd812a68148ed032d128b992efb993792e4f0a1bd5bce2d0f63698de4cc98d",
+    "run-response-pairs.py": "48104bcb1cb8b9869c7cfce94c1a0d239d128c1a18e9414b953065919379eea8",
+    "run-response-round.py": "9a4efcf963c17562c0775941427b131238920b494a8498cbdb532f5cea18f8d4",
+    "test-response.py": "ea8eb17f68fa96a2cf984ea4b475979f36d00cd4bd1fe3f9b27ba531f562cf1b"
+  },
+  "raw_manifest": {
+    "path": "qualification/evidence/response-json-moves-2026-10-10/raw-manifest.json",
+    "sha256": "4e6489b97ccb50f432088afcac100b238b656472f3f2350d25ae13f6475db93b",
+    "files": 91,
+    "bytes": 822860429,
+    "scope": "Every file in this evidence directory except manifest; baseline executable and build proof remain in separately frozen single-shard evidence"
+  },
+  "decision": "Retain: both largest broad cases improve in every pair with disjoint ranges; allocation calls fall. Small overlapping control regressions remain explicit; no fresh native upstream comparison."
+}

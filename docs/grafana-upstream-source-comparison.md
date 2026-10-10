@@ -489,3 +489,16 @@ constructing a complete label/postings index on each request. Krabka's
 new single-shard path reuses the already tenant-filtered immutable snapshot;
 its multiple-shard path still materializes merged indexes. The source file
 and its hash are retained with the local experiment evidence.
+
+## Stream response encoding
+
+At the same pinned Loki commit,
+[`encodeStreams` and `encodeStream`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/util/marshal/query.go#L375)
+write arrays, timestamps and escaped log lines directly to a `jsoniter.Stream`.
+Categorized metadata is written into that stream too. Krabka's response
+profile instead exposes repeated serialization of already-built JSON trees.
+Its folded entry strings and completed stream results now move into their
+containers, avoiding those copies. Krabka still uses an intermediate
+`serde_json::Value` tree for frontend merging; direct HTTP encoding remains
+a separate opportunity. The pinned source and checksum are retained with
+the [response experiment](../qualification/response-json-moves-2026-10-10.json).
