@@ -1813,3 +1813,66 @@ timestamp strings. That earlier stage explains why optimizing the later
 global JSON selection need not improve this workload. Timestamp handling
 in actual sort/trim callers is the next profiling target; no new production
 change or native upstream comparison is claimed by this qualification.
+
+## Rejected order check before stream sorting
+
+The [sorter prototype](../qualification/sorted-log-stream-2026-10-10.json)
+follows the complete HTTP profile's timestamp-parsing call chain. Production
+already parses each entry once into a cached sort key. The prototype first
+checks numeric timestamp order in one pass, returning without allocating
+sort keys when the stream is ordered. On an unordered stream, it falls back
+to the original stable cached-key sort and reparses the inspected prefix.
+
+The isolated driver contains the exact production sort function and a
+five-field entry stand-in with the same timestamp parser and label maps.
+It omits construction and serialization methods; no actual HTTP or storage
+caller improvement is qualified. Three alternating pairs cover four sizes
+through one million rows, ten or 1,000 entries per stream, and ordered,
+reversed and shuffled input. An independent numeric ledger checks every
+entry and all label buckets, including large and negative timestamps,
+malformed entries and stable ties. All 144 primary checks pass. At one
+million rows:
+
+| Entries per stream | Input | Baseline median | Prototype median | Median paired ratio |
+| --- | --- | --- | --- | --- |
+| 10 | Ordered | 179.879 ms | 132.040 ms | 0.7512 |
+| 10 | Reversed | 153.051 ms | 153.199 ms | 0.9977 |
+| 10 | Shuffled | 150.629 ms | 155.982 ms | 1.0453 |
+| 1,000 | Ordered | 31.886 ms | 24.434 ms | 0.7852 |
+| 1,000 | Reversed | 45.687 ms | 43.879 ms | 0.9637 |
+| 1,000 | Shuffled | 51.287 ms | 44.588 ms | 0.8694 |
+
+Ten-entry shuffled streams slow in every million-row pair. Twelve longer
+verified observations repeat that control at 100,000 and one million rows,
+using twenty and five timed iterations. Both sizes slow in every pair,
+with paired median ratios 1.0507 and 1.0522 and overlapping ranges. Preserve
+the ordered gains and unordered regressions; reject the prototype before
+changing or rebuilding production. Another 42 boundary ledger checks pass,
+including empty and single-entry fixtures.
+
+Four CPU captures at 100,000 rows include setup, independent verification,
+cloning/disposal and fifty timed sorts. They contain 1,740–1,844 actual
+sample records and lose no samples. Timestamp parsing receives 8.41/8.85%
+self attribution for ordered input and 7.75/8.13% for shuffled input. These
+relative whole-process percentages do not isolate a normalized sorter CPU
+ratio or establish the cause of the latency regression. Four allocation
+captures at 20,000 rows and ten timed sorts remove 22,000 calls and temporary
+allocations for ordered input (2,218,361/2,196,361 calls). Shuffled input
+retains 2,218,361 calls in both variants. Peak heap stays at 81.71 MB across
+all four captures; instrumented RSS changes by at most 0.14 MB. No general
+memory advantage is qualified.
+
+Pinned [Loki sort fields](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L255)
+obtain numeric nanoseconds from a typed timestamp and merge ordered
+iterators. Krabka retains a string timestamp; this prototype adds an order
+check without changing that representation. Keeping typed timestamps
+through actual sorting and trimming remains a distinct investigation,
+requiring tie, malformed-entry and complete request qualification.
+
+All work runs on this VM. Build-only assertion dependencies are hashed and
+removed before measurement; failed dependency recovery attempts remain in
+the evidence. Raw captures, losslessly compressed reports, the matched
+executable, source snapshots and commands are preserved. The demo is
+restored healthy. Production source, benchmark IDs and historical numeric
+budgets remain unchanged; the rejected candidate has no production test or
+native upstream qualification claim.
