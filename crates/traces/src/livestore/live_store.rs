@@ -1,3 +1,5 @@
+use krabka_traceql::TagCatalog;
+
 use super::{
     BTreeMap, BTreeSet, EVENT_TAGS, INTRINSIC_TAGS, LINK_TAGS, LiveResult, LiveSource, MemTable,
     RecordBatch, Span, SpanRecord, TracesError, UnixNano, collect_event_values,
@@ -147,6 +149,17 @@ impl LiveSource for LiveStore {
         Ok((!spans.is_empty()).then(|| trace_spans(trace_id, &spans)))
     }
 
+    fn block_builder_frontier_ns(&self, _tenant: &str) -> i64 {
+        if self.max_start_ns == i64::MIN {
+            0
+        } else {
+            self.max_start_ns
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl TagCatalog for LiveStore {
     async fn tag_names(
         &self,
         tenant: &str,
@@ -288,13 +301,5 @@ impl LiveSource for LiveStore {
             .into_iter()
             .map(|(type_, value)| krabka_traceql::TypedValue { type_, value })
             .collect())
-    }
-
-    fn block_builder_frontier_ns(&self, _tenant: &str) -> i64 {
-        if self.max_start_ns == i64::MIN {
-            0
-        } else {
-            self.max_start_ns
-        }
     }
 }

@@ -15,8 +15,12 @@
 //! event for each refusal. The certificates are generated for each test with
 //! `rcgen`, so no key material is in the repository.
 
+#[path = "../../observability/tests/support/server_security_pki.rs"]
+mod server_security_pki;
+#[path = "../../observability/tests/support/token_sha256.rs"]
+mod token_sha256;
+
 use std::{
-    fmt::Write as _,
     io::Write as _,
     net::SocketAddr,
     path::PathBuf,
@@ -48,14 +52,12 @@ use krabka_profiles::{
     query::{self, QuerierState},
 };
 use qubit_clock::FixedWallClock;
-use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose,
-};
+use rcgen::{CertifiedIssuer, KeyPair};
 use reqwest::header::{CONTENT_TYPE, HeaderValue};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use server_security_pki::{Leaf, Pem, authority};
 use tempfile::TempDir;
+use token_sha256::sha256_hex;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::TcpSocket,
@@ -620,16 +622,9 @@ struct Pki {
 impl Pki {
     fn new() -> Self {
         install_crypto_provider();
-        let mut params = CertificateParams::new(Vec::<String>::new()).expect("valid parameters");
-        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        params
-            .distinguished_name
-            .push(DnType::CommonName, "krabka profiles test ca");
         Self {
             dir: TempDir::new().expect("a temporary directory"),
-            authority: CertifiedIssuer::self_signed(params, KeyPair::generate().expect("a key"))
-                .expect("a CA"),
+            authority: authority("krabka profiles test ca"),
         }
     }
 
@@ -647,20 +642,10 @@ impl Pki {
             sha256_hex(GRAFANA_TOKEN),
         );
         let (certificate, key) = if tls {
-            let mut params =
-                CertificateParams::new(vec!["localhost".to_owned(), "127.0.0.1".to_owned()])
-                    .expect("valid parameters");
-            params
-                .distinguished_name
-                .push(DnType::CommonName, "krabka-profiles");
-            params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-            let key = KeyPair::generate().expect("a key");
-            let certificate = params
-                .signed_by(&key, &self.authority)
-                .expect("a signed server certificate");
+            let Pem { certificate, key } = Leaf::LOCAL_SERVER.signed_by(&self.authority);
             (
-                Some(self.write("server.pem", certificate.pem())),
-                Some(self.write("server-key.pem", key.serialize_pem())),
+                Some(self.write("server.pem", certificate)),
+                Some(self.write("server-key.pem", key)),
             )
         } else {
             (None, None)
@@ -691,15 +676,6 @@ impl Pki {
             .build()
             .expect("the client builds")
     }
-}
-
-fn sha256_hex(token: &str) -> String {
-    Sha256::digest(token.as_bytes())
-        .iter()
-        .fold(String::new(), |mut hex, byte| {
-            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-            hex
-        })
 }
 
 /// The tenant whose frame the render flamebearer holds.

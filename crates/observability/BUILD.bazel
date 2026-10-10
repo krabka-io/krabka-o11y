@@ -9,9 +9,13 @@ exports_files([
     "Cargo.toml",
     "tests/support/compaction_passes.rs",
     "tests/support/in_process_broker.rs",
+    "tests/support/index_snapshot_flags.rs",
     "tests/support/minio_store.rs",
     "tests/support/pipeline_bundle_metrics.rs",
+    "tests/support/rejection_responses.rs",
+    "tests/support/server_security_pki.rs",
     "tests/support/sigterm_child.rs",
+    "tests/support/token_sha256.rs",
     "tests/support/wal_fetch_limit_flags.rs",
 ])
 
@@ -27,6 +31,7 @@ crate_library(
         "tests/support/pipeline_bundle_metrics.rs",
         "tests/support/recorded_security_events.rs",
         "tests/support/server_security_pki.rs",
+        "tests/support/token_sha256.rs",
     ],
 )
 

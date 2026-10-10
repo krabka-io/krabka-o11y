@@ -1,4 +1,4 @@
-use super::{Arc, LiveSource, LiveStore, RwLock, SharedTraceIndex};
+use super::{Arc, LiveSource, LiveStore, RwLock, SharedTraceIndex, TagCatalog};
 
 pub(crate) struct IndexedLiveSource {
     pub(crate) store: Arc<RwLock<LiveStore>>,
@@ -32,6 +32,13 @@ impl LiveSource for IndexedLiveSource {
         guard.trace_spans(tenant, trace_id).await
     }
 
+    fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
+        krabka_traces::querier::store::block_builder_frontier_ns(&self.trace_index, tenant)
+    }
+}
+
+#[async_trait::async_trait]
+impl TagCatalog for IndexedLiveSource {
     async fn tag_names(
         &self,
         tenant: &str,
@@ -52,15 +59,5 @@ impl LiveSource for IndexedLiveSource {
     ) -> krabka_traces::querier::live::Result<Vec<krabka_traceql::TypedValue>> {
         let guard = self.store.read().await;
         guard.tag_values(tenant, tag, start_ns, end_ns).await
-    }
-
-    fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
-        let trace_index = self.trace_index.load();
-        trace_index
-            .trace_blocks(tenant)
-            .iter()
-            .map(|block| block.max_ts.saturating_add(1))
-            .max()
-            .unwrap_or_default()
     }
 }

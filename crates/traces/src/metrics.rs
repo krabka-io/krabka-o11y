@@ -11,18 +11,14 @@
 //! `prometheus-client` auto-appends `_total` to counters at encode time, so
 //! counter names are registered WITHOUT the suffix.
 
-use krabka_blockstore::{ObjectStoreMetrics, TenantId};
+use krabka_blockstore::TenantId;
+use krabka_observability::service_metrics::{
+    CompactionMetrics, IngestHelpText, IngestInstruments, IngestRequest, ObjectStoreMetrics,
+    PipelineInstruments, QueryHelpText, QueryInstruments, QueryRequest, WalConsumerMetrics,
+    WalProduceMetrics, register_in_new_registry,
+};
 pub use krabka_observability::service_metrics::{
     RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, TenantLabel, metrics_router,
-};
-use krabka_observability::{
-    compaction_metrics::CompactionMetrics,
-    service_metrics::{
-        IngestHelpText, IngestInstruments, IngestRequest, PipelineInstruments, QueryHelpText,
-        QueryInstruments, QueryRequest, register_in_new_registry,
-    },
-    wal_consumer_metrics::WalConsumerMetrics,
-    wal_produce::WalProduceMetrics,
 };
 use prometheus_client::{
     metrics::{counter::Counter, family::Family},

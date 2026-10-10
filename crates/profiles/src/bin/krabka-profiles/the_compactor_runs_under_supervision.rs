@@ -13,14 +13,14 @@ use std::{sync::Arc, time::Duration};
 
 use assert2::check;
 use clap::Parser as _;
-use krabka_observability::{RoleReadiness, StagedDrain};
+use krabka_observability::RoleReadiness;
 use krabka_profiles::limits::{Limits, OverridesProvider};
-use krabka_units::secs;
 use object_store::memory::InMemory;
 use tokio::sync::oneshot;
 
 use self::compaction_passes::{
-    COMPACTION_INTERVAL, assert_no_pass_after_the_stop, passes, passes_reach,
+    COMPACTION_INTERVAL, assert_no_pass_after_the_stop, assert_stage_drains_with_its_loop,
+    assert_stopped_without_a_pass, passes_reach,
 };
 use super::{CancellationToken, Cli, ObjectStore, ServiceMetrics, compactor_stage, run_compactor};
 
@@ -106,8 +106,7 @@ async fn a_compactor_started_during_shutdown_returns_without_a_pass() {
     )
     .await;
 
-    check!(outcome.is_ok());
-    check!(passes(&metrics.compaction) == 0);
+    assert_stopped_without_a_pass(&outcome, &metrics.compaction);
 }
 
 /// `--target all`: the compactor stage stops inside the drain's budget.
@@ -129,20 +128,11 @@ async fn the_compactor_stage_of_target_all_stops_within_its_drain_budget() {
         &metrics,
     );
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    let mut drain = StagedDrain::new(secs(5));
-    drain.stage("compactor", move |token| async move {
+    assert_stage_drains_with_its_loop(&metrics.compaction, move |token| async move {
         stage(token).await;
         let _ = stopped_tx.send(());
-    });
-
-    passes_reach(&metrics.compaction, 2).await;
-    let overran = drain.drain().await;
-
-    check!(overran.is_empty(), "the compactor stage overran its budget");
-    check!(stopped_rx.await.is_ok(), "the compactor stage returned");
-    assert_no_pass_after_the_stop(
-        &metrics.compaction,
-        "a compaction loop outlived the stage that owned it",
-    )
+    })
     .await;
+
+    check!(stopped_rx.await.is_ok(), "the compactor stage returned");
 }

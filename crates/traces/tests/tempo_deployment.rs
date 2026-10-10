@@ -27,7 +27,7 @@ mod deployment_evidence;
 use container_deployment::{
     Deployment, TestResult, base_url, image, start, start_infrastructure, wait_until_ready,
 };
-use deployment_evidence::record_evidence;
+use deployment_evidence::{QueryOutcome, record_evidence};
 
 const PORT: u16 = 3200;
 const ADMIN: u16 = 9404;
@@ -747,10 +747,12 @@ async fn check_trace_queries(
         let result = wait_trace_query(deployment, container, tenant, path, query, &expected).await;
         record_evidence(
             evidence,
-            json!({"phase":phase, "tenant":tenant, "path":path, "query":query,
-            "expected":expected, "actual":result.as_ref().ok(),
-            "status":if result.is_ok() {"matched"} else {"mismatch"},
-            "error":result.as_ref().err().map(ToString::to_string)}),
+            QueryOutcome {
+                request: json!({"phase":phase, "tenant":tenant, "path":path, "query":query}),
+                expected: &expected,
+                outcome: &result,
+            }
+            .evidence_case(),
             filename,
         )?;
         result?;

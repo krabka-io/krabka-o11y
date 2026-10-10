@@ -51,6 +51,10 @@ use url::Url;
 
 #[cfg(test)]
 mod tests {
+    // The vector-sample check the PromQL HTTP API's unit tests share,
+    // reached with `#[path]` from //crates/promql.
+    #[path = "../../../promql/src/http_api/tests/first_vector_sample.rs"]
+    mod first_vector_sample;
     mod instant_float_scan;
     mod owned_wal_replay;
     mod parallel_manifest_reads;
@@ -1922,8 +1926,13 @@ rules:
         let (status_is_success, body) =
             get_as_tenant_a(router, "/api/v1/query?query=up&time=10").await;
         assert2::assert!(status_is_success);
-        assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
-        assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
+        first_vector_sample::check_first_vector_sample(
+            &body,
+            &first_vector_sample::ExpectedVectorSample {
+                job: "api",
+                value: "1",
+            },
+        );
     }
 
     #[tokio::test]
@@ -2447,8 +2456,13 @@ rules:
         let (status_is_success, body) =
             get_as_tenant_a(router, "/api/v1/query?query=up&time=20").await;
         assert2::assert!(status_is_success);
-        assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
-        assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("2"));
+        first_vector_sample::check_first_vector_sample(
+            &body,
+            &first_vector_sample::ExpectedVectorSample {
+                job: "api",
+                value: "2",
+            },
+        );
     }
 
     async fn write_float_manifest(

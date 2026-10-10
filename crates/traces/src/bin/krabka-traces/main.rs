@@ -8,11 +8,8 @@ use krabka_blockstore::{
     IndexSnapshotRetain, ObjectStoreAccess, PromotedSpanAttr, TENANT_HEADER, TenantId,
     TenantPolicy, TraceIndex,
 };
-use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerFetchMaxBytes};
-use krabka_client_core::{
-    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
-    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-};
+use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_client_core::{ClientSecurity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY};
 use krabka_client_producer::Producer;
 use krabka_observability::{
     ConfigFileArgs, argv_with_config_file,
@@ -24,7 +21,7 @@ use krabka_observability::{
     wal_client_security::WalClientSecurityArgs,
 };
 use krabka_telemetry::OtlpConfig;
-use krabka_traceql::{EngineOpts, TraceqlEngine};
+use krabka_traceql::{EngineOpts, TagCatalog, TraceqlEngine};
 use krabka_traces::{
     Limits, LiveStore, TRACES_WAL_TOPIC, blockbuilder,
     compactor::{
@@ -584,42 +581,13 @@ mod tests {
     #[test]
     fn index_snapshot_policy_defaults_and_rejects_invalid_values() {
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
-        assert_eq!(
-            cli.index_snapshot_max,
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
-        );
-        assert_eq!(
-            cli.index_snapshot_retain.into_value(),
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
+        check!(cli.index_snapshot_max == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX);
+        check!(
+            cli.index_snapshot_retain.into_value()
+                == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
         );
 
-        for flag in ["--index-snapshot-max", "--index-snapshot-retain"] {
-            for invalid in ["0", "not-a-number", "-1", "18446744073709551616"] {
-                assert!(
-                    Cli::try_parse_from([
-                        "krabka-traces",
-                        "--target",
-                        "block-builder",
-                        flag,
-                        invalid,
-                    ])
-                    .is_err(),
-                    "{flag} should reject {invalid:?}"
-                );
-            }
-        }
-        for invalid in ["1.5B", "18446744073709551616B"] {
-            assert!(
-                Cli::try_parse_from([
-                    "krabka-traces",
-                    "--target",
-                    "block-builder",
-                    "--index-snapshot-max",
-                    invalid,
-                ])
-                .is_err()
-            );
-        }
+        index_snapshot_flags::assert_rejects_invalid_index_snapshot_policy::<Cli>("krabka-traces");
     }
 
     #[test]
@@ -2410,6 +2378,12 @@ mod in_process_broker;
 #[path = "../../../../observability/tests/support/wal_fetch_limit_flags.rs"]
 mod wal_fetch_limit_flags;
 
+/// The invalid index snapshot policy values, shared with the other signal
+/// binary that parses them.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/index_snapshot_flags.rs"]
+mod index_snapshot_flags;
+
 mod all_role_context;
 mod all_role_stage;
 mod all_role_stages;
@@ -2441,10 +2415,6 @@ mod log_role_outcome;
 mod max_trace_size;
 mod metrics_flags;
 mod now_unix_nanos;
-mod parse_client_dispatch_queue_capacity;
-mod parse_client_frame_max;
-mod parse_consumer_fetch_size;
-mod parse_min_two_usize;
 mod parse_non_negative_time_or_secs;
 mod parse_non_negative_whole_byte_size_or_bytes;
 mod parse_positive_time_or_millis;
@@ -2505,7 +2475,8 @@ use frontend_config_from_cli::frontend_config_from_cli;
 use indexed_live_source::IndexedLiveSource;
 use ingest_rate_from_cli::ingest_rate_from_cli;
 use krabka_observability::cli_value_parsers::{
-    parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    parse_min_two_usize, parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
 };
 use limits_from_cli::limits_from_cli;
 use listening_role::ListeningRole;
@@ -2516,10 +2487,6 @@ use log_role_outcome::log_role_outcome;
 use max_trace_size::max_trace_size;
 use metrics_flags::MetricsFlags;
 use now_unix_nanos::now_unix_nanos;
-use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
-use parse_client_frame_max::parse_client_frame_max;
-use parse_consumer_fetch_size::parse_consumer_fetch_size;
-use parse_min_two_usize::parse_min_two_usize;
 use parse_non_negative_time_or_secs::parse_non_negative_time_or_secs;
 use parse_non_negative_whole_byte_size_or_bytes::parse_non_negative_whole_byte_size_or_bytes;
 use parse_positive_time_or_millis::parse_positive_time_or_millis;

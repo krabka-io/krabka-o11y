@@ -17,6 +17,11 @@ pub(crate) async fn instant_query_without_time_defaults_to_current_time() {
 
     assert2::assert!(status == StatusCode::OK);
     assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
-    assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
+    first_vector_sample::check_first_vector_sample(
+        &body,
+        &first_vector_sample::ExpectedVectorSample {
+            job: "api",
+            value: "1",
+        },
+    );
 }

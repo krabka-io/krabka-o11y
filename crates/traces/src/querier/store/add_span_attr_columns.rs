@@ -1,5 +1,5 @@
 use super::{
-    ATTR_PREFIX, AttrValue, DataType, INSTRUMENTATION_ATTR_PREFIX, MatchScope, MatchValue,
+    ATTR_PREFIX, DataType, INSTRUMENTATION_ATTR_PREFIX, MatchScope, MatchValue,
     ProjectedAttrColumn, RESOURCE_ATTR_PREFIX, RecordBatch, ResourceAttrs, SpanMatcher,
     TraceqlError, add_span_attr_columns_to_batch, attr_values_with_resource, span_schema,
 };
@@ -94,14 +94,7 @@ pub(crate) fn add_span_attr_columns(
                         .into_iter()
                         .find(|(key, _)| key == &lookup_key)
                     {
-                        let next = match value {
-                            AttrValue::Unsupported(_) | AttrValue::Array(_) | AttrValue::Str(_) => {
-                                DataType::Utf8
-                            }
-                            AttrValue::Int(_) => DataType::Int64,
-                            AttrValue::Float(_) => DataType::Float64,
-                            AttrValue::Bool(_) => DataType::Boolean,
-                        };
+                        let next = value.arrow_data_type();
                         inferred = Some(match inferred.as_ref() {
                             Some(previous) => merge_projection_types(&column_name, previous, next)?,
                             None => next,

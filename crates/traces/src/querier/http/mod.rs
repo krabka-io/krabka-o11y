@@ -15,7 +15,7 @@ use krabka_observability::{
     server_security::{Principal, authorize_tenant},
 };
 use krabka_traceql::{
-    AttrValue, ComparisonOp, Field, FieldExpr, Intrinsic, ScanJob, ScanOptions, Scope, ScopedTag,
+    AttrValue, ComparisonOp, Field, FieldExpr, ScanJob, ScanOptions, Scope, ScopedTag,
     SearchOptions, SearchResponse, SpanRef, SpanStore, SpansetExpr, TagScope, TraceMetricsResponse,
     TraceSpans, TraceqlEngine, TraceqlError, TypedValue, Value as TraceqlValue,
 };
@@ -48,54 +48,6 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-
-    /// The intrinsic tag names are Tempo's API surface: a client asking for
-    /// `span:parentID` gets nothing back if this map spells it `span:parentId`.
-    /// Every variant is named here, and the names are checked for being
-    /// distinct as well as correct -- returning a neighbour's string is the
-    /// failure a per-variant spot check misses. A new variant needs a row.
-    #[test]
-    fn every_intrinsic_maps_to_its_tempo_tag_name() {
-        let cases = [
-            (Intrinsic::Name, "span:name"),
-            (Intrinsic::Duration, "span:duration"),
-            (Intrinsic::Kind, "span:kind"),
-            (Intrinsic::Status, "span:status"),
-            (Intrinsic::StatusMessage, "span:statusMessage"),
-            (Intrinsic::Id, "span:id"),
-            (Intrinsic::ParentId, "span:parentID"),
-            (Intrinsic::ChildCount, "span:childCount"),
-            (Intrinsic::TraceDuration, "trace:duration"),
-            (Intrinsic::TraceRootName, "trace:rootName"),
-            (Intrinsic::TraceRootService, "trace:rootService"),
-            (Intrinsic::TraceId, "trace:id"),
-            (Intrinsic::EventName, "event:name"),
-            (Intrinsic::EventTimeSinceStart, "event:timeSinceStart"),
-            (Intrinsic::LinkTraceId, "link:traceID"),
-            (Intrinsic::LinkSpanId, "link:spanID"),
-            (Intrinsic::InstrumentationName, "instrumentation:name"),
-            (Intrinsic::InstrumentationVersion, "instrumentation:version"),
-            (Intrinsic::NestedSetLeft, "span:nestedSetLeft"),
-            (Intrinsic::NestedSetRight, "span:nestedSetRight"),
-            (Intrinsic::NestedSetParent, "span:nestedSetParent"),
-        ];
-
-        for (intrinsic, want) in &cases {
-            check!(
-                super::intrinsic_tag_name(intrinsic) == *want,
-                "{intrinsic:?}"
-            );
-        }
-
-        let names = cases
-            .iter()
-            .map(|(_, name)| *name)
-            .collect::<std::collections::BTreeSet<_>>();
-        check!(
-            names.len() == cases.len(),
-            "every intrinsic has its own name"
-        );
-    }
 
     /// `collect_trace_intrinsic_values` reports one trace-level intrinsic
     /// with the type name a client reads it as. Three of the four arms
@@ -405,7 +357,8 @@ mod tests {
         TraceBlockStats, TraceIndex, encode_span_rows, span_block_schema,
     };
     use krabka_traceql::{
-        AttrValue, EngineOpts, EventRef, InMemorySpanStore, InputSpan, LinkRef, TraceqlEngine,
+        AttrValue, EngineOpts, EventRef, InMemorySpanStore, InputSpan, Intrinsic, LinkRef,
+        TagCatalog, TraceqlEngine,
     };
     use krabka_units::{nanos, secs};
     use object_store::{buffered::BufWriter, memory::InMemory, path::Path};
@@ -491,22 +444,12 @@ mod tests {
     fn root_span_ref(name: &str) -> SpanRef {
         SpanRef {
             span_id: [1; 8],
-            parent_span_id: None,
             name: name.into(),
-            kind: 0,
             nested_set_left: 1,
             nested_set_right: 2,
-            nested_set_parent: 0,
             start_time_unix_nano: 1_001,
             duration: nanos(200),
-            status_code: 0,
-            status_message: String::new(),
-            instrumentation_name: String::new(),
-            instrumentation_version: String::new(),
-            resource_attributes: Vec::new(),
-            attributes: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
+            ..SpanRef::default()
         }
     }
 
@@ -3182,7 +3125,10 @@ overrides:
         ) -> Result<Option<TraceSpans>, TraceqlError> {
             Ok(None)
         }
+    }
 
+    #[async_trait::async_trait]
+    impl TagCatalog for IndexedOnlyStore {
         async fn tag_names(
             &self,
             _tenant: &str,
@@ -3870,7 +3816,6 @@ mod instrumentation_groups;
 mod instrumentation_key;
 mod instrumentation_scope_json;
 mod instrumentation_tags;
-mod intrinsic_tag_name;
 mod intrinsic_tags;
 mod is_match_all_query;
 mod key_is_safe_attribute;
@@ -4003,7 +3948,6 @@ use instrumentation_groups::InstrumentationGroups;
 use instrumentation_key::InstrumentationKey;
 use instrumentation_scope_json::instrumentation_scope_json;
 use instrumentation_tags::INSTRUMENTATION_TAGS;
-use intrinsic_tag_name::intrinsic_tag_name;
 use intrinsic_tags::INTRINSIC_TAGS;
 use is_match_all_query::is_match_all_query;
 use key_is_safe_attribute::key_is_safe_attribute;

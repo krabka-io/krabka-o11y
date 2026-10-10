@@ -10,11 +10,7 @@ use krabka_blockstore::{
     BlockLevel, BlockTimestampUnit, CompactionPolicy, DEFAULT_MAX_BLOCKS_PER_JOB,
     DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, ProfileIndex,
 };
-use krabka_client_consumer::ConsumerFetchMaxBytes;
-use krabka_client_core::{
-    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
-    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-};
+use krabka_client_core::{ClientSecurity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY};
 use krabka_client_producer::Producer;
 use krabka_observability::{
     ConfigFileArgs, ReadinessGate, argv_with_config_file,
@@ -484,42 +480,15 @@ mod tests {
     #[test]
     fn index_snapshot_policy_defaults_and_rejects_invalid_values() {
         let cli = Cli::try_parse_from(["krabka-profiles", "--target", "block-builder"]).unwrap();
-        assert_eq!(
-            cli.index_snapshot_max,
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
-        );
-        assert_eq!(
-            cli.index_snapshot_retain.into_value(),
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
+        assert!(cli.index_snapshot_max == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX);
+        assert!(
+            cli.index_snapshot_retain.into_value()
+                == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
         );
 
-        for flag in ["--index-snapshot-max", "--index-snapshot-retain"] {
-            for invalid in ["0", "not-a-number", "-1", "18446744073709551616"] {
-                assert!(
-                    Cli::try_parse_from([
-                        "krabka-profiles",
-                        "--target",
-                        "block-builder",
-                        flag,
-                        invalid,
-                    ])
-                    .is_err(),
-                    "{flag} should reject {invalid:?}"
-                );
-            }
-        }
-        for invalid in ["1.5B", "18446744073709551616B"] {
-            assert!(
-                Cli::try_parse_from([
-                    "krabka-profiles",
-                    "--target",
-                    "block-builder",
-                    "--index-snapshot-max",
-                    invalid,
-                ])
-                .is_err()
-            );
-        }
+        index_snapshot_flags::assert_rejects_invalid_index_snapshot_policy::<Cli>(
+            "krabka-profiles",
+        );
     }
 
     #[test]
@@ -1109,6 +1078,12 @@ mod in_process_broker;
 #[path = "../../../../observability/tests/support/wal_fetch_limit_flags.rs"]
 mod wal_fetch_limit_flags;
 
+/// The invalid index snapshot policy values, shared with the other signal
+/// binary that parses them.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/index_snapshot_flags.rs"]
+mod index_snapshot_flags;
+
 mod all_stage;
 mod alloc;
 mod bind_all_stage_server;
@@ -1126,9 +1101,6 @@ mod compactor_stage;
 mod configured_object_store;
 mod debuginfod_config;
 mod load_profiles_limits_overrides_config;
-mod parse_client_dispatch_queue_capacity;
-mod parse_client_frame_max;
-mod parse_consumer_fetch_size;
 mod parse_min_two_usize;
 mod parse_non_empty_string;
 mod parse_positive_time_or_legacy;
@@ -1175,12 +1147,10 @@ use compactor_stage::compactor_stage;
 use configured_object_store::ConfiguredObjectStore;
 use debuginfod_config::debuginfod_config;
 use krabka_observability::cli_value_parsers::{
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
     parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
 };
 use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
-use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
-use parse_client_frame_max::parse_client_frame_max;
-use parse_consumer_fetch_size::parse_consumer_fetch_size;
 use parse_min_two_usize::parse_min_two_usize;
 use parse_non_empty_string::parse_non_empty_string;
 use parse_positive_time_or_legacy::parse_positive_time_or_legacy;

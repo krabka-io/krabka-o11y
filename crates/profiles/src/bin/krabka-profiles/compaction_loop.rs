@@ -1,8 +1,9 @@
+use krabka_observability::compaction_schedule::CompactionSchedule;
 use krabka_units::{convert::TimeExt as _, fmt::Human as _};
 
 use super::{
     Arc, CancellationToken, Cli, DownsamplePolicy, ObjectStore, OverridesProvider, ServiceMetrics,
-    Time, compaction_policy_from_cli, run_compaction_pass,
+    compaction_policy_from_cli, run_compaction_pass,
 };
 
 /// Runs compaction passes on `--compactor-interval` until `shutdown` fires.
@@ -44,22 +45,14 @@ pub(crate) async fn compaction_loop(
     // block builder publishes new blocks into the same snapshot chain, and a
     // stale in-memory copy would plan against blocks that have since been
     // replaced.
-    let mut tick = tokio::time::interval(cli.compactor_interval.to_std());
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        tokio::select! {
-            biased;
-            () = shutdown.cancelled() => break,
-            _ = tick.tick() => {}
-        }
-        let started = std::time::Instant::now();
-        let outcome = run_compaction_pass(
-            &store, &index_key, &cli, policy, downsample, &overrides, &metrics,
-        )
-        .await;
-        metrics
+    let mut schedule = CompactionSchedule::new(cli.compactor_interval, shutdown);
+    while schedule.next_pass_due().await {
+        let outcome = metrics
             .compaction
-            .record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
+            .time_run(run_compaction_pass(
+                &store, &index_key, &cli, policy, downsample, &overrides, &metrics,
+            ))
+            .await;
         match outcome {
             Ok(compacted_blocks) => tracing::info!(
                 compacted_blocks,

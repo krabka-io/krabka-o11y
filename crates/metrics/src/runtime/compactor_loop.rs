@@ -1,9 +1,9 @@
-use krabka_observability::CancellationToken;
+use krabka_observability::{CancellationToken, compaction_schedule::CompactionSchedule};
 use krabka_units::Time;
 
 use super::{
     Arc, BlockWriter, CompactionPolicy, ObjectStore, ObjectStoreCompactionIndexSink,
-    ServiceMetrics, TimeExt, run_compactor_once,
+    ServiceMetrics, run_compactor_once,
 };
 use crate::DeferredBlockDeletions;
 
@@ -14,9 +14,6 @@ use crate::DeferredBlockDeletions;
 /// its own state for as long as it runs. See
 /// [`run_compactor`](super::run_compactor::run_compactor) for what supervision
 /// buys.
-///
-/// The tick skips a missed deadline rather than firing twice. A pass that ran
-/// long has already read whatever the skipped tick would have read.
 ///
 /// The queue of retired input blocks lives here, across ticks, because the
 /// blocks a pass retires are deleted by a *later* pass. See
@@ -33,27 +30,19 @@ pub(crate) async fn compactor_loop(
     shutdown: CancellationToken,
 ) {
     let mut deferred = DeferredBlockDeletions::new();
-    let mut tick = tokio::time::interval(interval.to_std());
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        tokio::select! {
-            biased;
-            () = shutdown.cancelled() => return,
-            _ = tick.tick() => {}
-        }
-        let started = std::time::Instant::now();
-        let outcome = run_compactor_once(
-            &store,
-            &block_writer,
-            &index_sink,
-            policy,
-            &mut deferred,
-            &metrics,
-        )
-        .await;
-        metrics
+    let mut schedule = CompactionSchedule::new(interval, shutdown);
+    while schedule.next_pass_due().await {
+        let outcome = metrics
             .compaction
-            .record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
+            .time_run(run_compactor_once(
+                &store,
+                &block_writer,
+                &index_sink,
+                policy,
+                &mut deferred,
+                &metrics,
+            ))
+            .await;
         match outcome {
             Ok(pass) => {
                 for failure in pass

@@ -32,7 +32,7 @@ use crate::{
         link_matcher_matches_absence, link_matcher_matches_link, matcher_attributes_match,
         nested_presence_matches, nil_matches, string_matches, typed_value_parts,
     },
-    store::{MatchCmp, MatchScope, MatchValue, ScanResult, SpanMatcher, SpanStore},
+    store::{MatchCmp, MatchScope, MatchValue, ScanResult, SpanMatcher, SpanStore, TagCatalog},
 };
 
 #[cfg(test)]
@@ -163,22 +163,13 @@ mod tests {
                 resource_attributes: vec![("service.name".into(), AttrValue::Str("svc".into()))],
                 spans: vec![SpanRef {
                     span_id: [1; 8],
-                    parent_span_id: None,
                     name: "root".into(),
-                    kind: 0,
                     nested_set_left: 1,
                     nested_set_right: 2,
                     nested_set_parent: -1,
                     start_time_unix_nano: 1000,
                     duration: nanos(5),
-                    status_code: 0,
-                    status_message: String::new(),
-                    instrumentation_name: String::new(),
-                    instrumentation_version: String::new(),
-                    resource_attributes: Vec::new(),
-                    attributes: Vec::new(),
-                    events: Vec::new(),
-                    links: Vec::new(),
+                    ..SpanRef::default()
                 }],
             }
         );
@@ -2040,7 +2031,6 @@ mod tests {
 }
 
 mod attr_builder;
-mod attr_data_type;
 mod child_count_for;
 mod collect_span_intrinsic_values;
 mod collect_trace_intrinsic_values;
@@ -2068,7 +2058,6 @@ mod span_ref;
 mod stored_trace;
 
 use attr_builder::AttrBuilder;
-use attr_data_type::attr_data_type;
 use child_count_for::child_count_for;
 use collect_span_intrinsic_values::collect_span_intrinsic_values;
 use collect_trace_intrinsic_values::collect_trace_intrinsic_values;

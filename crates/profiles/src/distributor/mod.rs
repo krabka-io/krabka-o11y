@@ -21,11 +21,14 @@ use connectrpc_axum::{
     message::{Code, ConnectError, ConnectRequest, ConnectResponse},
 };
 use krabka_blockstore::{TenantId, TenantPolicy, TenantResolveError};
-use krabka_client_producer::{Header, Producer, ProducerRecord};
+use krabka_client_producer::{Producer, ProducerRecord};
 use krabka_observability::{
     server_security::{Principal, ServerListener, ServerSecurity, authorize_tenant, serve_router},
     service_metrics::{IngestRequest, RequestOutcome},
-    wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
+    wal_produce::{
+        ProduceWindow, WalBatchError, wal_record_headers, write_batch_pipelined,
+        write_batch_serially,
+    },
 };
 use krabka_pprof::PprofProfile;
 use krabka_throttle::TokenBucket;

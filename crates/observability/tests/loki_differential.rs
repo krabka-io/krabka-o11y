@@ -35,6 +35,9 @@ mod loki_experimental_queries;
 #[path = "support/loki_remote_fixture.rs"]
 mod loki_remote_fixture;
 
+#[path = "support/rejection_responses.rs"]
+mod rejection_responses;
+
 #[path = "../../metrics-service/tests/support/generated_differential.rs"]
 mod generated_differential;
 
@@ -57,6 +60,7 @@ use krabka_observability::{
     distributor_router_with_overrides, json_logging_layer, loki_router,
 };
 use prost::Message as _;
+use rejection_responses::{ImplementationAnswer, record_rejection_response};
 use reqwest::Method;
 use serde_json::{Value, json};
 use support::{
@@ -545,14 +549,15 @@ async fn run_generated_logql(
                         .header("X-Scope-OrgID", TENANT)
                         .send()
                         .await?;
-                    let status = response.status().as_u16();
-                    let body = response.text().await?;
-                    let classification = logql_query_rejection_kind(status, &body);
-                    rejected &= classification.is_some();
-                    responses.push(
-                        json!({"implementation": implementation, "http_status": status,
-                        "classification": classification, "body": body}),
-                    );
+                    rejected &= record_rejection_response(
+                        &mut responses,
+                        ImplementationAnswer {
+                            implementation,
+                            response,
+                        },
+                        logql_query_rejection_kind,
+                    )
+                    .await?;
                 }
                 let mut observations = observations
                     .lock()

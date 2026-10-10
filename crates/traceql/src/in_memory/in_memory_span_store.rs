@@ -50,14 +50,8 @@ impl InMemorySpanStore {
         for trace in traces {
             for span in &trace.spans {
                 for (key, value) in &span.attrs {
-                    cols.entry(key.clone()).or_insert_with(|| match value {
-                        AttrValue::Unsupported(_) | AttrValue::Array(_) | AttrValue::Str(_) => {
-                            DataType::Utf8
-                        }
-                        AttrValue::Int(_) => DataType::Int64,
-                        AttrValue::Float(_) => DataType::Float64,
-                        AttrValue::Bool(_) => DataType::Boolean,
-                    });
+                    cols.entry(key.clone())
+                        .or_insert_with(|| value.arrow_data_type());
                 }
                 for matcher in projection_matchers {
                     match matcher.scope {
@@ -71,7 +65,7 @@ impl InMemorySpanStore {
                                 continue;
                             };
                             cols.entry(format!("{EVENT_ATTR_PREFIX}{}", matcher.key))
-                                .or_insert_with(|| attr_data_type(value));
+                                .or_insert_with(|| value.arrow_data_type());
                         }
                         MatchScope::Link => {
                             let Some((_, value)) = span
@@ -83,7 +77,7 @@ impl InMemorySpanStore {
                                 continue;
                             };
                             cols.entry(format!("{LINK_ATTR_PREFIX}{}", matcher.key))
-                                .or_insert_with(|| attr_data_type(value));
+                                .or_insert_with(|| value.arrow_data_type());
                         }
                         MatchScope::Both
                         | MatchScope::Span
@@ -258,7 +252,10 @@ impl SpanStore for InMemorySpanStore {
                 .collect(),
         }))
     }
+}
 
+#[async_trait::async_trait]
+impl TagCatalog for InMemorySpanStore {
     async fn tag_names(
         &self,
         tenant: &str,

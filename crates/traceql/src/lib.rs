@@ -45,6 +45,7 @@ pub use span_columns::{
     INSTRUMENTATION_ATTR_PREFIX, InputSpan, LINK_ATTR_PREFIX, NestedSet, assign_nested_set,
     span_schema, span_schema_with_attrs,
 };
+pub use span_enum_codes::{kind_enum_value, status_enum_value};
 pub use span_matching::{
     SpanIntrinsicFields, attr_matches, attr_values_match, bool_matches, collect_event_values,
     collect_link_values, collect_span_field_values, enum_int_matches,
@@ -54,5 +55,5 @@ pub use span_matching::{
 };
 pub use store::{
     MatchCmp, MatchScope, MatchValue, ScanJob, ScanOptions, ScanResult, SpanMatcher, SpanStore,
-    filter_trace_spans_by_time,
+    TagCatalog, filter_trace_spans_by_time,
 };

@@ -1,10 +1,13 @@
+use krabka_observability::cli_value_parsers::{
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_min_two_usize,
+    parse_positive_u32,
+};
+
 use super::{
     ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
     DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_MAX_RATE_BUCKETS,
     DEFAULT_TARGET_ROWS_PER_BLOCK, HA_TRACKER_TOPIC, Parser, PathBuf, SocketAddr, Time, parse,
-    parse_client_dispatch_queue_capacity, parse_client_frame_max,
-    parse_compactor_max_blocks_per_job, parse_compactor_max_level, parse_compactor_target_rows,
-    parse_distributor_max_decompressed, parse_ingest_rate_bucket_cap,
+    parse_compactor_target_rows, parse_distributor_max_decompressed, parse_ingest_rate_bucket_cap,
 };
 
 /// Writer options shared by standalone and all-in-one metrics roles.
@@ -106,12 +109,15 @@ pub struct WriterConfig {
     /// Blocks one compaction job merges at most.
     ///
     /// A job needs at least two, and a larger cap means fewer, larger output
-    /// blocks per pass at the cost of holding more inputs open at once.
+    /// blocks per pass at the cost of holding more inputs open at once. A job
+    /// of one block rewrites that block and leaves the same rows behind, so
+    /// the flag refuses one rather than letting
+    /// [`CompactionPolicy`](krabka_blockstore::CompactionPolicy) clamp it.
     #[arg(
         long,
         env = "KRABKA_METRICS_COMPACTOR_MAX_BLOCKS_PER_JOB",
         default_value_t = DEFAULT_MAX_BLOCKS_PER_JOB,
-        value_parser = parse_compactor_max_blocks_per_job
+        value_parser = parse_min_two_usize
     )]
     pub(crate) compactor_max_blocks_per_job: usize,
     /// Rows at which a block is large enough to be left alone.
@@ -128,12 +134,13 @@ pub struct WriterConfig {
     /// How many times the same rows may be rewritten.
     ///
     /// A block at this level is never a compaction input again, which is what
-    /// makes the ladder terminate.
+    /// makes the ladder terminate. The flag refuses zero: a ladder of zero
+    /// levels leaves every block at its cap, so the compactor merges nothing.
     #[arg(
         long,
         env = "KRABKA_METRICS_COMPACTOR_MAX_LEVEL",
         default_value_t = DEFAULT_MAX_LEVEL.get(),
-        value_parser = parse_compactor_max_level
+        value_parser = parse_positive_u32
     )]
     pub(crate) compactor_max_level: u32,
     /// The level-zero grouping window. Blocks meet only inside one window.

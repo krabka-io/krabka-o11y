@@ -22,7 +22,7 @@ use krabka_blockstore::{
 };
 use krabka_pprof::{EngineOpts, FlameEngine};
 use krabka_profiles::{
-    ProfileRecord, WalFunction, WalLocation, WalSample, WalSymbolSet,
+    ProfileRecord, WalSample, WalSymbolSet,
     blockbuilder::{BLOCK_OBJECT_PREFIX, STACKTRACE_PARTITION, build_block},
     cold_store::ColdProfileStore,
     lifecycle::{LifecycleOptions, live_object_keys, run_lifecycle_pass, symdb_key},

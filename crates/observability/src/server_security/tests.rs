@@ -20,9 +20,12 @@ use tempfile::TempDir;
 mod recorded_security_events;
 #[path = "../../tests/support/server_security_pki.rs"]
 mod server_security_pki;
+#[path = "../../tests/support/token_sha256.rs"]
+mod token_sha256;
 
 use recorded_security_events::{RecordedEvents, tenant};
-use server_security_pki::{Leaf, Pem, authority, sha256_hex};
+use server_security_pki::{Leaf, Pem, authority};
+use token_sha256::sha256_hex;
 
 use super::{
     AdminDenied, AuthFailureReason, AuthMethod, ClientIdentity, PeerAddr, Principal,

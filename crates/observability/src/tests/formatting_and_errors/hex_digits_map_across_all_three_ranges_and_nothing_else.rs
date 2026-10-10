@@ -1,13 +1,13 @@
 use super::*;
 
-/// `hex_value` maps a hex digit to its value across three ranges. Every
+/// `hex_digit_value` maps a hex digit to its value across three ranges. Every
 /// range boundary is checked together with the character immediately
 /// outside it, since a range widened or narrowed by one is invisible from
 /// the middle -- and the two letter ranges must not be confused, because
 /// their offsets differ by the distance between the cases.
 #[test]
 pub(crate) fn hex_digits_map_across_all_three_ranges_and_nothing_else() {
-    let value = super::super::prelude::hex_value;
+    let value = super::super::prelude::hex_digit_value;
 
     check!(value(b'0') == Some(0), "the low edge of the digits");
     check!(value(b'9') == Some(9), "and the high edge");

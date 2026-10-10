@@ -44,6 +44,7 @@ use self::querier::metric_eval::{
 pub mod audit;
 pub mod cli_value_parsers;
 pub mod compaction_metrics;
+pub mod compaction_schedule;
 pub mod recovery_cut;
 pub mod server_security;
 pub mod service_metrics;

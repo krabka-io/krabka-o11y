@@ -571,7 +571,7 @@ pub use report::Report;
 pub use root_span_columns::{RootSpanRow, root_span_columns};
 use run_case::run_case;
 pub use run_corpus_dir::run_corpus_dir;
-pub use run_corpus_file::run_corpus_file;
+pub use run_corpus_file::{run_and_print_corpus_file, run_corpus_file};
 use run_metrics_case::run_metrics_case;
 use run_search_case::run_search_case;
 use run_trace_by_id_case::run_trace_by_id_case;

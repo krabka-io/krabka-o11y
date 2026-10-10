@@ -14,10 +14,7 @@ use clap::{Parser, ValueEnum};
 use krabka_blockstore::TenantId;
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_coordination::{BrokerTransport, LeaseConfig, MemberId, Role};
-use krabka_client_core::{
-    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
-    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-};
+use krabka_client_core::{ClientSecurity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY};
 use krabka_metrics::{Limits, OverridesProvider, WAL_TOPIC};
 use krabka_metrics_service::{
     MimirTenantAdminState, RULER_STATE_TOPIC, RulerAlertmanagerSink, WalHeadConsumerCommit,
@@ -946,8 +943,6 @@ mod the_shared_querier_starts_and_drains;
 mod alloc;
 mod cli;
 mod load_runtime_overrides;
-mod parse_client_dispatch_queue_capacity;
-mod parse_client_frame_max;
 mod parse_external_label;
 mod parse_remote_read_max_body;
 mod query_engine_opts;
@@ -972,10 +967,10 @@ mod target;
 // reads -- which is a warning, not a link to the allocator.
 
 use cli::Cli;
-use krabka_observability::cli_value_parsers::parse_positive_usize;
+use krabka_observability::cli_value_parsers::{
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_positive_usize,
+};
 use load_runtime_overrides::load_runtime_overrides;
-use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
-use parse_client_frame_max::parse_client_frame_max;
 use parse_external_label::{ExternalLabels, parse_external_label, parse_external_labels_env};
 use parse_remote_read_max_body::parse_remote_read_max_body;
 use query_engine_opts::query_engine_opts;

@@ -12,13 +12,16 @@ use axum::{
 };
 use flate2::read::GzDecoder;
 use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy};
-use krabka_client_producer::{Header, Producer, ProducerRecord};
+use krabka_client_producer::{Producer, ProducerRecord};
 use krabka_observability::{
     server_security::{
         GrpcAuthenticationLayer, Principal, ServerListener, ServerSecurity, authorize_tenant,
         grpc_incoming, serve_router,
     },
-    wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
+    wal_produce::{
+        ProduceWindow, WalBatchError, wal_record_headers, write_batch_pipelined,
+        write_batch_serially,
+    },
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _, mebibytes};
 use opentelemetry_proto::tonic::{

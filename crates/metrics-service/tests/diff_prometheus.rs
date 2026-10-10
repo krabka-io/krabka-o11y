@@ -39,6 +39,7 @@ mod upstream_http;
 
 use self::{
     corpus_differential::{CorpusDiff, PromApi, SAMPLES_PER_BATCH},
+    pinned_prometheus_image::pinned_prometheus_image,
     seed_remote_write::{FixtureLabel, remote_write_body, remote_write_labels},
     upstream_http::{
         KrabkaServer, RemoteWrite, TestResult, mapped_base_url, post_remote_write, wait_for_http_ok,
@@ -59,6 +60,9 @@ mod compliance_fixture;
 
 #[path = "support/generated_differential.rs"]
 mod generated_differential;
+
+#[path = "support/pinned_prometheus_image.rs"]
+mod pinned_prometheus_image;
 
 /// The deadline for a container to start, which includes the image pull.
 ///
@@ -468,20 +472,9 @@ async fn start_ready_prometheus(client: &reqwest::Client) -> TestResult<ReadyPro
 }
 
 async fn start_prometheus() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite compared
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG")
-        .expect(
-            "KRABKA_PROMETHEUS_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-        );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/prom/prometheus".to_string(), tag)
+        pinned_prometheus_image()
             .with_exposed_port(PROMETHEUS_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stderr(
                 "Server is ready to receive web requests",

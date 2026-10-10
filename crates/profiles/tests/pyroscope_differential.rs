@@ -26,6 +26,7 @@ use krabka_profiles::{
     query::{self, QuerierState},
     wire::pb,
 };
+use pinned_grafana_image::pinned_grafana_image;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -39,6 +40,8 @@ use tokio::sync::oneshot;
 
 #[path = "../../metrics-service/tests/support/generated_differential.rs"]
 mod generated_differential;
+#[path = "../../metrics-service/tests/support/pinned_grafana_image.rs"]
+mod pinned_grafana_image;
 #[path = "../src/bin/krabka-profiles/synthetic_cpu_profile.rs"]
 mod synthetic_cpu_profile;
 
@@ -873,15 +876,9 @@ async fn start_pyroscope_with_options(
 }
 
 async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // Set by //bazel/defs.bzl; see the note above.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+        pinned_grafana_image()
             .with_exposed_port(3000.tcp())
             .with_wait_for(WaitFor::seconds(5))
             .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")

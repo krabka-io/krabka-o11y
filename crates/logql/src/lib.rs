@@ -58,6 +58,7 @@ pub use types::{
     DestinationLabel, DurationNanos, JsonExpressionPath, OffsetNanos, QuantileDenominator,
     QuantileNumerator, SourceLabel,
 };
+pub use util::{hex_digit_value, parse_prometheus_duration_literal, prometheus_duration_unit};
 
 mod labels_2;
 mod unwrap_sample_value_label;

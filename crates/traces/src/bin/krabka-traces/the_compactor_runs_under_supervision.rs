@@ -13,12 +13,12 @@ use std::time::Duration;
 
 use assert2::check;
 use clap::Parser as _;
-use krabka_observability::{RoleReadiness, StagedDrain};
-use krabka_units::secs;
+use krabka_observability::RoleReadiness;
 use tokio::sync::oneshot;
 
 use self::compaction_passes::{
-    COMPACTION_INTERVAL, assert_no_pass_after_the_stop, passes, passes_reach,
+    COMPACTION_INTERVAL, assert_no_pass_after_the_stop, assert_stage_drains_with_its_loop,
+    assert_stopped_without_a_pass, passes_reach,
 };
 use super::{CancellationToken, Cli, ServiceMetrics, SharedObjectStore, run_compactor};
 
@@ -98,8 +98,7 @@ async fn a_compactor_started_during_shutdown_returns_without_a_pass() {
     )
     .await;
 
-    check!(outcome.is_ok());
-    check!(passes(&metrics.compaction) == 0);
+    assert_stopped_without_a_pass(&outcome, &metrics.compaction);
 }
 
 /// `--target all`: the compactor stage stops inside the drain's budget.
@@ -113,9 +112,8 @@ async fn a_compactor_started_during_shutdown_returns_without_a_pass() {
 async fn the_compactor_stage_of_target_all_stops_within_its_drain_budget() {
     let metrics = ServiceMetrics::new();
     let (outcome_tx, outcome_rx) = oneshot::channel();
-    let mut drain = StagedDrain::new(secs(5));
     let staged = metrics.clone();
-    drain.stage("compactor", move |token| async move {
+    assert_stage_drains_with_its_loop(&metrics.compaction, move |token| async move {
         let object_store = SharedObjectStore::new();
         let outcome = run_compactor(
             compactor_cli(),
@@ -126,19 +124,11 @@ async fn the_compactor_stage_of_target_all_stops_within_its_drain_budget() {
         )
         .await;
         let _ = outcome_tx.send(outcome.is_ok());
-    });
+    })
+    .await;
 
-    passes_reach(&metrics.compaction, 2).await;
-    let overran = drain.drain().await;
-
-    check!(overran.is_empty(), "the compactor stage overran its budget");
     check!(
         outcome_rx.await.expect("the stage reports its outcome"),
         "the compactor stage returned an error"
     );
-    assert_no_pass_after_the_stop(
-        &metrics.compaction,
-        "a compaction loop outlived the stage that owned it",
-    )
-    .await;
 }

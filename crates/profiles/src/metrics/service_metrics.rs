@@ -1,12 +1,7 @@
-use krabka_blockstore::ObjectStoreMetrics;
-use krabka_observability::{
-    compaction_metrics::CompactionMetrics,
-    service_metrics::{
-        IngestHelpText, IngestInstruments, IngestRequest, PipelineInstruments, QueryHelpText,
-        QueryInstruments, QueryRequest, register_in_new_registry,
-    },
-    wal_consumer_metrics::WalConsumerMetrics,
-    wal_produce::WalProduceMetrics,
+use krabka_observability::service_metrics::{
+    CompactionMetrics, IngestHelpText, IngestInstruments, IngestRequest, ObjectStoreMetrics,
+    PipelineInstruments, QueryHelpText, QueryInstruments, QueryRequest, WalConsumerMetrics,
+    WalProduceMetrics, register_in_new_registry,
 };
 use prometheus_client::{
     metrics::{counter::Counter, family::Family},

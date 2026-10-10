@@ -96,7 +96,7 @@ mod tests {
         in_memory::InMemorySpanStore,
         result::{AttrValue, EventRef, LinkRef, TypedValue},
         span_columns::InputSpan,
-        store::{MatchScope, ScanResult},
+        store::{MatchScope, ScanResult, TagCatalog},
         testkit::{RootSpanRow, root_span_columns},
     };
 
@@ -996,7 +996,10 @@ mod tests {
         ) -> Result<Option<TraceSpans>> {
             Ok(None)
         }
+    }
 
+    #[async_trait::async_trait]
+    impl TagCatalog for BatchSpanStore {
         async fn tag_names(
             &self,
             _tenant: &str,

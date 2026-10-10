@@ -30,10 +30,10 @@ use krabka_traceql::{
     COL_STATUS_CODE, COL_STATUS_MESSAGE, COL_TRACE_DURATION, COL_TRACE_ID, EVENT_ATTR_PREFIX,
     EventRef, INSTRUMENTATION_ATTR_PREFIX, LINK_ATTR_PREFIX, LinkRef, MatchCmp, MatchScope,
     MatchValue, ScanJob, ScanOptions, ScanResult, ScopedTag, SpanMatcher, SpanRef, SpanStore,
-    TagScope, TraceSpans, TraceqlError, TypedValue, attr_values_match, block_row_attrs_where,
-    bytes_to_hex, enum_int_matches, event_matcher_matches_absence, event_matcher_matches_event,
-    int_matches, link_matcher_matches_absence, link_matcher_matches_link, nested_presence_matches,
-    nil_matches, span_schema, string_matches,
+    TagCatalog, TagScope, TraceSpans, TraceqlError, TypedValue, attr_values_match,
+    block_row_attrs_where, bytes_to_hex, enum_int_matches, event_matcher_matches_absence,
+    event_matcher_matches_event, int_matches, link_matcher_matches_absence,
+    link_matcher_matches_link, nested_presence_matches, nil_matches, span_schema, string_matches,
 };
 use krabka_units::{
     ByteSize, Time,
@@ -633,45 +633,6 @@ mod tests {
         );
     }
 
-    /// Span kind and status names come off the wire as strings and have to
-    /// land on the numbers the stored spans use. Every name is checked, since
-    /// a table is exactly where an off-by-one goes unnoticed.
-    #[test]
-    fn span_kind_and_status_names_map_to_their_stored_numbers() {
-        let kinds = [
-            ("unspecified", 0),
-            ("internal", 1),
-            ("server", 2),
-            ("client", 3),
-            ("producer", 4),
-            ("consumer", 5),
-        ];
-        for (name, value) in kinds {
-            check!(super::kind_enum_value(name) == Some(value), "kind {name}");
-        }
-        check!(
-            super::kind_enum_value("Server") == None,
-            "the match is case-sensitive"
-        );
-        check!(super::kind_enum_value("") == None);
-        check!(
-            super::kind_enum_value("gateway") == None,
-            "an unknown kind is not a number"
-        );
-
-        for (name, value) in [("unset", 0), ("ok", 1), ("error", 2)] {
-            check!(
-                super::status_enum_value(name) == Some(value),
-                "status {name}"
-            );
-        }
-        check!(
-            super::status_enum_value("OK") == None,
-            "the match is case-sensitive"
-        );
-        check!(super::status_enum_value("failed") == None);
-    }
-
     /// Trace and span ids are rendered as lower-case hex, two characters per
     /// byte, with leading zeroes kept -- a byte dropping its high nibble
     /// would produce an id that no longer round-trips.
@@ -850,6 +811,13 @@ mod tests {
             Ok(self.trace.clone())
         }
 
+        fn block_builder_frontier_ns(&self, _tenant: &str) -> i64 {
+            self.frontier_ns
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TagCatalog for FakeLiveSource {
         async fn tag_names(
             &self,
             _tenant: &str,
@@ -868,10 +836,6 @@ mod tests {
             _end_ns: i64,
         ) -> Result<Vec<TypedValue>, TraceqlError> {
             Ok(self.values.clone())
-        }
-
-        fn block_builder_frontier_ns(&self, _tenant: &str) -> i64 {
-            self.frontier_ns
         }
     }
 
@@ -2983,6 +2947,13 @@ mod tests {
             self.store.trace_spans(tenant, trace_id).await
         }
 
+        fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
+            super::block_builder_frontier_ns(&self.trace_index, tenant)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TagCatalog for IndexedLiveStore {
         async fn tag_names(
             &self,
             tenant: &str,
@@ -3001,16 +2972,6 @@ mod tests {
             end_ns: i64,
         ) -> Result<Vec<TypedValue>, TraceqlError> {
             self.store.tag_values(tenant, tag, start_ns, end_ns).await
-        }
-
-        fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
-            self.trace_index
-                .load()
-                .trace_blocks(tenant)
-                .iter()
-                .map(|block| block.max_ts.saturating_add(1))
-                .max()
-                .unwrap_or_default()
         }
     }
 
@@ -3959,6 +3920,7 @@ mod attr_values;
 mod attr_values_with_resource;
 mod batch_attr_matches;
 mod batch_attr_matches_with_resource;
+mod block_builder_frontier_ns;
 mod block_err;
 mod block_span_schema;
 mod bool_array_value;
@@ -3992,7 +3954,6 @@ mod is_event_matcher;
 mod is_intrinsic_tag;
 mod is_link_matcher;
 mod is_nested_intrinsic_tag;
-mod kind_enum_value;
 mod krabka_span_store;
 mod link_tags;
 mod link_values;
@@ -4022,7 +3983,6 @@ mod row_matcher_matches;
 mod row_matches;
 mod scope_order;
 mod shared_trace_index;
-mod status_enum_value;
 mod string_array_value;
 mod string_value;
 mod struct_fixed_field;
@@ -4047,6 +4007,7 @@ use attr_values::attr_values;
 use attr_values_with_resource::attr_values_with_resource;
 use batch_attr_matches::batch_attr_matches;
 use batch_attr_matches_with_resource::batch_attr_matches_with_resource;
+pub use block_builder_frontier_ns::block_builder_frontier_ns;
 use block_err::block_err;
 use block_span_schema::block_span_schema;
 use bool_array_value::bool_array_value;
@@ -4080,9 +4041,8 @@ use is_event_matcher::is_event_matcher;
 use is_intrinsic_tag::is_intrinsic_tag;
 use is_link_matcher::is_link_matcher;
 use is_nested_intrinsic_tag::is_nested_intrinsic_tag;
-use kind_enum_value::kind_enum_value;
 pub use krabka_span_store::KrabkaSpanStore;
-use krabka_traceql::typed_value_parts;
+use krabka_traceql::{kind_enum_value, status_enum_value, typed_value_parts};
 use link_tags::LINK_TAGS;
 use link_values::link_values;
 use matching_events_for_scan::matching_events_for_scan;
@@ -4111,7 +4071,6 @@ use row_matcher_matches::row_matcher_matches;
 use row_matches::row_matches;
 use scope_order::SCOPE_ORDER;
 pub use shared_trace_index::SharedTraceIndex;
-use status_enum_value::status_enum_value;
 use string_array_value::string_array_value;
 use string_value::string_value;
 use struct_fixed_field::struct_fixed_field;

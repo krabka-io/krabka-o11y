@@ -91,6 +91,8 @@ mod ingest_capture;
 mod metrics_span;
 #[path = "../../metrics-service/tests/support/pinned_grafana_image.rs"]
 mod pinned_grafana_image;
+#[path = "../../metrics-service/tests/support/pinned_prometheus_image.rs"]
+mod pinned_prometheus_image;
 mod search_json;
 mod span_store;
 #[path = "../src/wire/jaeger/thrift_fixture.rs"]
@@ -101,6 +103,7 @@ use self::{
     ingest_capture::{CapturingSink, DoorPush, push_to_door, serve_until_shutdown, string_kv},
     metrics_span::MetricsSpan,
     pinned_grafana_image::pinned_grafana_image,
+    pinned_prometheus_image::pinned_prometheus_image,
     search_json::search_contains_span_id_hex,
     span_store::{resource_attr, span_store_from_records},
     thrift_fixture::{CompactStructWriter, encode_binary_sample_batch},
@@ -661,16 +664,9 @@ async fn start_grafana() -> TestResult<ContainerAsync<GenericImage>> {
 }
 
 async fn start_prometheus() -> TestResult<ContainerAsync<GenericImage>> {
-    // Set by //bazel/defs.bzl; see the note above.
-    let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG")
-        .expect(
-            "KRABKA_PROMETHEUS_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-        );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/prom/prometheus".to_string(), tag)
+        pinned_prometheus_image()
             .with_exposed_port(PROM_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stderr(
                 "Server is ready to receive web requests",

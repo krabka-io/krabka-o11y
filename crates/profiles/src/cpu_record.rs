@@ -4,7 +4,7 @@
 //! `tests/`, so it names the WAL types through its parent module, which
 //! imports them from wherever its crate sees them.
 
-use super::{ProfileRecord, WalFunction, WalLocation, WalSample, WalSymbolSet};
+use super::{ProfileRecord, WalSample, WalSymbolSet};
 
 /// The profile type of every `process_cpu` record the tests write.
 pub const CPU_PROFILE_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
@@ -45,20 +45,6 @@ pub fn cpu_record(record: CpuRecord<'_>) -> ProfileRecord {
             span_id: None,
             trace_id: None,
         }],
-        symbols: WalSymbolSet {
-            strings: vec![String::new(), function.to_string()],
-            functions: vec![WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![WalLocation {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![(0, 1)],
-            }],
-            mappings: Vec::new(),
-        },
+        symbols: WalSymbolSet::single_frame(function.to_string()),
     }
 }

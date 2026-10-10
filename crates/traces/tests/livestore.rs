@@ -6,7 +6,9 @@ use datafusion::catalog::TableProvider;
 use krabka_blockstore::{
     SCOL_ROOT_SPAN_NAME, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, span_block_schema,
 };
-use krabka_traceql::{AttrValue as TraceqlAttrValue, ScopedTag, TagScope, TypedValue};
+use krabka_traceql::{
+    AttrValue as TraceqlAttrValue, ScopedTag, TagCatalog as _, TagScope, TypedValue,
+};
 use krabka_traces::{
     AttrValue, EventRecord, KeyValue, LinkRecord, LiveStore, Span, SpanRecord,
     livestore::ingest_wal_payloads, querier::live::LiveSource,

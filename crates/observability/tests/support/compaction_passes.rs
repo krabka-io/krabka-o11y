@@ -8,7 +8,8 @@
 
 use std::time::{Duration, Instant};
 
-use krabka_observability::compaction_metrics::CompactionMetrics;
+use krabka_observability::{CancellationToken, StagedDrain, compaction_metrics::CompactionMetrics};
+use krabka_units::secs;
 
 /// The compaction interval the suites run the role at: short enough that
 /// several passes happen while a test waits, and still long enough to be a
@@ -50,4 +51,45 @@ pub async fn assert_no_pass_after_the_stop(compaction: &CompactionMetrics, outli
     let stopped_at = passes(compaction);
     tokio::time::sleep(AFTER_THE_STOP).await;
     assert2::assert!(passes(compaction) == stopped_at, "{outlived_message}");
+}
+
+/// Asserts that a role started with its token already cancelled returned
+/// `Ok(())` without finishing a pass.
+///
+/// That is the shutdown arriving during startup: the stop is not a fault, and
+/// nothing was compacted on the way out.
+pub fn assert_stopped_without_a_pass<RoleError: std::fmt::Debug>(
+    outcome: &Result<(), RoleError>,
+    compaction: &CompactionMetrics,
+) {
+    assert2::check!(outcome.is_ok(), "{outcome:?}");
+    assert2::check!(passes(compaction) == 0);
+}
+
+/// Runs `compactor_stage` as the one stage of a [`StagedDrain`], drains it
+/// once it has finished two passes, and asserts that it stopped inside the
+/// drain's budget and took its loop with it.
+///
+/// This is the `--target all` stop: a stage that returned while its loop kept
+/// running, or that did not return at all, would hold the whole stop open or
+/// outlive it. The caller checks how the stage itself ended.
+pub async fn assert_stage_drains_with_its_loop<Stage, StageRun>(
+    compaction: &CompactionMetrics,
+    compactor_stage: Stage,
+) where
+    Stage: FnOnce(CancellationToken) -> StageRun,
+    StageRun: Future<Output = ()> + Send + 'static,
+{
+    let mut drain = StagedDrain::new(secs(5));
+    drain.stage("compactor", compactor_stage);
+
+    passes_reach(compaction, 2).await;
+    let overran = drain.drain().await;
+
+    assert2::assert!(overran.is_empty(), "the compactor stage overran its budget");
+    assert_no_pass_after_the_stop(
+        compaction,
+        "a compaction loop outlived the stage that owned it",
+    )
+    .await;
 }

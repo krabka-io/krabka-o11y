@@ -15,7 +15,9 @@
 
 use std::sync::Arc;
 
-use krabka_blockstore::ObjectStoreMetrics;
+// The field types of [`PipelineInstruments`], so that a signal's metrics
+// module names every shared instrument through this one module.
+pub use krabka_blockstore::ObjectStoreMetrics;
 use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt, TimeExt},
@@ -27,8 +29,9 @@ use prometheus_client::{
 };
 use tokio::sync::Mutex;
 
-use crate::{
-    RoleKind, compaction_metrics::CompactionMetrics, wal_consumer_metrics::WalConsumerMetrics,
+use crate::RoleKind;
+pub use crate::{
+    compaction_metrics::CompactionMetrics, wal_consumer_metrics::WalConsumerMetrics,
     wal_produce::WalProduceMetrics,
 };
 

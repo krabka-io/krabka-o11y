@@ -55,6 +55,8 @@ mod diff_corpus;
 
 #[path = "../../metrics/tests/support/crashing_store.rs"]
 mod crashing_store;
+#[path = "support/pinned_prometheus_image.rs"]
+mod pinned_prometheus_image;
 #[path = "../../metrics/tests/support/tsdb_fixture.rs"]
 mod tsdb_fixture;
 
@@ -794,17 +796,10 @@ async fn a_query_during_a_stopped_import_reads_all_samples_or_none() -> TestResu
 async fn start_prometheus(
     files: &FixtureFiles,
 ) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // //bazel/defs.bzl sets this from //bazel/images/images.bzl, the map that
-    // decides what `docker load` tags.
-    let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG").expect(
-        "KRABKA_PROMETHEUS_IMAGE_TAG is unset. This suite runs under `bazel test \
-         --config=docker`, which loads the digest-pinned image and sets this. To run it under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     let block = format!("/prometheus/{FIXTURE_ULID}");
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/prom/prometheus".to_owned(), tag)
+        pinned_prometheus_image::pinned_prometheus_image()
             .with_exposed_port(PROMETHEUS_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stderr(
                 "Server is ready to receive web requests",

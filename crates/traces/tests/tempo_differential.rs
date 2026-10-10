@@ -57,6 +57,13 @@ use self::{
 
 #[path = "../../metrics-service/tests/support/generated_differential.rs"]
 mod generated_differential;
+#[path = "../../metrics-service/tests/support/pinned_grafana_image.rs"]
+mod pinned_grafana_image;
+#[path = "../../observability/tests/support/rejection_responses.rs"]
+mod rejection_responses;
+
+use pinned_grafana_image::pinned_grafana_image;
+use rejection_responses::{ImplementationAnswer, record_rejection_response};
 
 const TENANT: &str = "tenant-a";
 const TRACE_ID_HEX: &str = "01010101010101010101010101010101";
@@ -2619,15 +2626,9 @@ async fn start_tempo() -> TestResult<testcontainers::ContainerAsync<GenericImage
 }
 
 async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // Set by //bazel/defs.bzl; see the note above.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     let container = tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+        pinned_grafana_image()
             .with_exposed_port(GRAFANA_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::seconds(5))
             .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
@@ -2776,14 +2777,15 @@ async fn compare_generated_trace_rejection(
             request = request.header("x-scope-orgid", tenant);
         }
         let response = request.send().await?;
-        let status = response.status().as_u16();
-        let body = response.text().await?;
-        let classification = traceql_query_rejection_kind(status, &body);
-        rejected &= classification.is_some();
-        responses.push(
-            json!({"implementation": implementation, "http_status": status,
-            "classification": classification, "body": body}),
-        );
+        rejected &= record_rejection_response(
+            &mut responses,
+            ImplementationAnswer {
+                implementation,
+                response,
+            },
+            traceql_query_rejection_kind,
+        )
+        .await?;
     }
     let mut observations = observations
         .lock()

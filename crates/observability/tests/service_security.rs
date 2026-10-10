@@ -12,6 +12,8 @@ mod secure_router;
 #[path = "support/server_security_pki.rs"]
 mod server_security_pki;
 mod support;
+#[path = "support/token_sha256.rs"]
+mod token_sha256;
 
 use std::{fmt::Write as _, net::SocketAddr, path::Path, sync::Arc};
 
@@ -45,11 +47,12 @@ use qubit_clock::{ManualMonotonicClock, ManualWallClock, MonotonicClock as _};
 use rcgen::{CertifiedIssuer, KeyPair};
 use secure_router::{SecureRouter, serve_secure_router};
 use serde_json::json;
-use server_security_pki::{Leaf, Pem, authority, sha256_hex};
+use server_security_pki::{Leaf, Pem, authority};
 use support::{
     DenyingQueryAuthorizer, current_unix_epoch_nanos, proto_logs_request_at_ns, test_service_config,
 };
 use tempfile::TempDir;
+use token_sha256::sha256_hex;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},

@@ -2,8 +2,13 @@ load("//bazel:defs.bzl", "crate_library", "crate_tests")
 
 package(default_visibility = ["//visibility:public"])
 
-# Consumed by `crate.from_cargo` (see //MODULE.bazel).
-exports_files(["Cargo.toml"])
+# Consumed by `crate.from_cargo` (see //MODULE.bazel). The vector-sample
+# check is shared with //crates/metrics-service's unit tests, which reach it
+# with `#[path]`.
+exports_files([
+    "Cargo.toml",
+    "src/http_api/tests/first_vector_sample.rs",
+])
 
 # `experimental-functions` is off by default, so the default build never
 # compiles the code behind it: `limitk`, `limit_ratio`,

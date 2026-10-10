@@ -9,10 +9,10 @@ use super::{
     MetricVectorMatching, OffsetNanos, ParseError, ParserStage, PatternParser, PipelineStage,
     Quantile, QuantileDenominator, QuantileNumerator, QuotedBodyError, QuotedChar,
     RangeAggregation, RangeAggregationKind, RegexpParser, SourceLabel, StreamQuery,
-    UnwrapExpression, VectorAggregation, VectorAggregationOp, VectorGrouping, duration_unit,
+    UnwrapExpression, VectorAggregation, VectorAggregationOp, VectorGrouping,
     field_filter_expression_to_pipeline_stage, gcd_u64, is_ident_char, is_ident_start,
     parse_bytes_literal, parse_metric_subexpression, parse_prometheus_duration_literal,
-    range_aggregation_supports_grouping, read_quoted_body,
+    prometheus_duration_unit, range_aggregation_supports_grouping, read_quoted_body,
 };
 
 const EXPECTED_METRIC_EXPRESSION: &str = "expected metric expression";
@@ -984,7 +984,7 @@ impl<'a> Parser<'a> {
                 self.pos = self.pos.saturating_add(1);
             }
             let unit = &self.input[unit_start..self.pos];
-            let Some((unit_order, unit_bit, multiplier)) = duration_unit(unit) else {
+            let Some((unit_order, unit_bit, multiplier)) = prometheus_duration_unit(unit) else {
                 return Err(self.error("expected range duration unit"));
             };
             if seen_units & unit_bit != 0 {

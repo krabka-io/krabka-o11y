@@ -1,4 +1,4 @@
-use super::{SpanRecord, TracesError, WalBatchError};
+use super::{SpanRecord, TracesError, WalBatchError, write_batch_serially};
 
 /// Append one already-encoded logical span record to the traces WAL.
 #[async_trait::async_trait]
@@ -21,12 +21,6 @@ pub trait WalSink: Send + Sync {
         &self,
         records: Vec<SpanRecord>,
     ) -> Result<(), WalBatchError<TracesError>> {
-        let total = records.len();
-        for (appended, record) in records.into_iter().enumerate() {
-            if let Err(source) = self.append(record).await {
-                return Err(WalBatchError::new(appended, total, source));
-            }
-        }
-        Ok(())
+        write_batch_serially(records, |record| self.append(record)).await
     }
 }

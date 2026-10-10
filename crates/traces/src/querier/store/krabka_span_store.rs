@@ -308,7 +308,10 @@ impl SpanStore for KrabkaSpanStore {
         self.trace_by_id_inner(tenant, trace_id, start_ns, end_ns)
             .await
     }
+}
 
+#[async_trait::async_trait]
+impl TagCatalog for KrabkaSpanStore {
     async fn tag_names(
         &self,
         tenant: &str,

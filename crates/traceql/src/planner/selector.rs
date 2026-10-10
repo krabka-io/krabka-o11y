@@ -840,27 +840,12 @@ mod tests {
 
     #[test]
     fn matcher_key_uses_intrinsic_canonical_names() {
+        // `Intrinsic::tag_name` pins every variant's name; the key delegates to it.
         let cases = [
             (Intrinsic::Name, "span:name"),
-            (Intrinsic::Duration, "span:duration"),
-            (Intrinsic::Kind, "span:kind"),
-            (Intrinsic::Status, "span:status"),
-            (Intrinsic::StatusMessage, "span:statusMessage"),
-            (Intrinsic::Id, "span:id"),
             (Intrinsic::ParentId, "span:parentID"),
-            (Intrinsic::TraceDuration, "trace:duration"),
-            (Intrinsic::TraceRootName, "trace:rootName"),
             (Intrinsic::TraceRootService, "trace:rootService"),
-            (Intrinsic::TraceId, "trace:id"),
-            (Intrinsic::NestedSetLeft, "span:nestedSetLeft"),
-            (Intrinsic::NestedSetRight, "span:nestedSetRight"),
             (Intrinsic::NestedSetParent, "span:nestedSetParent"),
-            (Intrinsic::ChildCount, "span:childCount"),
-            (Intrinsic::InstrumentationName, "instrumentation:name"),
-            (Intrinsic::InstrumentationVersion, "instrumentation:version"),
-            (Intrinsic::EventName, "event:name"),
-            (Intrinsic::EventTimeSinceStart, "event:timeSinceStart"),
-            (Intrinsic::LinkTraceId, "link:traceID"),
             (Intrinsic::LinkSpanId, "link:spanID"),
         ];
         for (intrinsic, expected) in cases {
@@ -964,7 +949,6 @@ mod fixed_hex_lit;
 mod has_nested_scope;
 mod has_parent_scope;
 mod ident;
-mod intrinsic_match_key;
 mod intrinsic_name;
 mod match_cmp;
 mod match_scope;
@@ -1000,7 +984,6 @@ use fixed_hex_lit::fixed_hex_lit;
 pub(crate) use has_nested_scope::has_nested_scope;
 pub(crate) use has_parent_scope::has_parent_scope;
 pub(crate) use ident::ident;
-use intrinsic_match_key::intrinsic_match_key;
 use intrinsic_name::intrinsic_name;
 use match_cmp::match_cmp;
 use match_scope::match_scope;

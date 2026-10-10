@@ -1,27 +1,14 @@
 //! Certificate authorities and leaf certificates, shared by the
-//! `server_security` unit tests and the `server_security` and
-//! `service_security` suites.
+//! `server_security` unit tests, the `server_security` and
+//! `service_security` suites, and the TLS suites of //crates/metrics-service
+//! and //crates/profiles.
 //!
 //! Each reaches this file with `#[path]`, so it names only external crates.
-
-use std::fmt::Write as _;
 
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
 };
-use sha2::{Digest, Sha256};
-
-/// The lowercase hex SHA-256 digest of `token`, as a token digest flag takes
-/// it.
-pub fn sha256_hex(token: &str) -> String {
-    Sha256::digest(token.as_bytes())
-        .iter()
-        .fold(String::new(), |mut hex, byte| {
-            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-            hex
-        })
-}
 
 /// A certificate and its private key, as PEM.
 pub struct Pem {

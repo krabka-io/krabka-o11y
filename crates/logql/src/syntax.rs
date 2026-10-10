@@ -10,8 +10,8 @@ use crate::{
     UnwrapExpression,
     filters::field_filter_expression_to_pipeline_stage,
     util::{
-        QuotedBodyError, QuotedChar, duration_unit, gcd_u64, is_ident_char, is_ident_start,
-        parse_bytes_literal, parse_prometheus_duration_literal, read_quoted_body,
+        QuotedBodyError, QuotedChar, gcd_u64, is_ident_char, is_ident_start, parse_bytes_literal,
+        parse_prometheus_duration_literal, prometheus_duration_unit, read_quoted_body,
     },
 };
 

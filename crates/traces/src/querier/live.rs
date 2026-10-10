@@ -9,8 +9,8 @@ use arrow::{
 use krabka_blockstore::TENANT_HEADER;
 use krabka_observability::server_security::InternalClient;
 use krabka_traceql::{
-    AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagScope, TraceSpans, TraceqlError,
-    TypedValue,
+    AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagCatalog, TagScope, TraceSpans,
+    TraceqlError, TypedValue,
 };
 use krabka_units::{Time, convert::TimeExt as _};
 use opentelemetry_proto::tonic::{
@@ -635,6 +635,13 @@ mod tests {
             Ok(self.trace.clone())
         }
 
+        fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
+            self.frontiers.get(tenant).copied().unwrap_or_default()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TagCatalog for FakeLiveSource {
         async fn tag_names(
             &self,
             _tenant: &str,
@@ -653,10 +660,6 @@ mod tests {
             _end_ns: i64,
         ) -> Result<Vec<TypedValue>> {
             Ok(self.values.clone())
-        }
-
-        fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
-            self.frontiers.get(tenant).copied().unwrap_or_default()
         }
     }
 

@@ -35,6 +35,7 @@ mod annotation_store;
 mod cardinality_active_series_rejects_over_tenant_limit;
 mod discovery_rejects_label_counts_over_tenant_series_limit;
 mod expand_alert_template_substitutions;
+mod first_vector_sample;
 mod float_formatting_matches_go;
 mod instant_query_without_time_defaults_to_current_time;
 mod limited_get;

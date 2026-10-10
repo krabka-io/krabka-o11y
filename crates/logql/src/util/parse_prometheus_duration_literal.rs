@@ -1,6 +1,13 @@
-use super::duration_unit;
+use super::prometheus_duration_unit;
 
-pub(crate) fn parse_prometheus_duration_literal(value: &str) -> Option<i64> {
+/// Parses a Prometheus duration literal such as `1h30m` into nanoseconds.
+///
+/// This follows Prometheus `model.ParseDuration`: one or more `<amount><unit>`
+/// chunks, units strictly from larger to smaller, and no sign, fraction or
+/// whitespace. Returns `None` for an empty, malformed, out-of-order or
+/// overflowing literal, so each caller keeps its own upstream error message.
+#[must_use]
+pub fn parse_prometheus_duration_literal(value: &str) -> Option<i64> {
     let mut rest = value;
     let mut parsed_chunk = false;
     let mut previous_unit_order = None;
@@ -15,7 +22,7 @@ pub(crate) fn parse_prometheus_duration_literal(value: &str) -> Option<i64> {
         rest = rest.get(amount_len..)?;
 
         let unit_len = rest.bytes().take_while(u8::is_ascii_alphabetic).count();
-        let (unit_order, _unit_bit, multiplier) = duration_unit(rest.get(..unit_len)?)?;
+        let (unit_order, _unit_bit, multiplier) = prometheus_duration_unit(rest.get(..unit_len)?)?;
         rest = rest.get(unit_len..)?;
         if previous_unit_order.is_some_and(|previous| unit_order <= previous) {
             return None;

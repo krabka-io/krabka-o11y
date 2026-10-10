@@ -83,6 +83,13 @@ impl LiveSource for RemoteLiveSource {
         trace_spans_from_otlp(trace_id, data).map(Some)
     }
 
+    fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
+        crate::querier::store::block_builder_frontier_ns(&self.trace_index, tenant)
+    }
+}
+
+#[async_trait::async_trait]
+impl TagCatalog for RemoteLiveSource {
     async fn tag_names(
         &self,
         tenant: &str,
@@ -123,16 +130,6 @@ impl LiveSource for RemoteLiveSource {
             .append_pair("end", &ns_ceil_seconds(end_ns).to_string());
         let json = self.get_json(tenant, url).await?;
         typed_values_from_json(&json)
-    }
-
-    fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
-        let trace_index = self.trace_index.load();
-        trace_index
-            .trace_blocks(tenant)
-            .iter()
-            .map(|block| block.max_ts.saturating_add(1))
-            .max()
-            .unwrap_or_default()
     }
 }
 

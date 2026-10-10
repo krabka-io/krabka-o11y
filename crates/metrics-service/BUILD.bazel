@@ -39,7 +39,15 @@ exports_files([
     "tests/support/generated_differential.rs",
 ])
 
-crate_library(name = "metrics-service")
+crate_library(
+    name = "metrics-service",
+    # The router tests reach the vector-sample check the PromQL HTTP API's
+    # unit tests share with `#[path]` from //crates/promql.
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/bin/**"],
+    ) + ["//crates/promql:src/http_api/tests/first_vector_sample.rs"],
+)
 
 # `bazel run //crates/metrics-service:krabka-metrics-service -- --help`.
 crate_binary(
@@ -89,6 +97,7 @@ crate_tests(
         "diff_mimir": ["//crates/metrics:tests/support/diff_corpus.rs"],
         "diff_prometheus": ["//crates/metrics:tests/support/diff_corpus.rs"],
         "grafana_integration": ["//crates/metrics:tests/support/diff_corpus.rs"],
+        "server_security": ["//crates/observability:tests/support/server_security_pki.rs"],
         "tsdb_import": [
             "//crates/metrics:tests/support/crashing_store.rs",
             "//crates/metrics:tests/support/diff_corpus.rs",
@@ -125,4 +134,5 @@ exports_files([
     "tests/support/container_deployment.rs",
     "tests/support/deployment_evidence.rs",
     "tests/support/pinned_grafana_image.rs",
+    "tests/support/pinned_prometheus_image.rs",
 ])

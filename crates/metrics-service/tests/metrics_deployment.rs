@@ -27,7 +27,7 @@ mod deployment_evidence;
 use container_deployment::{
     Deployment, TestResult, base_url, image, start, start_infrastructure, wait_until_ready,
 };
-use deployment_evidence::record_evidence;
+use deployment_evidence::{QueryOutcome, record_evidence};
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(45);
 const DATA_PORT: u16 = 4041;
@@ -311,10 +311,12 @@ async fn check_compound_queries(
         let result = wait_range_query(client, base, tenant, &query, &expected).await;
         record_evidence(
             evidence,
-            json!({"phase":phase, "tenant":tenant, "query":query,
-            "expected":expected, "actual":result.as_ref().ok(),
-            "status":if result.is_ok() {"matched"} else {"mismatch"},
-            "error":result.as_ref().err().map(ToString::to_string)}),
+            QueryOutcome {
+                request: json!({"phase":phase, "tenant":tenant, "query":query}),
+                expected: &expected,
+                outcome: &result,
+            }
+            .evidence_case(),
             filename,
         )?;
         result?;

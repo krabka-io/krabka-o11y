@@ -14,7 +14,7 @@ pub use self::cpu_record::{CPU_PROFILE_TYPE, CpuRecord, cpu_record};
 use crate::{
     blockbuilder::build_block,
     cold_store::ColdProfileStore,
-    wal::{ProfileRecord, WalFunction, WalLocation, WalSample, WalSymbolSet},
+    wal::{ProfileRecord, WalSample, WalSymbolSet},
     wire::pb::otlp_profiles::{Function, Line, Location, ProfilesDictionary, Stack, ValueType},
 };
 

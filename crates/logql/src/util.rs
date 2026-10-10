@@ -7,8 +7,8 @@ mod tests {
     use krabka_units::{ByteSize, convert::ByteSizeExt};
 
     use super::{
-        QuotedChar, duration_unit, format_decimal_ratio, is_ident_start, parse_bytes_literal,
-        parse_prometheus_duration_literal,
+        QuotedChar, format_decimal_ratio, is_ident_start, parse_bytes_literal,
+        parse_prometheus_duration_literal, prometheus_duration_unit,
     };
 
     #[test]
@@ -35,9 +35,13 @@ mod tests {
         ];
 
         for (unit, expected) in units {
-            assert_eq!(duration_unit(unit), Some(expected), "unit {unit}");
+            assert_eq!(
+                prometheus_duration_unit(unit),
+                Some(expected),
+                "unit {unit}"
+            );
         }
-        assert_eq!(duration_unit("fortnight"), None);
+        assert_eq!(prometheus_duration_unit("fortnight"), None);
     }
 
     #[test]
@@ -98,24 +102,26 @@ mod tests {
 
 mod bytes_unit_multiplier;
 mod decode_quoted_escape;
-mod duration_unit;
 mod format_decimal_ratio;
 mod gcd_u64;
+mod hex_digit_value;
 mod is_ident_char;
 mod is_ident_start;
 mod parse_bytes_literal;
 mod parse_prometheus_duration_literal;
+mod prometheus_duration_unit;
 mod quoted_char;
 mod read_quoted_body;
 
 use bytes_unit_multiplier::bytes_unit_multiplier;
 pub(crate) use decode_quoted_escape::decode_quoted_escape;
-pub(crate) use duration_unit::duration_unit;
 pub(crate) use format_decimal_ratio::format_decimal_ratio;
 pub(crate) use gcd_u64::gcd_u64;
+pub use hex_digit_value::hex_digit_value;
 pub(crate) use is_ident_char::is_ident_char;
 pub(crate) use is_ident_start::is_ident_start;
 pub(crate) use parse_bytes_literal::parse_bytes_literal;
-pub(crate) use parse_prometheus_duration_literal::parse_prometheus_duration_literal;
+pub use parse_prometheus_duration_literal::parse_prometheus_duration_literal;
+pub use prometheus_duration_unit::prometheus_duration_unit;
 pub(crate) use quoted_char::QuotedChar;
 pub(crate) use read_quoted_body::{QuotedBodyError, read_quoted_body};

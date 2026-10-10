@@ -28,7 +28,7 @@ mod tests {
     mod span_batch_packing;
 
     use assert2::check;
-    use krabka_traceql::TagScope;
+    use krabka_traceql::{TagCatalog as _, TagScope};
 
     use super::{LiveSource as _, LiveStore};
     use crate::{
