@@ -4,8 +4,8 @@ use promql_parser::parser::{Call, SubqueryExpr};
 #[cfg(feature = "experimental-functions")]
 use super::range_functions::validate_smoothing_factor;
 use super::{
-    PromqlEngine, RangeEval,
-    annotations::{emit_warning, invalid_quantile_warning, is_valid_quantile},
+    PromqlEngine, RangeEval, RangeWindow,
+    annotations::{TypeAndUnitLabels, emit_warning, invalid_quantile_warning, is_valid_quantile},
     apply_selector_time_modifier,
     planned::PlannedInstant,
     planner_support::{
@@ -312,11 +312,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         // `anchored`/`smoothed` modifiers attach to a matrix selector, never a
         // subquery), matching `eval_range_arg`'s subquery arm.
         let range = RangeEval {
-            enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
             series,
-            end_ms,
-            range,
-            modifier: None,
+            window: RangeWindow {
+                end_ms,
+                range,
+                modifier: None,
+                type_and_unit_labels: TypeAndUnitLabels::from_engine_opts(&self.opts),
+            },
         };
         Ok(Some(PlannedInstant::Precomputed(apply_outer_range_fn(
             range, outer, time_ms,

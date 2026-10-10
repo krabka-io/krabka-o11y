@@ -2,10 +2,12 @@ use krabka_units::prelude::*;
 use promql_parser::parser::{MatrixSelector, VectorSelector};
 
 use super::{
-    InstantShape, OuterRangeFn, PlannedInstant, PromqlEngine, RangeEval,
-    annotations::emit_metric_might_not_be_counter_info, apply_outer_range_fn,
-    apply_selector_time_modifier, current_at_modifier_bounds, label_matcher_sets,
-    matrix_selector_at::MatrixSelectorAt, selector_duration,
+    InstantShape, OuterRangeFn, PlannedInstant, PromqlEngine, RangeEval, RangeWindow,
+    annotations::{TypeAndUnitLabels, emit_metric_might_not_be_counter_info},
+    apply_outer_range_fn, apply_selector_time_modifier, current_at_modifier_bounds,
+    label_matcher_sets,
+    matrix_selector_at::MatrixSelectorAt,
+    selector_duration,
 };
 use crate::{
     error::Result,
@@ -187,7 +189,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             for series in samples.iter().filter(|series| series.samples.len() >= 2) {
                 emit_metric_might_not_be_counter_info(
                     &series.labels,
-                    self.opts.enable_type_and_unit_labels,
+                    TypeAndUnitLabels::from_engine_opts(&self.opts),
                 );
             }
         }
@@ -317,11 +319,13 @@ impl<S: MetricStore> PromqlEngine<S> {
             .eval_matrix_selector(tenant, selector, time_ms, time_ms, None)
             .await?;
         let range = RangeEval {
-            enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
             series,
-            end_ms,
-            range,
-            modifier: None,
+            window: RangeWindow {
+                end_ms,
+                range,
+                modifier: None,
+                type_and_unit_labels: TypeAndUnitLabels::from_engine_opts(&self.opts),
+            },
         };
         Ok(PlannedInstant::Precomputed(apply_outer_range_fn(
             range, outer, time_ms,

@@ -40,3 +40,29 @@ pub(crate) fn assert_case_values(samples: &[crate::InstantSample], expected: &[C
         assert2::assert!(approx_eq(float_value(&sample.value), sample_value));
     }
 }
+
+/// A query over `temperature_celsius` and the value it yields for each case.
+pub(crate) struct CaseQuery {
+    pub(crate) query: &'static str,
+    pub(crate) expected: [CaseValue; 3],
+}
+
+/// Runs each query at 10s against `temperature_celsius` cases `neg` = -1.2,
+/// `zero` = 0 and `pos` = 1.2, and checks it yields its expected case values.
+pub(crate) async fn assert_signed_temperature_cases(case_queries: &[CaseQuery]) {
+    let mut store = InMemoryMetricStore::new();
+    push_cases(
+        &mut store,
+        "temperature_celsius",
+        &[
+            CaseValue::new("neg", -1.2),
+            CaseValue::new("zero", 0.0),
+            CaseValue::new("pos", 1.2),
+        ],
+    );
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    for CaseQuery { query, expected } in case_queries {
+        let samples = instant_vector(&engine, query, 10_000).await;
+        assert_case_values(&samples, expected);
+    }
+}

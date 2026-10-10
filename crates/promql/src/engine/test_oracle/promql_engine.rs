@@ -381,7 +381,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 .eval_unary_float_call(tenant, OracleCall { call, time_ms }, kind)
                 .await;
         }
-        if let Some(kind) = calendar_function(call.func.name) {
+        if let Some(kind) = calendar_fn_from_function_name(call.func.name) {
             return self.eval_calendar_call(tenant, call, time_ms, kind).await;
         }
         if let Some(kind) = over_time_function(call.func.name) {

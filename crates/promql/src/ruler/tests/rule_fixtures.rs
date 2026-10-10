@@ -117,3 +117,33 @@ pub(crate) fn group_state(last_evals: &[GroupLastEval]) -> super::super::RulerGr
     );
     state
 }
+
+/// The sinks an `up > 0` recording-and-alerting evaluation wrote to.
+pub(crate) struct UpRuleSinks<'a> {
+    pub(crate) wal_sink: &'a RecordingSink,
+    pub(crate) alert_sink: &'a RecordingAlertmanagerSink,
+}
+
+/// Checks the evaluation at 6m that follows a pending one at 1m: one more
+/// recording, and the `InstanceUp` alert that has been pending since 1m firing.
+pub(crate) fn assert_up_rules_fired_at_six_minutes(
+    firing: &super::super::RulerGroupEvaluation,
+    sinks: &UpRuleSinks<'_>,
+) {
+    assert2::assert!(
+        *firing
+            == super::super::RulerGroupEvaluation {
+                recording_records: 1,
+                alerts_dispatched: 1,
+                last_eval_ms: 360_000,
+            }
+    );
+    assert2::assert!(
+        sinks.wal_sink.records()
+            == vec![
+                job_up_current_record(60_000),
+                job_up_current_record(360_000),
+            ]
+    );
+    assert2::assert!(sinks.alert_sink.alerts() == vec![instance_up_alert(60_000)]);
+}

@@ -78,20 +78,10 @@ async fn native_histogram_cardinality_reports_latest_bucket_counts() {
         Arc::new(search_store()),
         EngineOpts::default(),
     ));
-    let response = prometheus_router(state)
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/active_native_histogram_metrics")
-                .header("x-scope-orgid", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, body) =
+        annotated_query_body(state, "/api/v1/cardinality/active_native_histogram_metrics").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert2::assert!(status == StatusCode::OK);
     assert2::check!(body["data"][0]["metric"] == "request_duration_seconds");
     assert2::check!(body["data"][0]["series_count"] == 1);
     assert2::check!(body["data"][0]["bucket_count"] == 2);

@@ -25,8 +25,7 @@ mod tests {
         calls: Arc<Mutex<Vec<&'static str>>>,
     }
 
-    #[async_trait::async_trait]
-    impl MetricStore for Empty {
+    crate::test_support::metric_store_with_empty_lookups!(Empty {
         async fn try_latest_float_samples(
             &self,
             _tenant: &str,
@@ -66,85 +65,7 @@ mod tests {
                 warnings: Vec::new(),
             })
         }
-
-        async fn label_names(
-            &self,
-            _tenant: &str,
-            _matchers: &[crate::PromqlMatcher],
-            _start_ms: i64,
-            _end_ms: i64,
-        ) -> Result<Vec<String>, PromqlError> {
-            Ok(vec![])
-        }
-
-        async fn label_values(
-            &self,
-            _tenant: &str,
-            _name: &str,
-            _matchers: &[crate::PromqlMatcher],
-            _start_ms: i64,
-            _end_ms: i64,
-        ) -> Result<Vec<krabka_metrics::MetricString>, PromqlError> {
-            Ok(vec![])
-        }
-
-        async fn series(
-            &self,
-            _tenant: &str,
-            _matchers: &[crate::PromqlMatcher],
-            _start_ms: i64,
-            _end_ms: i64,
-        ) -> Result<Vec<Labels>, PromqlError> {
-            Ok(vec![])
-        }
-
-        async fn exemplars(
-            &self,
-            _tenant: &str,
-            _matchers: &[crate::PromqlMatcher],
-            _start_ms: i64,
-            _end_ms: i64,
-        ) -> Result<ExemplarScan, PromqlError> {
-            Ok(ExemplarScan::default())
-        }
-
-        async fn metadata(
-            &self,
-            _tenant: &str,
-            _metric: Option<&str>,
-        ) -> Result<MetadataScan, PromqlError> {
-            Ok(MetadataScan::default())
-        }
-
-        async fn cardinality_label_names(
-            &self,
-            _tenant: &str,
-        ) -> Result<Vec<LabelNameCardinality>, PromqlError> {
-            Ok(vec![])
-        }
-
-        async fn cardinality_label_values(
-            &self,
-            _tenant: &str,
-        ) -> Result<Vec<LabelValueCardinality>, PromqlError> {
-            Ok(vec![])
-        }
-
-        async fn cardinality_active_series(
-            &self,
-            _tenant: &str,
-        ) -> Result<Vec<Labels>, PromqlError> {
-            Ok(vec![])
-        }
-
-        async fn tsdb_stats(&self, _tenant: &str) -> Result<TsdbStats, PromqlError> {
-            Ok(TsdbStats::empty())
-        }
-
-        async fn tsdb_blocks(&self, _tenant: &str) -> Result<Vec<TsdbBlock>, PromqlError> {
-            Ok(Vec::new())
-        }
-    }
+    });
 
     #[tokio::test]
     async fn canonical_shared_map_keeps_default_last_and_merged_first_owners() {

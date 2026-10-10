@@ -165,6 +165,8 @@ mod info_label_selector;
 mod is_ident_char;
 mod is_ident_start;
 mod is_zero;
+#[cfg(test)]
+mod job_values;
 mod labeled_series;
 mod matching_delimiter;
 mod ms_to_seconds;
@@ -200,6 +202,8 @@ pub use format_promql_expr::{format_promql_expr, serialize_promql_expr};
 use is_ident_char::is_ident_char;
 use is_ident_start::is_ident_start;
 use is_zero::is_zero;
+#[cfg(test)]
+use job_values::job_values;
 pub use labeled_series::LabeledSeries;
 use matching_delimiter::matching_delimiter;
 use ms_to_seconds::ms_to_seconds;

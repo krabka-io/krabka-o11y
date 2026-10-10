@@ -2,15 +2,28 @@ use datafusion::logical_expr::{Expr, LogicalPlan, UserDefinedLogicalNodeCore};
 
 use super::{DataFusionError, DfResult, fmt};
 
+/// The step grid and columns an instant-vector selection reads, shared by the
+/// logical [`InstantManipulate`] node and its physical `InstantManipulateExec`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
+pub struct InstantManipulateSettings {
+    /// The first grid instant, in milliseconds.
+    pub start_ms: i64,
+    /// The last grid instant, in milliseconds.
+    pub end_ms: i64,
+    /// The grid stride, in milliseconds.
+    pub step_ms: i64,
+    /// How far back from a grid instant a sample may lie, in milliseconds.
+    pub lookback_delta_ms: i64,
+    /// The `Int64` sample-timestamp column.
+    pub time_index: String,
+    /// The `Float64` sample-value column.
+    pub field_column: String,
+}
+
 /// Logical node: instant-vector selection over a step grid.
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd)]
 pub struct InstantManipulate {
-    pub start_ms: i64,
-    pub end_ms: i64,
-    pub step_ms: i64,
-    pub lookback_delta_ms: i64,
-    pub time_index: String,
-    pub field_column: String,
+    pub settings: InstantManipulateSettings,
     pub input: LogicalPlan,
 }
 
@@ -35,7 +48,10 @@ impl UserDefinedLogicalNodeCore for InstantManipulate {
         write!(
             f,
             "PromInstantManipulate: start_ms={}, end_ms={}, step_ms={}, lookback_delta_ms={}",
-            self.start_ms, self.end_ms, self.step_ms, self.lookback_delta_ms
+            self.settings.start_ms,
+            self.settings.end_ms,
+            self.settings.step_ms,
+            self.settings.lookback_delta_ms
         )
     }
 
@@ -50,12 +66,7 @@ impl UserDefinedLogicalNodeCore for InstantManipulate {
             ));
         }
         Ok(Self {
-            start_ms: self.start_ms,
-            end_ms: self.end_ms,
-            step_ms: self.step_ms,
-            lookback_delta_ms: self.lookback_delta_ms,
-            time_index: self.time_index.clone(),
-            field_column: self.field_column.clone(),
+            settings: self.settings.clone(),
             input: inputs.swap_remove(0),
         })
     }

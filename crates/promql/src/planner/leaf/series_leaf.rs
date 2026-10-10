@@ -3,6 +3,7 @@ use super::{
     SeriesDivide, SeriesFingerprint, SeriesNormalize, TIME_COLUMN, build_leaf_batch, leaf_scan,
     leaf_schema,
 };
+use crate::{NanSamples, SeriesNormalizeSettings};
 
 /// The leaf scan over a selector's matched series, with what the plan needs
 /// to read its output back.
@@ -61,9 +62,11 @@ pub(crate) fn divide_and_normalize(label_names: &[String], leaf: LogicalPlan) ->
     });
     LogicalPlan::Extension(Extension {
         node: Arc::new(SeriesNormalize {
-            offset_ms: 0,
-            time_index: TIME_COLUMN.to_string(),
-            need_filter_out_nan: false,
+            settings: SeriesNormalizeSettings {
+                offset_ms: 0,
+                time_index: TIME_COLUMN.to_string(),
+                nan_samples: NanSamples::Keep,
+            },
             input: divide,
         }),
     })

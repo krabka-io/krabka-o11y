@@ -41,6 +41,49 @@ macro_rules! single_input_exec_plumbing {
     };
 }
 
+/// Implements the [`ExecutionPlan`](datafusion::physical_plan::ExecutionPlan)
+/// methods every `Prom*Exec` node built from a `settings` field shares.
+///
+/// The node keeps no input order, rebuilds itself from its `settings` over a
+/// new child, and maps each input batch through `self.$transform_batch`. Like
+/// [`single_input_exec_plumbing`], it is a macro because it writes trait
+/// methods.
+macro_rules! settings_batch_exec_methods {
+    ($transform_batch:ident) => {
+        fn maintains_input_order(&self) -> Vec<bool> {
+            vec![false]
+        }
+
+        fn with_new_children(
+            self: ::std::sync::Arc<Self>,
+            children: Vec<::std::sync::Arc<dyn ::datafusion::physical_plan::ExecutionPlan>>,
+        ) -> ::datafusion::common::Result<
+            ::std::sync::Arc<dyn ::datafusion::physical_plan::ExecutionPlan>,
+        > {
+            let input = $crate::extension::only_child(children, self.name())?;
+            Ok(::std::sync::Arc::new(Self::new(
+                self.settings.clone(),
+                input,
+            )))
+        }
+
+        fn execute(
+            &self,
+            partition: usize,
+            context: ::std::sync::Arc<::datafusion::execution::TaskContext>,
+        ) -> ::datafusion::common::Result<::datafusion::physical_plan::SendableRecordBatchStream> {
+            let input = self.input.execute(partition, context)?;
+            let schema = self.schema();
+            let this = self.clone();
+            Ok($crate::extension::map_batches(
+                input,
+                schema,
+                move |batch| this.$transform_batch(batch),
+            ))
+        }
+    };
+}
+
 pub mod instant_manipulate;
 pub mod normalize;
 pub mod planner;

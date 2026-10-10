@@ -20,7 +20,7 @@ use super::{
     Arc, Extension, LogicalPlan, LogicalPlanBuilder, PromqlError, Result, StepGrid, TIME_COLUMN,
     Time, TimeExt, VALUE_COLUMN,
 };
-use crate::extension::range_manipulate::{RANGE_SUFFIX, RangeManipulate};
+use crate::extension::range_manipulate::{RANGE_SUFFIX, RangeManipulate, RangeManipulateSettings};
 
 /// The per-series input a range plan folds into windows.
 pub(crate) struct RangeWindows<'a> {
@@ -49,12 +49,14 @@ pub(crate) fn range_udf_plan(
     } = windows;
     let range_ms = range.millis_i64();
     let range = RangeManipulate::new(
-        grid.start,
-        grid.end,
-        grid.step,
-        range_ms,
-        TIME_COLUMN.to_string(),
-        VALUE_COLUMN.to_string(),
+        RangeManipulateSettings {
+            start_ms: grid.start,
+            end_ms: grid.end,
+            interval_ms: grid.step,
+            range_ms,
+            time_index: TIME_COLUMN.to_string(),
+            field_column: VALUE_COLUMN.to_string(),
+        },
         normalize,
     )
     .map_err(|error| PromqlError::Exec(error.to_string()))?;

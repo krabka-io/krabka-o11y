@@ -3,26 +3,28 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_bottomk_without_selects_smallest_sample_per_group_with_original_labels()
 {
-    let mut store = InMemoryMetricStore::new();
-    for (job, instance, value) in [
-        ("api", "a", 4.0),
-        ("api", "b", 1.0),
-        ("worker", "c", 5.0),
-        ("worker", "d", 2.0),
-    ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                ("__name__", "memory_bytes"),
-                ("job", job),
-                ("instance", instance),
-            ]),
-            10_000,
-            value,
-        );
-    }
-
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let engine = job_memory_bytes_engine(&[
+        JobInstanceSample {
+            job: "api",
+            instance: "a",
+            value: 4.0,
+        },
+        JobInstanceSample {
+            job: "api",
+            instance: "b",
+            value: 1.0,
+        },
+        JobInstanceSample {
+            job: "worker",
+            instance: "c",
+            value: 5.0,
+        },
+        JobInstanceSample {
+            job: "worker",
+            instance: "d",
+            value: 2.0,
+        },
+    ]);
     let samples = instant_vector(
         &engine,
         "bottomk without (instance) (1, memory_bytes)",
@@ -30,16 +32,20 @@ pub(crate) async fn instant_bottomk_without_selects_smallest_sample_per_group_wi
     )
     .await;
     check!(samples.len() == 2);
-    check!(samples.iter().any(|sample| {
-        sample.labels.get("__name__") == Some("memory_bytes")
-            && sample.labels.get("job") == Some("api")
-            && sample.labels.get("instance") == Some("b")
-            && approx_eq(float_value(&sample.value), 1.0)
-    }));
-    check!(samples.iter().any(|sample| {
-        sample.labels.get("__name__") == Some("memory_bytes")
-            && sample.labels.get("job") == Some("worker")
-            && sample.labels.get("instance") == Some("d")
-            && approx_eq(float_value(&sample.value), 2.0)
-    }));
+    check!(has_job_memory_bytes_sample(
+        &samples,
+        &JobInstanceSample {
+            job: "api",
+            instance: "b",
+            value: 1.0,
+        },
+    ));
+    check!(has_job_memory_bytes_sample(
+        &samples,
+        &JobInstanceSample {
+            job: "worker",
+            instance: "d",
+            value: 2.0,
+        },
+    ));
 }

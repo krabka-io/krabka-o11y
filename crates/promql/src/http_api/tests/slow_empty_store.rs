@@ -29,8 +29,7 @@ impl SlowEmptyStore {
     }
 }
 
-#[async_trait::async_trait]
-impl MetricStore for SlowEmptyStore {
+crate::test_support::metric_store_with_empty_lookups!(SlowEmptyStore {
     async fn scan(
         &self,
         _tenant: &str,
@@ -46,82 +45,4 @@ impl MetricStore for SlowEmptyStore {
             warnings: Vec::new(),
         })
     }
-
-    async fn label_names(
-        &self,
-        _tenant: &str,
-        _matchers: &[LabelMatcher],
-        _start_ms: i64,
-        _end_ms: i64,
-    ) -> Result<Vec<String>, PromqlError> {
-        Ok(Vec::new())
-    }
-
-    async fn label_values(
-        &self,
-        _tenant: &str,
-        _name: &str,
-        _matchers: &[LabelMatcher],
-        _start_ms: i64,
-        _end_ms: i64,
-    ) -> Result<Vec<krabka_metrics::MetricString>, PromqlError> {
-        Ok(Vec::new())
-    }
-
-    async fn series(
-        &self,
-        _tenant: &str,
-        _matchers: &[LabelMatcher],
-        _start_ms: i64,
-        _end_ms: i64,
-    ) -> Result<Vec<crate::PromqlLabels>, PromqlError> {
-        Ok(Vec::new())
-    }
-
-    async fn exemplars(
-        &self,
-        _tenant: &str,
-        _matchers: &[LabelMatcher],
-        _start_ms: i64,
-        _end_ms: i64,
-    ) -> Result<ExemplarScan, PromqlError> {
-        Ok(ExemplarScan::default())
-    }
-
-    async fn metadata(
-        &self,
-        _tenant: &str,
-        _metric: Option<&str>,
-    ) -> Result<MetadataScan, PromqlError> {
-        Ok(MetadataScan::default())
-    }
-
-    async fn cardinality_label_names(
-        &self,
-        _tenant: &str,
-    ) -> Result<Vec<LabelNameCardinality>, PromqlError> {
-        Ok(Vec::new())
-    }
-
-    async fn cardinality_label_values(
-        &self,
-        _tenant: &str,
-    ) -> Result<Vec<LabelValueCardinality>, PromqlError> {
-        Ok(Vec::new())
-    }
-
-    async fn cardinality_active_series(
-        &self,
-        _tenant: &str,
-    ) -> Result<Vec<crate::PromqlLabels>, PromqlError> {
-        Ok(Vec::new())
-    }
-
-    async fn tsdb_stats(&self, _tenant: &str) -> Result<TsdbStats, PromqlError> {
-        Ok(TsdbStats::empty())
-    }
-
-    async fn tsdb_blocks(&self, _tenant: &str) -> Result<Vec<TsdbBlock>, PromqlError> {
-        Ok(Vec::new())
-    }
-}
+});

@@ -17,10 +17,7 @@ use krabka_observability::server_security::{ServerSecurity, authenticate_request
 use tower::ServiceExt;
 
 use super::{request::unix_now_ms, *};
-use crate::{
-    ExemplarScan, InMemoryMetricStore, LabelNameCardinality, LabelValueCardinality, MetadataScan,
-    PromqlMatcher as LabelMatcher, ScanResult, TsdbBlock, TsdbStats,
-};
+use crate::{InMemoryMetricStore, PromqlMatcher as LabelMatcher, ScanResult};
 
 // Every request reaches the handlers through the authentication layer, as it
 // does on a served listener. With no credentials file, the layer marks each
@@ -62,7 +59,7 @@ mod series_rejects_selected_series_over_tenant_limit;
 mod slow_empty_store;
 mod two_series_store;
 
-use annotated_query_body::annotated_query_body;
+use annotated_query_body::{OrgRequest, annotated_query_body, org_query_body};
 use annotation_query_uri::annotation_query_uri;
 use annotation_store::annotation_store;
 use limited_get::{assert_execution_error, limited_get};

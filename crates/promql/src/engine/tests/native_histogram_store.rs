@@ -87,3 +87,25 @@ pub(crate) async fn assert_histogram_series_reduction(query: &str, expected: f64
         "{query}"
     );
 }
+
+/// An engine over a store holding `h` at 10s: a float native histogram of
+/// count 12 and the given `sum`, with buckets -4..-2 = 3 and -2..-1 = 1, a
+/// zero bucket of threshold 0.5 holding 2, then 1..2 = 4 and 2..4 = 2.
+pub(crate) fn signed_bucket_histogram_engine(sum: f64) -> PromqlEngine<InMemoryMetricStore> {
+    let mut histogram = native_histogram(12.0, sum);
+    histogram.zero_threshold = 0.5;
+    histogram.zero_count = 2.0;
+    histogram.positive_spans = vec![BucketSpan {
+        offset: 1,
+        length: 2,
+    }];
+    histogram.positive_counts = vec![4.0, 2.0];
+    histogram.negative_spans = vec![BucketSpan {
+        offset: 1,
+        length: 2,
+    }];
+    histogram.negative_counts = vec![3.0, 1.0];
+    let mut store = InMemoryMetricStore::new();
+    store.push_histogram("tenant-a", labels(&[("__name__", "h")]), 10_000, histogram);
+    PromqlEngine::new(Arc::new(store), EngineOpts::default())
+}

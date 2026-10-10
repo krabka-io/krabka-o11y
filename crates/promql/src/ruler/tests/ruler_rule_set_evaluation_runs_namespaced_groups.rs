@@ -48,20 +48,11 @@ rules:
     )
     .await
     .expect("firing rule-set evaluation");
-    assert2::assert!(
-        firing
-            == super::super::RulerGroupEvaluation {
-                recording_records: 1,
-                alerts_dispatched: 1,
-                last_eval_ms: 360_000,
-            }
+    assert_up_rules_fired_at_six_minutes(
+        &firing,
+        &UpRuleSinks {
+            wal_sink: &wal_sink,
+            alert_sink: &alert_sink,
+        },
     );
-    assert2::assert!(
-        wal_sink.records()
-            == vec![
-                job_up_current_record(60_000),
-                job_up_current_record(360_000),
-            ]
-    );
-    assert2::assert!(alert_sink.alerts() == vec![instance_up_alert(60_000)]);
 }

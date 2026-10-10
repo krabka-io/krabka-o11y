@@ -35,11 +35,11 @@ use crate::{PromqlLabels as Labels, error::Result, extension::planner::prom_sess
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::{BinaryArray, Float64Array};
+    use arrow::array::Float64Array;
     use assert2::check;
 
     use super::*;
-    use crate::planner::RangeWindowGrid;
+    use crate::planner::{RangeWindowGrid, job_values};
 
     fn approx_eq(left: f64, right: f64) -> bool {
         (left - right).abs() < 1e-9
@@ -66,36 +66,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let batches = plan
-            .ctx
-            .execute_logical_plan(plan.plan)
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-
-        let mut got = Vec::new();
-        for batch in &batches {
-            let job = batch
-                .column_by_name("job")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<BinaryArray>()
-                .unwrap();
-            let value = batch
-                .column_by_name(RATE_VALUE_COLUMN)
-                .unwrap()
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap();
-            for row in 0..batch.num_rows() {
-                got.push((
-                    String::from_utf8(job.value(row).to_vec()).unwrap(),
-                    value.value(row),
-                ));
-            }
-        }
+        let got = job_values(&plan.ctx, plan.plan, RATE_VALUE_COLUMN).await;
         check!(got.len() == 1);
         check!(got[0].0 == "a");
         check!(approx_eq(got[0].1, 5.0 / 300.0));

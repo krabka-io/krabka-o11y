@@ -226,16 +226,25 @@ async fn alerts<S: MetricStore>(
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
-    let alerts = state
+    let alerts = filtered_tenant_alerts(&state, &tenant, query.as_deref());
+    no_store(Json(alerts).into_response())
+}
+
+/// The tenant's stored alerts that match the `filter` matchers in `query`.
+fn filtered_tenant_alerts<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    tenant: &krabka_blockstore::TenantId,
+    query: Option<&str>,
+) -> Vec<Value> {
+    state
         .alertmanager_alerts
         .read()
         .ok()
-        .and_then(|alerts| alerts.get(&tenant).cloned())
+        .and_then(|alerts| alerts.get(tenant).cloned())
         .unwrap_or_default()
         .into_iter()
-        .filter(|alert| matches_filters(alert, query.as_deref()))
-        .collect::<Vec<_>>();
-    no_store(Json(alerts).into_response())
+        .filter(|alert| matches_filters(alert, query))
+        .collect()
 }
 
 async fn set_alerts<S: MetricStore>(
@@ -289,17 +298,8 @@ async fn alert_groups<S: MetricStore>(
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
-    let alerts = state
-        .alertmanager_alerts
-        .read()
-        .ok()
-        .and_then(|all| all.get(&tenant).cloned())
-        .unwrap_or_default();
     let mut groups = std::collections::BTreeMap::<String, Vec<Value>>::new();
-    for alert in alerts
-        .into_iter()
-        .filter(|alert| matches_filters(alert, query.as_deref()))
-    {
+    for alert in filtered_tenant_alerts(&state, &tenant, query.as_deref()) {
         let receiver = alert
             .pointer("/receivers/0/name")
             .and_then(Value::as_str)

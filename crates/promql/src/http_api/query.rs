@@ -25,6 +25,7 @@ use crate::{
     query_frontend::{FrontendRangeRequest, execute_range_query_frontend},
 };
 
+mod evaluated_query_response;
 mod exemplars_query_params;
 mod exemplars_query_params_from_form;
 mod instant_query_params;
@@ -45,6 +46,7 @@ mod range_query_params;
 mod range_query_params_from_form;
 mod run_timed_query;
 
+use evaluated_query_response::{EvaluatedQuery, evaluated_query_response};
 use exemplars_query_params::ExemplarsQueryParams;
 use exemplars_query_params_from_form::exemplars_query_params_from_form;
 use instant_query_params::InstantQueryParams;

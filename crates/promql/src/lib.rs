@@ -40,9 +40,11 @@ pub use error::PromqlError;
 mod promql_labels;
 mod promql_string;
 pub use extension::{
-    instant_manipulate::{InstantManipulate, InstantManipulateExec},
-    normalize::{SeriesNormalize, SeriesNormalizeExec},
-    range_manipulate::{RangeManipulate, RangeManipulateExec, build_extended_range_schema},
+    instant_manipulate::{InstantManipulate, InstantManipulateExec, InstantManipulateSettings},
+    normalize::{NanSamples, SeriesNormalize, SeriesNormalizeExec, SeriesNormalizeSettings},
+    range_manipulate::{
+        RangeManipulate, RangeManipulateExec, RangeManipulateSettings, build_extended_range_schema,
+    },
     series_divide::{SeriesDivide, SeriesDivideExec},
 };
 pub use functions::{

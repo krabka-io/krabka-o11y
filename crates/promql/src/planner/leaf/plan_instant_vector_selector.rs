@@ -3,6 +3,7 @@ use super::{
     SampleTimePresence, SeriesLeaf, StepGrid, TIME_COLUMN, Time, TimeExt, VALUE_COLUMN,
     divide_and_normalize, prom_session_context, series_leaf,
 };
+use crate::InstantManipulateSettings;
 
 /// Builds the leaf table and operator chain for a bare instant-vector selector.
 ///
@@ -40,12 +41,14 @@ pub async fn plan_instant_vector_selector(
     // within (instant - lookback, instant], dropping NaN.
     let instant = LogicalPlan::Extension(Extension {
         node: Arc::new(InstantManipulate {
-            start_ms: grid.start,
-            end_ms: grid.end,
-            step_ms: grid.step,
-            lookback_delta_ms: lookback_delta.millis_i64(),
-            time_index: TIME_COLUMN.to_string(),
-            field_column: VALUE_COLUMN.to_string(),
+            settings: InstantManipulateSettings {
+                start_ms: grid.start,
+                end_ms: grid.end,
+                step_ms: grid.step,
+                lookback_delta_ms: lookback_delta.millis_i64(),
+                time_index: TIME_COLUMN.to_string(),
+                field_column: VALUE_COLUMN.to_string(),
+            },
             input: normalize,
         }),
     });

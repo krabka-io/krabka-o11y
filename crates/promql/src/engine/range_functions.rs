@@ -3,7 +3,7 @@ use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 
 use super::{
-    RangeEval, add_compatible_native_histogram,
+    RangeEval, RangeWindow, add_compatible_native_histogram,
     annotations::{
         emit_info, emit_warning, histogram_counter_reset_collision_warning,
         histogram_ignored_in_mixed_range_info, mismatched_custom_buckets_info,
@@ -115,7 +115,7 @@ pub(super) use kahan_sum_inc::kahan_sum_inc;
 pub(super) use native_histograms_equal::native_histograms_equal;
 use note_histograms_ignored_in_range::note_histograms_ignored_in_range;
 pub(super) use outer_range_fn::OuterRangeFn;
-use outer_range_sample_from_series::outer_range_sample_from_series;
+use outer_range_sample_from_series::{OuterRangeFold, outer_range_sample_from_series};
 pub(super) use over_time_fn::OverTimeFn;
 use over_time_histogram_sample::over_time_histogram_sample;
 use over_time_mad::over_time_mad;

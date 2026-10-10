@@ -53,19 +53,15 @@ use super::extrapolate::{
 #[cfg(test)]
 mod tests {
     use arrow::{
-        array::Float64Array,
-        datatypes::{Field, Schema},
+        array::{Float64Array, PrimitiveArray},
+        datatypes::{ArrowPrimitiveType, Field, Float64Type, Int64Type, Schema},
         record_batch::RecordBatch,
     };
-    use assert2::check;
     use datafusion::common::ScalarValue;
 
     use super::*;
     use crate::{
-        functions::{
-            udf_args::decode_range_column,
-            udf_test_support::{WindowStep, nullable_floats, window_columns},
-        },
+        functions::udf_test_support::{WindowStep, nullable_floats, window_columns},
         range_array::RangeArray,
     };
 
@@ -73,7 +69,8 @@ mod tests {
         (left - right).abs() < 1e-9
     }
 
-    fn timestamp_range(windows: &[&[i64]]) -> ArrayRef {
+    /// Packs one window per eval step into a `RangeArray` dictionary column.
+    fn window_range<T: ArrowPrimitiveType>(windows: &[&[T::Native]]) -> ArrayRef {
         let mut values = Vec::new();
         let mut ranges = Vec::new();
         let mut offset = 0_u32;
@@ -83,25 +80,17 @@ mod tests {
             ranges.push((offset, len));
             offset += len;
         }
-        let range = RangeArray::from_ranges(Arc::new(Int64Array::from(values)) as ArrayRef, ranges)
-            .unwrap();
+        let values = Arc::new(PrimitiveArray::<T>::from_iter_values(values)) as ArrayRef;
+        let range = RangeArray::from_ranges(values, ranges).unwrap();
         Arc::new(range.into_dict_array().unwrap())
     }
 
+    fn timestamp_range(windows: &[&[i64]]) -> ArrayRef {
+        window_range::<Int64Type>(windows)
+    }
+
     fn value_range(windows: &[&[f64]]) -> ArrayRef {
-        let mut values = Vec::new();
-        let mut ranges = Vec::new();
-        let mut offset = 0_u32;
-        for window in windows {
-            let len = u32::try_from(window.len()).unwrap();
-            values.extend_from_slice(window);
-            ranges.push((offset, len));
-            offset += len;
-        }
-        let range =
-            RangeArray::from_ranges(Arc::new(Float64Array::from(values)) as ArrayRef, ranges)
-                .unwrap();
-        Arc::new(range.into_dict_array().unwrap())
+        window_range::<Float64Type>(windows)
     }
 
     fn invoke_args(
@@ -473,21 +462,6 @@ mod tests {
             .unwrap();
         assert2::assert!(column.len() == 1);
         assert2::assert!(approx_eq(column.value(0), 5.0 / 300.0));
-    }
-
-    /// Confirms that the helper round-trips a `DictionaryArray` into a `RangeArray`.
-    #[test]
-    fn decode_range_column_round_trips() {
-        let values = Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0])) as ArrayRef;
-        let range = RangeArray::from_ranges(values, [(0_u32, 2_u32), (2, 1)]).unwrap();
-        let dict: ArrayRef = Arc::new(range.into_dict_array().unwrap());
-        let back = decode_range_column(&dict, "value_range", "prom_rate").unwrap();
-        check!(back.len() == 2);
-        check!(back.value_slice(0).unwrap() == [1.0, 2.0]);
-
-        // A non-dictionary column is rejected.
-        let plain: ArrayRef = Arc::new(Int64Array::from(vec![1, 2, 3]));
-        check!(decode_range_column(&plain, "value_range", "prom_rate").is_err());
     }
 }
 

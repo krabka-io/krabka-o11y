@@ -140,5 +140,5 @@ pub use max_resolution_points::MAX_RESOLUTION_POINTS;
 pub use promql_engine::PromqlEngine;
 #[cfg(feature = "experimental-functions")]
 pub(super) use query_range_context::QueryRangeContext;
-use range_eval::RangeEval;
+use range_eval::{RangeEval, RangeWindow};
 pub(crate) use range_functions::over_time_mean;

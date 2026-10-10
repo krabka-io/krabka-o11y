@@ -102,6 +102,36 @@ fn up_api_a_and_web_b() -> TenantFloats {
         )
 }
 
+/// `up{job="api",instance="a"}` at 10s (value 1) and 20s (value 2).
+fn up_api_a_at_10_and_20() -> TenantFloats {
+    TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            20_000,
+            2.0,
+        )
+}
+
+/// `up{job="api",instance="a"}` and `up{job="web",zone="us"}`, both 1 at 10s.
+fn up_api_a_and_web_zone_us() -> TenantFloats {
+    TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("zone", "us")]),
+            10_000,
+            1.0,
+        )
+}
+
 /// Checks a `/series` body that holds only the `job="api"` series of [`up_api_a_and_web_b`].
 fn assert_only_up_api_a_series(body: &Value) {
     assert2::assert!(body["status"] == "success");
@@ -109,6 +139,26 @@ fn assert_only_up_api_a_series(body: &Value) {
     assert2::assert!(body["data"][0]["__name__"] == "up");
     assert2::assert!(body["data"][0]["job"] == "api");
     assert2::assert!(body["data"][0]["instance"] == "a");
+}
+
+/// `http_requests_total{job="api"}` = 1 at 10s, with the exemplar
+/// `{trace_id="abc", span_id="def"}` = 7 at 10.5s.
+fn api_exemplar_store() -> InMemoryMetricStore {
+    let mut store = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "http_requests_total"), ("job", "api")]),
+            10_000,
+            1.0,
+        )
+        .store();
+    store.push_exemplar(
+        "tenant-a",
+        labels(&[("__name__", "http_requests_total"), ("job", "api")]),
+        labels(&[("trace_id", "abc"), ("span_id", "def")]),
+        10_500,
+        7.0,
+    );
+    store
 }
 
 /// `tenant-a` float samples for a test store, added one sample at a time.
@@ -333,6 +383,18 @@ fn assert_error_envelope(body: &Value, expected: ApiError<'_>) {
     assert2::assert!(body["status"] == "error");
     assert2::assert!(body["errorType"] == expected.error_type);
     assert2::assert!(body["error"] == expected.message);
+}
+
+/// Checks a `400` Prometheus `bad_data` error envelope carrying `message`.
+async fn assert_bad_data(response: axum::response::Response, message: &str) {
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "bad_data",
+            message,
+        },
+    );
 }
 
 fn assert_result_type(body: &Value, result_type: &str) {
@@ -1451,10 +1513,7 @@ async fn rules_endpoint_rejects_invalid_exclude_alerts_parameter_with_prometheus
 
     let response = get(&app, "/api/v1/rules?exclude_alerts=maybe").await;
 
-    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(body["error"].as_str() == Some("invalid exclude_alerts parameter"));
+    assert_bad_data(response, "invalid exclude_alerts parameter").await;
 }
 
 #[tokio::test]
@@ -2091,20 +2150,7 @@ async fn query_exemplars_endpoint_returns_empty_list() {
 
 #[tokio::test]
 async fn query_exemplars_endpoint_returns_matching_exemplars() {
-    let mut store = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "http_requests_total"), ("job", "api")]),
-            10_000,
-            1.0,
-        )
-        .store();
-    store.push_exemplar(
-        "tenant-a",
-        labels(&[("__name__", "http_requests_total"), ("job", "api")]),
-        labels(&[("trace_id", "abc"), ("span_id", "def")]),
-        10_500,
-        7.0,
-    );
+    let mut store = api_exemplar_store();
     store.push_exemplar(
         "tenant-a",
         labels(&[("__name__", "http_requests_total"), ("job", "web")]),
@@ -2174,21 +2220,7 @@ async fn query_exemplars_endpoint_accepts_or_label_matchers() {
 
 #[tokio::test]
 async fn query_exemplars_endpoint_accepts_post_form_body() {
-    let mut store = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "http_requests_total"), ("job", "api")]),
-            10_000,
-            1.0,
-        )
-        .store();
-    store.push_exemplar(
-        "tenant-a",
-        labels(&[("__name__", "http_requests_total"), ("job", "api")]),
-        labels(&[("trace_id", "abc"), ("span_id", "def")]),
-        10_500,
-        7.0,
-    );
-    let app = prometheus_router(api_state(store));
+    let app = prometheus_router(api_state(api_exemplar_store()));
 
     let response = post_form(
         &app,
@@ -2211,10 +2243,7 @@ async fn query_exemplars_endpoint_rejects_end_before_start() {
 
     let response = get(&app, "/api/v1/query_exemplars?query=up&start=20&end=10").await;
 
-    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(body["error"].as_str() == Some("end timestamp must not be before start time"));
+    assert_bad_data(response, "end timestamp must not be before start time").await;
 }
 
 #[tokio::test]
@@ -2297,10 +2326,7 @@ async fn remote_read_endpoint_rejects_end_before_start() {
     };
     let response = remote_read(&app, &request).await;
 
-    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(body["error"].as_str() == Some("end timestamp must not be before start time"));
+    assert_bad_data(response, "end timestamp must not be before start time").await;
 }
 
 #[tokio::test]
@@ -2340,17 +2366,7 @@ async fn remote_read_endpoint_rejects_invalid_or_oversized_hint_ranges() {
 
 #[tokio::test]
 async fn remote_read_endpoint_returns_matching_float_samples() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            20_000,
-            2.0,
-        )
+    let app = up_api_a_at_10_and_20()
         .sample(
             labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
             30_000,
@@ -2449,21 +2465,10 @@ async fn remote_read_endpoint_rejects_selected_series_over_tenant_limit() {
 
 #[tokio::test]
 async fn remote_read_endpoint_rejects_samples_over_tenant_limit() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            20_000,
-            2.0,
-        )
-        .limited_app(Limits {
-            max_samples_per_query: 1,
-            ..Limits::default()
-        });
+    let app = up_api_a_at_10_and_20().limited_app(Limits {
+        max_samples_per_query: 1,
+        ..Limits::default()
+    });
     let request = up_api_samples_request(20_000);
     let response = remote_read(&app, &request).await;
 
@@ -2714,18 +2719,7 @@ async fn cardinality_label_names_endpoint_honors_limit_parameter() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_filters_selector_parameter() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("zone", "us")]),
-            10_000,
-            1.0,
-        )
-        .app();
+    let app = up_api_a_and_web_zone_us().app();
 
     let response = get(
         &app,
@@ -2776,10 +2770,7 @@ async fn cardinality_label_names_endpoint_rejects_invalid_limit_parameter() {
 
     let response = get(&app, "/api/v1/cardinality/label_names?limit=abc").await;
 
-    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(body["error"].as_str() == Some("invalid limit parameter"));
+    assert_bad_data(response, "invalid limit parameter").await;
 }
 
 #[tokio::test]
@@ -2812,25 +2803,12 @@ async fn cardinality_label_names_endpoint_rejects_invalid_count_method_parameter
 
     let response = get(&app, "/api/v1/cardinality/label_names?count_method=blocks").await;
 
-    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(body["error"].as_str() == Some("invalid count_method parameter"));
+    assert_bad_data(response, "invalid count_method parameter").await;
 }
 
 #[tokio::test]
 async fn cardinality_active_series_endpoint_returns_series_labels_under_mimir_prefix() {
-    let mut store = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            20_000,
-            2.0,
-        )
+    let mut store = up_api_a_at_10_and_20()
         .sample(
             labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
             10_000,
@@ -2914,17 +2892,7 @@ async fn cardinality_active_series_endpoint_accepts_post_form_body() {
 
 #[tokio::test]
 async fn cardinality_label_values_endpoint_returns_label_value_counts() {
-    let mut store = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            20_000,
-            2.0,
-        )
+    let mut store = up_api_a_at_10_and_20()
         .sample(
             labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
             10_000,
@@ -3012,18 +2980,7 @@ async fn cardinality_label_values_endpoint_filters_label_names_parameter() {
 
 #[tokio::test]
 async fn cardinality_label_values_endpoint_filters_selector_parameter() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("zone", "us")]),
-            10_000,
-            1.0,
-        )
-        .app();
+    let app = up_api_a_and_web_zone_us().app();
 
     let response = get(
         &app,
@@ -3088,10 +3045,7 @@ async fn cardinality_label_values_endpoint_rejects_invalid_limit_parameter() {
 
     let response = get(&app, "/api/v1/cardinality/label_values?limit=abc").await;
 
-    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(body["error"].as_str() == Some("invalid limit parameter"));
+    assert_bad_data(response, "invalid limit parameter").await;
 }
 
 #[tokio::test]
@@ -3214,10 +3168,7 @@ async fn parse_query_endpoint_returns_prometheus_error_for_missing_query() {
 
     let response = get(&app, "/api/v1/parse_query").await;
 
-    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(body["error"].as_str() == Some("missing query parameter"));
+    assert_bad_data(response, "missing query parameter").await;
 }
 
 #[tokio::test]
@@ -3373,10 +3324,7 @@ async fn status_tsdb_endpoint_rejects_invalid_limit_parameter_with_prometheus_er
 
     let response = get(&app, "/api/v1/status/tsdb?limit=abc").await;
 
-    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(body["error"].as_str() == Some("invalid limit parameter"));
+    assert_bad_data(response, "invalid limit parameter").await;
 }
 
 #[tokio::test]

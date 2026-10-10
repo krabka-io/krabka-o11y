@@ -15,8 +15,8 @@ use super::{
     invalid_quantile_warning, is_valid_quantile, label_ops,
     labels::{absent_labels, labels_without_metric_name},
     scalar::{
-        CalendarFn, ClampKind, SortDirection, UnaryFloatFn, clamp_float, negate_query_result,
-        round_to_nearest,
+        CalendarFn, ClampKind, SortDirection, UnaryFloatFn, calendar_fn_from_function_name,
+        clamp_float, negate_query_result, round_to_nearest,
     },
     selector::timestamp_seconds,
     with_histogram_stats,
@@ -35,13 +35,11 @@ use crate::{
     store::MetricStore,
 };
 
-mod calendar_function;
 mod over_time_function;
 mod promql_engine;
 mod string_literal_arg;
 mod unary_float_function;
 
-use calendar_function::calendar_function;
 use over_time_function::over_time_function;
 #[cfg(test)]
 use string_literal_arg::string_literal_arg;

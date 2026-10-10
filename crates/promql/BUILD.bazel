@@ -28,6 +28,7 @@ crate_tests(
         "parser_proptest": [
             "//crates/logql:tests/support/seed_splice.rs",
             "//crates/logql:tests/support/token_salad.rs",
+            "//crates/logql:tests/support/unicode_noise.rs",
         ],
     },
     feature_variants = EXPERIMENTAL,

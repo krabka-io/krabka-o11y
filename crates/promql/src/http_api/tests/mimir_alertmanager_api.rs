@@ -9,6 +9,17 @@ fn alertmanager_router_for_state(state: Arc<PrometheusApiState<InMemoryMetricSto
     )
 }
 
+/// A state over an empty metric store that keeps its Mimir configs in
+/// `object_store`.
+fn config_store_state(
+    object_store: Arc<dyn object_store::ObjectStore>,
+) -> Arc<PrometheusApiState<InMemoryMetricStore>> {
+    Arc::new(
+        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
+            .with_mimir_config_store(object_store),
+    )
+}
+
 #[tokio::test]
 async fn ruler_router_reserves_root_alerts_for_alertmanager_config() {
     let state = Arc::new(PrometheusApiState::new(
@@ -58,11 +69,7 @@ async fn request(
 async fn multitenant_config_round_trips_and_deletes() {
     let object_store: Arc<dyn object_store::ObjectStore> =
         Arc::new(object_store::memory::InMemory::new());
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
-            .with_mimir_config_store(Arc::clone(&object_store)),
-    );
-    let app = alertmanager_router_for_state(state);
+    let app = alertmanager_router_for_state(config_store_state(Arc::clone(&object_store)));
     let missing = request(&app, "GET", "/api/v1/alerts", Body::empty()).await;
     check!(missing.status() == StatusCode::NOT_FOUND);
     let invalid = "template_files: {}\nalertmanager_config: |\n  route:\n    receiver: missing\n  receivers:\n    - name: default\n";
@@ -83,10 +90,7 @@ async fn multitenant_config_round_trips_and_deletes() {
     check!(stored.status() == StatusCode::OK);
     check!(to_bytes(stored.into_body(), usize::MAX).await.unwrap() == config);
 
-    let restarted = Arc::new(
-        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
-            .with_mimir_config_store(object_store),
-    );
+    let restarted = config_store_state(object_store);
     restarted.reload_mimir_configs().await.unwrap();
     let restarted = alertmanager_router_for_state(restarted);
     let stored = request(&restarted, "GET", "/api/v1/alerts", Body::empty()).await;
@@ -103,11 +107,7 @@ async fn multitenant_config_round_trips_and_deletes() {
 async fn grafana_v2_alerts_and_silences_are_tenant_scoped() {
     let object_store: Arc<dyn object_store::ObjectStore> =
         Arc::new(object_store::memory::InMemory::new());
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
-            .with_mimir_config_store(Arc::clone(&object_store)),
-    );
-    let app = alertmanager_router_for_state(state);
+    let app = alertmanager_router_for_state(config_store_state(Arc::clone(&object_store)));
     let alert = r#"[{"labels":{"alertname":"Down"},"annotations":{"summary":"down"}},{"labels":{"alertname":"Up"}}]"#;
     check!(
         request(&app, "POST", "/alertmanager/api/v2/alerts", alert)
@@ -158,10 +158,7 @@ async fn grafana_v2_alerts_and_silences_are_tenant_scoped() {
     .await;
     check!(stored.status() == StatusCode::OK);
 
-    let restarted = Arc::new(
-        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
-            .with_mimir_config_store(object_store),
-    );
+    let restarted = config_store_state(object_store);
     restarted.reload_mimir_configs().await.unwrap();
     let restarted = alertmanager_router_for_state(restarted);
     check!(

@@ -8,6 +8,7 @@ exports_files([
     "tests/support/seed_splice.rs",
     "tests/support/template_functions.rs",
     "tests/support/token_salad.rs",
+    "tests/support/unicode_noise.rs",
 ])
 
 crate_library(

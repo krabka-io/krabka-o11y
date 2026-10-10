@@ -2,27 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_sum_and_avg_aggregations_omit_mixed_float_and_histogram_groups() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[
-            ("__name__", "mixed_metric"),
-            ("job", "api"),
-            ("instance", "float"),
-        ]),
-        10_000,
-        4.0,
-    );
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            ("__name__", "mixed_metric"),
-            ("job", "api"),
-            ("instance", "hist"),
-        ]),
-        10_000,
-        native_histogram(4.0, 10.0),
-    );
+    let mut store = mixed_api_group_store();
     store.push_float(
         "tenant-a",
         labels(&[

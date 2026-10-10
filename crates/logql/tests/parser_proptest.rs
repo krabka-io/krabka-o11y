@@ -27,6 +27,8 @@
 mod seed_splice;
 #[path = "support/token_salad.rs"]
 mod token_salad;
+#[path = "support/unicode_noise.rs"]
+mod unicode_noise;
 
 use std::{collections::BTreeMap, fmt::Write as _};
 
@@ -162,27 +164,10 @@ const TOKENS: &[&str] = &[
     "#",
 ];
 
-/// Arbitrary Unicode, weighted towards the code points that trip a
-/// byte-indexing parser: control characters, multi-byte characters, and the
-/// top of the code point range.
-fn arbitrary_text() -> impl Strategy<Value = String> {
-    prop::collection::vec(
-        prop_oneof![
-            2 => any::<char>(),
-            3 => prop::char::range('\u{0}', '\u{7f}'),
-            1 => Just('\u{10ffff}'),
-            1 => Just('é'),
-            1 => Just('\u{1f600}'),
-        ],
-        0..48,
-    )
-    .prop_map(String::from_iter)
-}
-
 /// Every string a caller can put in the `query` parameter.
 fn arbitrary_query() -> impl Strategy<Value = String> {
     prop_oneof![
-        2 => arbitrary_text(),
+        2 => unicode_noise::arbitrary_text(),
         3 => token_salad::spaced_token_salad(TOKENS),
         3 => seed_splice::mutated_seed(SEED_QUERIES),
     ]

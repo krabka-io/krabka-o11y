@@ -6,7 +6,9 @@ use krabka_units::prelude::*;
 use promql_parser::parser::{Expr, MatrixSelector, SubqueryExpr, VectorSelector};
 
 use super::{
-    AtModifierBounds, PromqlEngine, RangeEval, current_at_modifier_bounds,
+    AtModifierBounds, PromqlEngine, RangeEval, RangeWindow,
+    annotations::TypeAndUnitLabels,
+    current_at_modifier_bounds,
     histogram::native_histogram_detect_reset,
     histogram_stats_enabled,
     planner_support::validate_extended_selector_modifier,
@@ -480,11 +482,13 @@ impl<S: MetricStore> PromqlEngine<S> {
                     )
                     .await?;
                 Ok(RangeEval {
-                    enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
                     series,
-                    end_ms,
-                    range,
-                    modifier,
+                    window: RangeWindow {
+                        end_ms,
+                        range,
+                        modifier,
+                        type_and_unit_labels: TypeAndUnitLabels::from_engine_opts(&self.opts),
+                    },
                 })
             }
             Expr::Subquery(subquery) => {
@@ -497,11 +501,13 @@ impl<S: MetricStore> PromqlEngine<S> {
                 )?;
                 let series = self.eval_subquery(tenant, subquery, time_ms).await?;
                 Ok(RangeEval {
-                    enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
                     series,
-                    end_ms,
-                    range,
-                    modifier,
+                    window: RangeWindow {
+                        end_ms,
+                        range,
+                        modifier,
+                        type_and_unit_labels: TypeAndUnitLabels::from_engine_opts(&self.opts),
+                    },
                 })
             }
             _ => Err(PromqlError::Plan(format!(

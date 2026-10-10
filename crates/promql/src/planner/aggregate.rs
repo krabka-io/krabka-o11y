@@ -208,43 +208,40 @@ mod tests {
         out
     }
 
-    #[tokio::test]
-    async fn sum_by_collapses_to_group_labels() {
-        let ctx = SessionContext::new();
-        let leaf = selector_like_leaf(&ctx, &PROD_AND_CANARY).await;
+    /// Checks that `sum by (group)` over `leaf` yields one group whose sum is NaN.
+    async fn assert_sum_by_group_is_nan(leaf: LogicalPlan, ctx: &SessionContext) {
         let plan = plan_simple_aggregate(
             leaf,
             SimpleAggregateOp::Sum,
             &Grouping::By(vec!["group".into()]),
         )
         .unwrap();
-        let got = run(plan, &ctx).await;
-        assert2::assert!(
-            got == vec![
-                (vec![("group".to_string(), "canary".to_string())], 4.0),
-                (vec![("group".to_string(), "prod".to_string())], 3.0),
-            ]
-        );
+        let got = run(plan, ctx).await;
+        assert2::assert!(got.len() == 1);
+        assert2::assert!(got[0].1.is_nan());
     }
 
+    /// `sum by (group)` and `sum without (job)` both collapse to the `group`
+    /// label.
     #[tokio::test]
-    async fn sum_without_drops_listed_and_name() {
-        let ctx = SessionContext::new();
-        let leaf = selector_like_leaf(&ctx, &PROD_AND_CANARY).await;
+    async fn sum_by_and_without_collapse_to_group_labels() {
         // without (job) -> group by `group`.
-        let plan = plan_simple_aggregate(
-            leaf,
-            SimpleAggregateOp::Sum,
-            &Grouping::Without(vec!["job".into()]),
-        )
-        .unwrap();
-        let got = run(plan, &ctx).await;
-        assert2::assert!(
-            got == vec![
-                (vec![("group".to_string(), "canary".to_string())], 4.0),
-                (vec![("group".to_string(), "prod".to_string())], 3.0),
-            ]
-        );
+        for grouping in [
+            Grouping::By(vec!["group".into()]),
+            Grouping::Without(vec!["job".into()]),
+        ] {
+            let ctx = SessionContext::new();
+            let leaf = selector_like_leaf(&ctx, &PROD_AND_CANARY).await;
+            let plan = plan_simple_aggregate(leaf, SimpleAggregateOp::Sum, &grouping).unwrap();
+            let got = run(plan, &ctx).await;
+            assert2::assert!(
+                got == vec![
+                    (vec![("group".to_string(), "canary".to_string())], 4.0),
+                    (vec![("group".to_string(), "prod".to_string())], 3.0),
+                ],
+                "{grouping:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -328,15 +325,7 @@ mod tests {
             ],
         )
         .await;
-        let plan = plan_simple_aggregate(
-            leaf,
-            SimpleAggregateOp::Sum,
-            &Grouping::By(vec!["group".into()]),
-        )
-        .unwrap();
-        let got = run(plan, &ctx).await;
-        assert2::assert!(got.len() == 1);
-        assert2::assert!(got[0].1.is_nan());
+        assert_sum_by_group_is_nan(leaf, &ctx).await;
     }
 
     #[tokio::test]
@@ -458,15 +447,7 @@ mod tests {
             ],
         )
         .await;
-        let plan = plan_simple_aggregate(
-            leaf,
-            SimpleAggregateOp::Sum,
-            &Grouping::By(vec!["group".into()]),
-        )
-        .unwrap();
-        let got = run(plan, &ctx).await;
-        assert2::assert!(got.len() == 1);
-        assert2::assert!(got[0].1.is_nan());
+        assert_sum_by_group_is_nan(leaf, &ctx).await;
     }
 }
 

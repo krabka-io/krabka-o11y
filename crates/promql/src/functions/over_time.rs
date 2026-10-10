@@ -57,10 +57,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        functions::{
-            udf_args::decode_range_column,
-            udf_test_support::{WindowStep, nullable_floats, window_columns},
-        },
+        functions::udf_test_support::{WindowStep, nullable_floats, window_columns},
         range_array::RangeArray,
     };
 
@@ -529,20 +526,6 @@ mod tests {
         ] {
             assert2::assert!(ctx.udf(name).is_ok());
         }
-    }
-
-    /// Confirms the helper round-trips a `DictionaryArray` back into a `RangeArray`.
-    #[test]
-    fn decode_range_column_round_trips() {
-        let values = Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0])) as ArrayRef;
-        let range = RangeArray::from_ranges(values, [(0_u32, 2_u32), (2, 1)]).unwrap();
-        let dict: ArrayRef = Arc::new(range.into_dict_array().unwrap());
-        let back = decode_range_column(&dict, "value_range", "prom_sum_over_time").unwrap();
-        check!(back.len() == 2);
-        check!(back.value_slice(0).unwrap() == [1.0, 2.0]);
-
-        let plain: ArrayRef = Arc::new(Int64Array::from(vec![1, 2, 3]));
-        check!(decode_range_column(&plain, "value_range", "prom_sum_over_time").is_err());
     }
 }
 

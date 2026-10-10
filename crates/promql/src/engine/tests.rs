@@ -257,19 +257,23 @@ use assert_one_unnamed_float::{ExpectedLabel, assert_one_unnamed_float};
 use assert_single_float_sample::assert_single_float_sample;
 use assert_single_on_x_float_sample::assert_single_on_x_float_sample;
 use assert_sparse_aggregate_excludes_no_value::assert_sparse_aggregate_excludes_no_value;
-use case_values::{CaseValue, assert_case_values, push_cases};
+use case_values::{
+    CaseQuery, CaseValue, assert_case_values, assert_signed_temperature_cases, push_cases,
+};
 use classic_bucket_store::classic_bucket_store;
 use float_value::float_value;
 use instant_samples_match::instant_samples_match;
 use instant_vector::{assert_lone_value, instant_vector};
 use labels::labels;
-use memory_bytes_engine::memory_bytes_engine;
-use mixed_histogram_store::mixed_histogram_store;
+use memory_bytes_engine::{
+    JobInstanceSample, has_job_memory_bytes_sample, job_memory_bytes_engine, memory_bytes_engine,
+};
+use mixed_histogram_store::{mixed_api_group_store, mixed_histogram_store};
 use nan_equal_samples::nan_equal_samples;
 use native_histogram::native_histogram;
 use native_histogram_store::{
     InstanceHistograms, assert_histogram_series_reduction, instance_histogram_store,
-    native_histogram_store, two_bucket_histogram_store,
+    native_histogram_store, signed_bucket_histogram_engine, two_bucket_histogram_store,
 };
 use planned_and_interpreted::{
     annotated_planned_and_interpreted, fingerprint_sorted, planned_and_interpreted,

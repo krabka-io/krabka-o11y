@@ -22,7 +22,7 @@ use promql_parser::parser::{MatrixSelector, Offset, VectorSelector};
 
 use super::{
     PromqlEngine,
-    annotations::emit_metric_might_not_be_counter_info,
+    annotations::{TypeAndUnitLabels, emit_metric_might_not_be_counter_info},
     assembly::{assemble_range_fold_grid, assemble_selector_grid},
     labels::labels_without_metric_name,
     matrix_selector_at::MatrixSelectorAt,
@@ -308,7 +308,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 if let Some(labels) = labels_by_fp.get(&fingerprint) {
                     emit_metric_might_not_be_counter_info(
                         labels,
-                        self.opts.enable_type_and_unit_labels,
+                        TypeAndUnitLabels::from_engine_opts(&self.opts),
                     );
                 }
             }

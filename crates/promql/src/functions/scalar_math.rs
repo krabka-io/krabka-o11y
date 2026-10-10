@@ -214,7 +214,7 @@ mod scalar_math_op;
 mod scalar_math_udf;
 mod scalar_math_udfs;
 
-use clamp_float::clamp_float;
+pub(crate) use clamp_float::clamp_float;
 pub use register_scalar_math_udfs::register_scalar_math_udfs;
 use round_to_nearest::round_to_nearest;
 pub use scalar_math_op::ScalarMathOp;

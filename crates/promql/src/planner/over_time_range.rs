@@ -37,11 +37,11 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::{BinaryArray, Float64Array};
+    use arrow::array::Float64Array;
     use assert2::check;
 
     use super::*;
-    use crate::planner::RangeWindowGrid;
+    use crate::planner::{RangeWindowGrid, job_values};
 
     fn approx_eq(left: f64, right: f64) -> bool {
         (left - right).abs() < 1e-9
@@ -57,36 +57,7 @@ mod tests {
         let plan = plan_over_time_range_selector(samples, windows, fold)
             .await
             .unwrap();
-        let batches = plan
-            .ctx
-            .execute_logical_plan(plan.plan)
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-        let mut got = Vec::new();
-        for batch in &batches {
-            let job = batch
-                .column_by_name("job")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<BinaryArray>()
-                .unwrap();
-            let value = batch
-                .column_by_name(OVER_TIME_VALUE_COLUMN)
-                .unwrap()
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap();
-            for row in 0..batch.num_rows() {
-                got.push((
-                    String::from_utf8(job.value(row).to_vec()).unwrap(),
-                    value.value(row),
-                ));
-            }
-        }
-        got
+        job_values(&plan.ctx, plan.plan, OVER_TIME_VALUE_COLUMN).await
     }
 
     /// `avg_over_time` over the engine's basic window (3,5 -> 4.0) runs the full chain.

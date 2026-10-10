@@ -1,10 +1,10 @@
 use super::{
-    AnnotatedQueryResult, ApiError, Arc, ERASURE_REQUEST_PREFIX, FrontendRangeRequest, HeaderMap,
-    IntoResponse, MetricStore, Principal, PrometheusApiState, QueryRequestTiming,
-    QueryResponseStats, RangeQueryParams, Response, StdDurationExt, TimeExt, apply_result_limit,
+    AnnotatedQueryResult, ApiError, Arc, ERASURE_REQUEST_PREFIX, EvaluatedQuery,
+    FrontendRangeRequest, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
+    QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, TimeExt,
     authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
-    duration_param, enforce_query_range_limit, execute_range_query_frontend, has_erasure_requests,
-    success_response, success_response_with_stats, timestamp_ms, validate_timestamp_range,
+    duration_param, enforce_query_range_limit, evaluated_query_response,
+    execute_range_query_frontend, has_erasure_requests, timestamp_ms, validate_timestamp_range,
 };
 
 pub(crate) async fn query_range_dispatch<S: MetricStore>(
@@ -111,27 +111,14 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
     let evaluation = eval_started.elapsed();
     state.record_eval("range", result.is_ok(), evaluation.as_time());
 
-    match result {
-        Ok(AnnotatedQueryResult {
-            mut result,
-            annotations,
-        }) => {
-            apply_result_limit(&mut result, params.limit);
-            match samples {
-                Some(samples) => success_response_with_stats(
-                    result,
-                    QueryResponseStats::new(
-                        samples,
-                        preparation,
-                        evaluation,
-                        timing.queue,
-                        timing.started.elapsed(),
-                    ),
-                    &annotations,
-                ),
-                None => success_response(result, &annotations),
-            }
-        }
-        Err(error) => ApiError::from(error).into_response(),
-    }
+    evaluated_query_response(
+        EvaluatedQuery {
+            outcome: result,
+            samples,
+            preparation,
+            evaluation,
+        },
+        params.limit,
+        timing,
+    )
 }

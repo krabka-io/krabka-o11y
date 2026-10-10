@@ -5,10 +5,7 @@ use std::{fmt, sync::Arc};
 use arrow::{array::Float64Array, record_batch::RecordBatch};
 use datafusion::{
     common::{DataFusionError, Result as DfResult},
-    execution::TaskContext,
-    physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
-    },
+    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
 };
 
 #[cfg(test)]
@@ -27,16 +24,24 @@ mod tests {
         logical_leaf, physical_leaf, time_value_batch,
     };
 
-    #[tokio::test]
-    async fn logical_node_reports_identity_explain_and_rejects_bad_rewrites() {
-        let input = logical_leaf(time_value_batch(vec![0], vec![1.0])).await;
-        let node = InstantManipulate {
+    /// A minute-long grid of 15s steps with a five-minute lookback, over the
+    /// `timestamp` and `value` columns.
+    fn explain_settings() -> InstantManipulateSettings {
+        InstantManipulateSettings {
             start_ms: 0,
             end_ms: 60_000,
             step_ms: 15_000,
             lookback_delta_ms: 300_000,
             time_index: "timestamp".to_string(),
             field_column: "value".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn logical_node_reports_identity_explain_and_rejects_bad_rewrites() {
+        let input = logical_leaf(time_value_batch(vec![0], vec![1.0])).await;
+        let node = InstantManipulate {
+            settings: explain_settings(),
             input: input.clone(),
         };
 
@@ -51,24 +56,14 @@ mod tests {
         check!(explain.contains("TableScan: leaf projection=[timestamp, value]"));
 
         let node = InstantManipulate {
-            start_ms: 0,
-            end_ms: 60_000,
-            step_ms: 15_000,
-            lookback_delta_ms: 300_000,
-            time_index: "timestamp".to_string(),
-            field_column: "value".to_string(),
+            settings: explain_settings(),
             input: input.clone(),
         };
         let rewritten = checked_rewrite(&node, &input, col("timestamp"));
         assert2::assert!(
             rewritten
                 == InstantManipulate {
-                    start_ms: 0,
-                    end_ms: 60_000,
-                    step_ms: 15_000,
-                    lookback_delta_ms: 300_000,
-                    time_index: "timestamp".to_string(),
-                    field_column: "value".to_string(),
+                    settings: explain_settings(),
                     input,
                 }
         );
@@ -78,12 +73,7 @@ mod tests {
     fn physical_node_reports_identity_display_ordering_and_rejects_bad_children() {
         let input = physical_leaf(vec![time_value_batch(vec![0], vec![1.0])]);
         let exec: Arc<dyn ExecutionPlan> = Arc::new(InstantManipulateExec::new(
-            0,
-            60_000,
-            15_000,
-            300_000,
-            "timestamp".to_string(),
-            "value".to_string(),
+            explain_settings(),
             Arc::clone(&input),
         ));
 
@@ -105,12 +95,13 @@ mod tests {
         let mem = physical_leaf(vec![time_value_batch(vec![0, 60_000], vec![1.0, 2.0])]);
 
         let exec = InstantManipulateExec::new(
-            0,
-            120_000,
-            60_000,
-            300_000,
-            "timestamp".into(),
-            "value".into(),
+            InstantManipulateSettings {
+                start_ms: 0,
+                end_ms: 120_000,
+                step_ms: 60_000,
+                lookback_delta_ms: 300_000,
+                ..explain_settings()
+            },
             mem,
         );
         let merged = collect_concat(Arc::new(exec)).await;
@@ -123,12 +114,13 @@ mod tests {
         let mem = physical_leaf(vec![time_value_batch(vec![0], vec![1.0])]);
 
         let exec = InstantManipulateExec::new(
-            300_000,
-            300_000,
-            60_000,
-            300_000,
-            "timestamp".into(),
-            "value".into(),
+            InstantManipulateSettings {
+                start_ms: 300_000,
+                end_ms: 300_000,
+                step_ms: 60_000,
+                lookback_delta_ms: 300_000,
+                ..explain_settings()
+            },
             mem,
         );
         let ctx = SessionContext::new();
@@ -153,12 +145,13 @@ mod tests {
             MemorySourceConfig::try_new_exec(&[vec![genuine], vec![staled]], schema, None).unwrap();
 
         let exec = InstantManipulateExec::new(
-            0,
-            0,
-            60_000,
-            300_000,
-            "timestamp".into(),
-            "value".into(),
+            InstantManipulateSettings {
+                start_ms: 0,
+                end_ms: 0,
+                step_ms: 60_000,
+                lookback_delta_ms: 300_000,
+                ..explain_settings()
+            },
             mem,
         );
         let val = float64_values(&collect_concat(Arc::new(exec)).await, "value");
@@ -173,4 +166,4 @@ mod instant_manipulate_exec;
 mod instant_manipulate_type;
 
 pub use instant_manipulate_exec::InstantManipulateExec;
-pub use instant_manipulate_type::InstantManipulate;
+pub use instant_manipulate_type::{InstantManipulate, InstantManipulateSettings};

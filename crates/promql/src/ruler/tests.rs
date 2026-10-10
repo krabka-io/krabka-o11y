@@ -47,6 +47,7 @@ use recording_alertmanager_sink::RecordingAlertmanagerSink;
 use recording_ruler_state_sink::RecordingRulerStateSink;
 use recording_sink::RecordingSink;
 use rule_fixtures::{
-    GroupLastEval, IntervalGroup, group_state, instance_up_alert, interval_rule_set,
-    job_up_current_record, namespaced_rule_set, up_api_engine,
+    GroupLastEval, IntervalGroup, UpRuleSinks, assert_up_rules_fired_at_six_minutes, group_state,
+    instance_up_alert, interval_rule_set, job_up_current_record, namespaced_rule_set,
+    up_api_engine,
 };

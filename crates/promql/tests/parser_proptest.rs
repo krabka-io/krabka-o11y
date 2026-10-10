@@ -25,6 +25,8 @@
 mod seed_splice;
 #[path = "../../logql/tests/support/token_salad.rs"]
 mod token_salad;
+#[path = "../../logql/tests/support/unicode_noise.rs"]
+mod unicode_noise;
 
 use krabka_promql::{DurationExprContext, parse_promql, parse_promql_with_duration_context};
 use krabka_units::prelude::*;
@@ -128,23 +130,9 @@ const TOKENS: &[&str] = &[
     "__name__",
 ];
 
-fn arbitrary_text() -> impl Strategy<Value = String> {
-    prop::collection::vec(
-        prop_oneof![
-            2 => any::<char>(),
-            3 => prop::char::range('\u{0}', '\u{7f}'),
-            1 => Just('\u{10ffff}'),
-            1 => Just('é'),
-            1 => Just('\u{1f600}'),
-        ],
-        0..48,
-    )
-    .prop_map(String::from_iter)
-}
-
 fn arbitrary_query() -> impl Strategy<Value = String> {
     prop_oneof![
-        2 => arbitrary_text(),
+        2 => unicode_noise::arbitrary_text(),
         3 => token_salad::spaced_token_salad(TOKENS),
         3 => seed_splice::mutated_seed(SEED_QUERIES),
     ]

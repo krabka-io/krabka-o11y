@@ -1,9 +1,8 @@
 use super::{
-    ApiError, Arc, HeaderMap, InstantQueryParams, IntoResponse, MetricStore, Principal,
-    PrometheusApiState, QueryRequestTiming, QueryResponseStats, Response, StdDurationExt,
-    apply_result_limit, authorized_tenant_from_headers, collect_query_sample_stats,
-    enforce_query_range_limit, optional_timestamp_ms, query_stats_step, success_response,
-    success_response_with_stats,
+    AnnotatedQueryResult, Arc, EvaluatedQuery, HeaderMap, InstantQueryParams, IntoResponse,
+    MetricStore, Principal, PrometheusApiState, QueryRequestTiming, Response, StdDurationExt,
+    authorized_tenant_from_headers, collect_query_sample_stats, enforce_query_range_limit,
+    evaluated_query_response, optional_timestamp_ms, query_stats_step,
 };
 
 pub(crate) async fn query_dispatch<S: MetricStore>(
@@ -63,24 +62,17 @@ pub(crate) async fn query_dispatch<S: MetricStore>(
     };
     let evaluation = eval_started.elapsed();
     state.record_eval("instant", outcome.is_ok(), evaluation.as_time());
-    match outcome {
-        Ok((mut result, annotations)) => {
-            apply_result_limit(&mut result, params.limit);
-            match samples {
-                Some(samples) => success_response_with_stats(
-                    result,
-                    QueryResponseStats::new(
-                        samples,
-                        preparation,
-                        evaluation,
-                        timing.queue,
-                        timing.started.elapsed(),
-                    ),
-                    &annotations,
-                ),
-                None => success_response(result, &annotations),
-            }
-        }
-        Err(error) => ApiError::from(error).into_response(),
-    }
+    evaluated_query_response(
+        EvaluatedQuery {
+            outcome: outcome.map(|(result, annotations)| AnnotatedQueryResult {
+                result,
+                annotations,
+            }),
+            samples,
+            preparation,
+            evaluation,
+        },
+        params.limit,
+        timing,
+    )
 }

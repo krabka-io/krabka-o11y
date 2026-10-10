@@ -117,3 +117,31 @@ impl WindowColumns {
         Ok((timestamps, values))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use assert2::check;
+
+    use super::*;
+
+    /// Confirms that the helper round-trips a `DictionaryArray` into a
+    /// `RangeArray`, and rejects a non-dictionary column, for both the
+    /// rate-family and the over-time UDFs that call it.
+    #[test]
+    fn decode_range_column_round_trips() {
+        for udf in ["prom_rate", "prom_sum_over_time"] {
+            let values = Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0])) as ArrayRef;
+            let range = RangeArray::from_ranges(values, [(0_u32, 2_u32), (2, 1)]).unwrap();
+            let dict: ArrayRef = Arc::new(range.into_dict_array().unwrap());
+            let back = decode_range_column(&dict, "value_range", udf).unwrap();
+            check!(back.len() == 2);
+            check!(back.value_slice(0).unwrap() == [1.0, 2.0]);
+
+            // A non-dictionary column is rejected.
+            let plain: ArrayRef = Arc::new(Int64Array::from(vec![1, 2, 3]));
+            check!(decode_range_column(&plain, "value_range", udf).is_err());
+        }
+    }
+}
