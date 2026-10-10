@@ -1,6 +1,8 @@
 use super::{
-    HttpQueryError, LogqlExpr, LokiDirection, LokiStreamEncoding, QuerierState, QueryKind,
-    ScalarVectorExpressionResult, TimeRange, Value, add_loki_query_stats, apply_label_join_fields,
+    ComparisonResult, HttpQueryError, HttpQueryScope, HttpStreamQuery, LogqlExpr,
+    LokiStreamEncoding, LokiStreamOptions, MetricComparison, QueryKind, ScalarArithmetic,
+    ScalarComparison, ScalarLiteral, ScalarSide, ScalarVectorExpressionResult, TimeRange, Value,
+    VariantsDefinition, VectorComparison, add_loki_query_stats, apply_label_join_fields,
     apply_label_replace_to_loki_result, apply_metric_binary_arithmetic_to_loki_result,
     apply_metric_binary_comparison_to_loki_result, apply_metric_binary_set_to_loki_result,
     apply_metric_selection, apply_nested_vector_aggregation,
@@ -12,29 +14,41 @@ use super::{
 };
 use crate::http::params_format::aggregation_formatting::apply_approx_metric_selection;
 
-#[allow(clippy::too_many_arguments)]
+/// Everything an expression of one query is evaluated with, other than the
+/// expression itself.
+#[derive(Clone, Copy)]
+pub(crate) struct LogqlExprScope<'a> {
+    pub(crate) query: HttpQueryScope<'a>,
+    pub(crate) stream_options: LokiStreamOptions,
+    pub(crate) encoding: LokiStreamEncoding,
+    /// The whole query text, which a parse error of a nested literal names.
+    pub(crate) full_query: &'a str,
+}
+
+impl LogqlExprScope<'_> {
+    async fn execute(self, expression: &LogqlExpr) -> Result<Value, HttpQueryError> {
+        Box::pin(execute_http_logql_expr(self, expression)).await
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn execute_http_logql_expr(
-    state: &QuerierState,
-    tenant: &str,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
+    scope: LogqlExprScope<'_>,
     expression: &LogqlExpr,
-    stream_options: (LokiDirection, Option<usize>, Option<i64>),
-    encoding: LokiStreamEncoding,
-    full_query: &str,
 ) -> Result<Value, HttpQueryError> {
-    let scope = ExprScope {
-        state,
-        tenant,
-        time_range,
-        step,
-        kind,
+    let LogqlExprScope {
+        query:
+            HttpQueryScope {
+                state,
+                tenant,
+                time_range,
+                step,
+                kind,
+            },
         stream_options,
         encoding,
         full_query,
-    };
+    } = scope;
     match expression {
         LogqlExpr::Stream { source, .. } => {
             if matches!(kind, QueryKind::Instant) {
@@ -42,19 +56,16 @@ pub(crate) async fn execute_http_logql_expr(
                     "log queries are not supported as an instant query type, please change your query to a range query type".to_string(),
                 ));
             }
-            let (direction, limit, interval) = stream_options;
             execute_http_stream_query(
                 state,
-                source,
-                tenant,
-                time_range,
-                (
-                    direction,
-                    limit,
-                    interval,
-                    matches!(kind, QueryKind::Range).then_some(time_range.end_ns),
-                ),
-                encoding,
+                HttpStreamQuery {
+                    query: source,
+                    tenant,
+                    time_range,
+                    options: stream_options,
+                    end_exclusive: matches!(kind, QueryKind::Range).then_some(time_range.end_ns),
+                    encoding,
+                },
             )
             .await
             .map(add_loki_query_stats)
@@ -67,12 +78,13 @@ pub(crate) async fn execute_http_logql_expr(
             ..
         } => {
             execute_http_variants(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                (variants, stream, *range_ns, *offset_ns),
+                scope.query,
+                VariantsDefinition {
+                    variants,
+                    stream,
+                    range_ns: *range_ns,
+                    offset_ns: *offset_ns,
+                },
             )
             .await
         }
@@ -148,17 +160,14 @@ pub(crate) async fn execute_http_logql_expr(
             if *approximate {
                 query_state.limits.max_query_series = u64::MAX;
             }
-            let mut value = Box::pin(execute_http_logql_expr(
-                &query_state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                expr,
-                stream_options,
-                encoding,
-                full_query,
-            ))
+            let mut value = LogqlExprScope {
+                query: HttpQueryScope {
+                    state: &query_state,
+                    ..scope.query
+                },
+                ..scope
+            }
+            .execute(expr)
             .await?;
             let limit = usize::try_from(*limit).unwrap_or(usize::MAX);
             if *approximate {
@@ -209,14 +218,18 @@ pub(crate) async fn execute_http_logql_expr(
             if let Some(value) = scalar_expression_response(expression, time_range, step, kind)? {
                 return Ok(value);
             }
-            if let Some((scalar, scalar_on_left, vector)) = scalar_operand(left, right) {
-                let mut value = scope.execute(vector).await?;
+            if let Some(operand) = scalar_operand(left, right) {
+                let mut value = scope.execute(operand.vector).await?;
                 apply_scalar_arithmetic_to_loki_result(
                     &mut value,
-                    *op,
-                    &scalar,
-                    scalar_on_left,
-                    full_query,
+                    ScalarArithmetic {
+                        op: *op,
+                        scalar_side: operand.scalar_side,
+                    },
+                    ScalarLiteral {
+                        text: &operand.scalar,
+                        query: full_query,
+                    },
                 )?;
                 return Ok(value);
             }
@@ -248,15 +261,23 @@ pub(crate) async fn execute_http_logql_expr(
             if let Some(value) = scalar_expression_response(expression, time_range, step, kind)? {
                 return Ok(value);
             }
-            if let Some((scalar, scalar_on_left, vector)) = scalar_operand(left, right) {
-                let mut value = scope.execute(vector).await?;
+            // `krabka_logql` spells the `bool` modifier as a flag.
+            let comparison = MetricComparison {
+                op: *op,
+                result: ComparisonResult::from_bool_modifier(*bool_modifier),
+            };
+            if let Some(operand) = scalar_operand(left, right) {
+                let mut value = scope.execute(operand.vector).await?;
                 apply_scalar_comparison_to_loki_result(
                     &mut value,
-                    *op,
-                    *bool_modifier,
-                    &scalar,
-                    scalar_on_left,
-                    full_query,
+                    ScalarComparison {
+                        comparison,
+                        scalar_side: operand.scalar_side,
+                    },
+                    ScalarLiteral {
+                        text: &operand.scalar,
+                        query: full_query,
+                    },
                 )?;
                 return Ok(value);
             }
@@ -267,9 +288,10 @@ pub(crate) async fn execute_http_logql_expr(
             apply_metric_binary_comparison_to_loki_result(
                 &mut left,
                 &right,
-                *op,
-                *bool_modifier,
-                matching.as_ref(),
+                VectorComparison {
+                    comparison,
+                    matching: matching.as_ref(),
+                },
             );
             if left_is_vector || right_is_vector {
                 retain_metric_binary_on_labels(&mut left, matching.as_ref());
@@ -317,13 +339,28 @@ fn is_scalar_vector_only(expression: &LogqlExpr) -> bool {
     }
 }
 
-fn scalar_operand<'a>(
-    left: &'a LogqlExpr,
-    right: &'a LogqlExpr,
-) -> Option<(String, bool, &'a LogqlExpr)> {
+/// The scalar literal operand of a binary operator, and the vector it is
+/// applied to.
+struct ScalarOperand<'a> {
+    scalar: String,
+    scalar_side: ScalarSide,
+    vector: &'a LogqlExpr,
+}
+
+fn scalar_operand<'a>(left: &'a LogqlExpr, right: &'a LogqlExpr) -> Option<ScalarOperand<'a>> {
     scalar_sample(left)
-        .map(|scalar| (scalar, true, right))
-        .or_else(|| scalar_sample(right).map(|scalar| (scalar, false, left)))
+        .map(|scalar| ScalarOperand {
+            scalar,
+            scalar_side: ScalarSide::Left,
+            vector: right,
+        })
+        .or_else(|| {
+            scalar_sample(right).map(|scalar| ScalarOperand {
+                scalar,
+                scalar_side: ScalarSide::Right,
+                vector: left,
+            })
+        })
 }
 
 fn scalar_sample(expression: &LogqlExpr) -> Option<String> {
@@ -350,35 +387,4 @@ fn scalar_expression_response(
             loki_range_vector_response(time_range, resolved_range_step(step, time_range)?, result)
         }
     })))
-}
-
-/// Everything a nested expression of one query is evaluated with, other than
-/// the expression itself.
-#[derive(Clone, Copy)]
-struct ExprScope<'a> {
-    state: &'a QuerierState,
-    tenant: &'a str,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
-    stream_options: (LokiDirection, Option<usize>, Option<i64>),
-    encoding: LokiStreamEncoding,
-    full_query: &'a str,
-}
-
-impl ExprScope<'_> {
-    async fn execute(self, expression: &LogqlExpr) -> Result<Value, HttpQueryError> {
-        Box::pin(execute_http_logql_expr(
-            self.state,
-            self.tenant,
-            self.time_range,
-            self.step,
-            self.kind,
-            expression,
-            self.stream_options,
-            self.encoding,
-            self.full_query,
-        ))
-        .await
-    }
 }

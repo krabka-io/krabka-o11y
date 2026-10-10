@@ -1,5 +1,6 @@
 use super::{
-    MetricScalarArithmeticOp, Value, apply_metric_binary_arithmetic_to_sample_operands,
+    MetricScalarArithmeticOp, SampleOperands, Value,
+    apply_metric_binary_arithmetic_to_sample_operands,
     apply_metric_binary_to_series_with_left_operand,
 };
 
@@ -14,8 +15,10 @@ pub(crate) fn apply_metric_binary_arithmetic_to_series_with_left_operand(
         |output_sample, left_sample, right_sample| {
             apply_metric_binary_arithmetic_to_sample_operands(
                 output_sample,
-                left_sample,
-                right_sample,
+                SampleOperands {
+                    left: left_sample,
+                    right: right_sample,
+                },
                 op,
             )
         },

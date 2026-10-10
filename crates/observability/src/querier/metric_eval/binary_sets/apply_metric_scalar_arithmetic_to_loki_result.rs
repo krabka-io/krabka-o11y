@@ -1,9 +1,9 @@
-#[cfg(test)]
-use super::MetricScalarArithmetic;
 use super::{
-    HttpQueryError, ScalarLiteral, Value, apply_metric_scalar_arithmetic_to_series,
-    apply_scalar_to_loki_result,
+    HttpQueryError, ScalarArithmetic, ScalarLiteral, Value,
+    apply_metric_scalar_arithmetic_to_series, apply_scalar_to_loki_result,
 };
+#[cfg(test)]
+use super::{MetricScalarArithmetic, ScalarSide};
 
 #[cfg(test)]
 pub(crate) fn apply_metric_scalar_arithmetic_to_loki_result(
@@ -13,27 +13,25 @@ pub(crate) fn apply_metric_scalar_arithmetic_to_loki_result(
 ) -> Result<(), HttpQueryError> {
     apply_scalar_arithmetic_to_loki_result(
         value,
-        arithmetic.op,
-        &arithmetic.scalar,
-        arithmetic.scalar_on_left,
-        query,
+        ScalarArithmetic {
+            op: arithmetic.op,
+            scalar_side: ScalarSide::from_scalar_on_left(arithmetic.scalar_on_left),
+        },
+        ScalarLiteral {
+            text: &arithmetic.scalar,
+            query,
+        },
     )
 }
 
 pub(crate) fn apply_scalar_arithmetic_to_loki_result(
     value: &mut Value,
-    op: crate::MetricScalarArithmeticOp,
-    scalar: &str,
-    scalar_on_left: bool,
-    query: &str,
+    arithmetic: ScalarArithmetic,
+    scalar: ScalarLiteral<'_>,
 ) -> Result<(), HttpQueryError> {
-    let scalar = ScalarLiteral {
-        text: scalar,
-        query,
-    }
-    .parse()?;
+    let scalar = scalar.parse()?;
     apply_scalar_to_loki_result(value, scalar, |series, scalar| {
-        apply_metric_scalar_arithmetic_to_series(series, op, scalar, scalar_on_left)
+        apply_metric_scalar_arithmetic_to_series(series, arithmetic, scalar)
     });
     Ok(())
 }

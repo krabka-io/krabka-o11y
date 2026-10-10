@@ -34,15 +34,31 @@ pub const GRAFANA_PORT: u16 = 3000;
 /// The tenant the provisioned datasources send on every request.
 pub const TENANT: &str = "tenant-a";
 
+/// One `name=value` pair of a query string.
+#[derive(Clone, Debug)]
+pub struct QueryPair {
+    pub name: &'static str,
+    pub value: String,
+}
+
+impl QueryPair {
+    pub fn new(name: &'static str, value: impl std::fmt::Display) -> Self {
+        Self {
+            name,
+            value: value.to_string(),
+        }
+    }
+}
+
 /// Encodes one query string from its pairs.
 ///
 /// `reqwest` is built here without its `query` feature, which is what
 /// `RequestBuilder::query` needs, so the pairs are encoded the way
 /// `krabka-metrics-service`'s Grafana suite encodes its own.
-pub fn query_string(pairs: &[(&str, String)]) -> String {
+pub fn query_string(pairs: &[QueryPair]) -> String {
     pairs
         .iter()
-        .map(|(name, value)| format!("{}={}", form_encode(name), form_encode(value)))
+        .map(|pair| format!("{}={}", form_encode(pair.name), form_encode(&pair.value)))
         .collect::<Vec<_>>()
         .join("&")
 }

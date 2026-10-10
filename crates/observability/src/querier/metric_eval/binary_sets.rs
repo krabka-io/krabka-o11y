@@ -28,12 +28,14 @@ mod default_metric_range_step;
 mod execute_http_metric_range_query;
 mod include_metric_group_labels;
 mod metric_binary_set_keeps_sample;
+mod metric_comparison;
 mod metric_samples_share_timestamp;
 mod metric_scalar_arithmetic_value;
 mod metric_scalar_comparison_matches;
 mod metric_series_labels;
 mod metric_vector_group_modifier;
 mod metric_vector_matching_key;
+mod scalar_operands;
 mod sort_loki_metric_results_by_labels;
 
 pub(crate) use apply_metric_binary_set_to_loki_result::apply_metric_binary_set_to_loki_result;
@@ -58,10 +60,14 @@ pub(crate) use default_metric_range_step::default_metric_range_step;
 pub(crate) use execute_http_metric_range_query::execute_http_metric_range_query;
 pub(crate) use include_metric_group_labels::include_metric_group_labels;
 pub(crate) use metric_binary_set_keeps_sample::metric_binary_set_keeps_sample;
+pub(crate) use metric_comparison::{
+    ComparisonResult, MetricComparison, ScalarArithmetic, ScalarComparison,
+};
 pub(crate) use metric_samples_share_timestamp::metric_samples_share_timestamp;
 pub(crate) use metric_scalar_arithmetic_value::metric_scalar_arithmetic_value;
 pub(crate) use metric_scalar_comparison_matches::metric_scalar_comparison_matches;
 pub(crate) use metric_series_labels::metric_series_labels;
 pub(crate) use metric_vector_group_modifier::metric_vector_group_modifier;
 pub(crate) use metric_vector_matching_key::metric_vector_matching_key;
+pub(crate) use scalar_operands::{ScalarOperands, ScalarSide};
 pub(crate) use sort_loki_metric_results_by_labels::sort_loki_metric_results_by_labels;

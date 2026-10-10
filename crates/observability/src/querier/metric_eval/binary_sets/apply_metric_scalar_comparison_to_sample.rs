@@ -1,7 +1,8 @@
 #[cfg(test)]
 use super::MetricScalarComparison;
 use super::{
-    MetricValue, Value, json, metric_scalar_comparison_matches, parse_metric_sample_value,
+    ComparisonResult, MetricValue, ScalarComparison, ScalarOperands, Value, json,
+    metric_scalar_comparison_matches, parse_metric_sample_value,
 };
 
 #[cfg(test)]
@@ -10,21 +11,13 @@ pub(crate) fn apply_metric_scalar_comparison_to_sample(
     comparison: &MetricScalarComparison,
     scalar: MetricValue,
 ) -> bool {
-    apply_scalar_comparison_to_sample(
-        sample,
-        comparison.op,
-        comparison.bool_modifier,
-        scalar,
-        comparison.scalar_on_left,
-    )
+    apply_scalar_comparison_to_sample(sample, ScalarComparison::from(comparison), scalar)
 }
 
 pub(crate) fn apply_scalar_comparison_to_sample(
     sample: &mut Value,
-    op: crate::ComparisonOp,
-    bool_modifier: bool,
+    comparison: ScalarComparison,
     scalar: MetricValue,
-    scalar_on_left: bool,
 ) -> bool {
     let Some(values) = sample.as_array_mut() else {
         return false;
@@ -36,13 +29,19 @@ pub(crate) fn apply_scalar_comparison_to_sample(
     else {
         return false;
     };
-    let matches = metric_scalar_comparison_matches(sample_value, op, scalar, scalar_on_left);
-    if bool_modifier {
-        if let Some(value) = values.get_mut(1) {
-            *value = json!(if matches { "1" } else { "0" });
+    let operands = ScalarOperands {
+        sample: sample_value,
+        scalar,
+        scalar_side: comparison.scalar_side,
+    };
+    let matches = metric_scalar_comparison_matches(operands, comparison.comparison.op);
+    match comparison.comparison.result {
+        ComparisonResult::Bool => {
+            if let Some(value) = values.get_mut(1) {
+                *value = json!(if matches { "1" } else { "0" });
+            }
+            true
         }
-        true
-    } else {
-        matches
+        ComparisonResult::Filter => matches,
     }
 }

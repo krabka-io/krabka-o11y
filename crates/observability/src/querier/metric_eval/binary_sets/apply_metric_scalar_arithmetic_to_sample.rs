@@ -1,13 +1,12 @@
 use super::{
-    MetricScalarArithmeticOp, MetricValue, Value, format_metric_value, json,
+    MetricValue, ScalarArithmetic, ScalarOperands, Value, format_metric_value, json,
     metric_scalar_arithmetic_value, parse_metric_sample_value,
 };
 
 pub(crate) fn apply_metric_scalar_arithmetic_to_sample(
     sample: &mut Value,
-    op: MetricScalarArithmeticOp,
+    arithmetic: ScalarArithmetic,
     scalar: MetricValue,
-    scalar_on_left: bool,
 ) -> bool {
     let Some(values) = sample.as_array_mut() else {
         return false;
@@ -19,8 +18,12 @@ pub(crate) fn apply_metric_scalar_arithmetic_to_sample(
     else {
         return false;
     };
-    let Some(result) = metric_scalar_arithmetic_value(sample_value, op, scalar, scalar_on_left)
-    else {
+    let operands = ScalarOperands {
+        sample: sample_value,
+        scalar,
+        scalar_side: arithmetic.scalar_side,
+    };
+    let Some(result) = metric_scalar_arithmetic_value(operands, arithmetic.op) else {
         return false;
     };
     if let Some(value) = values.get_mut(1) {

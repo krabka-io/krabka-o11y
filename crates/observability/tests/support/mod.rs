@@ -676,11 +676,13 @@ pub fn assert_loki_error(body: &Value, error_type: &str, error_contains: &str) {
 }
 
 pub fn expected_api_error() -> Value {
-    expected_api_error_with_stats(&expected_loki_stats_with(1846, 1, 1))
+    expected_api_error_with_stats(&LokiStatsCounts::fixture_block_lines(1).expected_stats())
 }
 
 pub fn expected_loki_forwarded_api_error() -> Value {
-    expected_loki_forwarded_api_error_with_stats(&expected_loki_stats_with(1846, 1, 1))
+    expected_loki_forwarded_api_error_with_stats(
+        &LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    )
 }
 
 pub fn expected_api_error_with_stats(stats: &Value) -> Value {
@@ -829,16 +831,21 @@ impl LokiSuccess<'_> {
 }
 
 pub fn expected_loki_stats() -> Value {
-    expected_loki_stats_with(0, 0, 0)
+    LokiStatsCounts::default().expected_stats()
 }
 
-pub fn expected_loki_stats_with(bytes: u64, lines: u64, chunks: u64) -> Value {
-    expected_loki_mixed_stats_with(bytes, lines, 0, chunks)
-}
-
-/// The stats of a query that only the ingester's hot tail answered.
-pub fn expected_loki_ingester_stats_with(lines: u64) -> Value {
-    expected_loki_mixed_stats_with(0, 0, lines, 0)
+/// The counts a Loki query's `stats` member reports. A query that only the
+/// ingester's hot tail answered reports `ingester_lines` and nothing else.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LokiStatsCounts {
+    /// The compressed and the decompressed bytes the store read.
+    pub store_bytes: u64,
+    /// The lines the store decompressed.
+    pub store_lines: u64,
+    /// The lines the ingester sent.
+    pub ingester_lines: u64,
+    /// The chunks the store referenced and downloaded.
+    pub chunks: u64,
 }
 
 /// The Kafka record the WAL producer writes for `record`, as a consumer reads
@@ -866,43 +873,58 @@ pub fn kafka_wal_record(
     }
 }
 
-pub fn expected_loki_mixed_stats_with(
-    bytes: u64,
-    store_lines: u64,
-    ingester_lines: u64,
-    chunks: u64,
-) -> Value {
-    json!({
-        "ingester": {
-            "compressedBytes": 0,
-            "decompressedBytes": 0,
-            "decompressedLines": ingester_lines,
-            "headChunkBytes": 0,
-            "headChunkLines": 0,
-            "totalBatches": 0,
-            "totalChunksMatched": 0,
-            "totalDuplicates": 0,
-            "totalLinesSent": ingester_lines,
-            "totalReached": 0
-        },
-        "store": {
-            "compressedBytes": bytes,
-            "decompressedBytes": bytes,
-            "decompressedLines": store_lines,
-            "chunksDownloadTime": 0.0,
-            "totalChunksRef": chunks,
-            "totalChunksDownloaded": chunks,
-            "totalDuplicates": 0
-        },
-        "summary": {
-            "bytesProcessedPerSecond": 0,
-            "execTime": 0.0,
-            "linesProcessedPerSecond": 0,
-            "queueTime": 0.0,
-            "totalBytesProcessed": bytes,
-            "totalLinesProcessed": store_lines + ingester_lines
+impl LokiStatsCounts {
+    /// The counts of a query that read `store_lines` lines out of one of
+    /// [`fixture`]'s blocks.
+    pub const fn fixture_block_lines(store_lines: u64) -> Self {
+        Self {
+            store_bytes: 1846,
+            store_lines,
+            ingester_lines: 0,
+            chunks: 1,
         }
-    })
+    }
+
+    /// The whole `stats` member a query with these counts answers with.
+    pub fn expected_stats(self) -> Value {
+        let Self {
+            store_bytes: bytes,
+            store_lines,
+            ingester_lines,
+            chunks,
+        } = self;
+        json!({
+            "ingester": {
+                "compressedBytes": 0,
+                "decompressedBytes": 0,
+                "decompressedLines": ingester_lines,
+                "headChunkBytes": 0,
+                "headChunkLines": 0,
+                "totalBatches": 0,
+                "totalChunksMatched": 0,
+                "totalDuplicates": 0,
+                "totalLinesSent": ingester_lines,
+                "totalReached": 0
+            },
+            "store": {
+                "compressedBytes": bytes,
+                "decompressedBytes": bytes,
+                "decompressedLines": store_lines,
+                "chunksDownloadTime": 0.0,
+                "totalChunksRef": chunks,
+                "totalChunksDownloaded": chunks,
+                "totalDuplicates": 0
+            },
+            "summary": {
+                "bytesProcessedPerSecond": 0,
+                "execTime": 0.0,
+                "linesProcessedPerSecond": 0,
+                "queueTime": 0.0,
+                "totalBytesProcessed": bytes,
+                "totalLinesProcessed": store_lines + ingester_lines
+            }
+        })
+    }
 }
 
 /// A block's first and last WAL offset. The fixtures give each block the same

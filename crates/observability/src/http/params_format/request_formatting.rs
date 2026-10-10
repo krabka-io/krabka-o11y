@@ -1,7 +1,7 @@
 use krabka_logql::{LogqlExpr, parse_logql_expr};
 
 use crate::{
-    Bytes, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
+    Bytes, ComparisonResult, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
     MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, decode_form_component,
     format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
     format_metric_and_vector_operands, format_metric_label_replace_query, format_metric_query,
@@ -59,7 +59,9 @@ pub(crate) use format_label_replace_metric_binary_set::format_label_replace_metr
 pub(crate) use format_logql_query::format_logql_query;
 pub(crate) use format_metric_binary_arithmetic_query::format_metric_binary_arithmetic_query;
 pub(crate) use format_metric_binary_comparison_query::format_metric_binary_comparison_query;
-pub(crate) use format_metric_binary_expression::format_metric_binary_expression;
+pub(crate) use format_metric_binary_expression::{
+    MetricBinaryExpressionText, format_metric_binary_expression,
+};
 pub(crate) use format_metric_binary_set_operator::format_metric_binary_set_operator;
 pub(crate) use format_metric_binary_set_query::format_metric_binary_set_query;
 pub(crate) use format_metric_vector_arithmetic_expression::format_metric_vector_arithmetic_expression;

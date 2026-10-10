@@ -2165,19 +2165,31 @@ async fn seed_tenant_log_blocks(
     keys
 }
 
-/// Runs the compactor loop over an empty WAL until `gone` has no object left.
+/// One compactor run under a per-tenant retention overrides file.
+struct RetentionOverridesRun<'a> {
+    config: &'a ServiceConfig,
+    store: &'a dyn ObjectStore,
+    prefix: &'a ObjectPath,
+    overrides_yaml: &'a str,
+    /// The block whose object the sweep must delete.
+    swept_block: &'a BlockKey,
+}
+
+/// Runs the compactor loop over an empty WAL until `run.swept_block` has no
+/// object left.
 ///
 /// The sweep is the only thing this loop has to do, so the shutdown future is
 /// the condition the sweep produces. A run that never deletes the object stops
 /// on the poll budget instead, and the assertions after it then fail on what is
 /// still there rather than on a timeout.
-async fn run_compactor_with_retention_overrides(
-    config: &ServiceConfig,
-    store: &dyn ObjectStore,
-    prefix: &ObjectPath,
-    overrides_yaml: &str,
-    gone: &BlockKey,
-) {
+async fn run_compactor_with_retention_overrides(run: RetentionOverridesRun<'_>) {
+    let RetentionOverridesRun {
+        config,
+        store,
+        prefix,
+        overrides_yaml,
+        swept_block,
+    } = run;
     let dependencies = ServiceDependencies::default()
         .with_wal_consumer(RecordingWalConsumer::new(Vec::new()))
         .with_limits(Arc::new(
@@ -2188,7 +2200,7 @@ async fn run_compactor_with_retention_overrides(
         Duration::from_secs(10),
         run_compactor_until_shutdown(config, dependencies, Some(store), async {
             for _ in 0..200 {
-                if read_log_block_from_object_store(store, prefix, gone)
+                if read_log_block_from_object_store(store, prefix, swept_block)
                     .await
                     .is_err()
                 {
@@ -2370,14 +2382,14 @@ async fn each_tenant_is_swept_by_its_own_retention_window() {
         );
     }
 
-    run_compactor_with_retention_overrides(
-        &config,
-        &store,
-        &prefix,
-        "defaults:\n  retention_period: \"90m\"\noverrides:\n  tenant-short:\n    \
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
+        config: &config,
+        store: &store,
+        prefix: &prefix,
+        overrides_yaml: "defaults:\n  retention_period: \"90m\"\noverrides:\n  tenant-short:\n    \
          retention_period: \"1h\"\n  tenant-forever:\n    retention_period: \"0s\"\n",
-        &keys["tenant-short"],
-    )
+        swept_block: &keys["tenant-short"],
+    })
     .await;
 
     let mut expected = vec![
@@ -2402,13 +2414,13 @@ async fn the_retention_sweep_finds_a_tenant_whose_name_needs_escaping() {
         seed_tenant_log_blocks(&store, &prefix, tenant, &[now_unix_nanos() - 2 * HOUR_NS]).await[0]
             .clone();
 
-    run_compactor_with_retention_overrides(
-        &config,
-        &store,
-        &prefix,
-        "overrides:\n  \"team a/b\":\n    retention_period: \"1h\"\n",
-        &expired,
-    )
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
+        config: &config,
+        store: &store,
+        prefix: &prefix,
+        overrides_yaml: "overrides:\n  \"team a/b\":\n    retention_period: \"1h\"\n",
+        swept_block: &expired,
+    })
     .await;
 
     check!(list_log_block_paths(&store, &prefix).await == Vec::<String>::new());
@@ -2575,13 +2587,13 @@ async fn a_query_planned_before_the_sweep_still_answers_without_the_deleted_bloc
     assert!(before.status() == StatusCode::OK);
     check!(loki_stream_lines(before).await == vec!["api ok 1".to_string(), "api ok 0".to_string()]);
 
-    run_compactor_with_retention_overrides(
-        &compactor_config("observability/logs"),
-        &store,
-        &prefix,
-        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
-        &expired,
-    )
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
+        config: &compactor_config("observability/logs"),
+        store: &store,
+        prefix: &prefix,
+        overrides_yaml: "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        swept_block: &expired,
+    })
     .await;
 
     // The cached index still names the deleted block. The rest of the answer is
@@ -2755,13 +2767,13 @@ async fn sweep_with_one_hour_retention(
     store: &dyn ObjectStore,
     expired: &BlockKey,
 ) {
-    run_compactor_with_retention_overrides(
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
         config,
         store,
-        &ObjectPath::from("observability/logs"),
-        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
-        expired,
-    )
+        prefix: &ObjectPath::from("observability/logs"),
+        overrides_yaml: "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        swept_block: expired,
+    })
     .await;
 }
 
@@ -2931,13 +2943,13 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     }
 
     // Retention: the two-hour-old block is past a one-hour window.
-    run_compactor_with_retention_overrides(
-        &config,
-        store.as_ref(),
-        &prefix,
-        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
-        &old.key,
-    )
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
+        config: &config,
+        store: store.as_ref(),
+        prefix: &prefix,
+        overrides_yaml: "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        swept_block: &old.key,
+    })
     .await;
     let (_, blocks) = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
         .await

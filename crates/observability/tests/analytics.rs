@@ -16,8 +16,8 @@ use krabka_observability::{
 use krabka_units::convert::ByteSizeExt as _;
 use serde_json::json;
 use support::{
-    BlockSpan, LogEntry, LokiSuccess, Tenant, assert_loki_error, expected_loki_stats,
-    expected_loki_stats_with, json_body, log_entry, post_form, text_body,
+    BlockSpan, LogEntry, LokiStatsCounts, LokiSuccess, Tenant, assert_loki_error,
+    expected_loki_stats, json_body, log_entry, post_form, text_body,
 };
 
 /// A querier over one tenant-a block at offsets 10-19 that holds `entries`
@@ -211,7 +211,13 @@ async fn index_volume_endpoint_returns_series_vector_bytes() {
                         "value": [0.000_000_019, expected_block_bytes.to_string()]
                     }
                 ]),
-                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+                stats: LokiStatsCounts {
+                    store_bytes: expected_block_bytes,
+                    store_lines: 0,
+                    chunks: 1,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
             }
             .json()
     );
@@ -244,7 +250,13 @@ async fn index_volume_range_endpoint_returns_matrix_with_target_labels() {
                         "values": [[0.000_000_01, expected_block_bytes.to_string()]]
                     }
                 ]),
-                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+                stats: LokiStatsCounts {
+                    store_bytes: expected_block_bytes,
+                    store_lines: 0,
+                    chunks: 1,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
             }
             .json()
     );
@@ -277,7 +289,13 @@ async fn index_volume_range_endpoint_accepts_form_post_query_with_raw_ampersand(
                         "values": [[0.000_000_01, expected_block_bytes.to_string()]]
                     }
                 ]),
-                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+                stats: LokiStatsCounts {
+                    store_bytes: expected_block_bytes,
+                    store_lines: 0,
+                    chunks: 1,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
             }
             .json()
     );
@@ -306,7 +324,13 @@ async fn index_volume_range_endpoint_returns_matrix_without_target_labels() {
                         "values": [[0.000_000_01, expected_block_bytes.to_string()]]
                     }
                 ]),
-                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+                stats: LokiStatsCounts {
+                    store_bytes: expected_block_bytes,
+                    store_lines: 0,
+                    chunks: 1,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
             }
             .json()
     );
@@ -518,7 +542,13 @@ async fn index_volume_endpoint_supports_label_aggregation_and_limit() {
                         "value": [0.000_000_019, expected_block_bytes.to_string()]
                     }
                 ]),
-                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+                stats: LokiStatsCounts {
+                    store_bytes: expected_block_bytes,
+                    store_lines: 0,
+                    chunks: 1,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
             }
             .json()
     );

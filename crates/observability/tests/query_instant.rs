@@ -17,11 +17,10 @@ use krabka_observability::{
 use krabka_units::bytes;
 use serde_json::{Value, json};
 use support::{
-    DenyingQueryAuthorizer, LokiSuccess, Tenant, api_prod_streams, api_prod_wal_record,
-    api_seconds_block_app, assert_json_ok, assert_loki_error, check_one_stored_line_stats,
-    expected_loki_forwarded_api_error, expected_loki_mixed_stats_with, expected_loki_stats_with,
-    fixture, json_body, loki_forwarded_fixture, loki_forwarded_multi_tenant_fixture, send,
-    tenant_a_post, text_body,
+    DenyingQueryAuthorizer, LokiStatsCounts, LokiSuccess, Tenant, api_prod_streams,
+    api_prod_wal_record, api_seconds_block_app, assert_json_ok, assert_loki_error,
+    check_one_stored_line_stats, expected_loki_forwarded_api_error, fixture, json_body,
+    loki_forwarded_fixture, loki_forwarded_multi_tenant_fixture, send, tenant_a_post, text_body,
 };
 use tower::ServiceExt as _;
 
@@ -66,7 +65,13 @@ async fn query_endpoint_fans_out_pipe_separated_tenant_header() {
                     ]
                 }
             ]),
-            stats: expected_loki_stats_with(prod_bytes + stage_bytes, 2, 2),
+            stats: LokiStatsCounts {
+                store_bytes: prod_bytes + stage_bytes,
+                store_lines: 2,
+                chunks: 2,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats(),
         }
         .json(),
     )
@@ -175,7 +180,13 @@ async fn query_endpoint_merges_cold_blocks_with_hot_wal_tail() {
         &LokiSuccess {
             result_type: "streams",
             data_result: api_prod_streams(json!([["19", "api error"], ["20", "api hot error"]])),
-            stats: expected_loki_mixed_stats_with(1846, 1, 1, 1),
+            stats: LokiStatsCounts {
+                store_bytes: 1846,
+                store_lines: 1,
+                ingester_lines: 1,
+                chunks: 1,
+            }
+            .expected_stats(),
         }
         .json(),
     )
@@ -214,7 +225,7 @@ async fn query_endpoint_uses_updated_shared_compaction_frontier_for_hot_tail() {
         &LokiSuccess {
             result_type: "streams",
             data_result: api_prod_streams(json!([["19", "api error"]])),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -238,7 +249,7 @@ async fn query_endpoint_applies_limit_to_stream_results() {
         &LokiSuccess {
             result_type: "streams",
             data_result: api_prod_streams(json!([["19", "api error"]])),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -262,7 +273,13 @@ async fn query_endpoint_applies_backward_direction_before_limit() {
         &LokiSuccess {
             result_type: "streams",
             data_result: api_prod_streams(json!([["20", "api hot error"]])),
-            stats: expected_loki_mixed_stats_with(1846, 0, 1, 1),
+            stats: LokiStatsCounts {
+                store_bytes: 1846,
+                store_lines: 0,
+                ingester_lines: 1,
+                chunks: 1,
+            }
+            .expected_stats(),
         }
         .json(),
     )
@@ -286,7 +303,13 @@ async fn query_endpoint_defaults_to_backward_direction_before_limit() {
         &LokiSuccess {
             result_type: "streams",
             data_result: api_prod_streams(json!([["20", "api hot error"]])),
-            stats: expected_loki_mixed_stats_with(1846, 0, 1, 1),
+            stats: LokiStatsCounts {
+                store_bytes: 1846,
+                store_lines: 0,
+                ingester_lines: 1,
+                chunks: 1,
+            }
+            .expected_stats(),
         }
         .json(),
     )

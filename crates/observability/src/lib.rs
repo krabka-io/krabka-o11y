@@ -460,18 +460,19 @@ pub(crate) use self::{
         },
         metric_eval::{
             binary_arithmetic::{
-                MetricBinaryOperator, apply_metric_binary_arithmetic_to_sample,
+                MetricBinaryOperator, VectorComparison, apply_metric_binary_arithmetic_to_sample,
                 apply_metric_binary_arithmetic_to_series_with_left_operand,
                 apply_metric_binary_comparison_to_loki_result, apply_metric_binary_to_series,
                 matching_metric_binary_sample, metric_binary_sample_timestamps_match,
             },
             binary_sets::{
-                apply_metric_binary_set_to_loki_result, apply_metric_selection,
-                apply_scalar_arithmetic_to_loki_result, apply_scalar_comparison_to_loki_result,
-                default_metric_range_step, execute_http_metric_range_query,
-                include_metric_group_labels, metric_scalar_arithmetic_value,
-                metric_scalar_comparison_matches, metric_series_labels,
-                metric_vector_group_modifier, metric_vector_matching_key,
+                ComparisonResult, MetricComparison, ScalarArithmetic, ScalarComparison,
+                ScalarLiteral, ScalarOperands, ScalarSide, apply_metric_binary_set_to_loki_result,
+                apply_metric_selection, apply_scalar_arithmetic_to_loki_result,
+                apply_scalar_comparison_to_loki_result, default_metric_range_step,
+                execute_http_metric_range_query, include_metric_group_labels,
+                metric_scalar_arithmetic_value, metric_scalar_comparison_matches,
+                metric_series_labels, metric_vector_group_modifier, metric_vector_matching_key,
             },
             expression_parser::ScalarComparisonOp,
             expressions::{
@@ -480,8 +481,8 @@ pub(crate) use self::{
                 strip_outer_parenthesized_expression,
             },
             http_queries::{
-                execute_http_metric_instant_query, execute_http_stream_query,
-                validate_loki_interval,
+                HttpStreamQuery, LokiStreamOptions, execute_http_metric_instant_query,
+                execute_http_stream_query, validate_loki_interval,
             },
             result_transforms::{
                 apply_metric_binary_arithmetic_to_loki_result, metric_query_uses_approx_topk,

@@ -20,9 +20,9 @@ use krabka_observability::{
 use krabka_units::convert::ByteSizeExt as _;
 use serde_json::{Value, json};
 use support::{
-    LokiSuccess, Method, Tenant, TenantDenyingQueryAuthorizer, assert_loki_error,
-    expected_loki_stats_with, json_body, minimal_service_config, next_frame_within_two_seconds,
-    open_tail, post_form, test_service_config, text_body,
+    LokiStatsCounts, LokiSuccess, Method, Tenant, TenantDenyingQueryAuthorizer, assert_loki_error,
+    json_body, minimal_service_config, next_frame_within_two_seconds, open_tail, post_form,
+    test_service_config, text_body,
 };
 use tower::ServiceExt as _;
 
@@ -219,7 +219,13 @@ async fn compactor_delete_requests_filter_querier_metric_results() {
                         "value": [17, "2"]
                     }
                 ]),
-                stats: expected_loki_stats_with(block_bytes, 1, 1),
+                stats: LokiStatsCounts {
+                    store_bytes: block_bytes,
+                    store_lines: 1,
+                    chunks: 1,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
             }
             .json()
     );
@@ -577,7 +583,16 @@ async fn assert_secret_line_filtered(response: axum::response::Response, block_b
                 }
             ])
     );
-    assert!(body["data"]["stats"] == expected_loki_stats_with(block_bytes, 2, 1));
+    assert!(
+        body["data"]["stats"]
+            == LokiStatsCounts {
+                store_bytes: block_bytes,
+                store_lines: 2,
+                chunks: 1,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats()
+    );
 }
 
 /// Requests, through a compactor built from `config`, the deletion of

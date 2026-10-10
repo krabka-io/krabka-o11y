@@ -41,7 +41,7 @@ use testcontainers::{
 };
 
 use self::grafana_loki::{
-    CONTAINER_START_TIMEOUT, GRAFANA_PORT, HttpBase, TENANT, TestResult, query_string,
+    CONTAINER_START_TIMEOUT, GRAFANA_PORT, HttpBase, QueryPair, TENANT, TestResult, query_string,
     serve_pushed, start_grafana,
 };
 
@@ -154,7 +154,7 @@ struct Case {
     name: &'static str,
     /// The path below `/loki/api/v1/`.
     path: String,
-    params: Vec<(&'static str, String)>,
+    query_pairs: Vec<QueryPair>,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -394,13 +394,13 @@ fn range_cases(timeline: &Timeline, queries: &[(&'static str, &'static str)]) ->
         .map(|(name, logql)| Case {
             name,
             path: "query_range".to_string(),
-            params: vec![
-                ("query", logql.to_string()),
-                ("start", timeline.start.to_string()),
-                ("end", timeline.end.to_string()),
-                ("step", STEP_SECS.to_string()),
-                ("direction", "forward".to_string()),
-                ("limit", "5000".to_string()),
+            query_pairs: vec![
+                QueryPair::new("query", logql),
+                QueryPair::new("start", timeline.start),
+                QueryPair::new("end", timeline.end),
+                QueryPair::new("step", STEP_SECS),
+                QueryPair::new("direction", "forward"),
+                QueryPair::new("limit", "5000"),
             ],
         })
         .collect()
@@ -410,23 +410,23 @@ fn range_cases(timeline: &Timeline, queries: &[(&'static str, &'static str)]) ->
 fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
     let window = || {
         vec![
-            ("start", timeline.start.to_string()),
-            ("end", timeline.end.to_string()),
+            QueryPair::new("start", timeline.start),
+            QueryPair::new("end", timeline.end),
         ]
     };
     let mut cases = vec![
         Case {
             name: "labels_endpoint",
             path: "labels".to_string(),
-            params: window(),
+            query_pairs: window(),
         },
         Case {
             name: "series_endpoint",
             path: "series".to_string(),
-            params: {
-                let mut params = window();
-                params.push(("match[]", r#"{app=~".+"}"#.to_string()));
-                params
+            query_pairs: {
+                let mut query_pairs = window();
+                query_pairs.push(QueryPair::new("match[]", r#"{app=~".+"}"#));
+                query_pairs
             },
         },
     ];
@@ -438,7 +438,7 @@ fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
         cases.push(Case {
             name,
             path: format!("label/{label}/values"),
-            params: window(),
+            query_pairs: window(),
         });
     }
     cases
@@ -503,7 +503,7 @@ async fn probe(client: &reqwest::Client, base: &str, uid: &str, case: &Case) -> 
     let url = format!(
         "{base}/api/datasources/proxy/uid/{uid}/loki/api/v1/{}?{}",
         case.path,
-        query_string(&case.params)
+        query_string(&case.query_pairs)
     );
     let response = client.get(url).send().await?;
     let status = response.status();
@@ -611,10 +611,10 @@ fn known_divergence(case: &str) -> Option<Divergence> {
 
 fn report(case: &Case, krabka: &Value, loki: &Value) -> String {
     let query = case
-        .params
+        .query_pairs
         .iter()
-        .find(|(name, _)| *name == "query" || *name == "match[]")
-        .map_or_else(|| case.path.clone(), |(_, value)| value.clone());
+        .find(|pair| pair.name == "query" || pair.name == "match[]")
+        .map_or_else(|| case.path.clone(), |pair| pair.value.clone());
     format!(
         "\n--- {} ---\n  ask:    {query}\n  krabka: {}\n  loki:   {}\n",
         case.name,
@@ -720,12 +720,12 @@ async fn wait_for_seeded(client: &reqwest::Client, base: &str, timeline: &Timeli
     let case = Case {
         name: "seed probe",
         path: "query_range".to_string(),
-        params: vec![
-            ("query", r#"{app=~".+"}"#.to_string()),
-            ("start", timeline.start.to_string()),
-            ("end", timeline.end.to_string()),
-            ("step", STEP_SECS.to_string()),
-            ("direction", "forward".to_string()),
+        query_pairs: vec![
+            QueryPair::new("query", r#"{app=~".+"}"#),
+            QueryPair::new("start", timeline.start),
+            QueryPair::new("end", timeline.end),
+            QueryPair::new("step", STEP_SECS),
+            QueryPair::new("direction", "forward"),
         ],
     };
     let deadline = Instant::now() + READY_TIMEOUT;

@@ -35,12 +35,11 @@ use serde_json::{Value, json};
 use snap::raw::Encoder as SnappyEncoder;
 use support::{
     BodyHeaders, DenyingQueryAuthorizer, ExpectedLokiError, JsonStream, LokiProtoEntry,
-    LokiProtoPushRequest, LokiProtoStream, PushOutcome, RejectingIngestLimiter, Tenant,
-    assert_loki_error, current_unix_epoch_nanos, expected_api_error,
-    expected_loki_forwarded_api_error, expected_loki_forwarded_api_error_with_stats,
-    expected_loki_ingester_stats_with, json_body, kafka_wal_record,
-    loki_forwarded_tenant_object_store_shard_catalog_service_fixture, minimal_service_config,
-    proto_logs_request_at_ns, push_request, send, tenant_a_post,
+    LokiProtoPushRequest, LokiProtoStream, LokiStatsCounts, PushOutcome, RejectingIngestLimiter,
+    Tenant, assert_loki_error, current_unix_epoch_nanos, expected_api_error,
+    expected_loki_forwarded_api_error, expected_loki_forwarded_api_error_with_stats, json_body,
+    kafka_wal_record, loki_forwarded_tenant_object_store_shard_catalog_service_fixture,
+    minimal_service_config, proto_logs_request_at_ns, push_request, send, tenant_a_post,
     tenant_object_store_shard_catalog_service_fixture, text_body,
 };
 use tokio::{
@@ -730,7 +729,13 @@ async fn service_router_builds_querier_role_with_hot_tail_dependency() {
 
     assert!(status == StatusCode::OK);
     assert!(
-        body == expected_loki_forwarded_api_error_with_stats(&expected_loki_ingester_stats_with(1))
+        body == expected_loki_forwarded_api_error_with_stats(
+            &LokiStatsCounts {
+                ingester_lines: 1,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats()
+        )
     );
 }
 
@@ -856,9 +861,13 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
 
             assert!(status == StatusCode::OK);
             if body
-                == expected_loki_forwarded_api_error_with_stats(&expected_loki_ingester_stats_with(
-                    1,
-                ))
+                == expected_loki_forwarded_api_error_with_stats(
+                    &LokiStatsCounts {
+                        ingester_lines: 1,
+                        ..LokiStatsCounts::default()
+                    }
+                    .expected_stats(),
+                )
             {
                 break body;
             }
@@ -869,7 +878,13 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
     .unwrap();
 
     assert!(
-        body == expected_loki_forwarded_api_error_with_stats(&expected_loki_ingester_stats_with(1))
+        body == expected_loki_forwarded_api_error_with_stats(
+            &LokiStatsCounts {
+                ingester_lines: 1,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats()
+        )
     );
 }
 

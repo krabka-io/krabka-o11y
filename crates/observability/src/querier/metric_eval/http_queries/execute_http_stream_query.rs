@@ -9,15 +9,44 @@ use super::{
     validate_query_bytes_limit, validate_query_series_limit,
 };
 
+/// How a log query orders, caps and steps the entries it returns.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LokiStreamOptions {
+    pub(crate) direction: LokiDirection,
+    pub(crate) limit: Option<usize>,
+    pub(crate) interval: Option<i64>,
+}
+
+/// One log query, as the HTTP query API runs it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HttpStreamQuery<'a> {
+    pub(crate) query: &'a str,
+    pub(crate) tenant: &'a str,
+    pub(crate) time_range: TimeRange,
+    pub(crate) options: LokiStreamOptions,
+    /// The end a range query keeps entries strictly before, or `None` for a
+    /// query that keeps the whole of `time_range`.
+    pub(crate) end_exclusive: Option<i64>,
+    pub(crate) encoding: LokiStreamEncoding,
+}
+
 pub(crate) async fn execute_http_stream_query(
     state: &QuerierState,
-    query: &str,
-    tenant: &str,
-    time_range: TimeRange,
-    options: (LokiDirection, Option<usize>, Option<i64>, Option<i64>),
-    encoding: LokiStreamEncoding,
+    stream_query: HttpStreamQuery<'_>,
 ) -> Result<Value, HttpQueryError> {
-    let (direction, limit, interval, end_exclusive) = options;
+    let HttpStreamQuery {
+        query,
+        tenant,
+        time_range,
+        options:
+            LokiStreamOptions {
+                direction,
+                limit,
+                interval,
+            },
+        end_exclusive,
+        encoding,
+    } = stream_query;
     validate_loki_interval(interval)?;
     let query = parse_query(query)?;
     let state = state.with_request_tenant_index(tenant, time_range).await?;

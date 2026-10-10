@@ -1,7 +1,8 @@
 use super::{
-    HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, TenantId, Value,
-    clamp_query_lookback, current_unix_time_ns, execute_http_logql_expr, loki_direction,
-    parse_logql_expr, populate_loki_query_execution_stats, reject_signed_vector_function_literal,
+    HttpQueryError, HttpQueryScope, LogqlExprScope, LokiStreamEncoding, LokiStreamOptions,
+    QuerierState, QueryKind, QueryParams, TenantId, Value, clamp_query_lookback,
+    current_unix_time_ns, execute_http_logql_expr, loki_direction, parse_logql_expr,
+    populate_loki_query_execution_stats, reject_signed_vector_function_literal,
     strip_outer_parenthesized_expression, time_range, validate_loki_query_range_resolution,
     validate_loki_range_query_range_limit, validate_query_entries_limit,
     validate_query_range_limit, validate_query_string_bytes_limit,
@@ -81,15 +82,23 @@ pub(crate) async fn execute_http_query_for_tenant_inner(
         }
     })?;
     execute_http_logql_expr(
-        state,
-        tenant,
-        time_range,
-        params.step,
-        kind,
+        LogqlExprScope {
+            query: HttpQueryScope {
+                state,
+                tenant,
+                time_range,
+                step: params.step,
+                kind,
+            },
+            stream_options: LokiStreamOptions {
+                direction,
+                limit,
+                interval,
+            },
+            encoding,
+            full_query: &params.query,
+        },
         &expression,
-        (direction, limit, interval),
-        encoding,
-        &params.query,
     )
     .await
 }

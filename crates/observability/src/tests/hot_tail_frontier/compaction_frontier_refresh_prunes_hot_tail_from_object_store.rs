@@ -8,7 +8,7 @@ use object_store::ObjectStoreExt as _;
 
 use super::*;
 use crate::{
-    LokiDirection, LokiStreamEncoding, ServiceConfig,
+    HttpStreamQuery, LokiDirection, LokiStreamEncoding, LokiStreamOptions, ServiceConfig,
     compact_log_block_to_object_store_with_index_output, execute_http_stream_query,
 };
 
@@ -110,11 +110,18 @@ async fn different_wal_blocks_with_equal_time_ranges_survive_frontier_pruning() 
         .with_hot_tail_shared_frontier(hot_tail, frontier);
     let mut response = execute_http_stream_query(
         &state,
-        r#"{app=~"api|worker"}"#,
-        "tenant-a",
-        TimeRange::new(0, 30).unwrap(),
-        (LokiDirection::Forward, Some(10), None, Some(30)),
-        LokiStreamEncoding::Folded,
+        HttpStreamQuery {
+            query: r#"{app=~"api|worker"}"#,
+            tenant: "tenant-a",
+            time_range: TimeRange::new(0, 30).unwrap(),
+            options: LokiStreamOptions {
+                direction: LokiDirection::Forward,
+                limit: Some(10),
+                interval: None,
+            },
+            end_exclusive: Some(30),
+            encoding: LokiStreamEncoding::Folded,
+        },
     )
     .await
     .unwrap();
@@ -250,11 +257,18 @@ async fn metadata_without_time_bounds_keeps_hot_labels_outside_the_cold_window()
 async fn stream_response(state: &QuerierState) -> serde_json::Value {
     let mut response = execute_http_stream_query(
         state,
-        r#"{app="api"}"#,
-        "tenant-a",
-        TimeRange::new(0, 30).unwrap(),
-        (LokiDirection::Forward, Some(10), None, Some(30)),
-        LokiStreamEncoding::Folded,
+        HttpStreamQuery {
+            query: r#"{app="api"}"#,
+            tenant: "tenant-a",
+            time_range: TimeRange::new(0, 30).unwrap(),
+            options: LokiStreamOptions {
+                direction: LokiDirection::Forward,
+                limit: Some(10),
+                interval: None,
+            },
+            end_exclusive: Some(30),
+            encoding: LokiStreamEncoding::Folded,
+        },
     )
     .await
     .unwrap();

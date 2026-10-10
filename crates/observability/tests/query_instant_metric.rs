@@ -9,9 +9,8 @@ use datafusion::arrow::array::{Float64Array, MapArray, TimestampNanosecondArray}
 use krabka_observability::loki_router;
 use serde_json::json;
 use support::{
-    LokiSuccess, Tenant, assert_json_ok, assert_loki_error, expected_loki_stats,
-    expected_loki_stats_with, json_body, loki_forwarded_fixture as fixture, parquet_batch,
-    text_body,
+    LokiStatsCounts, LokiSuccess, Tenant, assert_json_ok, assert_loki_error, expected_loki_stats,
+    json_body, loki_forwarded_fixture as fixture, parquet_batch, text_body,
 };
 
 #[tokio::test]
@@ -34,7 +33,7 @@ async fn query_endpoint_returns_metric_query_as_loki_vector_json() {
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -112,7 +111,7 @@ async fn query_endpoint_filters_metric_query_with_scalar_comparison() {
         &LokiSuccess {
             result_type: "vector",
             data_result: json!([]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -136,7 +135,7 @@ async fn query_endpoint_applies_metric_vector_bool_comparison_on_modifier() {
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -163,7 +162,7 @@ async fn query_endpoint_applies_metric_vector_set_and_on_modifier() {
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -187,7 +186,7 @@ async fn query_endpoint_applies_vector_metric_set_or_on_modifier() {
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -214,7 +213,7 @@ async fn query_endpoint_applies_metric_query_scalar_arithmetic() {
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -238,7 +237,7 @@ async fn query_endpoint_applies_metric_vector_arithmetic_on_modifier() {
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -262,7 +261,7 @@ async fn query_endpoint_applies_vector_metric_arithmetic_group_right_modifier() 
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -289,7 +288,7 @@ async fn query_endpoint_applies_scalar_metric_query_arithmetic() {
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -316,7 +315,7 @@ async fn query_endpoint_applies_parenthesized_metric_query_scalar_arithmetic() {
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -343,7 +342,7 @@ async fn query_endpoint_applies_parenthesized_metric_operand_scalar_arithmetic()
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -370,7 +369,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic() {
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -397,7 +396,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic_ignoring_modifier() {
                     "value": [25, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -484,7 +483,7 @@ async fn query_endpoint_filters_metric_binary_comparison() {
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -511,7 +510,7 @@ async fn query_endpoint_applies_metric_binary_comparison_on_modifier() {
                     "value": [25, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -568,7 +567,7 @@ async fn query_endpoint_applies_metric_binary_set_and() {
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -595,7 +594,7 @@ async fn query_endpoint_applies_metric_binary_set_on_modifier() {
                     "value": [25, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -614,7 +613,7 @@ async fn query_endpoint_applies_metric_binary_set_unless() {
         &LokiSuccess {
             result_type: "vector",
             data_result: json!([]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -641,7 +640,7 @@ async fn query_endpoint_filters_scalar_metric_query_comparison() {
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -669,7 +668,7 @@ async fn query_endpoint_accepts_label_replace_metric_query() {
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -697,7 +696,7 @@ async fn query_endpoint_accepts_parenthesized_label_replace_metric_query() {
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -725,7 +724,7 @@ async fn query_endpoint_accepts_label_replace_metric_binary_expression() {
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -753,7 +752,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_oper
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -781,7 +780,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_scal
                     "value": [19, "1"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -809,7 +808,7 @@ async fn query_endpoint_applies_metric_binary_comparison_with_label_replace_oper
                     "value": [19, "0"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )
@@ -837,7 +836,7 @@ async fn query_endpoint_applies_metric_binary_set_with_label_replace_operands() 
                     "value": [19, "2"]
                 }
             ]),
-            stats: expected_loki_stats_with(1846, 1, 1),
+            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
         }
         .json(),
     )

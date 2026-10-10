@@ -15,6 +15,8 @@ use super::*;
 pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     use krabka_logql::ComparisonOp;
 
+    use super::super::prelude::{ComparisonResult, MetricComparison};
+
     let left = range_series(&[
         timed_sample(1, "10"),
         timed_sample(4, "20"),
@@ -38,8 +40,10 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
-            ComparisonOp::Greater,
-            false,
+            MetricComparison {
+                op: ComparisonOp::Greater,
+                result: ComparisonResult::Filter,
+            },
         )
     );
     check!(
@@ -54,8 +58,10 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
-            ComparisonOp::Greater,
-            true,
+            MetricComparison {
+                op: ComparisonOp::Greater,
+                result: ComparisonResult::Bool,
+            },
         )
     );
     check!(
@@ -74,8 +80,10 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
-            ComparisonOp::Less,
-            false,
+            MetricComparison {
+                op: ComparisonOp::Less,
+                result: ComparisonResult::Filter,
+            },
         )
     );
     check!(range_pairs(&output) == vec![(4, "20".to_string()), (5, "20".to_string())]);
@@ -86,8 +94,10 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         !super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
-            ComparisonOp::Greater,
-            false,
+            MetricComparison {
+                op: ComparisonOp::Greater,
+                result: ComparisonResult::Filter,
+            },
         )
     );
 
@@ -97,8 +107,10 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         !super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &json!({"metric": {}}),
-            ComparisonOp::Greater,
-            false,
+            MetricComparison {
+                op: ComparisonOp::Greater,
+                result: ComparisonResult::Filter,
+            },
         )
     );
 
@@ -111,8 +123,10 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &instant_series(timed_sample(1, "10")),
-            ComparisonOp::Greater,
-            false,
+            MetricComparison {
+                op: ComparisonOp::Greater,
+                result: ComparisonResult::Filter,
+            },
         ),
         "same instant, and 10 > 1"
     );
@@ -123,8 +137,10 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         !super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &instant_series(timed_sample(2, "10")),
-            ComparisonOp::Greater,
-            false,
+            MetricComparison {
+                op: ComparisonOp::Greater,
+                result: ComparisonResult::Filter,
+            },
         ),
         "different instants do not compare, however the values order"
     );

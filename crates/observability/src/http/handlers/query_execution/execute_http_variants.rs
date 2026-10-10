@@ -6,10 +6,11 @@ use krabka_logql::{
 };
 
 use super::{
-    apply_grouped_metric_selection, apply_nested_vector_aggregation, execute_federated_metric_query,
+    HttpQueryScope, apply_grouped_metric_selection, apply_nested_vector_aggregation,
+    execute_federated_metric_query,
 };
 use crate::{
-    HttpQueryError, LogqlExpr, QuerierState, QueryKind, TimeRange, Value, add_loki_query_stats,
+    HttpQueryError, LogqlExpr, QuerierState, QueryKind, Value, add_loki_query_stats,
     http::params_format::aggregation_formatting::apply_approx_metric_selection,
     json, merge_loki_query_stats, metric_scan_range,
     querier::{
@@ -18,17 +19,34 @@ use crate::{
     },
 };
 
+/// The parts of one `variants(...) of (...)` expression.
+#[derive(Clone, Copy)]
+pub(crate) struct VariantsDefinition<'a> {
+    pub(crate) variants: &'a [LogqlExpr],
+    pub(crate) stream: &'a StreamQuery,
+    pub(crate) range_ns: DurationNanos,
+    pub(crate) offset_ns: OffsetNanos,
+}
+
 // Boundaries and extractor composition follow Loki 3.7.7's
 // DefaultEvaluator.NewVariantsStepEvaluator and MultiVariantExpr.extractor.
 pub(crate) async fn execute_http_variants(
-    state: &QuerierState,
-    tenant: &str,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
-    definition: (&[LogqlExpr], &StreamQuery, DurationNanos, OffsetNanos),
+    scope: HttpQueryScope<'_>,
+    definition: VariantsDefinition<'_>,
 ) -> Result<Value, HttpQueryError> {
-    let (variants, stream, range_ns, offset_ns) = definition;
+    let HttpQueryScope {
+        state,
+        tenant,
+        time_range,
+        step,
+        kind,
+    } = scope;
+    let VariantsDefinition {
+        variants,
+        stream,
+        range_ns,
+        offset_ns,
+    } = definition;
     if !state.limits.enable_multi_variant_queries {
         return Err(HttpQueryError::VariantsDisabled);
     }

@@ -124,7 +124,20 @@ fn run_compactor_child(root: std::path::PathBuf) {
         };
         let dependencies =
             ServiceDependencies::default().with_wal_consumer(CommitLoggingConsumer {
-                batches: vec![vec![kafka_wal_record(10, "api ok", 6, 42)]],
+                batches: vec![vec![kafka_wal_record(
+                    &WalLogRecord {
+                        tenant: "tenant-a".to_string(),
+                        labels: labels([("app", "api"), ("env", "prod")]),
+                        timestamp_ns: 10,
+                        line: "api ok".to_string(),
+                        structured_metadata: BTreeMap::new(),
+                        position: None,
+                    },
+                    WalPosition {
+                        partition: PartitionIndex(6),
+                        offset: Offset(42),
+                    },
+                )]],
                 commit_log: root.join("committed"),
             });
 
@@ -167,21 +180,15 @@ impl LogWalConsumer for CommitLoggingConsumer {
     }
 }
 
-fn kafka_wal_record(timestamp_ns: i64, line: &str, partition: i32, offset: i64) -> KafkaWalRecord {
-    let record = WalLogRecord {
-        tenant: "tenant-a".to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
-        timestamp_ns,
-        line: line.to_string(),
-        structured_metadata: BTreeMap::new(),
-        position: None,
-    };
-    let producer_record = build_kafka_wal_record("__krabka_observability_logs_wal", &record)
-        .expect("producer record");
+/// The Kafka record the WAL producer writes for `record`, as a consumer reads
+/// it back at `position`.
+fn kafka_wal_record(record: &WalLogRecord, position: WalPosition) -> KafkaWalRecord {
+    let producer_record =
+        build_kafka_wal_record("__krabka_observability_logs_wal", record).expect("producer record");
     KafkaWalRecord {
         value: producer_record.value.expect("producer value").to_vec(),
-        partition: PartitionIndex(partition),
-        offset: Offset(offset),
+        partition: position.partition,
+        offset: position.offset,
         timestamp_ms: producer_record.timestamp_ms,
         headers: producer_record
             .headers

@@ -30,7 +30,8 @@ use serde_json::{Value, json};
 use testcontainers::{ContainerAsync, GenericImage, core::IntoContainerPort};
 
 use self::grafana_loki::{
-    GRAFANA_PORT, HttpBase, ServedQuerier, TestResult, query_string, serve_pushed, start_grafana,
+    GRAFANA_PORT, HttpBase, QueryPair, ServedQuerier, TestResult, query_string, serve_pushed,
+    start_grafana,
 };
 
 /// The datasource UID the proxy and `/api/ds/query` calls name.
@@ -62,8 +63,8 @@ struct MetadataCase {
     name: &'static str,
     /// The path below `/loki/api/v1/`.
     path: &'static str,
-    /// Query parameters beyond the window, which every case gets.
-    params: &'static [(&'static str, &'static str)],
+    /// Query pairs beyond the window, which every case gets.
+    extra_query_pairs: Vec<QueryPair>,
     /// The whole `data` member of the answer.
     expected: Value,
 }
@@ -102,19 +103,28 @@ async fn a_grafana_loki_datasource_reads_the_querier_over_the_proxy_and_the_back
     assert!(health.status().is_success());
 
     for case in metadata_cases() {
-        let answer = proxy_get(&client, &base, case.path, case.params, &krabka).await?;
+        let answer = proxy_get(
+            grafana_api,
+            &krabka,
+            LokiRead {
+                path: case.path,
+                extra_query_pairs: &case.extra_query_pairs,
+            },
+        )
+        .await?;
         check!(answer["data"] == case.expected, "{}", case.name);
     }
 
     let proxied = proxy_get(
-        &client,
-        &base,
-        "query_range",
-        &[
-            ("query", r#"{app="api",env="prod"} |= "error""#),
-            ("direction", "forward"),
-        ],
+        grafana_api,
         &krabka,
+        LokiRead {
+            path: "query_range",
+            extra_query_pairs: &[
+                QueryPair::new("query", r#"{app="api",env="prod"} |= "error""#),
+                QueryPair::new("direction", "forward"),
+            ],
+        },
     )
     .await?;
     assert!(proxied["data"]["result"] == expected_error_stream(krabka.base_ns));
@@ -122,13 +132,8 @@ async fn a_grafana_loki_datasource_reads_the_querier_over_the_proxy_and_the_back
     // The backend path. Grafana parses the answer into frames and hands back
     // its own shape, so the check is that the line survived the round trip
     // rather than that the shape matches Loki's.
-    let frames = backend_query(
-        &client,
-        &base,
-        r#"{app="api",env="prod"} |= "error""#,
-        &krabka,
-    )
-    .await?;
+    let frames =
+        backend_query(grafana_api, r#"{app="api",env="prod"} |= "error""#, &krabka).await?;
     assert!(json_holds(&frames, "api grafana datasource error"));
 
     krabka.shutdown();
@@ -141,7 +146,7 @@ fn metadata_cases() -> Vec<MetadataCase> {
         MetadataCase {
             name: "labels",
             path: "labels",
-            params: &[],
+            extra_query_pairs: Vec::new(),
             // `service_name` is not pushed. The distributor derives it from
             // the stream's `app` label, the way Loki's own discovery does.
             expected: json!(["app", "env", "service_name"]),
@@ -149,19 +154,19 @@ fn metadata_cases() -> Vec<MetadataCase> {
         MetadataCase {
             name: "label_values_app",
             path: "label/app/values",
-            params: &[],
+            extra_query_pairs: Vec::new(),
             expected: json!(["api"]),
         },
         MetadataCase {
             name: "label_values_env",
             path: "label/env/values",
-            params: &[],
+            extra_query_pairs: Vec::new(),
             expected: json!(["prod"]),
         },
         MetadataCase {
             name: "series",
             path: "series",
-            params: &[("match[]", r#"{app="api"}"#)],
+            extra_query_pairs: vec![QueryPair::new("match[]", r#"{app="api"}"#)],
             // One label set, not two. `detected_level` reaches the query
             // answer as structured metadata, and the metadata endpoints strip
             // structured metadata out, so it is not a series of its own here.
@@ -201,21 +206,30 @@ fn expected_error_stream(base_ns: i64) -> Value {
 // Grafana.
 // ---------------------------------------------------------------------------
 
-/// Reads a Loki path through Grafana's datasource proxy.
+/// One read of a path below `/loki/api/v1/`.
+struct LokiRead<'a> {
+    path: &'a str,
+    /// Query pairs beyond the window, which every read gets.
+    extra_query_pairs: &'a [QueryPair],
+}
+
+/// Reads a Loki path through Grafana's datasource proxy, over the window
+/// `krabka` was seeded in.
 async fn proxy_get(
-    client: &reqwest::Client,
-    base: &str,
-    path: &str,
-    params: &[(&str, &str)],
+    grafana: HttpBase<'_>,
     krabka: &KrabkaServer,
+    read: LokiRead<'_>,
 ) -> TestResult<Value> {
-    let mut pairs: Vec<(&str, String)> = vec![
-        ("start", krabka.base_ns.to_string()),
-        ("end", krabka.end_ns().to_string()),
+    let HttpBase { client, base } = grafana;
+    let LokiRead {
+        path,
+        extra_query_pairs,
+    } = read;
+    let mut pairs = vec![
+        QueryPair::new("start", krabka.base_ns),
+        QueryPair::new("end", krabka.end_ns()),
     ];
-    for (name, value) in params {
-        pairs.push((*name, (*value).to_string()));
-    }
+    pairs.extend_from_slice(extra_query_pairs);
     let url = format!(
         "{base}/api/datasources/proxy/uid/{DATASOURCE_UID}/loki/api/v1/{path}?{}",
         query_string(&pairs)
@@ -226,11 +240,11 @@ async fn proxy_get(
 
 /// Runs one query through the backend datasource path a dashboard panel uses.
 async fn backend_query(
-    client: &reqwest::Client,
-    base: &str,
+    grafana: HttpBase<'_>,
     expr: &str,
     krabka: &KrabkaServer,
 ) -> TestResult<Value> {
+    let HttpBase { client, base } = grafana;
     let body = json!({
         "from": (krabka.base_ns / 1_000_000).to_string(),
         "to": (krabka.end_ns() / 1_000_000).to_string(),

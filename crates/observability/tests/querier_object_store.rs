@@ -27,9 +27,8 @@ use krabka_units::convert::ByteSizeExt as _;
 use object_store::{ObjectStoreExt as _, local::LocalFileSystem, path::Path as ObjectPath};
 use serde_json::{Value, json};
 use support::{
-    BlockSpan, LogEntry, LokiSuccess, Tenant,
-    expected_loki_forwarded_api_error as expected_api_error, expected_loki_mixed_stats_with,
-    expected_loki_stats_with, json_body, log_entry,
+    BlockSpan, LogEntry, LokiStatsCounts, LokiSuccess, Tenant,
+    expected_loki_forwarded_api_error as expected_api_error, json_body, log_entry,
     loki_forwarded_tenant_object_store_shard_catalog_service_fixture, send,
     tenant_object_store_shard_catalog_config_fixture,
 };
@@ -587,7 +586,13 @@ async fn configured_object_store_query_returns_partial_warning_for_missing_block
             LokiSuccess {
                 result_type: "streams",
                 data_result: one_stream("prod", json!([["19", "api error"]])),
-                stats: expected_loki_stats_with(readable_block_bytes, 1, 2),
+                stats: LokiStatsCounts {
+                    store_bytes: readable_block_bytes,
+                    store_lines: 1,
+                    chunks: 2,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
             }
             .json()
         )
@@ -636,7 +641,13 @@ async fn configured_object_store_backward_limited_query_stops_after_newest_block
         body == LokiSuccess {
             result_type: "streams",
             data_result: one_stream("prod", json!([["29", "api newest error"]])),
-            stats: expected_loki_stats_with(newest_block_bytes, 1, 1),
+            stats: LokiStatsCounts {
+                store_bytes: newest_block_bytes,
+                store_lines: 1,
+                chunks: 1,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats(),
         }
         .json()
     );
@@ -699,7 +710,13 @@ async fn configured_object_store_query_merges_hot_tail_with_source_split_stats()
                 "prod",
                 json!([["19", "api cold error"], ["20", "api hot error"]])
             ),
-            stats: expected_loki_mixed_stats_with(cold_block_bytes, 1, 1, 1),
+            stats: LokiStatsCounts {
+                store_bytes: cold_block_bytes,
+                store_lines: 1,
+                ingester_lines: 1,
+                chunks: 1
+            }
+            .expected_stats(),
         }
         .json()
     );
@@ -722,7 +739,13 @@ async fn configured_object_store_metric_query_returns_partial_warning_for_missin
                     "metric": { "app": "api", "env": "prod" },
                     "values": [[0.000_000_03, "1"]]
                 }]),
-                stats: expected_loki_stats_with(readable_block_bytes, 1, 2),
+                stats: LokiStatsCounts {
+                    store_bytes: readable_block_bytes,
+                    store_lines: 1,
+                    chunks: 2,
+                    ..LokiStatsCounts::default()
+                }
+                .expected_stats(),
             }
             .json()
         )
@@ -829,7 +852,13 @@ async fn configured_object_store_index_volume_endpoint_loads_request_tenant_mani
                 "metric": { "app": "api", "env": "stage" },
                 "value": [0.000_000_029, expected_block_bytes.to_string()]
             }]),
-            stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+            stats: LokiStatsCounts {
+                store_bytes: expected_block_bytes,
+                store_lines: 0,
+                chunks: 1,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats(),
         }
         .json()
     );
@@ -983,7 +1012,13 @@ async fn assert_tenant_b_reads_stage_error(app: &Router, stage_block_bytes: u64)
         body == LokiSuccess {
             result_type: "streams",
             data_result: one_stream("stage", json!([["29000000000", "tenant-b api error"]])),
-            stats: expected_loki_stats_with(stage_block_bytes, 1, 1),
+            stats: LokiStatsCounts {
+                store_bytes: stage_block_bytes,
+                store_lines: 1,
+                chunks: 1,
+                ..LokiStatsCounts::default()
+            }
+            .expected_stats(),
         }
         .json()
     );

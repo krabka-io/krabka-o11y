@@ -1,8 +1,9 @@
 use num_traits::FromPrimitive as _;
 
 use crate::{
-    ComparisonOp, MetricScalarArithmeticOp, MetricVectorGroupModifier, MetricVectorMatching, Value,
-    format_metric_value, include_metric_group_labels, json, metric_scalar_arithmetic_value,
+    ComparisonResult, MetricComparison, MetricScalarArithmeticOp, MetricVectorGroupModifier,
+    MetricVectorMatching, ScalarOperands, ScalarSide, Value, format_metric_value,
+    include_metric_group_labels, json, metric_scalar_arithmetic_value,
     metric_scalar_comparison_matches, metric_series_labels, metric_vector_group_modifier,
     metric_vector_matching_key, parse_decimal_seconds_timestamp, parse_metric_sample_value,
 };
@@ -24,7 +25,9 @@ mod metric_binary_sample_timestamps_match;
 pub(crate) use apply_metric_binary_arithmetic_to_sample::apply_metric_binary_arithmetic_to_sample;
 pub(crate) use apply_metric_binary_arithmetic_to_sample_operands::apply_metric_binary_arithmetic_to_sample_operands;
 pub(crate) use apply_metric_binary_arithmetic_to_series_with_left_operand::apply_metric_binary_arithmetic_to_series_with_left_operand;
-pub(crate) use apply_metric_binary_comparison_to_loki_result::apply_metric_binary_comparison_to_loki_result;
+pub(crate) use apply_metric_binary_comparison_to_loki_result::{
+    VectorComparison, apply_metric_binary_comparison_to_loki_result,
+};
 pub(crate) use apply_metric_binary_comparison_to_sample::apply_metric_binary_comparison_to_sample;
 pub(crate) use apply_metric_binary_comparison_to_sample_operands::apply_metric_binary_comparison_to_sample_operands;
 pub(crate) use apply_metric_binary_comparison_to_series::apply_metric_binary_comparison_to_series;

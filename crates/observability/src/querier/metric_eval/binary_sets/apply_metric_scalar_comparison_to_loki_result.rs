@@ -1,7 +1,7 @@
 #[cfg(test)]
 use super::MetricScalarComparison;
 use super::{
-    HttpQueryError, ScalarLiteral, Value, apply_scalar_comparison_to_series,
+    HttpQueryError, ScalarComparison, ScalarLiteral, Value, apply_scalar_comparison_to_series,
     apply_scalar_to_loki_result,
 };
 
@@ -13,29 +13,22 @@ pub(crate) fn apply_metric_scalar_comparison_to_loki_result(
 ) -> Result<(), HttpQueryError> {
     apply_scalar_comparison_to_loki_result(
         value,
-        comparison.op,
-        comparison.bool_modifier,
-        &comparison.scalar,
-        comparison.scalar_on_left,
-        query,
+        ScalarComparison::from(comparison),
+        ScalarLiteral {
+            text: &comparison.scalar,
+            query,
+        },
     )
 }
 
 pub(crate) fn apply_scalar_comparison_to_loki_result(
     value: &mut Value,
-    op: crate::ComparisonOp,
-    bool_modifier: bool,
-    scalar: &str,
-    scalar_on_left: bool,
-    query: &str,
+    comparison: ScalarComparison,
+    scalar: ScalarLiteral<'_>,
 ) -> Result<(), HttpQueryError> {
-    let scalar = ScalarLiteral {
-        text: scalar,
-        query,
-    }
-    .parse()?;
+    let scalar = scalar.parse()?;
     apply_scalar_to_loki_result(value, scalar, |series, scalar| {
-        apply_scalar_comparison_to_series(series, op, bool_modifier, scalar, scalar_on_left)
+        apply_scalar_comparison_to_series(series, comparison, scalar)
     });
     Ok(())
 }
