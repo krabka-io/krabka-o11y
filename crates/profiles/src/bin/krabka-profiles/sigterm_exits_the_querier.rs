@@ -15,7 +15,6 @@
 //! unfixed WAL tail left behind.
 
 use std::{
-    collections::BTreeMap,
     process::Command,
     time::{Duration, Instant},
 };
@@ -23,10 +22,8 @@ use std::{
 use assert2::assert;
 use clap::Parser as _;
 use krabka_broker::{Broker, BrokerConfig};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
-use krabka_profiles::PROFILES_WAL_TOPIC;
 
-use super::{Cli, run};
+use super::{Cli, run, wal_topic::create_wal_topic};
 
 /// Set on the child re-execution of this test binary, and carries the broker
 /// the child's WAL tail reads.
@@ -133,25 +130,6 @@ fn run_querier_child(bootstrap: &str) {
     .expect("child CLI");
 
     runtime.block_on(async { run(cli).await.expect("the querier role returns on SIGTERM") });
-}
-
-async fn create_wal_topic(bootstrap: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: PROFILES_WAL_TOPIC.into(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
-        )
-        .await
-        .expect("create the profiles WAL topic");
 }
 
 /// An address nothing is listening on yet.

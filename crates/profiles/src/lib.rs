@@ -25,6 +25,8 @@ pub mod query_frontend;
 pub mod recording;
 pub mod symbolizer;
 mod tenant_from_headers;
+#[cfg(test)]
+mod test_support;
 pub mod wal;
 pub mod wire;
 

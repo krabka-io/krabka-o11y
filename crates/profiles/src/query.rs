@@ -373,7 +373,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::{Limits, OverridesProvider};
+    use crate::{Limits, OverridesProvider, test_support::serve_on_loopback_with};
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 
@@ -424,16 +424,44 @@ mod tests {
         assert!(err.to_string().contains("query length exceeded"), "{err}");
     }
 
-    fn store_with_frame(name: &str) -> InMemoryProfileStore {
-        let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string(name);
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
+    async fn serve_on_loopback<S: ProfileStore + 'static>(
+        state: Arc<QuerierState<S>>,
+    ) -> (SocketAddr, tokio::sync::oneshot::Sender<()>) {
+        serve_on_loopback_with(async |addr, security, shutdown| {
+            serve(addr, state, security, shutdown).await
+        })
+        .await
+    }
+
+    async fn post_querier(
+        bound: SocketAddr,
+        method: &str,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        reqwest::Client::new()
+            .post(format!("http://{bound}/querier.v1.QuerierService/{method}"))
+            .header("x-scope-orgid", "tenant-a")
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    fn intern_leaf_stacktrace(store: &mut InMemoryProfileStore, name: &str) -> u32 {
+        let symbols = store.symbols_mut();
+        let name_ref = symbols.intern_string(name);
+        let function_id = symbols.intern_function(FunctionRec {
             name: name_ref,
             system_name: name_ref,
             filename: 0,
             start_line: 0,
         });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
+        let location_id = symbols.intern_location(LocationRec {
             address: 0,
             mapping_id: 0,
             lines: vec![LineRec {
@@ -441,7 +469,12 @@ mod tests {
                 line: 1,
             }],
         });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        symbols.intern_stacktrace(0, &[location_id])
+    }
+
+    fn store_with_frame(name: &str) -> InMemoryProfileStore {
+        let mut store = InMemoryProfileStore::new();
+        let stacktrace = intern_leaf_stacktrace(&mut store, name);
         store.push_sample(
             ("tenant-a", PT),
             vec![("service_name".to_string(), "api".to_string())],
@@ -457,22 +490,7 @@ mod tests {
     /// store exercises the sort-by-name path of the `Series` response.
     fn store_with_unsorted_labels() -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         store.push_sample(
             ("tenant-a", PT),
             vec![
@@ -491,22 +509,7 @@ mod tests {
 
     fn store_with_two_profile_types() -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         for profile_type in [PT, "memory:alloc_space:bytes:space:bytes"] {
             store.push_sample(
                 ("tenant-a", profile_type),
@@ -547,22 +550,7 @@ mod tests {
 
     fn store_with_span_frame(name: &str, span_id: u64) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string(name);
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, name);
         store.push_sample_with_total_and_span(
             ("tenant-a", PT),
             vec![("service_name".to_string(), "api".to_string())],
@@ -577,22 +565,7 @@ mod tests {
     fn store_with_span_leaf_frames(frames: &[(&str, u64, i64)]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
         for (name, span_id, value) in frames {
-            let name_ref = store.symbols_mut().intern_string(name);
-            let function_id = store.symbols_mut().intern_function(FunctionRec {
-                name: name_ref,
-                system_name: name_ref,
-                filename: 0,
-                start_line: 0,
-            });
-            let location_id = store.symbols_mut().intern_location(LocationRec {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![LineRec {
-                    function_id,
-                    line: 1,
-                }],
-            });
-            let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+            let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample_with_total_and_span(
                 ("tenant-a", PT),
                 vec![("service_name".to_string(), "api".to_string())],
@@ -610,22 +583,7 @@ mod tests {
     ) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
         for (name, span_id, trace_id, value) in frames {
-            let name_ref = store.symbols_mut().intern_string(name);
-            let function_id = store.symbols_mut().intern_function(FunctionRec {
-                name: name_ref,
-                system_name: name_ref,
-                filename: 0,
-                start_line: 0,
-            });
-            let location_id = store.symbols_mut().intern_location(LocationRec {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![LineRec {
-                    function_id,
-                    line: 1,
-                }],
-            });
-            let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+            let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample_with_total_and_associations(
                 ("tenant-a", PT),
                 vec![("service_name".to_string(), "api".to_string())],
@@ -640,22 +598,7 @@ mod tests {
 
     fn store_with_frame_samples(name: &str, samples: &[(i64, i64)]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string(name);
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, name);
         for (timestamp, value) in samples {
             store.push_sample(
                 ("tenant-a", PT),
@@ -670,22 +613,7 @@ mod tests {
 
     fn store_with_services(samples: &[(&str, &str, i64)]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         for (service, env, value) in samples {
             store.push_sample(
                 ("tenant-a", PT),
@@ -704,22 +632,7 @@ mod tests {
     fn store_with_leaf_frames(frames: &[(&str, i64)]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
         for (name, value) in frames {
-            let name_ref = store.symbols_mut().intern_string(name);
-            let function_id = store.symbols_mut().intern_function(FunctionRec {
-                name: name_ref,
-                system_name: name_ref,
-                filename: 0,
-                start_line: 0,
-            });
-            let location_id = store.symbols_mut().intern_location(LocationRec {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![LineRec {
-                    function_id,
-                    line: 1,
-                }],
-            });
-            let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+            let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample(
                 ("tenant-a", PT),
                 vec![("service_name".to_string(), "api".to_string())],
@@ -733,22 +646,7 @@ mod tests {
 
     fn store_with_profile_ids() -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         for (profile_id, value) in [("profile-a", 5), ("profile-b", 7)] {
             store.push_sample(
                 ("tenant-a", PT),
@@ -769,22 +667,7 @@ mod tests {
     ) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
         for (profile_id, name, value) in frames {
-            let name_ref = store.symbols_mut().intern_string(name);
-            let function_id = store.symbols_mut().intern_function(FunctionRec {
-                name: name_ref,
-                system_name: name_ref,
-                filename: 0,
-                start_line: 0,
-            });
-            let location_id = store.symbols_mut().intern_location(LocationRec {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![LineRec {
-                    function_id,
-                    line: 1,
-                }],
-            });
-            let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+            let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample(
                 ("tenant-a", PT),
                 vec![
@@ -805,6 +688,33 @@ mod tests {
             .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
     }
 
+    fn pprof_json_sample_total(response: &serde_json::Value) -> i64 {
+        response
+            .get("sample")
+            .and_then(serde_json::Value::as_array)
+            .unwrap()
+            .iter()
+            .flat_map(|sample| {
+                sample
+                    .get("value")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .filter_map(json_i64)
+            .sum()
+    }
+
+    fn first_point_exemplar_ids<'a>(response: &'a serde_json::Value, field: &str) -> Vec<&'a str> {
+        response
+            .pointer("/series/0/points/0/exemplars")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("missing {field} exemplars: {response}"))
+            .iter()
+            .filter_map(|exemplar| exemplar.get(field).and_then(serde_json::Value::as_str))
+            .collect()
+    }
+
     #[tokio::test]
     async fn get_profile_stats_is_global_not_time_scoped() {
         // A sample ingested at a non-zero timestamp must be reported by
@@ -812,22 +722,7 @@ mod tests {
         // request (start = end = 0). Time-scoping to [0, 0] hides it and wedges
         // the Drilldown onto its onboarding screen.
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         store.push_sample(
             ("tenant-a", PT),
             vec![("service_name".to_string(), "api".to_string())],
@@ -932,23 +827,11 @@ overrides:
             ("small", "prod", 1),
             ("large", "prod", 10),
         ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": "{}",
                 "start": 0,
@@ -956,15 +839,9 @@ overrides:
                 "groupBy": ["service_name"],
                 "step": 1.0,
                 "limit": 1,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let actual: pb::querier::v1::SelectSeriesResponse =
             serde_json::from_value(response.clone()).unwrap();
@@ -1023,17 +900,7 @@ overrides:
     #[tokio::test]
     async fn render_format_dot_returns_dot_graph() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("query", &format!(r#"{PT}{{service_name="api"}}"#))
             .append_pair("from", "0")
@@ -1070,17 +937,7 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_admin_store(Arc::clone(&admin_store)),
         );
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, shutdown_tx) = serve_on_loopback(state).await;
         let client = reqwest::Client::new();
 
         let resp = client
@@ -1130,17 +987,7 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_admin_store(admin_store),
         );
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
 
         let persisted: serde_json::Value = client
             .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
@@ -1232,17 +1079,7 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_admin_store(admin_store),
         );
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let client = reqwest::Client::new();
         let connect = |path: &str, tenant: &str, body: serde_json::Value| {
             client
@@ -1695,17 +1532,7 @@ overrides:
             ("api", "prod", 5),
             ("worker", "prod", 7),
         ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("query", &format!(r#"{PT}{{env="prod"}}"#))
             .append_pair("from", "0")
@@ -1745,17 +1572,7 @@ overrides:
     #[tokio::test]
     async fn render_diff_flamebearer_includes_legacy_ticks_and_max_self() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("leftQuery", &format!(r#"{PT}{{service_name="api"}}"#))
             .append_pair("rightQuery", &format!(r#"{PT}{{service_name="api"}}"#))
@@ -1800,17 +1617,7 @@ overrides:
             "main.work",
             &[(1_700_000_010_000, 5), (1_700_000_090_000, 7)],
         ))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("leftQuery", &format!(r#"{PT}{{service_name="api"}}"#))
             .append_pair("leftFrom", "1700000000000")
@@ -1848,37 +1655,19 @@ overrides:
     #[tokio::test]
     async fn select_merge_stacktraces_dot_format_returns_dot_only() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectMergeStacktraces",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
                 "end": 100,
                 "format": "PROFILE_FORMAT_DOT",
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         check!(response.get("flamegraph").is_none(), "{response}");
         check!(
@@ -1900,37 +1689,19 @@ overrides:
     #[tokio::test]
     async fn select_merge_stacktraces_tree_format_returns_pyroscope_tree_bytes() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectMergeStacktraces",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
                 "end": 100,
                 "format": "PROFILE_FORMAT_TREE",
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         assert!(response.get("flamegraph").is_none(), "{response}");
         assert!(
@@ -1957,17 +1728,7 @@ overrides:
                 ("cold.path", 0x2b, [0xbb; 16], 7),
             ]),
         )));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let client = reqwest::Client::new();
         let url = format!("http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces");
         let request = |extra: serde_json::Value| {
@@ -2097,38 +1858,20 @@ overrides:
             "main.work",
             111,
         ))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeSpanProfile"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectMergeSpanProfile",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "spanSelector": ["000000000000006f"],
                 "start": 0,
                 "end": 100,
                 "format": "PROFILE_FORMAT_TREE",
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         assert!(response.get("flamegraph").is_none(), "{response}");
         let tree = response
@@ -2146,17 +1889,7 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_query_architecture(super::PyroscopeQueryArchitecture::V2),
         );
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, shutdown_tx) = serve_on_loopback(state).await;
         // The sample at 10 ms belongs to the 1000 ms endpoint with a
         // one-second step. Verify the fixture produces data before exercising
         // the populated v2 SPAN error.
@@ -2246,17 +1979,7 @@ overrides:
                 .with_query_architecture(architecture)
                 .with_async_queries_enabled(enabled),
             );
-            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-            let bound = serve(
-                "127.0.0.1:0".parse().unwrap(),
-                state,
-                &ServerSecurity::default(),
-                async move {
-                    let _ = shutdown_rx.await;
-                },
-            )
-            .await
-            .unwrap();
+            let (bound, shutdown_tx) = serve_on_loopback(state).await;
             let response = reqwest::Client::new().post(format!("http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"))
                 .header("x-scope-orgid", "tenant-a").json(&json!({"profileTypeID":PT,"labelSelector":"{}","start":0,"end":100,"async":{"type":"ASYNC_QUERY_TYPE_FORCE"}})).send().await.unwrap();
             check!(response.status() == status);
@@ -2277,37 +2000,19 @@ overrides:
     #[tokio::test]
     async fn select_merge_stacktraces_profile_id_selector_filters_profiles() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectMergeStacktraces",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "profileIdSelector": ["profile-a"],
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let total = response
             .get("flamegraph")
@@ -2319,52 +2024,21 @@ overrides:
     #[tokio::test]
     async fn select_merge_profile_profile_id_selector_filters_profiles() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeProfile"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectMergeProfile",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "profileIdSelector": ["profile-a"],
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
         assert!(response.get("profile").is_none(), "{response}");
-        let total: i64 = response
-            .get("sample")
-            .and_then(serde_json::Value::as_array)
-            .unwrap()
-            .iter()
-            .flat_map(|sample| {
-                sample
-                    .get("value")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-            })
-            .filter_map(json_i64)
-            .sum();
+        let total = pprof_json_sample_total(&response);
 
         assert!(total == 5, "{response}");
     }
@@ -2375,23 +2049,11 @@ overrides:
             ("hot.path", 7),
             ("cold.path", 10),
         ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeProfile"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectMergeProfile",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "stackTraceSelector": {
@@ -2399,30 +2061,11 @@ overrides:
                 },
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
         assert!(response.get("profile").is_none(), "{response}");
-        let total: i64 = response
-            .get("sample")
-            .and_then(serde_json::Value::as_array)
-            .unwrap()
-            .iter()
-            .flat_map(|sample| {
-                sample
-                    .get("value")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-            })
-            .filter_map(json_i64)
-            .sum();
+        let total = pprof_json_sample_total(&response);
 
         assert!(total == 7, "{response}");
     }
@@ -2441,37 +2084,19 @@ overrides:
             ("leaf8", 9),
             ("leaf9", 10),
         ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeProfile"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectMergeProfile",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "maxNodes": 4,
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let samples = response
             .get("sample")
@@ -2512,23 +2137,11 @@ overrides:
             ("hot.path", 7),
             ("cold.path", 10),
         ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectMergeStacktraces",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "stackTraceSelector": {
@@ -2536,15 +2149,9 @@ overrides:
                 },
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let total = response
             .get("flamegraph")
@@ -2559,21 +2166,11 @@ overrides:
             ("hot.path", 7),
             ("cold.path", 10),
         ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!("http://{bound}/querier.v1.QuerierService/Diff"))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "Diff",
+            json!({
                 "left": {
                     "profileTypeID": PT,
                     "labelSelector": r#"{service_name="api"}"#,
@@ -2592,15 +2189,9 @@ overrides:
                     "start": 0,
                     "end": 100
                 }
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         assert!(
             response.pointer("/flamegraph/leftTicks").and_then(json_i64) == Some(7),
@@ -2618,31 +2209,8 @@ overrides:
     #[tokio::test]
     async fn profile_types_without_time_range_returns_ingested_types() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/ProfileTypes"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(bound, "ProfileTypes", json!({})).await;
 
         let profile_types = response
             .get("profileTypes")
@@ -2669,31 +2237,8 @@ overrides:
                 ..Limits::default()
             },
         ));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/ProfileTypes"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(bound, "ProfileTypes", json!({})).await;
 
         assert!(
             response
@@ -2710,23 +2255,11 @@ overrides:
             ("hot.path", 7),
             ("cold.path", 10),
         ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -2736,15 +2269,9 @@ overrides:
                 "stackTraceSelector": {
                     "callSite": [{ "name": "hot.path" }]
                 }
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let points: Vec<pb::querier::v1::Point> =
             serde_json::from_value(response["series"][0]["points"].clone()).unwrap();
@@ -2769,17 +2296,7 @@ overrides:
     #[tokio::test]
     async fn series_emits_label_sets_sorted_by_name() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_unsorted_labels())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
 
         let series_labels = |body: serde_json::Value, allow_utf8: bool| {
             let url = format!("http://{bound}/querier.v1.QuerierService/Series");
@@ -2869,23 +2386,11 @@ overrides:
         let state = Arc::new(QuerierState::new(Arc::new(
             store_with_associated_leaf_frames(&[("span.path", 0x2a, [0xab; 16], 7)]),
         )));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -2893,15 +2398,9 @@ overrides:
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "exemplarType": "EXEMPLAR_TYPE_SPAN"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         check!(
             response
@@ -2934,23 +2433,11 @@ overrides:
             ("hot.path", 0x2a, 5),
             ("cold.path", 0x2b, 7),
         ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -2961,15 +2448,9 @@ overrides:
                     "callSite": [{ "name": "hot.path" }]
                 },
                 "exemplarType": "EXEMPLAR_TYPE_SPAN"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         check!(
             response
@@ -2979,14 +2460,7 @@ overrides:
             "{response}"
         );
 
-        let exemplars = response
-            .pointer("/series/0/points/0/exemplars")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or_else(|| panic!("missing span exemplars: {response}"));
-        let span_ids: Vec<_> = exemplars
-            .iter()
-            .filter_map(|exemplar| exemplar.get("spanId").and_then(serde_json::Value::as_str))
-            .collect();
+        let span_ids = first_point_exemplar_ids(&response, "spanId");
 
         assert!(span_ids == vec!["000000000000002a"], "{response}");
     }
@@ -2994,23 +2468,11 @@ overrides:
     #[tokio::test]
     async fn select_series_individual_exemplar_returns_profile_ids() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3018,15 +2480,9 @@ overrides:
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "exemplarType": "EXEMPLAR_TYPE_INDIVIDUAL"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         check!(
             response
@@ -3036,18 +2492,7 @@ overrides:
             "{response}"
         );
 
-        let exemplars = response
-            .pointer("/series/0/points/0/exemplars")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or_else(|| panic!("missing individual exemplars: {response}"));
-        let profile_ids: Vec<_> = exemplars
-            .iter()
-            .filter_map(|exemplar| {
-                exemplar
-                    .get("profileId")
-                    .and_then(serde_json::Value::as_str)
-            })
-            .collect();
+        let profile_ids = first_point_exemplar_ids(&response, "profileId");
 
         assert!(profile_ids.contains(&"profile-a"), "{response}");
         assert!(profile_ids.contains(&"profile-b"), "{response}");
@@ -3061,23 +2506,11 @@ overrides:
                 ("profile-b", "cold.path", 7),
             ]),
         )));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3088,15 +2521,9 @@ overrides:
                     "callSite": [{ "name": "hot.path" }]
                 },
                 "exemplarType": "EXEMPLAR_TYPE_INDIVIDUAL"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         check!(
             response
@@ -3106,18 +2533,7 @@ overrides:
             "{response}"
         );
 
-        let exemplars = response
-            .pointer("/series/0/points/0/exemplars")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or_else(|| panic!("missing individual exemplars: {response}"));
-        let profile_ids: Vec<_> = exemplars
-            .iter()
-            .filter_map(|exemplar| {
-                exemplar
-                    .get("profileId")
-                    .and_then(serde_json::Value::as_str)
-            })
-            .collect();
+        let profile_ids = first_point_exemplar_ids(&response, "profileId");
 
         assert!(profile_ids == vec!["profile-a"], "{response}");
     }
@@ -3151,17 +2567,7 @@ overrides:
             );
         }
         let state = Arc::new(QuerierState::new(Arc::new(store)));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let client = reqwest::Client::new();
         let labels = vec![pb::querier::v1::LabelPair {
             name: "service_name".to_string(),
@@ -3250,38 +2656,20 @@ overrides:
             0,
         );
         let state = Arc::new(QuerierState::new(Arc::new(store)));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectHeatmap"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectHeatmap",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": "{}",
                 "start": 0,
                 "end": 100,
                 "step": 100.0,
                 "groupBy": ["service_name"],
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let series = response
             .get("series")
@@ -3310,23 +2698,11 @@ overrides:
             "span.path",
             0x2a,
         ))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectHeatmap"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectHeatmap",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3335,15 +2711,9 @@ overrides:
                 "groupBy": ["service_name"],
                 "queryType": "HEATMAP_QUERY_TYPE_SPAN",
                 "exemplarType": "EXEMPLAR_TYPE_SPAN"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let exemplar = response
             .pointer("/series/0/slots/0/exemplars/0")
@@ -3361,23 +2731,11 @@ overrides:
     #[tokio::test]
     async fn select_heatmap_individual_exemplar_returns_profile_ids() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectHeatmap"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectHeatmap",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3385,15 +2743,9 @@ overrides:
                 "step": 60.0,
                 "groupBy": ["service_name"],
                 "exemplarType": "EXEMPLAR_TYPE_INDIVIDUAL"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let exemplars = response
             .pointer("/series/0/slots/0/exemplars")
@@ -3431,23 +2783,11 @@ overrides:
             20,
         );
         let state = Arc::new(QuerierState::new(Arc::new(store)));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectHeatmap"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "SelectHeatmap",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3455,15 +2795,9 @@ overrides:
                 "step": 100.0,
                 "groupBy": ["service_name"],
                 "queryType": "HEATMAP_QUERY_TYPE_SPAN"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let count: i64 = response
             .pointer("/series/0/slots/0/counts")
@@ -3482,37 +2816,19 @@ overrides:
             QuerierState::new(Arc::new(store_with_two_profile_types()))
                 .with_query_analysis_series_enabled(true),
         );
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, shutdown_tx) = serve_on_loopback(state).await;
         for (query, count) in [
             ("", 2),
             ("{}", 2),
             ("{service_name=\"api\"}", 2),
             ("{service_name=\"missing\"}", 0),
         ] {
-            let response: serde_json::Value = reqwest::Client::new()
-                .post(format!(
-                    "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-                ))
-                .header("x-scope-orgid", "tenant-a")
-                .json(&json!({"start":1,"end":100,"query":query}))
-                .send()
-                .await
-                .unwrap()
-                .error_for_status()
-                .unwrap()
-                .json()
-                .await
-                .unwrap();
+            let response = post_querier(
+                bound,
+                "AnalyzeQuery",
+                json!({"start":1,"end":100,"query":query}),
+            )
+            .await;
             check!(
                 response
                     .pointer("/queryImpact/totalQueriedSeries")
@@ -3540,31 +2856,13 @@ overrides:
     #[tokio::test]
     async fn disabled_query_analysis_ignores_selector_and_preserves_physical_cost() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_two_profile_types())));
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
+        let (bound, shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "AnalyzeQuery",
+            json!({"start":1,"end":100,"query":"invalid ignored {"}),
         )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({"start":1,"end":100,"query":"invalid ignored {"}))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        .await;
         check!(
             response
                 .pointer("/queryImpact/totalQueriedSeries")
@@ -3594,35 +2892,17 @@ overrides:
             QuerierState::new(Arc::new(store_with_two_profile_types()))
                 .with_query_analysis_series_enabled(true),
         );
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "AnalyzeQuery",
+            json!({
                 "start": 1,
                 "end": 100,
                 "query": format!(r#"{PT}{{service_name="api"}}"#),
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         check!(response.get("valid").is_none(), "{response}");
         check!(
@@ -3672,36 +2952,18 @@ overrides:
         );
         let state =
             Arc::new(QuerierState::new(Arc::new(store)).with_query_analysis_series_enabled(true));
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, shutdown_tx) = serve_on_loopback(state).await;
         for (start, end, selector, expected) in [
             (25, 75, "{}", 1),
             (200, 300, "{}", 0),
             (25, 75, r#"{service_name="missing"}"#, 0),
         ] {
-            let response: serde_json::Value = reqwest::Client::new()
-                .post(format!(
-                    "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-                ))
-                .header("x-scope-orgid", "tenant-a")
-                .json(&json!({"start":start,"end":end,"query":format!("{PT}{selector}")}))
-                .send()
-                .await
-                .unwrap()
-                .error_for_status()
-                .unwrap()
-                .json()
-                .await
-                .unwrap();
+            let response = post_querier(
+                bound,
+                "AnalyzeQuery",
+                json!({"start":start,"end":end,"query":format!("{PT}{selector}")}),
+            )
+            .await;
             check!(
                 response
                     .pointer("/queryImpact/totalQueriedSeries")
@@ -3720,35 +2982,17 @@ overrides:
             QuerierState::new(Arc::new(store_with_two_profile_types()))
                 .with_query_analysis_series_enabled(true),
         );
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(
+            bound,
+            "AnalyzeQuery",
+            json!({
                 "start": 1,
                 "end": 100,
                 "query": format!(r#"{PT}{{service_name="api"}}"#),
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         assert!(
             response
@@ -3948,17 +3192,7 @@ overrides:
         ] {
             let mut state = QuerierState::new(Arc::new(store_with_frame("main.work")));
             state.tenant_policy = policy.clone();
-            let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-            let bound = serve(
-                "127.0.0.1:0".parse().unwrap(),
-                Arc::new(state),
-                &ServerSecurity::default(),
-                async move {
-                    let _ = shutdown_rx.await;
-                },
-            )
-            .await
-            .unwrap();
+            let (bound, _shutdown_tx) = serve_on_loopback(Arc::new(state)).await;
             let client = reqwest::Client::new();
             let query = url::form_urlencoded::Serializer::new(String::new())
                 .append_pair("query", &format!(r#"{PT}{{service_name="api"}}"#))
@@ -4032,31 +3266,8 @@ overrides:
         // The range-omitted (`start==0 && end==0`) health probe must still work
         // even though the default cap now rejects explicit unbounded ranges.
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/ProfileTypes"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let response = post_querier(bound, "ProfileTypes", json!({})).await;
 
         assert!(
             response
@@ -4195,6 +3406,7 @@ mod analyze_query_handler;
 mod analyze_query_inner;
 mod apply_go_pgo;
 mod async_stacktrace_query;
+mod bucket_exemplars;
 mod connect_error;
 mod default_heatmap_time_buckets_max;
 mod default_heatmap_value_buckets;
@@ -4234,6 +3446,7 @@ mod merge_label_matcher;
 mod merge_profile_id_selector;
 mod merge_profile_type_selector;
 mod metadata_range;
+mod metadata_scope;
 mod normalize_render_unix_time;
 mod parse_matchers;
 mod parse_render_offset;
@@ -4296,6 +3509,7 @@ use analyze_query_inner::analyze_query_inner;
 use apply_go_pgo::apply_go_pgo;
 pub use async_stacktrace_query::AsyncQueryPolicy;
 use async_stacktrace_query::async_stacktrace_query;
+use bucket_exemplars::{ExemplarSource, bucket_exemplars};
 use connect_error::connect_error;
 use default_heatmap_time_buckets_max::DEFAULT_HEATMAP_TIME_BUCKETS_MAX;
 use default_heatmap_value_buckets::DEFAULT_HEATMAP_VALUE_BUCKETS;
@@ -4332,6 +3546,7 @@ use merge_label_matcher::merge_label_matcher;
 use merge_profile_id_selector::merge_profile_id_selector;
 use merge_profile_type_selector::merge_profile_type_selector;
 use metadata_range::MetadataRange;
+use metadata_scope::{MetadataScope, metadata_scope};
 use normalize_render_unix_time::normalize_render_unix_time;
 use parse_matchers::parse_matchers;
 use parse_render_offset::parse_render_offset;

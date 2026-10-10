@@ -418,7 +418,10 @@ mod tests {
     use assert2::{assert, check};
 
     use super::*;
-    use crate::wire::pb;
+    use crate::{
+        test_support::{otlp_single_frame_dictionary, otlp_value_type},
+        wire::pb,
+    };
 
     #[test]
     fn otlp_resolves_dictionary_into_rawprofile() {
@@ -428,21 +431,12 @@ mod tests {
                 resource::v1::Resource,
             },
             otlp_profiles::{
-                Function, KeyValueAndUnit, Line, Link, Location, Profile, ProfilesDictionary,
-                ResourceProfiles, Sample, ScopeProfiles, Stack, ValueType,
+                KeyValueAndUnit, Link, Profile, ProfilesDictionary, ResourceProfiles, Sample,
+                ScopeProfiles,
             },
         };
 
         let dict = ProfilesDictionary {
-            string_table: vec![
-                String::new(),
-                "samples".into(),
-                "count".into(),
-                "main".into(),
-                "target".into(),
-                "all".into(),
-                "env".into(),
-            ],
             attribute_table: vec![
                 KeyValueAndUnit {
                     key_strindex: 4,
@@ -459,37 +453,23 @@ mod tests {
                     unit_strindex: 0,
                 },
             ],
-            function_table: vec![Function {
-                name_strindex: 3,
-                ..Default::default()
-            }],
             link_table: vec![Link {
                 trace_id: vec![0xaa; 16],
                 span_id: 42_u64.to_be_bytes().to_vec(),
             }],
-            location_table: vec![Location {
-                address: 0x40,
-                lines: vec![Line {
-                    function_index: 0,
-                    line: 1,
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }],
-            stack_table: vec![Stack {
-                location_indices: vec![0],
-            }],
-            ..Default::default()
+            ..otlp_single_frame_dictionary(vec![
+                String::new(),
+                "samples".into(),
+                "count".into(),
+                "main".into(),
+                "target".into(),
+                "all".into(),
+                "env".into(),
+            ])
         };
         let profile = Profile {
-            sample_type: Some(ValueType {
-                type_strindex: 1,
-                unit_strindex: 2,
-            }),
-            period_type: Some(ValueType {
-                type_strindex: 1,
-                unit_strindex: 2,
-            }),
+            sample_type: Some(otlp_value_type()),
+            period_type: Some(otlp_value_type()),
             samples: vec![Sample {
                 stack_index: 0,
                 link_index: 0,

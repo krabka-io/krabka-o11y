@@ -8,8 +8,6 @@
 //! block it queries is the one the block-builder actually wrote.
 
 use std::{
-    collections::BTreeMap,
-    io::Write as _,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -17,17 +15,14 @@ use std::{
 use assert2::{assert, check};
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    http::{Request, Response, StatusCode},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use flate2::{Compression, write::GzEncoder};
 use krabka_blockstore::{ProfileIndex, TenantPolicy};
-use krabka_broker::{Broker, BrokerConfig};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
+use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
 use krabka_client_producer::Producer;
 use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
-use krabka_pprof::{PprofProfile, proto};
 use krabka_profiles::{
     PROFILES_WAL_TOPIC, ProfileRecord, WalSample,
     blockbuilder::{DEFAULT_FLUSH_RECORDS, flush_consumer_records_with_index},
@@ -42,14 +37,25 @@ use object_store::{ObjectStore, ObjectStoreExt as _, memory::InMemory};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+use self::{
+    render_roundtrip::{flame_names, flame_ticks, gzip_bytes},
+    synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, synthetic_cpu_pprof},
+    wal_topic::create_wal_topic,
+};
+
+#[path = "../src/bin/krabka-profiles/render_roundtrip.rs"]
+mod render_roundtrip;
+#[path = "../src/bin/krabka-profiles/synthetic_cpu_profile.rs"]
+mod synthetic_cpu_profile;
+#[path = "../src/bin/krabka-profiles/wal_topic.rs"]
+mod wal_topic;
+
 const TENANT: &str = "tenant-a";
 const PROFILE_NAME: &str = "process_cpu";
 const PROFILE_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 const SERVICE: &str = "checkout";
 const PROFILE_ID: &str = "krabka-ingest-roundtrip";
 const SELECTOR: &str = r#"{service_name="checkout"}"#;
-const FUNC_WORK: &str = "main.work";
-const FUNC_HOT: &str = "main.hotloop";
 /// `main.hotloop` under `main.work`, plus `main.work` on its own.
 const LEAF_VALUE: i64 = 100;
 const SELF_VALUE: i64 = 40;
@@ -59,28 +65,11 @@ const PROFILE_TIME_NANOS: i64 = 1_700_000_000_000_000_000;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_pushed_profile_lands_in_a_queryable_block() {
-    let tempdir = tempfile::TempDir::new().expect("tempdir");
-    let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
-    create_profiles_wal_topic(&bootstrap).await;
-
-    let producer = Producer::builder()
-        .bootstrap(&bootstrap)
-        .build()
-        .await
-        .expect("producer build");
-    let state = distributor_state(Arc::new(KafkaSink::new(Arc::new(producer))));
-    // A listener puts a principal into every request. These routers are
-    // served without one, so `authenticate_requests` does it here.
-    let response = authenticate_requests(distributor::router(state), &ServerSecurity::default())
-        .oneshot(push_request())
-        .await
-        .expect("push response");
+    let broker = WalBroker::start().await;
+    let response = broker.push(push_request(TENANT)).await;
     assert!(response.status() == StatusCode::OK);
 
-    let wal_records = consume_wal_records(&bootstrap).await;
+    let wal_records = consume_wal_records(&broker.bootstrap).await;
     assert!(wal_records.len() == 1);
     let wal_record = decode_wal_record(&wal_records[0]);
 
@@ -176,37 +165,50 @@ async fn a_pushed_profile_lands_in_a_queryable_block() {
 /// happy path, so an empty topic here is the door's doing and not the sink's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_push_with_a_path_unsafe_tenant_never_reaches_the_wal() {
-    let tempdir = tempfile::TempDir::new().expect("tempdir");
-    let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
-    create_profiles_wal_topic(&bootstrap).await;
-
-    let producer = Producer::builder()
-        .bootstrap(&bootstrap)
-        .build()
-        .await
-        .expect("producer build");
-    let state = distributor_state(Arc::new(KafkaSink::new(Arc::new(producer))));
-    let request = Request::builder()
-        .method("POST")
-        .uri("/push.v1.PusherService/Push")
-        .header("Content-Type", "application/json")
-        .header("x-scope-orgid", "../escape")
-        .body(Body::from(
-            serde_json::to_vec(&push_body()).expect("serialize push body"),
-        ))
-        .expect("request");
-    // A listener puts a principal into every request. These routers are
-    // served without one, so `authenticate_requests` does it here.
-    let response = authenticate_requests(distributor::router(state), &ServerSecurity::default())
-        .oneshot(request)
-        .await
-        .expect("push response");
+    let broker = WalBroker::start().await;
+    let response = broker.push(push_request("../escape")).await;
 
     check!(response.status() == StatusCode::BAD_REQUEST);
-    assert!(consume_wal_records(&bootstrap).await.is_empty());
+    assert!(consume_wal_records(&broker.bootstrap).await.is_empty());
+}
+
+/// A broker with the profiles WAL topic, the WAL a distributor appends to.
+struct WalBroker {
+    _broker: BrokerHandle,
+    _tempdir: tempfile::TempDir,
+    bootstrap: String,
+}
+
+impl WalBroker {
+    async fn start() -> Self {
+        let tempdir = tempfile::TempDir::new().expect("tempdir");
+        let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+        create_wal_topic(&bootstrap).await;
+        Self {
+            _broker: broker,
+            _tempdir: tempdir,
+            bootstrap,
+        }
+    }
+
+    /// Sends `request` to a distributor whose sink appends to this broker.
+    async fn push(&self, request: Request<Body>) -> Response<Body> {
+        let producer = Producer::builder()
+            .bootstrap(&self.bootstrap)
+            .build()
+            .await
+            .expect("producer build");
+        let state = distributor_state(Arc::new(KafkaSink::new(Arc::new(producer))));
+        // A listener puts a principal into every request. These routers are
+        // served without one, so `authenticate_requests` does it here.
+        authenticate_requests(distributor::router(state), &ServerSecurity::default())
+            .oneshot(request)
+            .await
+            .expect("push response")
+    }
 }
 
 fn distributor_state(sink: Arc<KafkaSink>) -> Arc<DistributorState> {
@@ -223,25 +225,6 @@ fn distributor_state(sink: Arc<KafkaSink>) -> Arc<DistributorState> {
         legacy_decode_limits: krabka_profiles::ingest::LegacyDecodeLimits::default(),
         metrics: ServiceMetrics::new(),
     })
-}
-
-async fn create_profiles_wal_topic(bootstrap: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: PROFILES_WAL_TOPIC.into(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
-        )
-        .await
-        .expect("create profiles wal topic");
 }
 
 /// Every WAL record the topic holds, polled until one arrives or the deadline
@@ -333,33 +316,12 @@ async fn render_flamebearer(object_store: Arc<dyn ObjectStore>, index: ProfileIn
     serde_json::from_slice(&body).expect("render json")
 }
 
-fn flame_names(value: &Value) -> Vec<String> {
-    let mut names: Vec<String> = value
-        .pointer("/flamebearer/names")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flat_map(|names| names.iter())
-        .filter_map(Value::as_str)
-        .filter(|name| *name != "total" && !name.is_empty())
-        .map(ToString::to_string)
-        .collect();
-    names.sort();
-    names
-}
-
-fn flame_ticks(value: &Value) -> Option<i64> {
-    value
-        .pointer("/flamebearer/numTicks")
-        .or_else(|| value.pointer("/flamebearer/total"))
-        .and_then(Value::as_i64)
-}
-
-fn push_request() -> Request<Body> {
+fn push_request(tenant: &str) -> Request<Body> {
     Request::builder()
         .method("POST")
         .uri("/push.v1.PusherService/Push")
         .header("Content-Type", "application/json")
-        .header("x-scope-orgid", TENANT)
+        .header("x-scope-orgid", tenant)
         .body(Body::from(
             serde_json::to_vec(&push_body()).expect("serialize push body"),
         ))
@@ -374,95 +336,12 @@ fn push_body() -> Value {
                 { "name": "service_name", "value": SERVICE }
             ],
             "samples": [{
-                "rawProfile": BASE64.encode(gzip_bytes(&synthetic_cpu_pprof())),
+                "rawProfile": BASE64.encode(gzip_bytes(&synthetic_cpu_pprof(
+                    PROFILE_TIME_NANOS,
+                    [LEAF_VALUE, SELF_VALUE],
+                ))),
                 "ID": PROFILE_ID
             }]
         }]
     })
-}
-
-/// A two-sample CPU profile: `main.hotloop` called from `main.work`, and
-/// `main.work` on its own.
-fn synthetic_cpu_pprof() -> Vec<u8> {
-    // string_table: 0="" 1="cpu" 2="nanoseconds" 3=main.work 4=main.hotloop 5="app.go"
-    let profile = proto::Profile {
-        sample_type: vec![proto::ValueType { r#type: 1, unit: 2 }],
-        sample: vec![
-            proto::Sample {
-                location_id: vec![2, 1], // leaf-first: main.hotloop -> main.work
-                value: vec![LEAF_VALUE],
-                label: Vec::new(),
-            },
-            proto::Sample {
-                location_id: vec![1], // main.work
-                value: vec![SELF_VALUE],
-                label: Vec::new(),
-            },
-        ],
-        mapping: vec![proto::Mapping {
-            id: 1,
-            symbolization: proto::MappingSymbolization::from_parts((true, false, false, false)),
-            ..Default::default()
-        }],
-        location: vec![
-            proto::Location {
-                id: 1,
-                mapping_id: 1,
-                address: 0x1000,
-                line: vec![proto::Line {
-                    function_id: 1,
-                    line: 10,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-            proto::Location {
-                id: 2,
-                mapping_id: 1,
-                address: 0x2000,
-                line: vec![proto::Line {
-                    function_id: 2,
-                    line: 20,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-        ],
-        function: vec![
-            proto::Function {
-                id: 1,
-                name: 3,
-                system_name: 3,
-                filename: 5,
-                start_line: 1,
-            },
-            proto::Function {
-                id: 2,
-                name: 4,
-                system_name: 4,
-                filename: 5,
-                start_line: 2,
-            },
-        ],
-        string_table: vec![
-            String::new(),
-            "cpu".to_string(),
-            "nanoseconds".to_string(),
-            FUNC_WORK.to_string(),
-            FUNC_HOT.to_string(),
-            "app.go".to_string(),
-        ],
-        time_nanos: PROFILE_TIME_NANOS,
-        duration_nanos: 1_000_000_000,
-        period_type: Some(proto::ValueType { r#type: 1, unit: 2 }),
-        period: 10_000_000,
-        ..Default::default()
-    };
-    PprofProfile::from(profile).encode()
-}
-
-fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(bytes).expect("gzip write");
-    encoder.finish().expect("gzip finish")
 }

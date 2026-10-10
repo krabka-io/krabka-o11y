@@ -121,17 +121,48 @@ pub mod pb {
 pub(crate) mod test_fixtures {
     use krabka_blockstore::Labels;
     use krabka_pprof::PprofProfile;
+
+    use super::pb::{
+        push::v1::{PushRequest, RawProfileSeries, RawSample},
+        types::v1::LabelPair,
+    };
+
     pub(crate) fn cpu_profile_pprof_bytes() -> Vec<u8> {
         cpu_profile().encode()
     }
 
-    pub(crate) fn raw_profile_cpu() -> crate::ingest::RawProfile {
+    /// A push request with one `process_cpu` series of service `api`, holding
+    /// `raw_profile` as its one sample, with sample id `id`.
+    pub(crate) fn push_request_cpu(raw_profile: Vec<u8>, id: &str) -> PushRequest {
+        PushRequest {
+            series: vec![RawProfileSeries {
+                labels: vec![
+                    LabelPair {
+                        name: "__name__".into(),
+                        value: "process_cpu".into(),
+                    },
+                    LabelPair {
+                        name: "service_name".into(),
+                        value: "api".into(),
+                    },
+                ],
+                samples: vec![RawSample {
+                    raw_profile,
+                    id: id.into(),
+                }],
+                annotations: Vec::new(),
+            }],
+        }
+    }
+
+    /// A non-delta raw profile of service `api` whose `__name__` is `name`.
+    pub(crate) fn api_raw_profile(name: &str, profile: PprofProfile) -> crate::ingest::RawProfile {
         let mut labels = Labels::new();
-        labels.insert("__name__", "process_cpu");
+        labels.insert("__name__", name);
         labels.insert("service_name", "api");
         crate::ingest::RawProfile {
             labels,
-            profile: cpu_profile(),
+            profile,
             delta: false,
             sample_timestamps_ns: Vec::new(),
             sample_span_ids: Vec::new(),
@@ -139,13 +170,14 @@ pub(crate) mod test_fixtures {
         }
     }
 
+    pub(crate) fn raw_profile_cpu() -> crate::ingest::RawProfile {
+        api_raw_profile("process_cpu", cpu_profile())
+    }
+
     pub(crate) fn raw_profile_2types() -> crate::ingest::RawProfile {
-        let mut labels = Labels::new();
-        labels.insert("__name__", "memory");
-        labels.insert("service_name", "api");
-        crate::ingest::RawProfile {
-            labels,
-            profile: PprofProfile::from(krabka_pprof::proto::Profile {
+        api_raw_profile(
+            "memory",
+            PprofProfile::from(krabka_pprof::proto::Profile {
                 sample_type: vec![
                     krabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
                     krabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
@@ -183,11 +215,7 @@ pub(crate) mod test_fixtures {
                 period_type: Some(krabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
                 ..Default::default()
             }),
-            delta: false,
-            sample_timestamps_ns: Vec::new(),
-            sample_span_ids: Vec::new(),
-            sample_trace_ids: Vec::new(),
-        }
+        )
     }
 
     fn cpu_profile() -> PprofProfile {

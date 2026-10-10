@@ -439,12 +439,7 @@ impl<S: ProfileStore> QuerierState<S> {
         };
         let mut out = BTreeMap::new();
         for labels in groups {
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+            let matchers = series_matchers(&base_matchers, &labels);
             let scan = self
                 .store
                 .select(tenant.as_str(), profile_type, &matchers, scan_start, end_ms)
@@ -484,29 +479,16 @@ impl<S: ProfileStore> QuerierState<S> {
             .await?;
         let mut out: SpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
-            let Some(profile_id) = labels
-                .iter()
-                .find(|(name, _)| name == PROFILE_ID_LABEL)
-                .map(|(_, value)| value.clone())
-            else {
+            let Some(profile_id) = profile_id_of(&labels) else {
                 continue;
             };
-            let series_labels: Vec<_> = labels
-                .iter()
-                .filter(|(name, _)| group_by.contains(name))
-                .cloned()
-                .collect();
+            let series_labels = labels_grouped_by(&labels, group_by);
             let exemplar_labels = labels
                 .iter()
                 .filter(|(name, _)| name != PROFILE_ID_LABEL)
                 .cloned()
                 .collect::<Vec<_>>();
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+            let matchers = series_matchers(&base_matchers, &labels);
             let scan = self
                 .store
                 .select(tenant.as_str(), profile_type, &matchers, scan_start, end_ms)
@@ -529,14 +511,14 @@ impl<S: ProfileStore> QuerierState<S> {
         Ok(out)
     }
 
-    pub(crate) async fn select_heatmap_span_exemplars(
+    /// Validates a heatmap exemplar query and lists every series its
+    /// selector matches, with the selector's matchers.
+    async fn heatmap_exemplar_series(
         &self,
         target: QueryTarget<'_>,
-        group_by: &[String],
         range: QueryRange,
-        step_ms: i64,
-    ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
+    ) -> Result<(Vec<LabelMatcher>, Vec<Vec<(String, String)>>), ProfileError> {
+        let (tenant, _, label_selector) = target;
         let (start_ms, end_ms) = range;
         self.validate_query_range(tenant, start_ms, end_ms)?;
         let base_matchers = parse_label_selector(label_selector)?;
@@ -544,28 +526,28 @@ impl<S: ProfileStore> QuerierState<S> {
             .store
             .series(tenant.as_str(), &base_matchers, &[], start_ms, end_ms)
             .await?;
+        Ok((base_matchers, groups))
+    }
+
+    pub(crate) async fn select_heatmap_span_exemplars(
+        &self,
+        target: QueryTarget<'_>,
+        group_by: &[String],
+        range: QueryRange,
+        step_ms: i64,
+    ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
+        let (tenant, profile_type, _) = target;
+        let (start_ms, end_ms) = range;
+        let (base_matchers, groups) = self.heatmap_exemplar_series(target, range).await?;
         let mut out = BTreeMap::new();
         for labels in groups {
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+            let matchers = series_matchers(&base_matchers, &labels);
             let scan = self
                 .store
                 .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
                 .await?;
-            let exemplar_labels = labels
-                .iter()
-                .filter(|(name, _)| name != PROFILE_ID_LABEL && !group_by.contains(name))
-                .cloned()
-                .collect::<Vec<_>>();
-            let series_labels = labels
-                .iter()
-                .filter(|(name, _)| group_by.contains(name))
-                .cloned()
-                .collect::<Vec<_>>();
+            let exemplar_labels = heatmap_exemplar_labels(&labels, group_by);
+            let series_labels = labels_grouped_by(&labels, group_by);
             let exemplars = heatmap_span_exemplars_from_scan(
                 &scan,
                 start_ms,
@@ -594,39 +576,17 @@ impl<S: ProfileStore> QuerierState<S> {
         range: QueryRange,
         step_ms: i64,
     ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
+        let (tenant, profile_type, _) = target;
         let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let base_matchers = parse_label_selector(label_selector)?;
-        let groups = self
-            .store
-            .series(tenant.as_str(), &base_matchers, &[], start_ms, end_ms)
-            .await?;
+        let (base_matchers, groups) = self.heatmap_exemplar_series(target, range).await?;
         let mut out: HeatmapSpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
-            let Some(profile_id) = labels
-                .iter()
-                .find(|(name, _)| name == PROFILE_ID_LABEL)
-                .map(|(_, value)| value.clone())
-            else {
+            let Some(profile_id) = profile_id_of(&labels) else {
                 continue;
             };
-            let series_labels: Vec<_> = labels
-                .iter()
-                .filter(|(name, _)| group_by.contains(name))
-                .cloned()
-                .collect();
-            let exemplar_labels = labels
-                .iter()
-                .filter(|(name, _)| name != PROFILE_ID_LABEL && !group_by.contains(name))
-                .cloned()
-                .collect::<Vec<_>>();
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+            let series_labels = labels_grouped_by(&labels, group_by);
+            let exemplar_labels = heatmap_exemplar_labels(&labels, group_by);
+            let matchers = series_matchers(&base_matchers, &labels);
             let scan = self
                 .store
                 .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
@@ -667,12 +627,7 @@ impl<S: ProfileStore> QuerierState<S> {
         };
         let mut out = Vec::new();
         for labels in groups {
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+            let matchers = series_matchers(&base_matchers, &labels);
             let scan = self
                 .store
                 .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
@@ -761,4 +716,43 @@ impl<S: ProfileStore> QuerierState<S> {
             }
         }
     }
+}
+
+/// The selector's matchers narrowed to the one series that `labels` names.
+fn series_matchers(base: &[LabelMatcher], labels: &[(String, String)]) -> Vec<LabelMatcher> {
+    let mut matchers = base.to_vec();
+    matchers.extend(
+        labels
+            .iter()
+            .map(|(name, value)| LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())),
+    );
+    matchers
+}
+
+fn profile_id_of(labels: &[(String, String)]) -> Option<String> {
+    labels
+        .iter()
+        .find(|(name, _)| name == PROFILE_ID_LABEL)
+        .map(|(_, value)| value.clone())
+}
+
+fn labels_grouped_by(labels: &[(String, String)], group_by: &[String]) -> Vec<(String, String)> {
+    labels
+        .iter()
+        .filter(|(name, _)| group_by.contains(name))
+        .cloned()
+        .collect()
+}
+
+/// The labels a heatmap exemplar carries: those its series is not grouped
+/// by, less the profile id.
+fn heatmap_exemplar_labels(
+    labels: &[(String, String)],
+    group_by: &[String],
+) -> Vec<(String, String)> {
+    labels
+        .iter()
+        .filter(|(name, _)| name != PROFILE_ID_LABEL && !group_by.contains(name))
+        .cloned()
+        .collect()
 }

@@ -11,40 +11,23 @@
 //! is committed exactly once, and a permanent one is reported on the first
 //! attempt with the offset left where it was.
 
-use std::{
-    collections::BTreeMap,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 use assert2::{assert, check};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use krabka_blockstore::{ObjectStoreRetryPolicy, ProfileIndex};
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
-use krabka_client_consumer::{AutoOffsetReset, Consumer};
-use krabka_client_producer::Producer;
-use krabka_profiles::{
-    PROFILES_WAL_TOPIC, ProfileRecord, WalSample, WalSymbolSet,
-    blockbuilder::{BlockBuilderConfig, run_with_config},
-    distributor::{KafkaSink, WalSink as _},
-    metrics::ServiceMetrics,
-};
-use krabka_units::{Time, hours, millis};
+use krabka_blockstore::ObjectStoreRetryPolicy;
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
 };
-use tokio_util::sync::CancellationToken;
 
-/// Long enough that no ordinary flush can fire during the test: the only way a
-/// block reaches the store is the drain.
-const UNREACHABLE_FLUSH_RECORDS: usize = 10_000;
-const UNREACHABLE_FLUSH_MAX_AGE: Time = hours(24);
+use self::block_builder_support::{ConsumedBuilder, OneRecordBroker, indexed_block_count};
+
+mod block_builder_support;
 
 /// A 5xx, a timeout or a reset connection -- what the `object_store` clients
 /// report once their own retry budget is spent.
@@ -198,35 +181,17 @@ async fn a_drain_refused_by_the_store_fails_at_once_and_leaves_the_offset() {
     check!(broker.replayed_records().await == 1);
 }
 
-/// A broker with the profiles WAL topic and one buffered record in it.
+/// A broker with the profiles WAL topic and one buffered record in it, and
+/// the consumer group its block-builders join.
 struct TestBroker {
-    _broker: BrokerHandle,
-    _tempdir: tempfile::TempDir,
-    bootstrap: String,
+    broker: OneRecordBroker,
     group_id: String,
 }
 
 impl TestBroker {
     async fn start(group_id: &str) -> Self {
-        let tempdir = tempfile::TempDir::new().expect("tempdir");
-        let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
-        create_wal_topic(&bootstrap).await;
-        let producer = Producer::builder()
-            .bootstrap(&bootstrap)
-            .build()
-            .await
-            .expect("producer build");
-        KafkaSink::new(Arc::new(producer))
-            .append(profile_record())
-            .await
-            .expect("append the WAL record");
         Self {
-            _broker: broker,
-            _tempdir: tempdir,
-            bootstrap,
+            broker: OneRecordBroker::start().await,
             group_id: group_id.to_string(),
         }
     }
@@ -239,134 +204,28 @@ impl TestBroker {
         store: &Arc<dyn ObjectStore>,
         flaky: &Arc<FlakyIndexStore>,
     ) -> (Result<(), krabka_profiles::ProfilesError>, String) {
-        let mut config = BlockBuilderConfig::new(self.bootstrap.clone(), Arc::clone(store));
+        let (mut config, metrics) = self.broker.drain_only_config(store, &self.group_id);
         let index_key = config.index_key.clone();
-        config.group_id = self.group_id.clone();
-        config.flush_records = UNREACHABLE_FLUSH_RECORDS;
-        config.flush_max_age = UNREACHABLE_FLUSH_MAX_AGE;
-        config.poll_timeout = millis(100);
         // The injected schedule: the same number of attempts the default
         // allows, with none of its waiting. Raising the default cannot make
         // this suite slower.
         config.object_store_retry = ObjectStoreRetryPolicy::immediate(4);
-        let metrics = ServiceMetrics::new();
-        config.metrics = Some(metrics.clone());
 
-        let shutdown = CancellationToken::new();
-        let builder = tokio::spawn(run_with_config(config, shutdown.clone()));
-
-        // Wait for the record to be consumed before testing the drain. Group
-        // assignment can take longer than a fixed sleep on a busy CI runner.
-        tokio::time::timeout(Duration::from_secs(30), async {
-            while metrics.wal_consumer.records(PROFILES_WAL_TOPIC, 0) == 0 {
-                assert!(
-                    !builder.is_finished(),
-                    "block-builder exited before consuming"
-                );
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .expect("the block-builder consumes the WAL record before cancellation");
+        let builder = ConsumedBuilder::start(config, &metrics).await;
         check!(
             flaky.index_put_attempts() == 0,
             "no ordinary flush may fire before the drain"
         );
 
-        shutdown.cancel();
-        let drained = tokio::time::timeout(Duration::from_secs(30), builder)
-            .await
-            .expect("the block-builder returns after cancellation")
-            .expect("block-builder task");
-        (drained, index_key)
+        (builder.drain().await, index_key)
     }
 
     /// What a restart in the block-builder's own consumer group would be
     /// handed. An uncommitted offset replays the record; a committed one does
     /// not.
     async fn replayed_records(&self) -> usize {
-        let mut consumer = Consumer::builder()
-            .bootstrap(&self.bootstrap)
-            .group_id(self.group_id.clone())
-            .client_id("profiles-block-builder-retry-restart")
-            .subscribe([PROFILES_WAL_TOPIC.to_string()])
-            .auto_offset_reset(AutoOffsetReset::Earliest)
-            .build()
+        self.broker
+            .replayed_records(&self.group_id, "profiles-block-builder-retry-restart")
             .await
-            .expect("restart consumer");
-        tokio::time::timeout(Duration::from_secs(30), async {
-            let mut replayed = 0;
-            loop {
-                let records = consumer
-                    .poll(millis(250))
-                    .await
-                    .expect("poll the restart consumer");
-                replayed += records
-                    .iter()
-                    .filter(|record| record.topic == PROFILES_WAL_TOPIC)
-                    .count();
-                if consumer.at_log_end().await {
-                    return replayed;
-                }
-            }
-        })
-        .await
-        .expect("the restart consumer reaches the WAL end")
     }
-}
-
-/// Every block the index snapshot in the store names.
-async fn indexed_block_count(store: &Arc<dyn ObjectStore>, index_key: &str) -> usize {
-    match ProfileIndex::load_latest_snapshot(store, index_key).await {
-        Ok(index) => index.all_blocks().len(),
-        // No snapshot at all: nothing was flushed.
-        Err(_) => 0,
-    }
-}
-
-fn profile_record() -> ProfileRecord {
-    ProfileRecord {
-        tenant: "tenant-a".into(),
-        labels: vec![
-            ("__name__".into(), "process_cpu".into()),
-            ("service_name".into(), "checkout".into()),
-            (
-                "__profile_type__".into(),
-                "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
-            ),
-        ],
-        profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
-        samples: vec![WalSample {
-            stacktrace_location_refs: vec![0, 1],
-            value: 100,
-            timestamp_ns: 1_700_000_000_000_000_000,
-            span_id: None,
-            trace_id: None,
-        }],
-        symbols: WalSymbolSet {
-            strings: vec![String::new(), "main.work".into(), "main.hotloop".into()],
-            functions: vec![],
-            locations: vec![],
-            mappings: vec![],
-        },
-    }
-}
-
-async fn create_wal_topic(bootstrap: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: PROFILES_WAL_TOPIC.into(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
-        )
-        .await
-        .expect("create the profiles WAL topic");
 }

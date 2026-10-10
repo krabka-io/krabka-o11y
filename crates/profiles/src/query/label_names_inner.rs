@@ -1,8 +1,7 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataRange,
-    Principal, ProfileStore, QuerierState, authorize_tenant, client_allows_utf8_label_names,
-    connect_error, is_internal_label, is_legacy_label_name, parse_matchers, pb,
-    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataScope,
+    Principal, ProfileStore, QuerierState, client_allows_utf8_label_names, connect_error,
+    is_internal_label, is_legacy_label_name, metadata_scope, pb,
 };
 
 pub(crate) async fn label_names_inner<S>(
@@ -14,13 +13,17 @@ pub(crate) async fn label_names_inner<S>(
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
-    let matchers = parse_matchers(&req.0.matchers).map_err(connect_error)?;
-    let range = MetadataRange::from_request(req.0.start, req.0.end)
-        .validate(&state, &tenant)
-        .map_err(connect_error)?;
+    let MetadataScope {
+        tenant,
+        matchers,
+        range,
+    } = metadata_scope(
+        &state,
+        &principal,
+        &headers,
+        &req.0.matchers,
+        (req.0.start, req.0.end),
+    )?;
     let mut names = state
         .store
         .label_names(tenant.as_str(), &matchers, range.start_ms, range.end_ms)

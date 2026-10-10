@@ -1,7 +1,9 @@
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use futures::StreamExt;
 use krabka_units::ByteSize;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 
 use super::{
     AddressFallbackResolver, Arc, AsArray, BTreeMap, BTreeSet, ChainedResolver, CompositeSymbols,
@@ -546,23 +548,33 @@ impl ColdProfileStore {
         Ok(active)
     }
 
+    async fn object_bytes(&self, path: &Path) -> Result<Bytes, ProfileError> {
+        self.store
+            .get(path)
+            .await
+            .map_err(|err| ProfileError::Store(err.to_string()))?
+            .bytes()
+            .await
+            .map_err(|err| ProfileError::Store(err.to_string()))
+    }
+
+    async fn open_block_reader(
+        &self,
+        block_key: &str,
+    ) -> Result<ParquetRecordBatchReader, ProfileError> {
+        let bytes = self.object_bytes(&Path::from(block_key)).await?;
+        ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .map_err(|err| ProfileError::Store(err.to_string()))?
+            .build()
+            .map_err(|err| ProfileError::Store(err.to_string()))
+    }
+
     pub(crate) async fn load_block_batches_for_fingerprints(
         &self,
         block_key: &str,
         fps: &BTreeSet<SeriesFingerprint>,
     ) -> Result<Vec<RecordBatch>, ProfileError> {
-        let bytes = self
-            .store
-            .get(&Path::from(block_key))
-            .await
-            .map_err(|err| ProfileError::Store(err.to_string()))?
-            .bytes()
-            .await
-            .map_err(|err| ProfileError::Store(err.to_string()))?;
-        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
-            .map_err(|err| ProfileError::Store(err.to_string()))?
-            .build()
-            .map_err(|err| ProfileError::Store(err.to_string()))?;
+        let reader = self.open_block_reader(block_key).await?;
         let mut out = Vec::new();
         for batch in reader {
             let batch = batch.map_err(|err| ProfileError::Store(err.to_string()))?;
@@ -581,14 +593,7 @@ impl ColdProfileStore {
             }
         }
         let key = format!("{block_key}.symdb");
-        let bytes = self
-            .store
-            .get(&Path::from(key))
-            .await
-            .map_err(|err| ProfileError::Store(err.to_string()))?
-            .bytes()
-            .await
-            .map_err(|err| ProfileError::Store(err.to_string()))?;
+        let bytes = self.object_bytes(&Path::from(key)).await?;
         let symbols = SymbolDb::decode(&bytes)?;
         let mut cache = self.symdb_cache.lock().expect("symbol cache lock poisoned");
         if !cache.0.contains_key(block_key) {
@@ -615,18 +620,7 @@ impl ColdProfileStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Vec<RecordBatch>, ProfileError> {
-        let bytes = self
-            .store
-            .get(&Path::from(block_key))
-            .await
-            .map_err(|err| ProfileError::Store(err.to_string()))?
-            .bytes()
-            .await
-            .map_err(|err| ProfileError::Store(err.to_string()))?;
-        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
-            .map_err(|err| ProfileError::Store(err.to_string()))?
-            .build()
-            .map_err(|err| ProfileError::Store(err.to_string()))?;
+        let reader = self.open_block_reader(block_key).await?;
         let mut out = Vec::new();
         for batch in reader {
             let batch = batch.map_err(|err| ProfileError::Store(err.to_string()))?;

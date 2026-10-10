@@ -24,8 +24,6 @@
 //! real role composition.
 
 use std::{
-    collections::BTreeMap,
-    io::Write as _,
     process::{Child, Command},
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -34,14 +32,16 @@ use std::{
 use assert2::{assert, check};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use clap::Parser as _;
-use flate2::{Compression, write::GzEncoder};
 use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
-use krabka_pprof::{PprofProfile, proto};
-use krabka_profiles::PROFILES_WAL_TOPIC;
 use serde_json::{Value, json};
 
-use super::{Cli, run};
+use super::{
+    Cli,
+    render_roundtrip::{flame_names, flame_ticks, gzip_bytes},
+    run,
+    synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, synthetic_cpu_pprof},
+    wal_topic::create_wal_topic,
+};
 
 /// Set on the child re-execution, and carries the broker the child's roles
 /// speak to. One marker per test, because both spawn the same executable and
@@ -67,8 +67,6 @@ const ARCHIVED_SERVICE: &str = "checkout";
 /// is what makes the older one unreachable from the WAL tail -- and a block in
 /// the shared object store the only place it can be answered from.
 const RECENT_SERVICE: &str = "heartbeat";
-const FUNC_WORK: &str = "main.work";
-const FUNC_HOT: &str = "main.hotloop";
 const LEAF_VALUE: i64 = 100;
 const SELF_VALUE: i64 = 40;
 const ARCHIVED_AGE: Duration = Duration::from_hours(1);
@@ -335,25 +333,6 @@ fn epoch_millis() -> i64 {
     .expect("epoch milliseconds fit in i64")
 }
 
-async fn create_wal_topic(bootstrap: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: PROFILES_WAL_TOPIC.into(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
-        )
-        .await
-        .expect("create the profiles WAL topic");
-}
-
 /// An address nothing is listening on yet. The child's ports have to be named
 /// before it starts, because the parent connects to them.
 fn free_loopback_addr() -> String {
@@ -453,27 +432,6 @@ async fn render_until_answered(
     panic!("no profile for {service} came back within {within:?}; last answer was {last}");
 }
 
-fn flame_names(value: &Value) -> Vec<String> {
-    let mut names: Vec<String> = value
-        .pointer("/flamebearer/names")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flat_map(|names| names.iter())
-        .filter_map(Value::as_str)
-        .filter(|name| *name != "total" && !name.is_empty())
-        .map(ToString::to_string)
-        .collect();
-    names.sort();
-    names
-}
-
-fn flame_ticks(value: &Value) -> Option<i64> {
-    value
-        .pointer("/flamebearer/numTicks")
-        .or_else(|| value.pointer("/flamebearer/total"))
-        .and_then(Value::as_i64)
-}
-
 fn push_body(series: &[(&str, i64)]) -> Value {
     let series: Vec<Value> = series
         .iter()
@@ -484,97 +442,11 @@ fn push_body(series: &[(&str, i64)]) -> Value {
                     { "name": "service_name", "value": service }
                 ],
                 "samples": [{
-                    "rawProfile": BASE64.encode(gzip_bytes(&synthetic_cpu_pprof(at_ms * 1_000_000))),
+                    "rawProfile": BASE64.encode(gzip_bytes(&synthetic_cpu_pprof(at_ms * 1_000_000, [LEAF_VALUE, SELF_VALUE]))),
                     "ID": format!("krabka-all-in-one-{service}")
                 }]
             })
         })
         .collect();
     json!({ "series": series })
-}
-
-/// A two-sample CPU profile: `main.hotloop` called from `main.work`, and
-/// `main.work` on its own.
-fn synthetic_cpu_pprof(time_nanos: i64) -> Vec<u8> {
-    // string_table: 0="" 1="cpu" 2="nanoseconds" 3=main.work 4=main.hotloop 5="app.go"
-    let profile = proto::Profile {
-        sample_type: vec![proto::ValueType { r#type: 1, unit: 2 }],
-        sample: vec![
-            proto::Sample {
-                location_id: vec![2, 1], // leaf-first: main.hotloop -> main.work
-                value: vec![LEAF_VALUE],
-                label: Vec::new(),
-            },
-            proto::Sample {
-                location_id: vec![1], // main.work
-                value: vec![SELF_VALUE],
-                label: Vec::new(),
-            },
-        ],
-        mapping: vec![proto::Mapping {
-            id: 1,
-            symbolization: proto::MappingSymbolization::from_parts((true, false, false, false)),
-            ..Default::default()
-        }],
-        location: vec![
-            proto::Location {
-                id: 1,
-                mapping_id: 1,
-                address: 0x1000,
-                line: vec![proto::Line {
-                    function_id: 1,
-                    line: 10,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-            proto::Location {
-                id: 2,
-                mapping_id: 1,
-                address: 0x2000,
-                line: vec![proto::Line {
-                    function_id: 2,
-                    line: 20,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-        ],
-        function: vec![
-            proto::Function {
-                id: 1,
-                name: 3,
-                system_name: 3,
-                filename: 5,
-                start_line: 1,
-            },
-            proto::Function {
-                id: 2,
-                name: 4,
-                system_name: 4,
-                filename: 5,
-                start_line: 2,
-            },
-        ],
-        string_table: vec![
-            String::new(),
-            "cpu".to_string(),
-            "nanoseconds".to_string(),
-            FUNC_WORK.to_string(),
-            FUNC_HOT.to_string(),
-            "app.go".to_string(),
-        ],
-        time_nanos,
-        duration_nanos: 1_000_000_000,
-        period_type: Some(proto::ValueType { r#type: 1, unit: 2 }),
-        period: 10_000_000,
-        ..Default::default()
-    };
-    PprofProfile::from(profile).encode()
-}
-
-fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(bytes).expect("gzip write");
-    encoder.finish().expect("gzip finish")
 }

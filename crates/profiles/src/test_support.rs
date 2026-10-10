@@ -1,0 +1,107 @@
+//! Fixtures shared by the crate's unit-test modules.
+
+use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+
+use krabka_blockstore::{BlockIndex as _, BlockMeta, Labels, ObjectStoreMetrics, ProfileIndex};
+use krabka_observability::server_security::ServerSecurity;
+use object_store::ObjectStore;
+
+use crate::{
+    blockbuilder::build_block,
+    wal::ProfileRecord,
+    wire::pb::otlp_profiles::{Function, Line, Location, ProfilesDictionary, Stack, ValueType},
+};
+
+/// Writes `records` as one profile block for tenant `t`, partition 0.
+pub async fn build_test_block(
+    store: &Arc<dyn ObjectStore>,
+    records: &[ProfileRecord],
+    offset_range: (i64, i64),
+) -> BlockMeta {
+    build_block(
+        store,
+        "t",
+        0,
+        records,
+        offset_range,
+        &ObjectStoreMetrics::unregistered(),
+    )
+    .await
+    .unwrap()
+    .remove(0)
+}
+
+/// An index for tenant `t` that knows the series of `records` and `blocks`.
+pub fn index_with_series<'a>(
+    records: impl IntoIterator<Item = &'a ProfileRecord>,
+    blocks: &[&BlockMeta],
+) -> ProfileIndex {
+    let mut index = ProfileIndex::new();
+    for rec in records {
+        let labels = Labels::from_pairs(rec.labels.iter().cloned());
+        index
+            .add_series("t", labels.fingerprint(), &labels)
+            .unwrap();
+    }
+    for block in blocks {
+        index.add_block(block);
+    }
+    index
+}
+
+/// An OTLP dictionary with one function (`string_table[3]`) at one location
+/// (address `0x40`, line 1) on one stack.
+pub fn otlp_single_frame_dictionary(string_table: Vec<String>) -> ProfilesDictionary {
+    ProfilesDictionary {
+        string_table,
+        function_table: vec![Function {
+            name_strindex: 3,
+            ..Default::default()
+        }],
+        location_table: vec![Location {
+            address: 0x40,
+            lines: vec![Line {
+                function_index: 0,
+                line: 1,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        stack_table: vec![Stack {
+            location_indices: vec![0],
+        }],
+        ..Default::default()
+    }
+}
+
+/// The OTLP value type `string_table[1]`:`string_table[2]`, used as both the
+/// sample type and the period type.
+pub fn otlp_value_type() -> ValueType {
+    ValueType {
+        type_strindex: 1,
+        unit_strindex: 2,
+    }
+}
+
+/// The shutdown signal a test server waits on.
+pub type Shutdown = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// Starts a server on an ephemeral loopback port with default security.
+///
+/// `serve` is the role's `serve` entry point. The server runs until the
+/// returned sender fires or is dropped.
+pub async fn serve_on_loopback_with(
+    serve: impl AsyncFnOnce(SocketAddr, &ServerSecurity, Shutdown) -> std::io::Result<SocketAddr>,
+) -> (SocketAddr, tokio::sync::oneshot::Sender<()>) {
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let bound = serve(
+        "127.0.0.1:0".parse().unwrap(),
+        &ServerSecurity::default(),
+        Box::pin(async move {
+            let _ = shutdown_rx.await;
+        }),
+    )
+    .await
+    .unwrap();
+    (bound, shutdown_tx)
+}

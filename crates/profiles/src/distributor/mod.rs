@@ -110,23 +110,30 @@ mod tests {
         check!(err.contains("height does not fit u32"), "got: {err}");
     }
 
-    fn state_with_ingestion(rate: f64, burst: u64, max_tenants: usize) -> Arc<DistributorState> {
-        Arc::new(DistributorState {
-            sink: Arc::new(RecordingSink(Mutex::default())),
-            overrides: OverridesProvider::from_yaml(&format!(
-                "overrides:\n  tenant-a:\n    ingestion_rate_profiles_per_sec: {rate}\n    ingestion_burst_profiles: {burst}\n"
-            ))
-            .expect("the overrides parse"),
+    fn test_state(sink: Arc<dyn WalSink>, overrides: OverridesProvider) -> DistributorState {
+        DistributorState {
+            sink,
+            overrides,
             tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             cumulative_profiles: tokio::sync::Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
             max_decompressed: mebibytes(16),
-            max_tracked_tenants: max_tenants,
+            max_tracked_tenants: 4096,
             legacy_decode_limits: LegacyDecodeLimits::default(),
             metrics: ServiceMetrics::new(),
-        })
+        }
+    }
+
+    fn state_with_ingestion(rate: f64, burst: u64, max_tenants: usize) -> Arc<DistributorState> {
+        Arc::new(DistributorState {
+max_tracked_tenants: max_tenants,
+..test_state(Arc::new(RecordingSink(Mutex::default())), OverridesProvider::from_yaml(&format!(
+                "overrides:\n  tenant-a:\n    ingestion_rate_profiles_per_sec: {rate}\n    ingestion_burst_profiles: {burst}\n"
+            ))
+            .expect("the overrides parse"))
+})
     }
 
     /// A burst cap rejects an over-sized batch outright, before the token
@@ -211,22 +218,13 @@ mod tests {
     }
 
     fn state_with_max_series(limit: u64) -> Arc<DistributorState> {
-        Arc::new(DistributorState {
-            sink: Arc::new(RecordingSink(Mutex::default())),
-            overrides: OverridesProvider::from_yaml(&format!(
+        Arc::new(test_state(
+            Arc::new(RecordingSink(Mutex::default())),
+            OverridesProvider::from_yaml(&format!(
                 "overrides:\n  tenant-a:\n    max_series: {limit}\n"
             ))
             .unwrap(),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        })
+        ))
     }
 
     fn tenant(name: &str) -> TenantId {
@@ -415,6 +413,7 @@ mod tests {
         error::ProfilesError,
         ingest::{RelabelAction, RelabelConfig},
         limits::OverridesProvider,
+        test_support::{otlp_single_frame_dictionary, otlp_value_type, serve_on_loopback_with},
         wal::ProfileRecord,
     };
 
@@ -474,19 +473,7 @@ mod tests {
     }
 
     fn state_with(sink: Arc<RecordingSink>) -> Arc<DistributorState> {
-        Arc::new(DistributorState {
-            sink,
-            overrides: OverridesProvider::new(Limits::default()),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        })
+        Arc::new(test_state(sink, OverridesProvider::new(Limits::default())))
     }
 
     fn otlp_export_request() -> pb::otlp_profiles::ExportProfilesServiceRequest {
@@ -495,46 +482,18 @@ mod tests {
                 common::v1::{AnyValue, KeyValue, any_value::Value},
                 resource::v1::Resource,
             },
-            otlp_profiles::{
-                Function, Line, Location, Profile, ProfilesDictionary, ResourceProfiles, Sample,
-                ScopeProfiles, Stack, ValueType,
-            },
+            otlp_profiles::{Profile, ResourceProfiles, Sample, ScopeProfiles},
         };
 
-        let dictionary = ProfilesDictionary {
-            string_table: vec![
-                String::new(),
-                "samples".to_string(),
-                "count".to_string(),
-                "main".to_string(),
-            ],
-            function_table: vec![Function {
-                name_strindex: 3,
-                ..Default::default()
-            }],
-            location_table: vec![Location {
-                address: 0x40,
-                lines: vec![Line {
-                    function_index: 0,
-                    line: 1,
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }],
-            stack_table: vec![Stack {
-                location_indices: vec![0],
-            }],
-            ..Default::default()
-        };
+        let dictionary = otlp_single_frame_dictionary(vec![
+            String::new(),
+            "samples".to_string(),
+            "count".to_string(),
+            "main".to_string(),
+        ]);
         let profile = Profile {
-            sample_type: Some(ValueType {
-                type_strindex: 1,
-                unit_strindex: 2,
-            }),
-            period_type: Some(ValueType {
-                type_strindex: 1,
-                unit_strindex: 2,
-            }),
+            sample_type: Some(otlp_value_type()),
+            period_type: Some(otlp_value_type()),
             samples: vec![Sample {
                 stack_index: 0,
                 values: vec![7],
@@ -576,29 +535,13 @@ mod tests {
     async fn a_partially_appended_batch_is_reported_as_a_failure_not_a_success() {
         let metrics = ServiceMetrics::new();
         let state = Arc::new(DistributorState {
-            sink: Arc::new(PartialSink::new(1)),
-            overrides: OverridesProvider::new(Limits::default()),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
             metrics: metrics.clone(),
+            ..test_state(
+                Arc::new(PartialSink::new(1)),
+                OverridesProvider::new(Limits::default()),
+            )
         });
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         // Two resource profiles, so the request becomes two WAL records and
         // the sink can take one of them.
         let mut request = otlp_export_request();
@@ -674,9 +617,6 @@ mod tests {
     async fn push_normalizes_pprof_symbol_ids_to_wal_indices() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let mut labels = krabka_blockstore::Labels::new();
-        labels.insert("__name__", "samples");
-        labels.insert("service_name", "api");
         let profile = PprofProfile::from(krabka_pprof::proto::Profile {
             sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
             sample: vec![krabka_pprof::proto::Sample {
@@ -735,14 +675,9 @@ mod tests {
         process_raw(
             &state,
             &tenant("tenant-a"),
-            vec![crate::ingest::RawProfile {
-                labels,
-                profile,
-                delta: false,
-                sample_timestamps_ns: Vec::new(),
-                sample_span_ids: Vec::new(),
-                sample_trace_ids: Vec::new(),
-            }],
+            vec![crate::wire::test_fixtures::api_raw_profile(
+                "samples", profile,
+            )],
         )
         .await
         .unwrap();
@@ -756,12 +691,6 @@ mod tests {
     async fn relabel_drop_skips_the_series() {
         let sink = Arc::new(RecordingSink::default());
         let state = Arc::new(DistributorState {
-            sink: sink.clone(),
-            overrides: OverridesProvider::new(Limits::default()),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
             relabel: vec![RelabelConfig {
                 source_labels: vec!["__name__".to_string()],
                 regex: "process_cpu".to_string(),
@@ -769,10 +698,7 @@ mod tests {
                 replacement: String::new(),
                 action: RelabelAction::Drop,
             }],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
+            ..test_state(sink.clone(), OverridesProvider::new(Limits::default()))
         });
         let raws = vec![crate::wire::test_fixtures::raw_profile_cpu()];
 
@@ -969,19 +895,10 @@ overrides:
     }
 
     fn state_with_overrides(sink: Arc<RecordingSink>, yaml: &str) -> Arc<DistributorState> {
-        Arc::new(DistributorState {
+        Arc::new(test_state(
             sink,
-            overrides: OverridesProvider::from_yaml(yaml).expect("the overrides parse"),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        })
+            OverridesProvider::from_yaml(yaml).expect("the overrides parse"),
+        ))
     }
 
     #[tokio::test]
@@ -1010,9 +927,9 @@ defaults:
     #[tokio::test]
     async fn pyroscope_overrides_drive_ingest_label_limits() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState {
+        let state = Arc::new(test_state(
             sink,
-            overrides: OverridesProvider::from_yaml(
+            OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1020,16 +937,7 @@ overrides:
 ",
             )
             .unwrap(),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        });
+        ));
 
         let err = process_raw(
             &state,
@@ -1052,9 +960,9 @@ overrides:
     #[tokio::test]
     async fn pyroscope_overrides_enforce_max_series_without_partial_writes() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState {
-            sink: sink.clone(),
-            overrides: OverridesProvider::from_yaml(
+        let state = Arc::new(test_state(
+            sink.clone(),
+            OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1062,16 +970,7 @@ overrides:
 ",
             )
             .unwrap(),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        });
+        ));
 
         let err = process_raw(
             &state,
@@ -1102,15 +1001,15 @@ overrides:
             .unwrap_err();
 
         assert!(error.to_string().contains("max series exceeded"));
-        assert_eq!(state.cumulative_profiles.lock().await.len(), 1);
+        assert!(state.cumulative_profiles.lock().await.len() == 1);
     }
 
     #[tokio::test]
     async fn pyroscope_overrides_enforce_ingestion_burst_without_partial_writes() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState {
-            sink: sink.clone(),
-            overrides: OverridesProvider::from_yaml(
+        let state = Arc::new(test_state(
+            sink.clone(),
+            OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1119,16 +1018,7 @@ overrides:
 ",
             )
             .unwrap(),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        });
+        ));
 
         let err = process_raw(
             &state,
@@ -1145,9 +1035,9 @@ overrides:
     #[tokio::test]
     async fn pyroscope_overrides_enforce_ingestion_rate_per_tenant() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState {
-            sink: sink.clone(),
-            overrides: OverridesProvider::from_yaml(
+        let state = Arc::new(test_state(
+            sink.clone(),
+            OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1156,16 +1046,7 @@ overrides:
 ",
             )
             .unwrap(),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        });
+        ));
 
         process_raw(
             &state,
@@ -1210,6 +1091,31 @@ overrides:
         );
     }
 
+    async fn serve_on_loopback(
+        state: Arc<DistributorState>,
+    ) -> (SocketAddr, tokio::sync::oneshot::Sender<()>) {
+        serve_on_loopback_with(async |addr, security, shutdown| {
+            serve(addr, state, security, shutdown).await
+        })
+        .await
+    }
+
+    fn ok_ingest_requests(state: &DistributorState) -> u64 {
+        state
+            .metrics
+            .ingest_requests
+            .get_or_create(&crate::metrics::StatusLabel {
+                status: "ok".into(),
+            })
+            .get()
+    }
+
+    fn tenant_a_headers() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-scope-orgid", "tenant-a".parse().unwrap());
+        headers
+    }
+
     fn push_request_one_sample() -> pb::push::v1::PushRequest {
         use std::io::Write as _;
 
@@ -1218,25 +1124,7 @@ overrides:
         encoder.write_all(&pprof_bytes).unwrap();
         let gzipped = encoder.finish().unwrap();
 
-        pb::push::v1::PushRequest {
-            series: vec![pb::push::v1::RawProfileSeries {
-                labels: vec![
-                    pb::types::v1::LabelPair {
-                        name: "__name__".into(),
-                        value: "process_cpu".into(),
-                    },
-                    pb::types::v1::LabelPair {
-                        name: "service_name".into(),
-                        value: "api".into(),
-                    },
-                ],
-                samples: vec![pb::push::v1::RawSample {
-                    raw_profile: gzipped,
-                    id: "s1".into(),
-                }],
-                annotations: Vec::new(),
-            }],
-        }
+        crate::wire::test_fixtures::push_request_cpu(gzipped, "s1")
     }
 
     // The Connect `push` handler must decode the request, append the decoded
@@ -1246,13 +1134,11 @@ overrides:
     async fn push_handler_appends_record_and_records_metrics() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let mut headers = HeaderMap::new();
-        headers.insert("x-scope-orgid", "tenant-a".parse().unwrap());
 
         push_handler(
             Extension(state.clone()),
             Extension(Principal::Unauthenticated),
-            headers,
+            tenant_a_headers(),
             ConnectRequest(push_request_one_sample()),
         )
         .await
@@ -1262,16 +1148,7 @@ overrides:
         check!(recs.len() == 1);
         check!(recs[0].tenant == "tenant-a");
         // Metrics side effect: one ok ingest request was recorded.
-        check!(
-            state
-                .metrics
-                .ingest_requests
-                .get_or_create(&crate::metrics::StatusLabel {
-                    status: "ok".into(),
-                })
-                .get()
-                == 1
-        );
+        check!(ok_ingest_requests(&state) == 1);
     }
 
     // The Connect `export` (OTLP) handler must decode the request, append the
@@ -1281,13 +1158,11 @@ overrides:
     async fn export_handler_appends_record_and_records_metrics() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let mut headers = HeaderMap::new();
-        headers.insert("x-scope-orgid", "tenant-a".parse().unwrap());
 
         export_handler(
             Extension(state.clone()),
             Extension(Principal::Unauthenticated),
-            headers,
+            tenant_a_headers(),
             ConnectRequest(otlp_export_request()),
         )
         .await
@@ -1296,33 +1171,14 @@ overrides:
         let recs = sink.0.lock().unwrap();
         check!(recs.len() == 1);
         check!(recs[0].tenant == "tenant-a");
-        check!(
-            state
-                .metrics
-                .ingest_requests
-                .get_or_create(&crate::metrics::StatusLabel {
-                    status: "ok".into(),
-                })
-                .get()
-                == 1
-        );
+        check!(ok_ingest_requests(&state) == 1);
     }
 
     #[tokio::test]
     async fn otlp_http_profiles_path_appends_records() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let body = otlp_export_request().encode_to_vec();
 
         let response = reqwest::Client::new()
@@ -1349,17 +1205,7 @@ overrides:
 
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let json = serde_json::to_vec(&otlp_export_request()).unwrap();
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(&json).unwrap();
@@ -1384,17 +1230,7 @@ overrides:
     async fn legacy_ingest_accepts_plain_folded_groups_body() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
 
         let response = reqwest::Client::new()
             .post(format!(
@@ -1438,17 +1274,7 @@ overrides:
     async fn pyroscope_ingest_alias_uses_the_legacy_handler() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
 
         let response = reqwest::Client::new()
             .post(format!(
@@ -1493,9 +1319,9 @@ overrides:
     // so a failed write does not permanently consume the tenant's budget.
     #[tokio::test]
     async fn wal_append_failure_rolls_back_max_series_reservation() {
-        let state = Arc::new(DistributorState {
-            sink: Arc::new(FailingSink),
-            overrides: OverridesProvider::from_yaml(
+        let state = Arc::new(test_state(
+            Arc::new(FailingSink),
+            OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1503,16 +1329,7 @@ overrides:
 ",
             )
             .unwrap(),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        });
+        ));
 
         let err = process_raw(
             &state,
@@ -1548,9 +1365,9 @@ overrides:
     #[tokio::test]
     async fn max_series_rejection_does_not_reserve() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState {
-            sink: sink.clone(),
-            overrides: OverridesProvider::from_yaml(
+        let state = Arc::new(test_state(
+            sink.clone(),
+            OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1558,16 +1375,7 @@ overrides:
 ",
             )
             .unwrap(),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        });
+        ));
 
         // Two distinct series in one request exceed the cap of 1 and are rejected.
         let err = process_raw(
@@ -1616,23 +1424,14 @@ overrides:
         // Build an overrides provider that gives EVERY tenant a finite rate, so
         // each distinct tenant allocates a bucket. We assert the map never grows
         // past `MAX_TENANTS`.
-        let state = Arc::new(DistributorState {
+        let state = Arc::new(test_state(
             sink,
-            overrides: OverridesProvider::new(crate::limits::Limits {
+            OverridesProvider::new(crate::limits::Limits {
                 ingestion_rate: per_sec(1000),
                 ingestion_burst_profiles: 1000,
                 ..Default::default()
             }),
-            tenant_policy: TenantPolicy::anonymous(),
-            active_series: Mutex::default(),
-            cumulative_profiles: tokio::sync::Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        });
+        ));
 
         for idx in 0..(4096 + 50) {
             // The cap lives in the bucket map, not in the rate gate, so the
@@ -1692,9 +1491,6 @@ overrides:
     async fn mapping_symbolization_flags_are_populated_independently() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let mut labels = krabka_blockstore::Labels::new();
-        labels.insert("__name__", "samples");
-        labels.insert("service_name", "api");
         let profile = PprofProfile::from(krabka_pprof::proto::Profile {
             sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
             sample: vec![krabka_pprof::proto::Sample {
@@ -1748,14 +1544,9 @@ overrides:
         process_raw(
             &state,
             &tenant("tenant-a"),
-            vec![crate::ingest::RawProfile {
-                labels,
-                profile,
-                delta: false,
-                sample_timestamps_ns: Vec::new(),
-                sample_span_ids: Vec::new(),
-                sample_trace_ids: Vec::new(),
-            }],
+            vec![crate::wire::test_fixtures::api_raw_profile(
+                "samples", profile,
+            )],
         )
         .await
         .unwrap();
@@ -1771,6 +1562,7 @@ overrides:
 
 mod client_facing_message;
 mod connect_error;
+mod connect_ingest;
 mod distributor_state;
 mod enforce_and_reserve_max_series;
 mod enforce_ingestion_rate;
@@ -1778,6 +1570,7 @@ mod evict_one_tenant;
 mod export_handler;
 mod extract_symbols;
 mod ingest_handler;
+mod ingest_request_span;
 mod ingest_span_tenant;
 mod ingestion_bucket_for_tenant;
 mod internal_error_message;
@@ -1790,6 +1583,7 @@ mod process_raw;
 mod profiles_error_response;
 mod push_handler;
 mod rate_tokens_per_sec;
+mod record_ingest_outcome;
 mod rollback_reserved_series;
 mod router;
 mod serve;
@@ -1799,6 +1593,7 @@ mod wal_sink;
 
 use client_facing_message::client_facing_message;
 use connect_error::connect_error;
+use connect_ingest::connect_ingest;
 pub(crate) use distributor_state::CumulativeProfileCache;
 pub use distributor_state::DistributorState;
 use enforce_and_reserve_max_series::enforce_and_reserve_max_series;
@@ -1807,6 +1602,7 @@ use evict_one_tenant::evict_one_tenant;
 use export_handler::export_handler;
 use extract_symbols::extract_symbols;
 use ingest_handler::ingest_handler;
+use ingest_request_span::ingest_request_span;
 use ingest_span_tenant::ingest_span_tenant;
 use ingestion_bucket_for_tenant::ingestion_bucket_for_tenant;
 use internal_error_message::INTERNAL_ERROR_MESSAGE;
@@ -1819,6 +1615,7 @@ pub use process_raw::process_raw;
 use profiles_error_response::profiles_error_response;
 use push_handler::push_handler;
 use rate_tokens_per_sec::rate_tokens_per_sec;
+use record_ingest_outcome::{IngestOutcome, record_ingest_outcome};
 use rollback_reserved_series::rollback_reserved_series;
 pub use router::router;
 pub use serve::serve;

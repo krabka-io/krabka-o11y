@@ -46,11 +46,23 @@ crate_tests(
             },
         },
     },
-    # The shared lifecycle store, reached with `#[path]` from //crates/blockstore.
+    # The shared lifecycle store, reached with `#[path]` from //crates/blockstore,
+    # and the fixtures shared with the binary's own suites, reached with `#[path]`
+    # from `src/bin/krabka-profiles`.
     extra_srcs = {
+        "block_builder_drain": ["src/bin/krabka-profiles/wal_topic.rs"],
+        "block_builder_object_store_retry": ["src/bin/krabka-profiles/wal_topic.rs"],
+        "ingest_roundtrip": [
+            "src/bin/krabka-profiles/render_roundtrip.rs",
+            "src/bin/krabka-profiles/synthetic_cpu_profile.rs",
+            "src/bin/krabka-profiles/wal_topic.rs",
+        ],
         "lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
         "pyroscope_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
-        "pyroscope_differential": ["//crates/metrics-service:tests/support/generated_differential.rs"],
+        "pyroscope_differential": [
+            "//crates/metrics-service:tests/support/generated_differential.rs",
+            "src/bin/krabka-profiles/synthetic_cpu_profile.rs",
+        ],
     },
     lib = "profiles",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is

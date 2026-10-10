@@ -13,11 +13,10 @@ use crate::{
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use krabka_blockstore::Labels;
     use krabka_pprof::PprofProfile;
 
     use super::*;
-    use crate::ingest::RawProfile;
+    use crate::wire::test_fixtures::api_raw_profile;
 
     fn two_type_profile() -> PprofProfile {
         let profile = krabka_pprof::proto::Profile {
@@ -53,17 +52,7 @@ mod tests {
 
     #[test]
     fn split_yields_one_series_per_sample_type() {
-        let mut labels = Labels::new();
-        labels.insert("__name__", "memory");
-        labels.insert("service_name", "api");
-        let raw = RawProfile {
-            labels,
-            profile: two_type_profile(),
-            delta: false,
-            sample_timestamps_ns: Vec::new(),
-            sample_span_ids: Vec::new(),
-            sample_trace_ids: Vec::new(),
-        };
+        let raw = api_raw_profile("memory", two_type_profile());
 
         let out = split_sample_types(&raw).unwrap();
         assert!(out.len() == 2);
@@ -136,19 +125,9 @@ mod tests {
             period_type: Some(krabka_pprof::proto::ValueType { r#type: 3, unit: 2 }),
             ..Default::default()
         };
-        let mut labels = Labels::new();
-        labels.insert("__name__", "samples");
-        labels.insert("service_name", "api");
 
-        let out = split_sample_types(&RawProfile {
-            labels,
-            profile: PprofProfile::from(profile),
-            delta: false,
-            sample_timestamps_ns: Vec::new(),
-            sample_span_ids: Vec::new(),
-            sample_trace_ids: Vec::new(),
-        })
-        .unwrap();
+        let out =
+            split_sample_types(&api_raw_profile("samples", PprofProfile::from(profile))).unwrap();
 
         assert!(out[0].samples[0].stacktrace_location_refs == vec![1]);
     }
@@ -195,19 +174,9 @@ mod tests {
             period_type: Some(krabka_pprof::proto::ValueType { r#type: 3, unit: 2 }),
             ..Default::default()
         };
-        let mut labels = Labels::new();
-        labels.insert("__name__", "samples");
-        labels.insert("service_name", "api");
 
-        let out = split_sample_types(&RawProfile {
-            labels,
-            profile: PprofProfile::from(profile),
-            delta: false,
-            sample_timestamps_ns: Vec::new(),
-            sample_span_ids: Vec::new(),
-            sample_trace_ids: Vec::new(),
-        })
-        .unwrap();
+        let out =
+            split_sample_types(&api_raw_profile("samples", PprofProfile::from(profile))).unwrap();
 
         check!(out.len() == 2);
         for target in ["all", "self"] {

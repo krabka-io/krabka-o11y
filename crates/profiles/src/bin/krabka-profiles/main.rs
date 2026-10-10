@@ -1118,6 +1118,15 @@ mod all_in_one;
 #[cfg(all(test, unix))]
 mod sigterm_exits_the_querier;
 
+/// Test fixtures that the binary's suites share with suites under `tests/`,
+/// which reach them with `#[path]`.
+#[cfg(all(test, unix))]
+mod render_roundtrip;
+#[cfg(all(test, unix))]
+mod synthetic_cpu_profile;
+#[cfg(all(test, unix))]
+mod wal_topic;
+
 /// `Target` is private to this binary, so the one place its clap spellings can
 /// be checked against the shared role vocabulary is here.
 #[cfg(test)]
@@ -1170,6 +1179,7 @@ mod run_compactor;
 mod run_distributor;
 mod run_querier;
 mod run_query_frontend;
+mod run_read_role;
 mod run_symbolizer;
 mod spawn_profile_index_refresh;
 mod spawn_wal_tail;
@@ -1220,6 +1230,7 @@ use run_compactor::run_compactor;
 use run_distributor::run_distributor;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
+use run_read_role::{ReadRole, run_read_role};
 use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;

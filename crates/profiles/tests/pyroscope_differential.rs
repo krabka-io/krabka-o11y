@@ -29,6 +29,7 @@ use krabka_profiles::{
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK};
 use testcontainers::{
     GenericImage, ImageExt,
     core::{Host, IntoContainerPort, WaitFor},
@@ -38,6 +39,8 @@ use tokio::sync::oneshot;
 
 #[path = "../../metrics-service/tests/support/generated_differential.rs"]
 mod generated_differential;
+#[path = "../src/bin/krabka-profiles/synthetic_cpu_profile.rs"]
+mod synthetic_cpu_profile;
 
 const TENANT: &str = "tenant-a";
 /// Pyroscope HTTP port inside the container.
@@ -52,8 +55,6 @@ const WALL_PROFILE_TYPE: &str = "wall:wall:nanoseconds:wall:nanoseconds";
 const CPU_NAME: &str = "process_cpu";
 const E2E_SERVICE: &str = "checkout";
 const E2E_SELECTOR: &str = r#"{service_name="checkout"}"#;
-const FUNC_WORK: &str = "main.work";
-const FUNC_HOT: &str = "main.hotloop";
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -967,14 +968,11 @@ async fn start_krabka_pair_with_architecture(
     .await
 }
 
-async fn start_krabka_pair_with_query_options(
+/// Serves a distributor on a loopback port whose WAL is `sink`. It runs until
+/// the returned sender fires or is dropped.
+async fn start_distributor(
     sink: CapturingSink,
-    store: WalTailProfileStore,
-    architecture: query::PyroscopeQueryArchitecture,
-    async_enabled: bool,
-    analysis_enabled: bool,
-) -> TestResult<KrabkaPair> {
-    let cold = sink.cold.clone();
+) -> TestResult<(std::net::SocketAddr, oneshot::Sender<()>)> {
     let (distributor_shutdown, distributor_rx) = oneshot::channel();
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
@@ -998,21 +996,41 @@ async fn start_krabka_pair_with_query_options(
         },
     )
     .await?;
+    Ok((distributor_addr, distributor_shutdown))
+}
+
+/// A querier over the hot `store` in front of `cold`, with no per-query range
+/// cap. The differential / e2e corpus intentionally queries the full
+/// `[0, i64::MAX]` range to compare against real Pyroscope.
+fn unbounded_querier_state(
+    store: WalTailProfileStore,
+    cold: WalTailProfileStore,
+) -> QuerierState<UnionProfileStore<WalTailProfileStore, WalTailProfileStore>> {
+    QuerierState::new_with_limits(
+        Arc::new(UnionProfileStore::new(Arc::new(store), Arc::new(cold))),
+        krabka_profiles::limits::Limits {
+            max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
+            ..Default::default()
+        },
+    )
+}
+
+async fn start_krabka_pair_with_query_options(
+    sink: CapturingSink,
+    store: WalTailProfileStore,
+    architecture: query::PyroscopeQueryArchitecture,
+    async_enabled: bool,
+    analysis_enabled: bool,
+) -> TestResult<KrabkaPair> {
+    let cold = sink.cold.clone();
+    let (distributor_addr, distributor_shutdown) = start_distributor(sink).await?;
 
     let (querier_shutdown, querier_rx) = oneshot::channel();
-    // The differential / e2e corpus intentionally queries the full `[0, i64::MAX]`
-    // range to compare against real Pyroscope, so disable the per-query range cap.
     let querier_state = Arc::new(
-        QuerierState::new_with_limits(
-            Arc::new(UnionProfileStore::new(Arc::new(store), Arc::new(cold))),
-            krabka_profiles::limits::Limits {
-                max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
-                ..Default::default()
-            },
-        )
-        .with_query_architecture(architecture)
-        .with_async_queries_enabled(async_enabled)
-        .with_query_analysis_series_enabled(analysis_enabled),
+        unbounded_querier_state(store, cold)
+            .with_query_architecture(architecture)
+            .with_async_queries_enabled(async_enabled)
+            .with_query_analysis_series_enabled(analysis_enabled),
     );
     let querier_addr = query::serve(
         "127.0.0.1:0".parse()?,
@@ -1053,6 +1071,31 @@ fn timestamp_goroutine_profile(compressed: &[u8], timestamp_nanos: i64) -> TestR
     gzip_bytes(&PprofProfile::from(profile).encode())
 }
 
+/// Posts a `push.v1` JSON `body` to `base`, under `tenant` when one is given,
+/// and fails unless it is accepted. `what` names the push in the error.
+async fn post_push_json(
+    client: &reqwest::Client,
+    base: &str,
+    tenant: Option<&str>,
+    body: &Value,
+    what: &str,
+) -> TestResult {
+    let mut request = client
+        .post(format!("{base}/push.v1.PusherService/Push"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(body);
+    if let Some(tenant) = tenant {
+        request = request.header("x-scope-orgid", tenant);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("push.v1 {what} to {base} returned {status}: {body}").into());
+    }
+    Ok(())
+}
+
 async fn post_push_profile(
     client: &reqwest::Client,
     base: &str,
@@ -1072,20 +1115,7 @@ async fn post_push_profile(
             }]
         }]
     });
-    let mut request = client
-        .post(format!("{base}/push.v1.PusherService/Push"))
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .json(&body);
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("push.v1 profile push to {base} returned {status}: {body}").into());
-    }
-    Ok(())
+    post_push_json(client, base, tenant, &body, "profile push").await
 }
 
 async fn render_any(
@@ -2956,81 +2986,9 @@ fn synthetic_cpu_pprof(time_nanos: i64) -> TestResult<Vec<u8>> {
 }
 
 fn synthetic_cpu_pprof_with_values(time_nanos: i64, values: [i64; 2]) -> TestResult<Vec<u8>> {
-    // string_table: 0="" 1="cpu" 2="nanoseconds" 3=main.work 4=main.hotloop 5="app.go"
-    let profile = proto::Profile {
-        sample_type: vec![proto::ValueType { r#type: 1, unit: 2 }],
-        sample: vec![
-            proto::Sample {
-                location_id: vec![2, 1], // leaf-first: main.hotloop -> main.work
-                value: vec![values[0]],
-                label: Vec::new(),
-            },
-            proto::Sample {
-                location_id: vec![1], // main.work
-                value: vec![values[1]],
-                label: Vec::new(),
-            },
-        ],
-        mapping: vec![proto::Mapping {
-            id: 1,
-            symbolization: proto::MappingSymbolization::from_parts((true, false, false, false)),
-            ..Default::default()
-        }],
-        location: vec![
-            proto::Location {
-                id: 1,
-                mapping_id: 1,
-                address: 0x1000,
-                line: vec![proto::Line {
-                    function_id: 1,
-                    line: 10,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-            proto::Location {
-                id: 2,
-                mapping_id: 1,
-                address: 0x2000,
-                line: vec![proto::Line {
-                    function_id: 2,
-                    line: 20,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-        ],
-        function: vec![
-            proto::Function {
-                id: 1,
-                name: 3,
-                system_name: 3,
-                filename: 5,
-                start_line: 1,
-            },
-            proto::Function {
-                id: 2,
-                name: 4,
-                system_name: 4,
-                filename: 5,
-                start_line: 2,
-            },
-        ],
-        string_table: vec![
-            String::new(),
-            "cpu".to_string(),
-            "nanoseconds".to_string(),
-            FUNC_WORK.to_string(),
-            FUNC_HOT.to_string(),
-            "app.go".to_string(),
-        ],
-        time_nanos,
-        duration_nanos: 1_000_000_000,
-        period_type: Some(proto::ValueType { r#type: 1, unit: 2 }),
-        period: 10_000_000,
-        ..Default::default()
-    };
-    gzip_bytes(&PprofProfile::from(profile).encode())
+    gzip_bytes(&synthetic_cpu_profile::synthetic_cpu_pprof(
+        time_nanos, values,
+    ))
 }
 
 fn gzip_bytes(bytes: &[u8]) -> TestResult<Vec<u8>> {
@@ -3068,20 +3026,7 @@ async fn post_cpu_profile_with_id(
             }]
         }]
     });
-    let mut request = client
-        .post(format!("{base}/push.v1.PusherService/Push"))
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .json(&body);
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("push.v1 cpu profile to {base} returned {status}: {body}").into());
-    }
-    Ok(())
+    post_push_json(client, base, tenant, &body, "cpu profile").await
 }
 
 struct KrabkaPublic {
@@ -3110,40 +3055,10 @@ async fn start_krabka_public(
     store: WalTailProfileStore,
 ) -> TestResult<KrabkaPublic> {
     let cold = sink.cold.clone();
-    let (distributor_shutdown, distributor_rx) = oneshot::channel();
-    let distributor_state = Arc::new(DistributorState {
-        sink: Arc::new(sink),
-        overrides: OverridesProvider::new(Limits::default()),
-        tenant_policy: TenantPolicy::anonymous(),
-        active_series: Mutex::default(),
-        cumulative_profiles: tokio::sync::Mutex::default(),
-        ingestion_buckets: Mutex::default(),
-        relabel: Vec::new(),
-        max_decompressed: krabka_units::mebibytes(16),
-        max_tracked_tenants: 4096,
-        legacy_decode_limits: krabka_profiles::ingest::LegacyDecodeLimits::default(),
-        metrics: krabka_profiles::metrics::ServiceMetrics::new(),
-    });
-    let distributor_addr = distributor::serve(
-        "127.0.0.1:0".parse()?,
-        distributor_state,
-        &ServerSecurity::default(),
-        async move {
-            let _ = distributor_rx.await;
-        },
-    )
-    .await?;
+    let (distributor_addr, distributor_shutdown) = start_distributor(sink).await?;
 
     let (querier_shutdown, querier_rx) = oneshot::channel();
-    // The differential / e2e corpus intentionally queries the full `[0, i64::MAX]`
-    // range to compare against real Pyroscope, so disable the per-query range cap.
-    let querier_state = Arc::new(QuerierState::new_with_limits(
-        Arc::new(UnionProfileStore::new(Arc::new(store), Arc::new(cold))),
-        krabka_profiles::limits::Limits {
-            max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
-            ..Default::default()
-        },
-    ));
+    let querier_state = Arc::new(unbounded_querier_state(store, cold));
     let querier_addr = query::serve(
         "0.0.0.0:0".parse()?,
         querier_state,
@@ -3918,20 +3833,7 @@ async fn post_push_typed(
             }]
         }]
     });
-    let mut request = client
-        .post(format!("{base}/push.v1.PusherService/Push"))
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .json(&body);
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("push.v1 {} to {base} returned {status}: {body}", case.name).into());
-    }
-    Ok(())
+    post_push_json(client, base, tenant, &body, case.name).await
 }
 
 // -- OTLP `v1development` differential ------------------------------------
@@ -4350,16 +4252,12 @@ fn populated_diff_expected(reverse: bool) -> Value {
         "rightTicks": if reverse {140} else {28}})
 }
 
-async fn compare_populated_diffs(
-    evidence: &mut Value,
-    client: &reqwest::Client,
-    oracle_base: &str,
-    krabka_base: &str,
+/// Serves a query-frontend over `store` on a loopback port, sharding each
+/// query into 500ms ranges, and returns its base URL. It runs until the
+/// returned sender fires or is dropped.
+async fn start_sharded_frontend(
     store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
-    fixture_timestamp: i64,
-) -> TestResult {
-    use pb::querier::v1::{DiffRequest, DiffResponse, SelectMergeStacktracesRequest};
-
+) -> TestResult<(String, oneshot::Sender<()>)> {
     let (shutdown, shutdown_rx) = oneshot::channel();
     let frontend = query::serve(
         "127.0.0.1:0".parse()?,
@@ -4375,7 +4273,20 @@ async fn compare_populated_diffs(
         },
     )
     .await?;
-    let frontend_base = format!("http://{frontend}");
+    Ok((format!("http://{frontend}"), shutdown))
+}
+
+async fn compare_populated_diffs(
+    evidence: &mut Value,
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
+    fixture_timestamp: i64,
+) -> TestResult {
+    use pb::querier::v1::{DiffRequest, DiffResponse, SelectMergeStacktracesRequest};
+
+    let (frontend_base, shutdown) = start_sharded_frontend(store).await?;
     let side = |timestamp| SelectMergeStacktracesRequest {
         profile_type_id: CPU_PROFILE_TYPE.to_string(),
         label_selector: E2E_SELECTOR.to_string(),
@@ -4902,22 +4813,7 @@ async fn run_generated_profile_rejections(
     time_ms: i64,
     output: &std::path::Path,
 ) -> TestResult {
-    let (shutdown, shutdown_rx) = oneshot::channel();
-    let frontend = query::serve(
-        "127.0.0.1:0".parse()?,
-        Arc::new(QuerierState::new_frontend(
-            Arc::new(store.clone()),
-            krabka_profiles::query_frontend::FrontendConfig {
-                shard_width: krabka_units::millis(500),
-            },
-        )),
-        &ServerSecurity::default(),
-        async move {
-            let _ = shutdown_rx.await;
-        },
-    )
-    .await?;
-    let frontend_base = format!("http://{frontend}");
+    let (frontend_base, shutdown) = start_sharded_frontend(store).await?;
     let frontend_base = &frontend_base;
     let result = generated_differential::run(
         "pyroscope-rejections",
