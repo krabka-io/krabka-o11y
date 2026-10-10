@@ -1,6 +1,7 @@
 use super::{
     AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode,
-    TraceSpans, Uri, decode_trace_id, header, optional_time_bounds, request_tenant, trace_json,
+    TenantRequest, TraceSpans, Uri, decode_trace_id, header, optional_time_bounds,
+    tenant_and_bounds, trace_json,
 };
 
 /// How a trace-by-id endpoint encodes a found trace as protobuf.
@@ -41,13 +42,17 @@ where
     let Ok(trace_id) = decode_trace_id(&trace_id) else {
         return (StatusCode::BAD_REQUEST, "trace id must be 32 hex chars").into_response();
     };
-    let tenant = match request_tenant(&headers, principal, &state.cfg.tenant_policy) {
-        Ok(tenant) => tenant,
+    let (tenant, start_ns, end_ns) = match tenant_and_bounds(
+        TenantRequest {
+            headers: &headers,
+            principal,
+            policy: &state.cfg.tenant_policy,
+            uri: &uri,
+        },
+        optional_time_bounds,
+    ) {
+        Ok(tenant_window) => tenant_window,
         Err(rejection) => return *rejection,
-    };
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
 
     match state

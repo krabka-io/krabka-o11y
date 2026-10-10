@@ -1,6 +1,6 @@
 use super::{
-    InputSpan, MatchScope, NestedSet, SpanMatcher, StoredTrace, attr_values_match,
-    instrumentation_matches, intrinsic_matches, resource_matches, span_attr_matches,
+    InputSpan, MatchScope, NestedSet, SpanMatcher, StoredTrace, instrumentation_matches,
+    intrinsic_matches, matcher_attributes_match, resource_matches, span_attr_matches,
 };
 
 pub(crate) fn matcher_matches(
@@ -11,24 +11,14 @@ pub(crate) fn matcher_matches(
     matcher: &SpanMatcher,
 ) -> bool {
     let is_match = match matcher.scope {
-        MatchScope::Event => span.events.iter().any(|event| {
-            let values = event
-                .attributes
-                .iter()
-                .filter(|(key, _)| key == &matcher.key)
-                .map(|(_, value)| value)
-                .collect::<Vec<_>>();
-            attr_values_match(&values, matcher.op, &matcher.value)
-        }),
-        MatchScope::Link => span.links.iter().any(|link| {
-            let values = link
-                .attributes
-                .iter()
-                .filter(|(key, _)| key == &matcher.key)
-                .map(|(_, value)| value)
-                .collect::<Vec<_>>();
-            attr_values_match(&values, matcher.op, &matcher.value)
-        }),
+        MatchScope::Event => span
+            .events
+            .iter()
+            .any(|event| matcher_attributes_match(&event.attributes, matcher)),
+        MatchScope::Link => span
+            .links
+            .iter()
+            .any(|link| matcher_attributes_match(&link.attributes, matcher)),
         MatchScope::Intrinsic => intrinsic_matches(trace, span, nested_sets, idx, matcher),
         MatchScope::Resource => resource_matches(trace, matcher),
         MatchScope::Instrumentation => instrumentation_matches(span, matcher),

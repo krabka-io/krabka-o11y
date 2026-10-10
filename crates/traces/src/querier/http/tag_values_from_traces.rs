@@ -2,13 +2,12 @@ use krabka_traceql::{collect_event_values, collect_link_values};
 
 use super::{
     BTreeSet, TagScope, TraceSpans, TypedValue, collect_span_intrinsic_values,
-    collect_trace_intrinsic_values, scoped_attribute_tag, trace_resource_attributes,
-    typed_value_parts,
+    collect_trace_intrinsic_values, trace_resource_attributes, typed_value_parts,
 };
 
 pub(crate) fn tag_values_from_traces(traces: &[TraceSpans], tag: &str) -> Vec<TypedValue> {
     let tag = tag.strip_prefix('.').unwrap_or(tag);
-    let (attr_tag, attr_scope) = scoped_attribute_tag(tag);
+    let (attr_tag, attr_scope) = TagScope::split_resource_or_span_prefix(tag);
     let mut values = BTreeSet::new();
     for trace in traces {
         collect_trace_intrinsic_values(trace, tag, &mut values);

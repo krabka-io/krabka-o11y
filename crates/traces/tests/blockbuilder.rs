@@ -385,15 +385,12 @@ async fn configured_index_snapshot_retention_is_applied() {
 
 #[tokio::test]
 async fn multiple_polls_below_threshold_flush_one_block_per_partition() {
-    use krabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
+    use krabka_traces::blockbuilder::FlushAccumulator;
     use tokio::time::Instant;
 
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
-    let config = BlockBuilderConfig {
-        flush_max_age: minutes(1),
-        ..block_builder_config()
-    };
+    let config = minute_flush_block_builder_config();
 
     // Three polls, each well under the flush threshold, all for the same trace
     // across two polls plus a second trace in the third poll.
@@ -457,8 +454,7 @@ async fn accumulator_flushes_on_record_count_threshold() {
 
     let config = BlockBuilderConfig {
         flush_max_records: 2,
-        flush_max_age: minutes(1),
-        ..block_builder_config()
+        ..minute_flush_block_builder_config()
     };
 
     let mut accumulator = FlushAccumulator::new();
@@ -501,13 +497,10 @@ async fn accumulator_flushes_on_record_count_threshold() {
 
 #[tokio::test]
 async fn accumulator_flushes_on_age_for_low_traffic_stream() {
-    use krabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
+    use krabka_traces::blockbuilder::FlushAccumulator;
     use tokio::time::Instant;
 
-    let config = BlockBuilderConfig {
-        flush_max_age: minutes(1),
-        ..block_builder_config()
-    };
+    let config = minute_flush_block_builder_config();
 
     let mut accumulator = FlushAccumulator::new();
     let start = Instant::now();
@@ -538,15 +531,12 @@ async fn accumulator_flushes_on_age_for_low_traffic_stream() {
 
 #[tokio::test]
 async fn shutdown_drain_flushes_remaining_buffer_without_losing_spans() {
-    use krabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
+    use krabka_traces::blockbuilder::FlushAccumulator;
     use tokio::time::Instant;
 
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
-    let config = BlockBuilderConfig {
-        flush_max_age: minutes(1),
-        ..block_builder_config()
-    };
+    let config = minute_flush_block_builder_config();
 
     // Two polls buffered, never reaching the flush threshold (mirrors a pending
     // buffer at shutdown).
@@ -921,6 +911,14 @@ impl WalConsumerCommit for ScriptedConsumer {
             .expect("events lock")
             .push("commit".to_string());
         Ok(())
+    }
+}
+
+// `block_builder_config`, but a buffered record older than a minute flushes.
+fn minute_flush_block_builder_config() -> BlockBuilderConfig {
+    BlockBuilderConfig {
+        flush_max_age: minutes(1),
+        ..block_builder_config()
     }
 }
 
@@ -1450,6 +1448,53 @@ async fn concurrent_block_builders_sharing_one_index_key_keep_both_blocks_querya
 
 /// One WAL partition window flushed through a builder that carries `index`,
 /// the way `run_block_builder` does between polls.
+/// One builder replica's flush: the WAL partition and offset it consumed, and
+/// the one-span trace in it.
+#[derive(Clone, Copy)]
+struct ReplicaWindow {
+    partition: i32,
+    offset: i64,
+    trace_id: [u8; 16],
+    start_ns: i64,
+}
+
+/// The windows of `count` replicas: replica `n`, from 1, consumed offset
+/// `10 n` of partition `n + 2`, holding trace `[n; 16]` that starts at
+/// `100 n` ns.
+fn replica_windows(count: u8) -> Vec<ReplicaWindow> {
+    (1..=count)
+        .map(|n| ReplicaWindow {
+            partition: i32::from(n) + 2,
+            offset: 10 * i64::from(n),
+            trace_id: [n; 16],
+            start_ns: 100 * i64::from(n),
+        })
+        .collect()
+}
+
+/// Flushes every window from its own replica, each with a fresh index, all
+/// at once against `store`.
+async fn flush_replica_windows_concurrently(
+    store: &Arc<dyn ObjectStore>,
+    config: &BlockBuilderConfig,
+    windows: &[ReplicaWindow],
+) {
+    futures::future::join_all(windows.iter().map(|window| async move {
+        let mut index = TraceIndex::new();
+        flush_one_window(
+            store,
+            config,
+            &mut index,
+            window.partition,
+            window.offset,
+            window.trace_id,
+            window.start_ns,
+        )
+        .await;
+    }))
+    .await;
+}
+
 async fn flush_one_window(
     store: &Arc<dyn ObjectStore>,
     config: &BlockBuilderConfig,
@@ -1521,24 +1566,7 @@ async fn three_concurrent_block_builders_sharing_one_index_key_keep_every_block_
     let store: Arc<dyn ObjectStore> = Arc::clone(&barrier) as Arc<dyn ObjectStore>;
     let config = block_builder_config();
 
-    let builders = [
-        (3, 10, [1; 16], 100),
-        (4, 20, [2; 16], 200),
-        (5, 30, [3; 16], 300),
-    ]
-    .map(|(partition, offset, trace_id, start_ns)| {
-        let store = Arc::clone(&store);
-        let config = &config;
-        async move {
-            let mut index = TraceIndex::new();
-            flush_one_window(
-                &store, config, &mut index, partition, offset, trace_id, start_ns,
-            )
-            .await;
-        }
-    });
-    let [first, second, third] = builders;
-    tokio::join!(first, second, third);
+    flush_replica_windows_concurrently(&store, &config, &replica_windows(3)).await;
 
     let expected = vec![
         block_key(3, 10, 100),
@@ -1625,25 +1653,7 @@ async fn retention_still_prunes_when_four_builders_write_at_once() {
         ..block_builder_config()
     };
 
-    let builders = [
-        (3, 10, [1; 16], 100),
-        (4, 20, [2; 16], 200),
-        (5, 30, [3; 16], 300),
-        (6, 40, [4; 16], 400),
-    ]
-    .map(|(partition, offset, trace_id, start_ns)| {
-        let store = Arc::clone(&store);
-        let config = &config;
-        async move {
-            let mut index = TraceIndex::new();
-            flush_one_window(
-                &store, config, &mut index, partition, offset, trace_id, start_ns,
-            )
-            .await;
-        }
-    });
-    let [first, second, third, fourth] = builders;
-    tokio::join!(first, second, third, fourth);
+    flush_replica_windows_concurrently(&store, &config, &replica_windows(4)).await;
 
     check!(snapshot_object_count(&store, &config.index_key).await == retain.into_value());
 

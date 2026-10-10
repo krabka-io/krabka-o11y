@@ -1,6 +1,5 @@
 use super::{
-    Path, QuerierRequest, Response, SpanStore, TagValuesRequest, search_tag_values_inner,
-    search_tag_values_v2_json,
+    Path, QuerierRequest, Response, SpanStore, search_tag_values_v2_json, timed_tag_values,
 };
 
 pub(crate) async fn search_tag_values_v2<S>(
@@ -10,24 +9,5 @@ pub(crate) async fn search_tag_values_v2<S>(
 where
     S: SpanStore + 'static,
 {
-    let QuerierRequest {
-        state,
-        principal,
-        headers,
-        uri,
-    } = request;
-    let start = std::time::Instant::now();
-    let resp = search_tag_values_inner(
-        &state,
-        TagValuesRequest {
-            principal: &principal,
-            headers,
-            tag,
-            uri,
-            render: search_tag_values_v2_json,
-        },
-    )
-    .await;
-    state.record_query("tag_values", resp.status(), start);
-    resp
+    timed_tag_values(request, tag, search_tag_values_v2_json).await
 }

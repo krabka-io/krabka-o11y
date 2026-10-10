@@ -401,10 +401,8 @@ mod tests {
     };
     use http_body_util::BodyExt;
     use krabka_blockstore::{
-        AttrValue as BlockAttrValue, BlockLevel, BlockStore, NestedSet as BlockNestedSet,
-        ShardedTraceBloom, SpanAttr, SpanKind as BlockSpanKind, SpanRow,
-        StatusCode as BlockStatusCode, TraceBlockStats, TraceIndex, encode_span_rows,
-        span_block_schema,
+        AttrValue as BlockAttrValue, BlockLevel, BlockStore, ShardedTraceBloom, SpanAttr, SpanRow,
+        TraceBlockStats, TraceIndex, encode_span_rows, span_block_schema,
     };
     use krabka_traceql::{
         AttrValue, EngineOpts, EventRef, InMemorySpanStore, InputSpan, LinkRef, TraceqlEngine,
@@ -835,34 +833,14 @@ mod tests {
 
     fn block_span_row(trace: u8, span: u8, name: &str) -> SpanRow {
         SpanRow {
-            trace_id: [trace; 16],
-            span_id: [span; 8],
-            parent_span_id: None,
-            nested_set: BlockNestedSet {
-                nested_set_left: 1,
-                nested_set_right: 2,
-                parent_id: 0,
-            },
-            child_count: 0,
-            root_service_name: Some("api".into()),
             root_span_name: Some(name.into()),
-            trace_start_unix_nano: 1_000,
-            trace_duration: nanos(500),
             name: Some(name.into()),
-            kind: BlockSpanKind::Server,
-            start_unix_nano: 1_000,
-            duration: nanos(500),
-            status_code: BlockStatusCode::Ok,
-            status_message: None,
-            instrumentation_name: Some("otel-rust".into()),
-            instrumentation_version: None,
             attrs: vec![SpanAttr {
                 key: "svc".into(),
                 is_array: false,
                 value: BlockAttrValue::Str(vec!["api".into()]),
             }],
-            events: Vec::new(),
-            links: Vec::new(),
+            ..crate::querier::test_rows::api_root_server_row([trace; 16], [span; 8])
         }
     }
 
@@ -4024,7 +4002,6 @@ mod router_with_state;
 mod scan_options_param;
 mod scope_param;
 mod scope_spans_json;
-mod scoped_attribute_tag;
 mod scoped_tags_from_traces;
 mod search;
 mod search_inner;
@@ -4052,6 +4029,8 @@ mod tag_scope_name;
 mod tag_values_from_traces;
 mod tags_to_traceql;
 mod tempo_tag_alias;
+mod tenant_and_bounds;
+mod timed_tag_values;
 mod trace_by_id;
 mod trace_by_id_inner;
 mod trace_by_id_response;
@@ -4068,7 +4047,6 @@ mod traceql_query_error_response;
 mod traceql_tag_field;
 mod traces_matching_filter;
 mod typed_traceql_value;
-mod typed_value_parts;
 mod wants_json;
 mod wants_protobuf;
 
@@ -4109,6 +4087,7 @@ use intrinsic_tag_name::intrinsic_tag_name;
 use intrinsic_tags::INTRINSIC_TAGS;
 use is_match_all_query::is_match_all_query;
 use key_is_safe_attribute::key_is_safe_attribute;
+use krabka_traceql::typed_value_parts;
 use limit_error_response::limit_error_response;
 use link_tags::LINK_TAGS;
 use links_json::links_json;
@@ -4119,7 +4098,7 @@ use metric_prom_labels::metric_prom_labels;
 use metrics_query_param::metrics_query_param;
 pub(crate) use metrics_request::{TenantRequest, metrics_request};
 use optional_seconds_param::optional_seconds_param;
-use optional_time_bounds::optional_time_bounds;
+pub(crate) use optional_time_bounds::optional_time_bounds;
 use optional_usize_param::optional_usize_param;
 use otlp_attrs::otlp_attrs;
 use otlp_event::otlp_event;
@@ -4142,10 +4121,10 @@ use q_filter_limit::q_filter_limit;
 use querier_request::QuerierRequest;
 use query_instant::query_instant;
 use query_instant_inner::query_instant_inner;
-use query_param::query_param;
+pub(crate) use query_param::query_param;
 use query_range::query_range;
 use query_range_inner::query_range_inner;
-use request_tenant::request_tenant;
+pub(crate) use request_tenant::request_tenant;
 use required_seconds_param::required_seconds_param;
 use required_time_range::required_time_range;
 use resource_attrs::ResourceAttrs;
@@ -4158,7 +4137,6 @@ use router_with_state::router_with_state;
 use scan_options_param::scan_options_param;
 use scope_param::scope_param;
 use scope_spans_json::scope_spans_json;
-use scoped_attribute_tag::scoped_attribute_tag;
 use scoped_tags_from_traces::scoped_tags_from_traces;
 use search::search;
 use search_inner::search_inner;
@@ -4186,6 +4164,8 @@ pub(crate) use tag_scope_name::tag_scope_name;
 use tag_values_from_traces::tag_values_from_traces;
 use tags_to_traceql::tags_to_traceql;
 use tempo_tag_alias::tempo_tag_alias;
+pub(crate) use tenant_and_bounds::tenant_and_bounds;
+use timed_tag_values::timed_tag_values;
 use trace_by_id::trace_by_id;
 use trace_by_id_inner::{TraceByIdRequest, TraceEncoding, trace_by_id_inner};
 use trace_by_id_response::TraceByIdResponse;
@@ -4204,8 +4184,6 @@ use traces_matching_filter::{TagFilter, traces_matching_filter};
 use typed_traceql_value::typed_traceql_value;
 pub(crate) use wants_json::wants_json;
 use wants_protobuf::wants_protobuf;
-
-use crate::span::typed_value_parts::typed_value_parts;
 
 mod tempo_metric_bounds;
 use tempo_metric_bounds::tempo_metric_bounds;

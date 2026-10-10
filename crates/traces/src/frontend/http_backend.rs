@@ -107,9 +107,11 @@ mod tests {
 }
 
 mod build_url;
+mod decode_json_body;
 mod error_for_status;
 mod http_querier;
 mod instant_metrics_response_json;
+mod internal_http_client;
 mod ns_to_seconds;
 mod parse_scope;
 mod push_shard_params;
@@ -120,9 +122,11 @@ mod tags_body;
 mod typed_value_json;
 
 use build_url::build_url;
+use decode_json_body::decode_json_body;
 use error_for_status::error_for_status;
 pub use http_querier::HttpQuerier;
 use instant_metrics_response_json::InstantMetricsResponseJson;
+pub(crate) use internal_http_client::internal_http_client;
 use ns_to_seconds::ns_to_seconds;
 use parse_scope::parse_scope;
 use push_shard_params::push_shard_params;

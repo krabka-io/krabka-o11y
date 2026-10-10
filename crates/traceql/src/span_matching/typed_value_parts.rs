@@ -1,6 +1,9 @@
 use super::AttrValue;
 
-pub(crate) fn typed_value_parts(value: &AttrValue) -> Vec<(String, String)> {
+/// Flattens `value` into Tempo's `(type, value)` tag-value pairs, recursing
+/// into arrays and dropping the opaque values Tempo does not list.
+#[must_use]
+pub fn typed_value_parts(value: &AttrValue) -> Vec<(String, String)> {
     if let AttrValue::Array(values) = value {
         return values.iter().flat_map(typed_value_parts).collect();
     }

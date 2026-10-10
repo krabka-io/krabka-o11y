@@ -27,10 +27,10 @@ use crate::{
         assign_nested_set, span_schema_with_attrs,
     },
     span_matching::{
-        attr_values_match, collect_event_values, collect_link_values, enum_int_matches,
-        event_matcher_matches_absence, event_matcher_matches_event, int_matches,
-        link_matcher_matches_absence, link_matcher_matches_link, nested_presence_matches,
-        nil_matches, string_matches, typed_value_parts,
+        attr_values_match, collect_event_values, collect_link_values, collect_span_field_values,
+        enum_int_matches, event_matcher_matches_absence, event_matcher_matches_event, int_matches,
+        link_matcher_matches_absence, link_matcher_matches_link, matcher_attributes_match,
+        nested_presence_matches, nil_matches, string_matches, typed_value_parts,
     },
     store::{MatchCmp, MatchScope, MatchValue, ScanResult, SpanMatcher, SpanStore},
 };
@@ -75,20 +75,8 @@ mod tests {
 
     fn span(id: u8, parent: Option<u8>, name: &str, attrs: Vec<(&str, AttrValue)>) -> InputSpan {
         InputSpan {
-            trace_id: [7; 16],
-            span_id: [id; 8],
-            parent_span_id: parent.map(|p| [p; 8]),
-            name: name.into(),
-            kind: 0,
             start_unix_nano: 1000,
-            duration: nanos(5),
-            status_code: 0,
-            status_message: String::new(),
-            instrumentation_name: String::new(),
-            instrumentation_version: String::new(),
-            attrs: attrs.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
-            events: Vec::new(),
-            links: Vec::new(),
+            ..crate::testkit::span::span(7, id, parent, name, 5, attrs)
         }
     }
 

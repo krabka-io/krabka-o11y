@@ -453,7 +453,27 @@ mod tests {
 
     // Pair one 10ms `frontend` client span with its 8ms `backend` server
     // span under the default config, and drain the edge.
-    fn drain_frontend_to_backend_request() -> Vec<Series> {
+    /// One `frontend` client span calling one `backend` server span.
+    #[derive(Clone, Copy)]
+    struct FrontendBackendEdge {
+        client_duration_ns: i64,
+        server_duration_ns: i64,
+        server_status: StatusCode,
+    }
+
+    impl Default for FrontendBackendEdge {
+        fn default() -> Self {
+            Self {
+                client_duration_ns: 10_000_000,
+                server_duration_ns: 8_000_000,
+                server_status: StatusCode::Ok,
+            }
+        }
+    }
+
+    /// Records the client then the server half of `edge`, asserting they pair,
+    /// and drains the store.
+    fn drain_edge(edge: FrontendBackendEdge) -> Vec<Series> {
         let mut store = EdgeStore::new(&MetricsGenConfig::default());
         let client = span(
             "frontend",
@@ -461,15 +481,15 @@ mod tests {
             [0; 8],
             SpanKind::Client,
             StatusCode::Ok,
-            10_000_000,
+            edge.client_duration_ns,
         );
         let server = span(
             "backend",
             [0xB; 8],
             [0xA; 8],
             SpanKind::Server,
-            StatusCode::Ok,
-            8_000_000,
+            edge.server_status,
+            edge.server_duration_ns,
         );
 
         assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
@@ -480,7 +500,7 @@ mod tests {
 
     #[test]
     fn pairs_client_then_server_into_one_request() {
-        let out = drain_frontend_to_backend_request();
+        let out = drain_edge(FrontendBackendEdge::default());
         assert2::assert!((counter(&out, "traces_service_graph_request_total") - 1.0).abs() < 1e-9);
         assert2::assert!(counter(&out, "traces_service_graph_request_failed_total").abs() < 1e-9);
 
@@ -552,7 +572,7 @@ mod tests {
 
     #[test]
     fn request_latency_histograms_include_configured_buckets() {
-        let out = drain_frontend_to_backend_request();
+        let out = drain_edge(FrontendBackendEdge::default());
         for (name, le, want) in [
             ("traces_service_graph_request_client_seconds", 0.008, 0.0),
             ("traces_service_graph_request_client_seconds", 0.016, 1.0),
@@ -567,28 +587,11 @@ mod tests {
 
     #[test]
     fn unset_connection_type_is_labeled_explicitly() {
-        let mut store = EdgeStore::new(&MetricsGenConfig::default());
-        let client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
-        let server = span(
-            "backend",
-            [0xB; 8],
-            [0xA; 8],
-            SpanKind::Server,
-            StatusCode::Ok,
-            1,
-        );
-
-        assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
-        assert2::assert!(store.record_span(&server, 1) == RecordOutcome::Completed);
-
-        let out = store.drain(1_000);
+        let out = drain_edge(FrontendBackendEdge {
+            client_duration_ns: 1,
+            server_duration_ns: 1,
+            server_status: StatusCode::Ok,
+        });
         let labels = labels_for(&out, "traces_service_graph_request_total");
         assert2::assert!(
             labels
@@ -599,28 +602,11 @@ mod tests {
 
     #[test]
     fn failed_when_either_side_errors() {
-        let mut store = EdgeStore::new(&MetricsGenConfig::default());
-        let client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
-        let server = span(
-            "backend",
-            [0xB; 8],
-            [0xA; 8],
-            SpanKind::Server,
-            StatusCode::Error,
-            1,
-        );
-
-        assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
-        assert2::assert!(store.record_span(&server, 1) == RecordOutcome::Completed);
-
-        let out = store.drain(1_000);
+        let out = drain_edge(FrontendBackendEdge {
+            client_duration_ns: 1,
+            server_duration_ns: 1,
+            server_status: StatusCode::Error,
+        });
         assert2::assert!(
             (counter(&out, "traces_service_graph_request_failed_total") - 1.0).abs() < 1e-9
         );

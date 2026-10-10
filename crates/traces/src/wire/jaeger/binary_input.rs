@@ -22,6 +22,12 @@ impl<'a> BinaryInput<'a> {
         Self { bytes, pos: 0 }
     }
 
+    /// The bytes left to read, which bound what a collection header may
+    /// announce.
+    fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.pos)
+    }
+
     pub(crate) fn read_field(&mut self) -> Result<Option<(u8, i16)>, WireError> {
         let field_type = self.read_u8()?;
         if field_type == BT_STOP {
@@ -62,7 +68,7 @@ impl<'a> BinaryInput<'a> {
         check_collection_header(
             CollectionHeader { element_type, len },
             BT_STOP,
-            self.bytes.len().saturating_sub(self.pos),
+            self.remaining(),
         )
     }
 
@@ -78,7 +84,7 @@ impl<'a> BinaryInput<'a> {
                 len,
             },
             BT_STOP,
-            self.bytes.len().saturating_sub(self.pos),
+            self.remaining(),
         )
     }
 

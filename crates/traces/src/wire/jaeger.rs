@@ -583,6 +583,17 @@ mod tests {
         ]
     }
 
+    // The ids and timing of the span every sample batch carries.
+    fn sample_span() -> Span {
+        Span {
+            trace_id: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
+            span_id: [0, 0, 0, 0, 0, 0, 0, 3],
+            start_ns: 1_000_000,
+            duration_ns: 25_000,
+            ..Span::default()
+        }
+    }
+
     // The span tags both sample batches carry.
     fn sample_span_attrs() -> Vec<KeyValue> {
         vec![
@@ -602,15 +613,10 @@ mod tests {
         assert2::assert!(
             spans
                 == vec![Span {
-                    trace_id: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                    span_id: [0, 0, 0, 0, 0, 0, 0, 3],
                     parent_span_id: Some([0, 0, 0, 0, 0, 0, 0, 4]),
                     name: "GET /".into(),
                     kind: SpanKind::Server,
-                    start_ns: 1_000_000,
-                    duration_ns: 25_000,
                     status: StatusCode::Error,
-                    status_message: String::new(),
                     resource_attrs: sample_resource_attrs(),
                     span_attrs: sample_span_attrs(),
                     events: vec![EventRecord {
@@ -635,8 +641,7 @@ mod tests {
                             value: AttrValue::Str("follows_from".into()),
                         }],
                     }],
-                    instrumentation_scope: String::new(),
-                    instrumentation_version: String::new(),
+                    ..sample_span()
                 }]
         );
     }
@@ -648,21 +653,15 @@ mod tests {
         assert2::assert!(
             spans
                 == vec![Span {
-                    trace_id: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                    span_id: [0, 0, 0, 0, 0, 0, 0, 3],
                     parent_span_id: None,
                     name: "GET /binary".into(),
                     kind: SpanKind::Server,
-                    start_ns: 1_000_000,
-                    duration_ns: 25_000,
                     status: StatusCode::Error,
-                    status_message: String::new(),
                     resource_attrs: sample_resource_attrs(),
                     span_attrs: sample_span_attrs(),
                     events: Vec::new(),
                     links: Vec::new(),
-                    instrumentation_scope: String::new(),
-                    instrumentation_version: String::new(),
+                    ..sample_span()
                 }]
         );
     }
@@ -772,15 +771,10 @@ mod tests {
         check!(
             spans
                 == vec![Span {
-                    trace_id: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                    span_id: [0, 0, 0, 0, 0, 0, 0, 3],
                     parent_span_id: Some([0, 0, 0, 0, 0, 0, 0, 9]),
                     name: "GET /full".into(),
                     kind: SpanKind::Internal,
-                    start_ns: 1_000_000,
-                    duration_ns: 25_000,
                     status: StatusCode::Unset,
-                    status_message: String::new(),
                     resource_attrs: vec![KeyValue {
                         key: "service.name".into(),
                         value: AttrValue::Str("checkout".into()),
@@ -821,8 +815,7 @@ mod tests {
                             value: AttrValue::Str("follows_from".into()),
                         }],
                     }],
-                    instrumentation_scope: String::new(),
-                    instrumentation_version: String::new(),
+                    ..sample_span()
                 }]
         );
     }

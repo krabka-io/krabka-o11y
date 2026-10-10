@@ -1,7 +1,8 @@
 use super::{
     AppState, HeaderMap, IntoResponse, Json, Principal, Response, ScopedTag, SpanStore, StatusCode,
-    TagFilter, TagScope, TimeRange, Uri, Value, is_match_all_query, optional_time_bounds,
-    query_param, request_tenant, scope_param, scoped_tags_from_traces, traces_matching_filter,
+    TagFilter, TagScope, TenantRequest, TimeRange, Uri, Value, is_match_all_query,
+    optional_time_bounds, query_param, scope_param, scoped_tags_from_traces, tenant_and_bounds,
+    traces_matching_filter,
 };
 
 /// A tag-names request.
@@ -24,13 +25,17 @@ where
         uri,
         render,
     } = request;
-    let tenant = match request_tenant(&headers, principal, &state.cfg.tenant_policy) {
-        Ok(tenant) => tenant,
+    let (tenant, start_ns, end_ns) = match tenant_and_bounds(
+        TenantRequest {
+            headers: &headers,
+            principal,
+            policy: &state.cfg.tenant_policy,
+            uri: &uri,
+        },
+        optional_time_bounds,
+    ) {
+        Ok(tenant_window) => tenant_window,
         Err(rejection) => return *rejection,
-    };
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
     let scope = match scope_param(&uri) {
         Ok(scope) => scope,

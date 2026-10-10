@@ -1,4 +1,4 @@
-use super::{CompareSpec, MetricFunction, MetricPlan};
+use super::{CompareSpec, MetricPlan, count_over_time_plan};
 
 /// Builds the `MetricPlan` for a `compare()` stage.
 ///
@@ -7,17 +7,7 @@ use super::{CompareSpec, MetricFunction, MetricPlan};
 /// `*_over_time()` machinery.
 pub(crate) fn metric_plan_with_compare(compare: CompareSpec) -> MetricPlan {
     MetricPlan {
-        function: MetricFunction::CountOverTime,
-        value: None,
-        quantiles: Vec::new(),
-        by: Vec::new(),
-        exemplar_fields: Vec::new(),
-        stages: Vec::new(),
-        spanset_pipeline: Vec::new(),
-        sampling_factor: 1.0,
-        spanset_pipeline_had_input: false,
-        frontend_labels: false,
-        instant: false,
         compare: Some(compare),
+        ..count_over_time_plan()
     }
 }

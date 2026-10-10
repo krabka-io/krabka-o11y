@@ -3,6 +3,8 @@
 pub mod http;
 pub mod live;
 pub mod store;
+#[cfg(test)]
+pub(crate) mod test_rows;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuerierConfig {

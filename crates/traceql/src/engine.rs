@@ -120,6 +120,13 @@ mod tests {
         }
     }
 
+    // An engine over tenant `t` holding one trace (service `a`, root `root`).
+    fn one_trace_engine(spans: Vec<InputSpan>) -> TraceqlEngine<InMemorySpanStore> {
+        let mut s = InMemorySpanStore::new();
+        s.push_trace("t", "a", "root", spans);
+        TraceqlEngine::new(Arc::new(s), EngineOpts::default())
+    }
+
     #[tokio::test]
     async fn expression_aggregates_group_per_trace_keep_nil_and_execute_coalesce_in_order() {
         let mut store = InMemorySpanStore::new();
@@ -780,26 +787,17 @@ mod tests {
             attributes: Vec::new(),
         }];
         let peer = sp(9, 2, Some(1), "b");
-        let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "a", "root", vec![event_span, peer]);
-        TraceqlEngine::new(Arc::new(s), EngineOpts::default())
+        one_trace_engine(vec![event_span, peer])
     }
 
     // Two `api` spans in the first minute, one `db` span in each minute.
     fn api_db_metric_engine() -> TraceqlEngine<InMemorySpanStore> {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "api", 0),
-                sp_at(1, 2, None, "api", 10_000),
-                sp_at(1, 3, None, "db", 20_000),
-                sp_at(1, 4, None, "db", 70_000),
-            ],
-        );
-        TraceqlEngine::new(Arc::new(s), EngineOpts::default())
+        one_trace_engine(vec![
+            sp_at(1, 1, None, "api", 0),
+            sp_at(1, 2, None, "api", 10_000),
+            sp_at(1, 3, None, "db", 20_000),
+            sp_at(1, 4, None, "db", 70_000),
+        ])
     }
 
     // `count_over_time() | by(event:name)` over one minute, sorted by labels.
@@ -815,21 +813,14 @@ mod tests {
 
     // In the first minute: two `api` spans, one `db`, three `worker`.
     fn api_db_worker_engine() -> TraceqlEngine<InMemorySpanStore> {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "api", 0),
-                sp_at(1, 2, None, "api", 10_000),
-                sp_at(1, 3, None, "db", 20_000),
-                sp_at(1, 4, None, "worker", 30_000),
-                sp_at(1, 5, None, "worker", 40_000),
-                sp_at(1, 6, None, "worker", 50_000),
-            ],
-        );
-        TraceqlEngine::new(Arc::new(s), EngineOpts::default())
+        one_trace_engine(vec![
+            sp_at(1, 1, None, "api", 0),
+            sp_at(1, 2, None, "api", 10_000),
+            sp_at(1, 3, None, "db", 20_000),
+            sp_at(1, 4, None, "worker", 30_000),
+            sp_at(1, 5, None, "worker", 40_000),
+            sp_at(1, 6, None, "worker", 50_000),
+        ])
     }
 
     // The series of a metrics query over the first minute, sorted by labels.
@@ -889,33 +880,19 @@ mod tests {
 
     // One trace of `api` spans at 0s and 10s and a `db` span at 20s.
     fn api_api_db_engine() -> TraceqlEngine<InMemorySpanStore> {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "api", 0),
-                sp_at(1, 2, None, "api", 10_000),
-                sp_at(1, 3, None, "db", 20_000),
-            ],
-        );
-        TraceqlEngine::new(Arc::new(s), EngineOpts::default())
+        one_trace_engine(vec![
+            sp_at(1, 1, None, "api", 0),
+            sp_at(1, 2, None, "api", 10_000),
+            sp_at(1, 3, None, "db", 20_000),
+        ])
     }
 
     // One trace of an `api` root span at 0s and its `api` child at 10s.
     fn api_parent_child_engine() -> TraceqlEngine<InMemorySpanStore> {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "api", 0),
-                sp_at(1, 2, Some(1), "api", 10_000),
-            ],
-        );
-        TraceqlEngine::new(Arc::new(s), EngineOpts::default())
+        one_trace_engine(vec![
+            sp_at(1, 1, None, "api", 0),
+            sp_at(1, 2, Some(1), "api", 10_000),
+        ])
     }
 
     // The top two `api_db_worker_engine` services by span count.
@@ -1269,9 +1246,7 @@ mod tests {
             format!("{INSTRUMENTATION_ATTR_PREFIX}language"),
             AttrValue::Str("rust".into()),
         ));
-        let mut store = InMemorySpanStore::new();
-        store.push_trace("t", "a", "root", vec![span]);
-        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let engine = one_trace_engine(vec![span]);
 
         let search = engine
             .search(
@@ -1344,9 +1319,7 @@ mod tests {
             name: "cache.miss".into(),
             attributes: vec![("cache.key".into(), AttrValue::Str("users".into()))],
         }];
-        let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "a", "root", vec![span, sp(8, 1, None, "x")]);
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![span, sp(8, 1, None, "x")]);
 
         let r = search_all(&e, "{ event:name = \"cache.miss\" }").await;
 
@@ -1396,9 +1369,7 @@ mod tests {
             attributes: Vec::new(),
         }];
         let peer = sp(9, 3, Some(1), "c");
-        let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "a", "root", vec![miss_span, hit_span, peer]);
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![miss_span, hit_span, peer]);
 
         let r = search_all(
             &e,
@@ -1429,9 +1400,7 @@ mod tests {
             name: "cache.hit".into(),
             attributes: vec![("cache.key".into(), AttrValue::Str("users".into()))],
         }];
-        let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "a", "root", vec![miss_users, miss_orders, hit_users]);
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![miss_users, miss_orders, hit_users]);
 
         let r = search_all(
             &e,
@@ -1468,9 +1437,7 @@ mod tests {
             name: "cache.miss".into(),
             attributes: vec![("cache.key".into(), AttrValue::Str("users".into()))],
         }];
-        let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "a", "root", vec![split_events, same_event]);
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![split_events, same_event]);
 
         let r = search_all(
             &e,
@@ -1491,9 +1458,7 @@ mod tests {
         }];
         let attr_span = sp(9, 2, Some(1), "b");
         let unrelated = sp(9, 3, Some(1), "c");
-        let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "a", "root", vec![event_span, attr_span, unrelated]);
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![event_span, attr_span, unrelated]);
 
         let r = search_all(&e, "{ event:name = \"cache.miss\" || .svc = \"b\" }").await;
 
@@ -1507,26 +1472,19 @@ mod tests {
 
     #[tokio::test]
     async fn search_selector_applies_array_any_none_semantics_to_repeated_attrs() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                InputSpan {
-                    attrs: vec![
-                        ("http.method".into(), AttrValue::Str("GET".into())),
-                        ("http.method".into(), AttrValue::Str("POST".into())),
-                    ],
-                    ..sp(9, 1, None, "a")
-                },
-                InputSpan {
-                    attrs: vec![("http.method".into(), AttrValue::Str("DELETE".into()))],
-                    ..sp(9, 2, Some(1), "b")
-                },
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            InputSpan {
+                attrs: vec![
+                    ("http.method".into(), AttrValue::Str("GET".into())),
+                    ("http.method".into(), AttrValue::Str("POST".into())),
+                ],
+                ..sp(9, 1, None, "a")
+            },
+            InputSpan {
+                attrs: vec![("http.method".into(), AttrValue::Str("DELETE".into()))],
+                ..sp(9, 2, Some(1), "b")
+            },
+        ]);
 
         let r = search_all(&e, "{ span.http.method = \"POST\" }").await;
         check_single_matched_span(&r, 1);
@@ -1543,9 +1501,7 @@ mod tests {
             span_id: [6; 8],
             attributes: vec![("link.kind".into(), AttrValue::Str("retry".into()))],
         }];
-        let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "a", "root", vec![span, sp(8, 1, None, "x")]);
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![span, sp(8, 1, None, "x")]);
 
         let r = search_all(&e, "{ link.link.kind = \"retry\" }").await;
 
@@ -1564,20 +1520,13 @@ mod tests {
 
     #[tokio::test]
     async fn search_selector_matches_status_enum_value() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                InputSpan {
-                    status_code: 2,
-                    ..sp(9, 1, None, "a")
-                },
-                sp(9, 2, Some(1), "b"),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            InputSpan {
+                status_code: 2,
+                ..sp(9, 1, None, "a")
+            },
+            sp(9, 2, Some(1), "b"),
+        ]);
         let r = search_all(&e, "{ span:status = error }").await;
 
         check_single_matched_span(&r, 1);
@@ -1586,20 +1535,13 @@ mod tests {
 
     #[tokio::test]
     async fn search_selector_matches_kind_enum_value() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                InputSpan {
-                    kind: 2,
-                    ..sp(9, 1, None, "a")
-                },
-                sp(9, 2, Some(1), "b"),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            InputSpan {
+                kind: 2,
+                ..sp(9, 1, None, "a")
+            },
+            sp(9, 2, Some(1), "b"),
+        ]);
         let r = search_all(&e, "{ span:kind = server }").await;
 
         check_single_matched_span(&r, 1);
@@ -1727,19 +1669,12 @@ mod tests {
 
     #[tokio::test]
     async fn count_over_time_counts_matched_spans_per_bucket() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "a", 0),
-                sp_at(1, 2, None, "a", 10_000),
-                sp_at(1, 3, None, "a", 60_000),
-                sp_at(1, 4, None, "b", 70_000),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            sp_at(1, 1, None, "a", 0),
+            sp_at(1, 2, None, "a", 10_000),
+            sp_at(1, 3, None, "a", 60_000),
+            sp_at(1, 4, None, "b", 70_000),
+        ]);
         let got = e
             .query_range(
                 "t",
@@ -1756,18 +1691,11 @@ mod tests {
 
     #[tokio::test]
     async fn rate_divides_bucket_count_by_step_seconds() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "a", 0),
-                sp_at(1, 2, None, "a", 10_000),
-                sp_at(1, 3, None, "a", 20_000),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            sp_at(1, 1, None, "a", 0),
+            sp_at(1, 2, None, "a", 10_000),
+            sp_at(1, 3, None, "a", 20_000),
+        ]);
         let got = e
             .query_range(
                 "t",
@@ -2098,92 +2026,63 @@ mod tests {
 
     #[tokio::test]
     async fn count_over_time_by_kind_and_status_intrinsics() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                InputSpan {
-                    kind: 2,
-                    status_code: 0,
-                    ..sp_at(1, 1, None, "api", 0)
-                },
-                InputSpan {
-                    kind: 2,
-                    status_code: 2,
-                    ..sp_at(1, 2, None, "api", 10_000)
-                },
-                InputSpan {
-                    kind: 3,
-                    status_code: 2,
-                    ..sp_at(1, 3, None, "api", 20_000)
-                },
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            InputSpan {
+                kind: 2,
+                status_code: 0,
+                ..sp_at(1, 1, None, "api", 0)
+            },
+            InputSpan {
+                kind: 2,
+                status_code: 2,
+                ..sp_at(1, 2, None, "api", 10_000)
+            },
+            InputSpan {
+                kind: 3,
+                status_code: 2,
+                ..sp_at(1, 3, None, "api", 20_000)
+            },
+        ]);
         let got = sorted_series(
             &e,
             "{ .svc = \"api\" } | count_over_time() | by(span:kind, span:status)",
             TWO_BUCKETS,
         )
         .await;
-        assert!(
-            got == vec![
-                TraceMetricSeries {
-                    label_types: BTreeMap::default(),
-                    labels: vec![
-                        ("kind".into(), "client".into()),
-                        ("status".into(), "error".into())
-                    ],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-                TraceMetricSeries {
-                    label_types: BTreeMap::default(),
-                    labels: vec![
-                        ("kind".into(), "server".into()),
-                        ("status".into(), "error".into())
-                    ],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-                TraceMetricSeries {
-                    label_types: BTreeMap::default(),
-                    labels: vec![
-                        ("kind".into(), "server".into()),
-                        ("status".into(), "unset".into())
-                    ],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-            ]
-        );
+        // Spans per (kind, status) pair: one each, all in the first minute.
+        let expected = [
+            ["client", "error"],
+            ["server", "error"],
+            ["server", "unset"],
+        ]
+        .map(|[kind, status]| TraceMetricSeries {
+            label_types: BTreeMap::default(),
+            labels: vec![
+                ("kind".into(), kind.into()),
+                ("status".into(), status.into()),
+            ],
+            points: vec![(0, 1.0), (60_000, 0.0)],
+            exemplars: vec![],
+        });
+        assert!(got == expected);
     }
 
     #[tokio::test]
     async fn count_over_time_by_status_message_intrinsic() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                InputSpan {
-                    status_message: "timeout".into(),
-                    ..sp_at(1, 1, None, "api", 0)
-                },
-                InputSpan {
-                    status_message: "timeout".into(),
-                    ..sp_at(1, 2, None, "api", 10_000)
-                },
-                InputSpan {
-                    status_message: "cancelled".into(),
-                    ..sp_at(1, 3, None, "api", 20_000)
-                },
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            InputSpan {
+                status_message: "timeout".into(),
+                ..sp_at(1, 1, None, "api", 0)
+            },
+            InputSpan {
+                status_message: "timeout".into(),
+                ..sp_at(1, 2, None, "api", 10_000)
+            },
+            InputSpan {
+                status_message: "cancelled".into(),
+                ..sp_at(1, 3, None, "api", 20_000)
+            },
+        ]);
         let got = sorted_series(
             &e,
             "{ .svc = \"api\" } | count_over_time() | by(span:statusMessage)",
@@ -2273,9 +2172,7 @@ mod tests {
 
     #[tokio::test]
     async fn count_over_time_by_instrumentation_name_intrinsic() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "a", "root", vec![sp_at(1, 1, None, "api", 0)]);
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![sp_at(1, 1, None, "api", 0)]);
         let got = e
             .query_range(
                 "t",
@@ -2335,27 +2232,20 @@ mod tests {
 
     #[tokio::test]
     async fn avg_and_sum_over_time_fold_duration_per_bucket() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                InputSpan {
-                    duration: nanos(100),
-                    ..sp_at(1, 1, None, "api", 0)
-                },
-                InputSpan {
-                    duration: nanos(300),
-                    ..sp_at(1, 2, None, "api", 10_000)
-                },
-                InputSpan {
-                    duration: nanos(50),
-                    ..sp_at(1, 3, None, "api", 70_000)
-                },
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            InputSpan {
+                duration: nanos(100),
+                ..sp_at(1, 1, None, "api", 0)
+            },
+            InputSpan {
+                duration: nanos(300),
+                ..sp_at(1, 2, None, "api", 10_000)
+            },
+            InputSpan {
+                duration: nanos(50),
+                ..sp_at(1, 3, None, "api", 70_000)
+            },
+        ]);
 
         let avg = e
             .query_range(
@@ -2408,23 +2298,16 @@ mod tests {
 
     #[tokio::test]
     async fn sum_over_time_can_fold_trace_duration_intrinsic() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                InputSpan {
-                    duration: nanos(100),
-                    ..sp_at(1, 1, None, "api", 0)
-                },
-                InputSpan {
-                    duration: nanos(300),
-                    ..sp_at(1, 2, None, "api", 50)
-                },
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            InputSpan {
+                duration: nanos(100),
+                ..sp_at(1, 1, None, "api", 0)
+            },
+            InputSpan {
+                duration: nanos(300),
+                ..sp_at(1, 2, None, "api", 50)
+            },
+        ]);
 
         let got = e
             .query_range(
@@ -2442,35 +2325,28 @@ mod tests {
 
     #[tokio::test]
     async fn quantile_over_time_emits_per_quantile_series() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                InputSpan {
-                    duration: nanos(100),
-                    ..sp_at(1, 1, None, "api", 0)
-                },
-                InputSpan {
-                    duration: nanos(200),
-                    ..sp_at(1, 2, None, "api", 10_000)
-                },
-                InputSpan {
-                    duration: nanos(300),
-                    ..sp_at(1, 3, None, "api", 20_000)
-                },
-                InputSpan {
-                    duration: nanos(400),
-                    ..sp_at(1, 4, None, "api", 30_000)
-                },
-                InputSpan {
-                    duration: nanos(500),
-                    ..sp_at(1, 5, None, "api", 40_000)
-                },
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            InputSpan {
+                duration: nanos(100),
+                ..sp_at(1, 1, None, "api", 0)
+            },
+            InputSpan {
+                duration: nanos(200),
+                ..sp_at(1, 2, None, "api", 10_000)
+            },
+            InputSpan {
+                duration: nanos(300),
+                ..sp_at(1, 3, None, "api", 20_000)
+            },
+            InputSpan {
+                duration: nanos(400),
+                ..sp_at(1, 4, None, "api", 30_000)
+            },
+            InputSpan {
+                duration: nanos(500),
+                ..sp_at(1, 5, None, "api", 40_000)
+            },
+        ]);
         let mut series = e
             .query_range(
                 "t",
@@ -2510,27 +2386,20 @@ mod tests {
 
     #[tokio::test]
     async fn histogram_over_time_emits_non_cumulative_logarithmic_counts() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                InputSpan {
-                    duration: nanos(1_000_000),
-                    ..sp_at(1, 1, None, "api", 0)
-                },
-                InputSpan {
-                    duration: nanos(2_000_000_000),
-                    ..sp_at(1, 2, None, "api", 10_000)
-                },
-                InputSpan {
-                    duration: secs(12),
-                    ..sp_at(1, 3, None, "api", 20_000)
-                },
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            InputSpan {
+                duration: nanos(1_000_000),
+                ..sp_at(1, 1, None, "api", 0)
+            },
+            InputSpan {
+                duration: nanos(2_000_000_000),
+                ..sp_at(1, 2, None, "api", 10_000)
+            },
+            InputSpan {
+                duration: secs(12),
+                ..sp_at(1, 3, None, "api", 20_000)
+            },
+        ]);
         let mut series = e
             .query_range(
                 "t",
@@ -2623,17 +2492,10 @@ mod tests {
 
     #[tokio::test]
     async fn histogram_over_time_without_field_defaults_to_span_duration() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![InputSpan {
-                duration: nanos(1_000_000),
-                ..sp_at(1, 1, None, "api", 0)
-            }],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![InputSpan {
+            duration: nanos(1_000_000),
+            ..sp_at(1, 1, None, "api", 0)
+        }]);
         let series = e
             .query_range(
                 "t",
@@ -2813,9 +2675,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejected_spansets_keep_only_initialized_ungrouped_count_or_rate_series() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace("t", "a", "root", vec![sp_at(1, 1, None, "api", 1)]);
-        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let engine = one_trace_engine(vec![sp_at(1, 1, None, "api", 1)]);
         let zero = vec![TraceMetricSeries {
             labels: Vec::new(),
             label_types: BTreeMap::new(),
@@ -2852,19 +2712,12 @@ mod tests {
 
     #[tokio::test]
     async fn fractional_sampling_runs_before_selector_and_scaling_before_metric_filter() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "api", 1),
-                sp_at(1, 2, None, "api", 2),
-                sp_at(1, 3, None, "db", 3),
-                sp_at(1, 4, None, "worker", 4),
-            ],
-        );
-        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let engine = one_trace_engine(vec![
+            sp_at(1, 1, None, "api", 1),
+            sp_at(1, 2, None, "api", 2),
+            sp_at(1, 3, None, "db", 3),
+            sp_at(1, 4, None, "worker", 4),
+        ]);
         let response = engine
             .query_range(
                 "t",
@@ -3431,9 +3284,7 @@ mod tests {
 
     #[tokio::test]
     async fn default_options_disable_traceql_metric_exemplars() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "a", "root", vec![sp_at(0x11, 0x22, None, "api", 0)]);
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![sp_at(0x11, 0x22, None, "api", 0)]);
 
         let got = e
             .query_range(
@@ -3512,18 +3363,11 @@ mod tests {
     async fn absent_metric_attribute_does_not_pollute_min_and_avg() {
         // Spans whose target attribute is ABSENT must not contribute a 0 to
         // min/avg/max over the value field.
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_with_code(1, 0, Some(10)),
-                sp_with_code(2, 10_000, Some(30)),
-                sp_with_code(3, 20_000, None),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            sp_with_code(1, 0, Some(10)),
+            sp_with_code(2, 10_000, Some(30)),
+            sp_with_code(3, 20_000, None),
+        ]);
 
         let min = e
             .query_range(
@@ -4159,29 +4003,12 @@ mod tests {
         .unwrap()
     }
 
-    fn count_plan() -> MetricPlan {
-        MetricPlan {
-            function: MetricFunction::CountOverTime,
-            value: None,
-            quantiles: Vec::new(),
-            by: Vec::new(),
-            exemplar_fields: Vec::new(),
-            stages: Vec::new(),
-            spanset_pipeline: Vec::new(),
-            sampling_factor: 1.0,
-            spanset_pipeline_had_input: false,
-            frontend_labels: false,
-            instant: false,
-            compare: None,
-        }
-    }
-
     #[test]
     fn assemble_metrics_response_allows_equal_start_and_end() {
         // end_ns == start_ns is a valid single-bucket range. The `end_ns < start_ns`
         // guard must NOT fire on equality (kills `< -> <=` and `< -> ==`).
         let batch = metric_start_batch(&[0]);
-        let plan = count_plan();
+        let plan = count_over_time_plan();
         let resp = assemble_metrics_response(
             &[batch],
             UnixNano(0),
@@ -4219,7 +4046,7 @@ mod tests {
         //  * `|| -> &&` would stop skipping the below-start row.
         //  * `> -> ==` / `> -> >=` would drop the row exactly at end_ns.
         let batch = metric_start_batch(&[-10, 0, 60_000, 120_001]);
-        let plan = count_plan();
+        let plan = count_over_time_plan();
         let resp = assemble_metrics_response(
             &[batch],
             UnixNano(0),
@@ -4239,7 +4066,7 @@ mod tests {
     #[test]
     fn assemble_metrics_response_builds_one_point_per_step_bucket() {
         let batch = metric_start_batch(&[9, 10, 12, 14, 15]);
-        let plan = count_plan();
+        let plan = count_over_time_plan();
 
         let resp = assemble_metrics_response(
             &[batch],
@@ -4259,18 +4086,11 @@ mod tests {
     #[tokio::test]
     async fn count_over_time_counts_spans_regardless_of_value_field() {
         // count_over_time has no value field, so absent attributes still count.
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_with_code(1, 0, Some(10)),
-                sp_with_code(2, 10_000, None),
-                sp_with_code(3, 20_000, None),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = one_trace_engine(vec![
+            sp_with_code(1, 0, Some(10)),
+            sp_with_code(2, 10_000, None),
+            sp_with_code(3, 20_000, None),
+        ]);
 
         let count = e
             .query_range(
@@ -5475,6 +5295,7 @@ mod compare_total_series;
 mod compare_totals;
 mod compare_value_match;
 mod compare_value_series;
+mod count_over_time_plan;
 mod deduplicate_search_spans;
 mod engine_opts;
 mod enum_cmp;
@@ -5586,6 +5407,7 @@ use compare_total_series::compare_total_series;
 use compare_totals::CompareTotals;
 use compare_value_match::compare_value_match;
 use compare_value_series::compare_value_series;
+use count_over_time_plan::count_over_time_plan;
 use deduplicate_search_spans::deduplicate_search_spans;
 pub use engine_opts::EngineOpts;
 use enum_cmp::enum_cmp;

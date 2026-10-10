@@ -12,13 +12,9 @@ use std::{
 };
 
 use assert2::check;
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
+use axum::{body::Body, http::StatusCode};
 use base64::Engine as _;
 use generated_differential::{CompareOp, TypedConstructor, TypedExpr};
-use http_body_util::BodyExt as _;
 use krabka_traceql::{AttrValue as TraceqlAttrValue, EngineOpts, TraceqlEngine};
 use krabka_traces::{
     AttrValue,
@@ -44,17 +40,18 @@ use testcontainers::{
     core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
-use tower::ServiceExt as _;
 
 mod container_url;
 mod ingest_capture;
 mod metrics_span;
+mod search_json;
 mod span_store;
 
 use self::{
     container_url::mapped_base_url,
-    ingest_capture::{CapturingSink, string_kv},
+    ingest_capture::{CapturingSink, DoorPush, push_to_door, serve_until_shutdown, string_kv},
     metrics_span::MetricsSpan,
+    search_json::search_contains_span_id_hex,
     span_store::{span_store_from_records, traceql_attr},
 };
 
@@ -751,8 +748,10 @@ async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> 
         let query = format!("{selector} | {pipeline} with({hints})");
         let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
-        let upstream_result = get_json(client, &format!("{oracle}{suffix}"), None).await;
-        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let OracleAndCandidate {
+            upstream: upstream_result,
+            actual: actual_result,
+        } = get_json_from_both(targets, &suffix).await;
         let upstream = json_or_error(&upstream_result);
         let actual = json_or_error(&actual_result);
         let result = upstream_result.and_then(|upstream| {
@@ -891,10 +890,7 @@ async fn compare_live_sampled_pipelines(
     ledger: ComparisonLedger<'_>,
 ) -> TestResult {
     let QueryTargets {
-        client,
-        oracle,
-        candidate,
-        query_range: range,
+        query_range: range, ..
     } = targets;
     let ComparisonLedger { cases, failures } = ledger;
     for (id, expression, traces, average) in [
@@ -924,8 +920,10 @@ async fn compare_live_sampled_pipelines(
         };
         let encoded = url_encoded(expression);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
-        let upstream_result = get_json(client, &format!("{oracle}{suffix}"), None).await;
-        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let OracleAndCandidate {
+            upstream: upstream_result,
+            actual: actual_result,
+        } = get_json_from_both(targets, &suffix).await;
         let upstream = json_or_error(&upstream_result);
         let actual = json_or_error(&actual_result);
         let result = upstream_result.and_then(|upstream| {
@@ -1625,12 +1623,7 @@ async fn record_array_metric_frontend_observation(
     targets: QueryTargets<'_>,
     anchor: u64,
 ) -> TestResult {
-    let QueryTargets {
-        client,
-        oracle,
-        candidate,
-        query_range,
-    } = targets;
+    let QueryTargets { query_range, .. } = targets;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
     // Three source spans occupy two buckets: root 500ms, children 150ms/140ms.
@@ -1653,8 +1646,10 @@ async fn record_array_metric_frontend_observation(
         );
         let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
-        let upstream_result = get_json(client, &format!("{oracle}{suffix}"), None).await;
-        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let OracleAndCandidate {
+            upstream: upstream_result,
+            actual: actual_result,
+        } = get_json_from_both(targets, &suffix).await;
         let upstream = json_or_error(&upstream_result);
         let actual = json_or_error(&actual_result);
         let mut expected = array_metric_frontend_expectation(anchor)?;
@@ -2301,25 +2296,7 @@ async fn grafana_accepts_tempo_datasource_pointing_at_krabka() -> TestResult {
             "httpHeaderValue1": TENANT
         }
     });
-    let _created: JsonValue = client
-        .post(format!("{grafana_base}/api/datasources"))
-        .basic_auth("admin", Some("admin"))
-        .json(&payload)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let fetched: JsonValue = client
-        .get(format!(
-            "{grafana_base}/api/datasources/uid/{GRAFANA_TEMPO_DATASOURCE_UID}"
-        ))
-        .basic_auth("admin", Some("admin"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let fetched = create_and_fetch_datasource(&client, &grafana_base, &payload).await?;
 
     assert2::assert!(fetched.get("type").and_then(JsonValue::as_str) == Some("tempo"));
     assert2::assert!(
@@ -2449,23 +2426,7 @@ async fn grafana_service_graph_prometheus_datasource_and_series() -> TestResult 
             "httpHeaderValue1": TENANT
         }
     });
-    let _created: JsonValue = client
-        .post(format!("{grafana_base}/api/datasources"))
-        .basic_auth("admin", Some("admin"))
-        .json(&payload)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let fetched: JsonValue = client
-        .get(format!("{grafana_base}/api/datasources/uid/{prom_uid}"))
-        .basic_auth("admin", Some("admin"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let fetched = create_and_fetch_datasource(&client, &grafana_base, &payload).await?;
     assert2::assert!(fetched.get("type").and_then(JsonValue::as_str) == Some("prometheus"));
 
     // (2) Krabka-side production: the real metrics-generator EdgeStore pairs the
@@ -2559,24 +2520,19 @@ async fn start_krabka_pair_on(
 ) -> TestResult<KrabkaPair> {
     let sink = CapturingSink::default();
     let distributor_state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
-    let resp = authenticated(distributor::router(distributor_state))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/traces")
-                .header("content-type", "application/x-protobuf")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(otlp_body.to_vec()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::OK);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(distributor_state)),
+        DoorPush {
+            uri: "/v1/traces",
+            content_type: "application/x-protobuf",
+            tenant: TENANT,
+            body: Body::from(otlp_body.to_vec()),
+            expected_status: StatusCode::OK,
+        },
+    )
+    .await?;
 
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
+    let records = sink.snapshot()?;
     let store = Arc::new(TraceqlEngine::new(
         Arc::new(span_store_from_records(&records)),
         EngineOpts {
@@ -2588,14 +2544,7 @@ async fn start_krabka_pair_on(
     let listener = tokio::net::TcpListener::bind(format!("{bind_host}:0")).await?;
     let addr = listener.local_addr()?;
     let port = addr.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, app);
 
     Ok(KrabkaPair {
         base_url: format!("http://127.0.0.1:{port}"),
@@ -2904,6 +2853,56 @@ fn traceql_rejection_comparator_rejects_success_and_unrelated_failures() {
     check!(traceql_query_rejection_kind(400, r#"{"traces":[],"message":"parse error"}"#).is_none());
 }
 
+/// What the oracle and the candidate each answered to one request.
+struct OracleAndCandidate {
+    upstream: TestResult<JsonValue>,
+    actual: TestResult<JsonValue>,
+}
+
+/// GETs `suffix` from the oracle without a tenant, and from the candidate as
+/// [`TENANT`].
+async fn get_json_from_both(targets: QueryTargets<'_>, suffix: &str) -> OracleAndCandidate {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        ..
+    } = targets;
+    OracleAndCandidate {
+        upstream: get_json(client, &format!("{oracle}{suffix}"), None).await,
+        actual: get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await,
+    }
+}
+
+/// Creates a Grafana datasource from `payload`, then reads it back by its
+/// `uid`, as Grafana stored it.
+async fn create_and_fetch_datasource(
+    client: &reqwest::Client,
+    grafana_base: &str,
+    payload: &JsonValue,
+) -> TestResult<JsonValue> {
+    let uid = payload["uid"]
+        .as_str()
+        .ok_or("datasource payload has a uid")?;
+    let _created: JsonValue = client
+        .post(format!("{grafana_base}/api/datasources"))
+        .basic_auth("admin", Some("admin"))
+        .json(payload)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(client
+        .get(format!("{grafana_base}/api/datasources/uid/{uid}"))
+        .basic_auth("admin", Some("admin"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
 async fn get_json(
     client: &reqwest::Client,
     url: &str,
@@ -2939,20 +2938,20 @@ async fn get_json_until_non_empty_traces(
     url: &str,
     tenant: Option<&str>,
 ) -> TestResult<JsonValue> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut last = JsonValue::Null;
-    while Instant::now() < deadline {
-        let json = get_json(client, url, tenant).await?;
-        if json["traces"]
-            .as_array()
-            .is_some_and(|traces| !traces.is_empty())
-        {
-            return Ok(json);
-        }
-        last = json;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    Err(format!("timed out waiting for non-empty traces from {url}: {last}").into())
+    get_json_until(
+        client,
+        PollTarget {
+            url,
+            tenant,
+            waiting_for: "non-empty traces",
+        },
+        |json| {
+            json["traces"]
+                .as_array()
+                .is_some_and(|traces| !traces.is_empty())
+        },
+    )
+    .await
 }
 
 async fn get_json_until_positive_metric_total(
@@ -2960,17 +2959,48 @@ async fn get_json_until_positive_metric_total(
     url: &str,
     tenant: Option<&str>,
 ) -> TestResult<JsonValue> {
+    get_json_until(
+        client,
+        PollTarget {
+            url,
+            tenant,
+            waiting_for: "positive metric total",
+        },
+        |json| metric_points_total(json) > 0.0,
+    )
+    .await
+}
+
+/// One JSON endpoint to poll, and what the poll waits for, as the timeout
+/// error names it.
+struct PollTarget<'a> {
+    url: &'a str,
+    tenant: Option<&'a str>,
+    waiting_for: &'static str,
+}
+
+/// Polls `target` every 500 ms for up to 30 s until `ready` accepts its JSON.
+async fn get_json_until(
+    client: &reqwest::Client,
+    target: PollTarget<'_>,
+    ready: impl Fn(&JsonValue) -> bool,
+) -> TestResult<JsonValue> {
+    let PollTarget {
+        url,
+        tenant,
+        waiting_for,
+    } = target;
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut last = JsonValue::Null;
     while Instant::now() < deadline {
         let json = get_json(client, url, tenant).await?;
-        if metric_points_total(&json) > 0.0 {
+        if ready(&json) {
             return Ok(json);
         }
         last = json;
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    Err(format!("timed out waiting for positive metric total from {url}: {last}").into())
+    Err(format!("timed out waiting for {waiting_for} from {url}: {last}").into())
 }
 
 /// Real Tempo has ingestion latency. A freshly pushed trace is not immediately
@@ -3091,14 +3121,7 @@ fn search_identities(response: &JsonValue) -> TestResult<BTreeMap<String, Vec<St
 }
 
 fn assert_search_contains_span_id(search: &JsonValue, span_id: &str) {
-    let found = search["traces"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|trace| trace["spanSets"].as_array().into_iter().flatten())
-        .flat_map(|span_set| span_set["spans"].as_array().into_iter().flatten())
-        .any(|span| span["spanID"].as_str() == Some(span_id));
-    assert2::assert!(found);
+    assert2::assert!(search_contains_span_id_hex(search, span_id));
 }
 
 fn assert_search_empty(search: &JsonValue) {
@@ -3721,7 +3744,7 @@ fn retrieval_otlp_attributes() -> Vec<OtlpKeyValue> {
 #[test]
 fn retrieval_shape_ledger_rejects_type_collapse_order_and_nonfinite_corruption() {
     assert2::assert!(
-        traceql_attr(AttrValue::Bytes(vec![0, 255]))
+        traceql_attr(&AttrValue::Bytes(vec![0, 255]))
             == Some(TraceqlAttrValue::Unsupported(
                 r#"{"bytesValue":"AP8="}"#.into()
             ))

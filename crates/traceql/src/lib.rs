@@ -45,10 +45,11 @@ pub use span_columns::{
     span_schema, span_schema_with_attrs,
 };
 pub use span_matching::{
-    attr_matches, attr_values_match, bool_matches, collect_event_values, collect_link_values,
-    enum_int_matches, event_matcher_matches_absence, event_matcher_matches_event, float_matches,
-    int_matches, link_matcher_matches_absence, link_matcher_matches_link, nested_presence_matches,
-    nil_matches, present_value_matches, string_matches,
+    SpanIntrinsicFields, attr_matches, attr_values_match, bool_matches, collect_event_values,
+    collect_link_values, collect_span_field_values, enum_int_matches,
+    event_matcher_matches_absence, event_matcher_matches_event, float_matches, int_matches,
+    link_matcher_matches_absence, link_matcher_matches_link, matcher_attributes_match,
+    nested_presence_matches, nil_matches, present_value_matches, string_matches, typed_value_parts,
 };
 pub use store::{
     MatchCmp, MatchScope, MatchValue, ScanJob, ScanOptions, ScanResult, SpanMatcher, SpanStore,

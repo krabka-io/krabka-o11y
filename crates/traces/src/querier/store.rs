@@ -708,11 +708,9 @@ mod tests {
     };
     use assert2::check;
     use krabka_blockstore::{
-        AttrValue as BlockAttrValue, BlockLevel, BlockWriter, NestedSet as BlockNestedSet,
-        PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanAttr,
-        SpanKind as BlockSpanKind, SpanRow, StatusCode as BlockStatusCode, SummaryColumns,
-        TraceBlockStats, encode_span_rows, encode_span_rows_with_promoted_attrs, span_block_decl,
-        span_block_schema,
+        AttrValue as BlockAttrValue, BlockLevel, BlockWriter, PromotedSpanAttr, SCOL_START_NANO,
+        SCOL_TRACE_ID, ShardedTraceBloom, SpanAttr, SpanRow, SummaryColumns, TraceBlockStats,
+        encode_span_rows, encode_span_rows_with_promoted_attrs, span_block_decl, span_block_schema,
     };
     use krabka_traceql::{
         COL_CHILD_COUNT, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, EngineOpts,
@@ -1719,6 +1717,15 @@ mod tests {
                 tag_values: BTreeMap::new(),
             }
         }
+    }
+
+    // An engine over a store that holds only `block`, with no live tier.
+    async fn cold_block_engine(block: IndexedBlock<'_>) -> TraceqlEngine<KrabkaSpanStore> {
+        let (blocks, index) = write_indexed_block(block).await;
+        TraceqlEngine::new(
+            Arc::new(KrabkaSpanStore::new(blocks, shared(index), None)),
+            EngineOpts::default(),
+        )
     }
 
     // Write `block`, and return the block store with an index that names it.
@@ -2839,6 +2846,16 @@ mod tests {
         );
     }
 
+    /// A live tier that holds only `span`, with its frontier at the span's start.
+    fn live_tier_holding(span: &Span) -> LiveTier {
+        LiveTier::new(Arc::new(FakeLiveSource {
+            trace: None,
+            batches: vec![span_batch(std::slice::from_ref(span)).unwrap()],
+            values: vec![],
+            frontier_ns: span.start_ns,
+        }))
+    }
+
     #[tokio::test]
     async fn traceql_search_recomputes_nested_sets_across_cold_and_live_tiers() {
         let root = span_with_nested_refs();
@@ -2856,12 +2873,7 @@ mod tests {
             ..IndexedBlock::default()
         })
         .await;
-        let live = LiveTier::new(Arc::new(FakeLiveSource {
-            trace: None,
-            batches: vec![span_batch(std::slice::from_ref(&child)).unwrap()],
-            values: vec![],
-            frontier_ns: child.start_ns,
-        }));
+        let live = live_tier_holding(&child);
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), Some(live)));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
 
@@ -2917,12 +2929,7 @@ mod tests {
             ..IndexedBlock::default()
         })
         .await;
-        let live = LiveTier::new(Arc::new(FakeLiveSource {
-            trace: None,
-            batches: vec![span_batch(std::slice::from_ref(&child)).unwrap()],
-            values: vec![],
-            frontier_ns: child.start_ns,
-        }));
+        let live = live_tier_holding(&child);
         let store = KrabkaSpanStore::new(blocks, shared(index), Some(live));
 
         let scan = store
@@ -3432,15 +3439,13 @@ mod tests {
             value: SpanAttrValue::Str("DELETE".into()),
         });
         let batch = span_batch(&[repeated.clone(), other.clone()]).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let engine = cold_block_engine(IndexedBlock {
             key: "blocks/search-array-attrs.parquet",
             batch,
             trace_ids: &[repeated.trace_id, other.trace_id],
             ..IndexedBlock::default()
         })
         .await;
-        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
-        let engine = TraceqlEngine::new(store, EngineOpts::default());
 
         let resp = engine
             .search("tenant", "{ span.http.method = \"POST\" }", 0, 10_000, 10)
@@ -3465,15 +3470,13 @@ mod tests {
             value: SpanAttrValue::Str("us-east-1".into()),
         });
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let engine = cold_block_engine(IndexedBlock {
             key: "blocks/search-resource-scope.parquet",
             batch,
             trace_ids: &[span.trace_id],
             ..IndexedBlock::default()
         })
         .await;
-        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
-        let engine = TraceqlEngine::new(store, EngineOpts::default());
 
         let resource = engine
             .search(
@@ -3625,15 +3628,13 @@ mod tests {
             ),
         ];
         let batch = encode_span_rows(&rows).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let engine = cold_block_engine(IndexedBlock {
             key: "blocks/search-block-array-attrs.parquet",
             batch,
             trace_ids: &[[1; 16], [3; 16]],
             ..IndexedBlock::default()
         })
         .await;
-        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
-        let engine = TraceqlEngine::new(store, EngineOpts::default());
 
         let resp = engine
             .search("tenant", "{ span.http.method = \"POST\" }", 0, 10_000, 10)
@@ -3755,34 +3756,14 @@ mod tests {
         values: Vec<String>,
     ) -> SpanRow {
         SpanRow {
-            trace_id,
-            span_id,
-            parent_span_id: None,
-            nested_set: BlockNestedSet {
-                nested_set_left: 1,
-                nested_set_right: 2,
-                parent_id: 0,
-            },
-            child_count: 0,
-            root_service_name: Some("api".into()),
             root_span_name: Some("root".into()),
-            trace_start_unix_nano: 1_000,
-            trace_duration: nanos(500),
             name: Some(name.into()),
-            kind: BlockSpanKind::Server,
-            start_unix_nano: 1_000,
-            duration: nanos(500),
-            status_code: BlockStatusCode::Ok,
-            status_message: None,
-            instrumentation_name: Some("otel-rust".into()),
-            instrumentation_version: None,
             attrs: vec![SpanAttr {
                 key: "http.method".into(),
                 is_array,
                 value: BlockAttrValue::Str(values),
             }],
-            events: Vec::new(),
-            links: Vec::new(),
+            ..crate::querier::test_rows::api_root_server_row(trace_id, span_id)
         }
     }
 
@@ -4087,6 +4068,7 @@ use is_link_matcher::is_link_matcher;
 use is_nested_intrinsic_tag::is_nested_intrinsic_tag;
 use kind_enum_value::kind_enum_value;
 pub use krabka_span_store::KrabkaSpanStore;
+use krabka_traceql::typed_value_parts;
 use link_tags::LINK_TAGS;
 use link_values::link_values;
 use matching_events_for_scan::matching_events_for_scan;
@@ -4125,5 +4107,3 @@ use struct_string_field::struct_string_field;
 use tag_scope_key::tag_scope_key;
 use trace_from_batches::trace_from_batches;
 use unscoped_attribute_tag::unscoped_attribute_tag;
-
-use crate::span::typed_value_parts::typed_value_parts;

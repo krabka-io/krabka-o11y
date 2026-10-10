@@ -115,17 +115,10 @@ async fn borrowed_window_keeps_complete_rows_order_and_owned_output() {
             KeyValue::new("http.method", AttrValue::Str("POST".into())),
             KeyValue::new("__resource.service.name", AttrValue::Str("spoof".into())),
             KeyValue::new("bytes", AttrValue::Bytes(vec![0, 255])),
-            KeyValue::new("empty", AttrValue::Array(Vec::new())),
-            KeyValue::new("one", AttrValue::Array(vec![AttrValue::Int(7)])),
-            KeyValue::new(
-                "many",
-                AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
-            ),
-            KeyValue::new(
-                "mixed",
-                AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
-            ),
         ]);
+        child
+            .span_attrs
+            .extend(crate::span::test_span::array_shape_attrs());
         store.ingest(SpanRecord {
             tenant: "t".into(),
             span: child,

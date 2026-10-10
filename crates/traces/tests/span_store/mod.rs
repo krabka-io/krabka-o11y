@@ -55,7 +55,7 @@ fn input_span(span: Span) -> InputSpan {
         instrumentation_version: span.instrumentation_version,
         attrs: attrs
             .into_iter()
-            .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
+            .filter_map(|attr| Some((attr.key, traceql_attr(&attr.value)?)))
             .collect(),
         events: span
             .events
@@ -66,7 +66,7 @@ fn input_span(span: Span) -> InputSpan {
                 attributes: event
                     .attrs
                     .into_iter()
-                    .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
+                    .filter_map(|attr| Some((attr.key, traceql_attr(&attr.value)?)))
                     .collect(),
             })
             .collect(),
@@ -79,42 +79,15 @@ fn input_span(span: Span) -> InputSpan {
                 attributes: link
                     .attrs
                     .into_iter()
-                    .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
+                    .filter_map(|attr| Some((attr.key, traceql_attr(&attr.value)?)))
                     .collect(),
             })
             .collect(),
     }
 }
 
-pub fn traceql_attr(value: AttrValue) -> Option<TraceqlAttrValue> {
-    if let AttrValue::Array(values) = &value
-        && values.iter().any(|element| {
-            matches!(
-                element,
-                AttrValue::Array(_) | AttrValue::Bytes(_) | AttrValue::Unsupported(_)
-            ) || values.first().is_some_and(|first| {
-                std::mem::discriminant(first) != std::mem::discriminant(element)
-            })
-        })
-    {
-        return Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()));
-    }
-    match value {
-        AttrValue::Unsupported(value) => Some(TraceqlAttrValue::Unsupported(value)),
-        AttrValue::Array(values) => Some(TraceqlAttrValue::Array(
-            values
-                .into_iter()
-                .map(traceql_attr)
-                .collect::<Option<Vec<_>>>()?,
-        )),
-        AttrValue::Str(value) => Some(TraceqlAttrValue::Str(value)),
-        AttrValue::Int(value) => Some(TraceqlAttrValue::Int(value)),
-        AttrValue::Double(value) => Some(TraceqlAttrValue::Float(value)),
-        AttrValue::Bool(value) => Some(TraceqlAttrValue::Bool(value)),
-        value @ AttrValue::Bytes(_) => {
-            Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()))
-        }
-    }
+pub fn traceql_attr(value: &AttrValue) -> Option<TraceqlAttrValue> {
+    value.traceql_value()
 }
 
 pub fn resource_attr<'a>(span: &'a Span, key: &str) -> Option<&'a str> {

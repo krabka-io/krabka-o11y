@@ -1,21 +1,13 @@
 use super::{
-    LinkRef, MatchScope, SpanMatcher, attr_values_match, bytes_to_hex, nested_presence_matches,
-    string_matches,
+    LinkRef, MatchScope, SpanMatcher, bytes_to_hex, matcher_attributes_match,
+    nested_presence_matches, string_matches,
 };
 
 /// Whether a link matcher matches one link.
 #[must_use]
 pub fn link_matcher_matches_link(link: &LinkRef, matcher: &SpanMatcher) -> bool {
     let is_match = match matcher.scope {
-        MatchScope::Link => {
-            let values = link
-                .attributes
-                .iter()
-                .filter(|(key, _)| key == &matcher.key)
-                .map(|(_, value)| value)
-                .collect::<Vec<_>>();
-            attr_values_match(&values, matcher.op, &matcher.value)
-        }
+        MatchScope::Link => matcher_attributes_match(&link.attributes, matcher),
         MatchScope::Intrinsic => match matcher.key.as_str() {
             "link:traceID" => nested_presence_matches(true, matcher.op, &matcher.value)
                 .unwrap_or_else(|| {

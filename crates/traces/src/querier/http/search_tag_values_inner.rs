@@ -1,8 +1,8 @@
 use super::{
     AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode, TagFilter,
-    TimeRange, TypedValue, Uri, Value, exact_tag_value_filter, filter_tag_values,
-    is_match_all_query, optional_time_bounds, query_param, request_tenant, tag_values_from_traces,
-    tempo_tag_alias, traceql_query_error_response, traces_matching_filter,
+    TenantRequest, TimeRange, TypedValue, Uri, Value, exact_tag_value_filter, filter_tag_values,
+    is_match_all_query, optional_time_bounds, query_param, tag_values_from_traces, tempo_tag_alias,
+    tenant_and_bounds, traceql_query_error_response, traces_matching_filter,
 };
 
 /// A tag-values request.
@@ -30,15 +30,19 @@ where
         uri,
         render,
     } = request;
-    let tenant = match request_tenant(&headers, principal, &state.cfg.tenant_policy) {
-        Ok(tenant) => tenant,
+    let (tenant, start_ns, end_ns) = match tenant_and_bounds(
+        TenantRequest {
+            headers: &headers,
+            principal,
+            policy: &state.cfg.tenant_policy,
+            uri: &uri,
+        },
+        optional_time_bounds,
+    ) {
+        Ok(tenant_window) => tenant_window,
         Err(rejection) => return *rejection,
     };
     let tag = tempo_tag_alias(&tag);
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
     let mut expected = None;
     if let Some(query) = query_param(&uri, "q")
         && !is_match_all_query(&query)

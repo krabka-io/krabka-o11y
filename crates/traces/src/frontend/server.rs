@@ -15,15 +15,12 @@ use axum::{
     Json, Router,
     body::{Body, Bytes},
     extract::{Extension, Path, State},
-    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri},
+    http::{HeaderMap, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
 };
-use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy};
-use krabka_observability::{
-    RoleReadiness,
-    server_security::{Principal, authorize_tenant},
-};
+use krabka_blockstore::TenantId;
+use krabka_observability::{RoleReadiness, server_security::Principal};
 use serde_json::json;
 
 use crate::{
@@ -46,23 +43,16 @@ mod tests {
 
     use super::*;
 
-    /// The frontend's query parameters each have a boundary that only one
-    /// input distinguishes: an empty window is legal but an inverted one is
-    /// not, and a step must be strictly positive rather than merely parsed.
+    /// A step must be strictly positive rather than merely parsed. The time
+    /// bounds are the querier's `optional_time_bounds`, which its own tests
+    /// pin.
     #[test]
-    fn frontend_time_bounds_and_step_reject_only_what_they_should() {
+    fn frontend_step_rejects_only_what_it_should() {
         let uri = |query: &str| {
             format!("http://x/api?{query}")
                 .parse::<Uri>()
                 .expect("a valid uri")
         };
-
-        // end == start is an empty window and allowed, so `<` must not become
-        // `<=`; end < start is refused, so it must not become `==` either.
-        check!(super::optional_time_bounds(&uri("start=5&end=5")).is_ok());
-        check!(super::optional_time_bounds(&uri("start=5&end=4")).is_err());
-        check!(super::optional_time_bounds(&uri("start=5&end=6")).is_ok());
-        check!(super::optional_time_bounds(&uri("")) == Ok((0, i64::MAX)));
 
         // A step is required, must parse, and must be strictly positive.
         check!(super::required_step(&uri("step=5s")) == Ok(5_000_000_000));
@@ -332,13 +322,9 @@ mod frontend_request;
 mod key_is_safe_attribute;
 mod metrics_query;
 mod ndjson_search_stream;
-mod optional_seconds;
-mod optional_time_bounds;
 mod overrides;
 mod parse_scope;
 mod parse_step_to_ns;
-mod query_param;
-mod request_tenant;
 mod required_seconds;
 mod required_step;
 mod required_time_bounds;
@@ -351,7 +337,6 @@ mod search_request;
 mod search_tag_values;
 mod search_tags;
 mod tags_to_traceql;
-mod tenant_and_bounds;
 mod trace_by_id;
 mod trace_v1_response;
 mod with_warnings;
@@ -369,13 +354,9 @@ use frontend_request::FrontendRequest;
 use key_is_safe_attribute::key_is_safe_attribute;
 use metrics_query::metrics_query;
 use ndjson_search_stream::ndjson_search_stream;
-use optional_seconds::optional_seconds;
-use optional_time_bounds::optional_time_bounds;
 use overrides::overrides;
 use parse_scope::parse_scope;
 use parse_step_to_ns::parse_step_to_ns;
-use query_param::query_param;
-use request_tenant::request_tenant;
 use required_seconds::required_seconds;
 use required_step::required_step;
 use required_time_bounds::required_time_bounds;
@@ -388,11 +369,11 @@ use search_request::search_request;
 use search_tag_values::search_tag_values;
 use search_tags::search_tags;
 use tags_to_traceql::tags_to_traceql;
-use tenant_and_bounds::tenant_and_bounds;
 use trace_by_id::trace_by_id;
 use trace_v1_response::trace_v1_response;
 use with_warnings::with_warnings;
 
 use crate::querier::http::{
-    TenantRequest, metrics_request, parse_go_duration_ns, parse_logfmt_tags, parse_seconds_to_ns,
+    TenantRequest, metrics_request, optional_time_bounds, parse_go_duration_ns, parse_logfmt_tags,
+    parse_seconds_to_ns, query_param, request_tenant, tenant_and_bounds,
 };

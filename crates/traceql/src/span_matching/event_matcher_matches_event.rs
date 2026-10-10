@@ -1,5 +1,5 @@
 use super::{
-    EventRef, MatchScope, SpanMatcher, TimeExt as _, attr_values_match, int_matches,
+    EventRef, MatchScope, SpanMatcher, TimeExt as _, int_matches, matcher_attributes_match,
     nested_presence_matches, string_matches,
 };
 
@@ -7,15 +7,7 @@ use super::{
 #[must_use]
 pub fn event_matcher_matches_event(event: &EventRef, matcher: &SpanMatcher) -> bool {
     let is_match = match matcher.scope {
-        MatchScope::Event => {
-            let values = event
-                .attributes
-                .iter()
-                .filter(|(key, _)| key == &matcher.key)
-                .map(|(_, value)| value)
-                .collect::<Vec<_>>();
-            attr_values_match(&values, matcher.op, &matcher.value)
-        }
+        MatchScope::Event => matcher_attributes_match(&event.attributes, matcher),
         MatchScope::Intrinsic => match matcher.key.as_str() {
             "event:name" => nested_presence_matches(true, matcher.op, &matcher.value)
                 .unwrap_or_else(|| string_matches(&event.name, matcher.op, &matcher.value)),

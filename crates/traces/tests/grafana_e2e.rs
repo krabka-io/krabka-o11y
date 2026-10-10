@@ -56,12 +56,8 @@ use std::{
 };
 
 use assert2::check;
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
+use axum::{body::Body, http::StatusCode};
 use base64::Engine as _;
-use http_body_util::BodyExt as _;
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
     SpanRecord,
@@ -89,19 +85,20 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 use tonic::Request as GrpcRequest;
-use tower::ServiceExt as _;
 
 mod container_url;
 mod ingest_capture;
 mod metrics_span;
+mod search_json;
 mod span_store;
 #[path = "../src/wire/jaeger/thrift_fixture.rs"]
 mod thrift_fixture;
 
 use self::{
     container_url::mapped_base_url,
-    ingest_capture::{CapturingSink, string_kv},
+    ingest_capture::{CapturingSink, DoorPush, push_to_door, serve_until_shutdown, string_kv},
     metrics_span::MetricsSpan,
+    search_json::search_contains_span_id_hex,
     span_store::{resource_attr, span_store_from_records},
     thrift_fixture::{CompactStructWriter, encode_binary_sample_batch},
 };
@@ -386,64 +383,60 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
     let state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
 
     // D1 — OTLP HTTP `POST /v1/traces` (Trace A).
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/traces")
-                .header("content-type", "application/x-protobuf")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(trace_a_otlp_bytes()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::OK);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/v1/traces",
+            content_type: "application/x-protobuf",
+            tenant: TENANT,
+            body: Body::from(trace_a_otlp_bytes()),
+            expected_status: StatusCode::OK,
+        },
+    )
+    .await?;
 
     // D2 — Tempo push `POST /api/push` (Trace B, the PARTIAL trace).
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/push")
-                .header("content-type", "application/x-protobuf")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(trace_b_otlp_bytes()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::OK);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/api/push",
+            content_type: "application/x-protobuf",
+            tenant: TENANT,
+            body: Body::from(trace_b_otlp_bytes()),
+            expected_status: StatusCode::OK,
+        },
+    )
+    .await?;
 
     // D3 — Zipkin v2 `POST /api/v2/spans`.
     let zipkin = r#"[{"traceId":"33333333333333333333333333333333","id":"0000000000000033",
         "name":"zipkin op","timestamp":1000,"duration":2000,"kind":"SERVER",
         "localEndpoint":{"serviceName":"zipkin-svc"},
         "tags":{"http.method":"GET","error":"boom"}}]"#;
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v2/spans")
-                .header("content-type", "application/json")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(zipkin))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::ACCEPTED);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/api/v2/spans",
+            content_type: "application/json",
+            tenant: TENANT,
+            body: Body::from(zipkin),
+            expected_status: StatusCode::ACCEPTED,
+        },
+    )
+    .await?;
 
     // D4 — Jaeger binary thrift `POST /api/traces`.
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/traces")
-                .header("content-type", "application/vnd.apache.thrift.binary")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(encode_binary_sample_batch()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::ACCEPTED);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/api/traces",
+            content_type: "application/vnd.apache.thrift.binary",
+            tenant: TENANT,
+            body: Body::from(encode_binary_sample_batch()),
+            expected_status: StatusCode::ACCEPTED,
+        },
+    )
+    .await?;
 
     // D5 — OTLP gRPC, in-process via the production service struct.
     let otlp_grpc = OtlpGrpcService::new(state.clone());
@@ -508,25 +501,19 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
     // `application/x-thrift` selects the compact decoder, distinct from D4's
     // binary decoder). This is the same `decode_jaeger_thrift` path the compact
     // UDP datagram receiver uses.
-    let resp = authenticated(distributor::router(state.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/traces")
-                .header("content-type", "application/x-thrift")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(jaeger_compact_batch()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::ACCEPTED);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(state.clone())),
+        DoorPush {
+            uri: "/api/traces",
+            content_type: "application/x-thrift",
+            tenant: TENANT,
+            body: Body::from(jaeger_compact_batch()),
+            expected_status: StatusCode::ACCEPTED,
+        },
+    )
+    .await?;
 
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
-    Ok(records)
+    sink.snapshot()
 }
 
 /// Assert that every door's contribution landed in the captured records.
@@ -641,14 +628,7 @@ async fn start_krabka_querier(records: &[SpanRecord]) -> TestResult<KrabkaPair> 
     ));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
     let port = listener.local_addr()?.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, app);
 
     // Grafana reaches the querier through the proxy (container_base_url); the
     // test process can also hit it directly on loopback (local_base_url).
@@ -842,16 +822,6 @@ fn enc(s: &str) -> String {
 
 fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-fn search_contains_span_id_hex(search: &JsonValue, span_id_hex: &str) -> bool {
-    search["traces"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|trace| trace["spanSets"].as_array().into_iter().flatten())
-        .flat_map(|span_set| span_set["spans"].as_array().into_iter().flatten())
-        .any(|span| span["spanID"].as_str() == Some(span_id_hex))
 }
 
 // ---------------------------------------------------------------------------

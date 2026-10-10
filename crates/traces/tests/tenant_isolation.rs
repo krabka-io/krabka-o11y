@@ -52,8 +52,7 @@ use krabka_traces::{
     querier::http::HttpConfig,
     wire::{
         jaeger_grpc::api_v2::{
-            Batch as JaegerBatch, PostSpansRequest, Process as JaegerProcess, Span as JaegerSpan,
-            collector_service_client::CollectorServiceClient,
+            self as api_v2, PostSpansRequest, collector_service_client::CollectorServiceClient,
             collector_service_server::CollectorService as _,
         },
         otlp::decode_otlp,
@@ -84,10 +83,13 @@ use tonic::{
 use tower::ServiceExt as _;
 
 mod ingest_capture;
+#[path = "../src/wire/jaeger_grpc/post_spans_fixture.rs"]
+mod post_spans_fixture;
 mod span_store;
 
 use self::{
-    ingest_capture::{CapturingSink, string_kv},
+    ingest_capture::{CapturingSink, DoorPush, push_to_door, serve_until_shutdown, string_kv},
+    post_spans_fixture::{checkout_grpc_span, checkout_post_spans_request},
     span_store::span_store_from_records,
 };
 
@@ -130,24 +132,18 @@ impl TestServer {
 async fn ingest(tenant: &str, otlp_body: &[u8]) -> TestResult<Vec<SpanRecord>> {
     let sink = CapturingSink::default();
     let state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
-    let resp = authenticated(distributor::router(state))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/traces")
-                .header("content-type", "application/x-protobuf")
-                .header(TENANT_HEADER, tenant)
-                .body(Body::from(otlp_body.to_vec()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::OK);
-    let _ = resp.into_body().collect().await?;
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
-    Ok(records)
+    push_to_door(
+        authenticated(distributor::router(state)),
+        DoorPush {
+            uri: "/v1/traces",
+            content_type: "application/x-protobuf",
+            tenant,
+            body: Body::from(otlp_body.to_vec()),
+            expected_status: StatusCode::OK,
+        },
+    )
+    .await?;
+    sink.snapshot()
 }
 
 /// Boot the querier over a real socket, atop a tenant-keyed store seeded from
@@ -171,14 +167,7 @@ async fn start_querier(
     ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, app);
     Ok(TestServer {
         base_url: format!("http://127.0.0.1:{port}"),
         shutdown: tx,
@@ -505,12 +494,7 @@ overrides:
 
     // The read door, from the same provider: a `limit=2` search is over
     // tenant-tight's search cap and within every other tenant's.
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
-    let server = start_querier(records, overrides).await?;
+    let server = start_querier(sink.snapshot()?, overrides).await?;
     let client = reqwest::Client::new();
     let search = |tenant: &'static str| {
         let url = format!(
@@ -560,14 +544,7 @@ overrides:
     // Bind a real socket for the distributor so X-Scope-OrgID flows through HTTP.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, router);
     let base_url = format!("http://127.0.0.1:{port}");
 
     // tenant-a: first single-span push consumes the burst; second is over-rate.
@@ -659,28 +636,7 @@ fn otlp_request(value: Option<&[u8]>) -> TestResult<GrpcRequest<ExportTraceServi
 }
 
 fn jaeger_request(value: Option<&[u8]>) -> TestResult<GrpcRequest<PostSpansRequest>> {
-    let mut request = GrpcRequest::new(PostSpansRequest {
-        batch: Some(JaegerBatch {
-            process: Some(JaegerProcess {
-                service_name: "checkout".into(),
-                tags: Vec::new(),
-            }),
-            spans: vec![JaegerSpan {
-                trace_id: vec![0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                span_id: vec![0, 0, 0, 0, 0, 0, 0, 3],
-                operation_name: "GET /grpc".into(),
-                start_time: Some(prost_types::Timestamp {
-                    seconds: 1,
-                    nanos: 0,
-                }),
-                duration: Some(prost_types::Duration {
-                    seconds: 0,
-                    nanos: 25_000,
-                }),
-                ..JaegerSpan::default()
-            }],
-        }),
-    });
+    let mut request = GrpcRequest::new(checkout_post_spans_request(checkout_grpc_span()));
     *request.metadata_mut() = tenant_metadata(value)?;
     request
         .extensions_mut()

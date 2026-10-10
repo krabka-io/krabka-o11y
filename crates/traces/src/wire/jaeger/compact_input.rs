@@ -22,6 +22,12 @@ impl<'a> CompactInput<'a> {
         Self { bytes, pos: 0 }
     }
 
+    /// The bytes left to read, which bound what a collection header may
+    /// announce.
+    fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.pos)
+    }
+
     pub(crate) fn read_field(
         &mut self,
         last_field_id: &mut i16,
@@ -80,7 +86,7 @@ impl<'a> CompactInput<'a> {
         check_collection_header(
             CollectionHeader { element_type, len },
             T_STOP,
-            self.bytes.len().saturating_sub(self.pos),
+            self.remaining(),
         )
     }
 
@@ -99,7 +105,7 @@ impl<'a> CompactInput<'a> {
                 len,
             },
             T_STOP,
-            self.bytes.len().saturating_sub(self.pos),
+            self.remaining(),
         )
     }
 

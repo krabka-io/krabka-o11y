@@ -22,3 +22,21 @@ pub(crate) fn api_server_span() -> Span {
         ..Span::default()
     }
 }
+
+/// One attribute per array shape a block must keep apart: `empty` (no
+/// elements), `one` (a singleton), `many` (a homogeneous array), and `mixed`
+/// (elements of different types).
+pub(crate) fn array_shape_attrs() -> Vec<KeyValue> {
+    vec![
+        KeyValue::new("empty", AttrValue::Array(Vec::new())),
+        KeyValue::new("one", AttrValue::Array(vec![AttrValue::Int(7)])),
+        KeyValue::new(
+            "many",
+            AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
+        ),
+        KeyValue::new(
+            "mixed",
+            AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
+        ),
+    ]
+}

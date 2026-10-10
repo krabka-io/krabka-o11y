@@ -74,7 +74,10 @@ mod tests {
     use tower::ServiceExt as _;
 
     use super::*;
-    use crate::wire::jaeger::thrift_fixture::encode_binary_sample_batch;
+    use crate::wire::{
+        jaeger::thrift_fixture::encode_binary_sample_batch,
+        jaeger_grpc::post_spans_fixture::{checkout_grpc_span, checkout_post_spans_request},
+    };
 
     // The push doors read their principal from the request extensions, where
     // the authentication layer puts it. The tests drive the router behind the
@@ -376,42 +379,29 @@ mod tests {
     async fn jaeger_grpc_post_spans_appends_and_returns_success() {
         let (state, sink) = test_state();
         let service = JaegerGrpcService::new(state);
-        let mut req = GrpcRequest::new(crate::wire::jaeger_grpc::api_v2::PostSpansRequest {
-            batch: Some(crate::wire::jaeger_grpc::api_v2::Batch {
-                process: Some(crate::wire::jaeger_grpc::api_v2::Process {
-                    service_name: "checkout".into(),
-                    tags: Vec::new(),
+        let mut req = GrpcRequest::new(checkout_post_spans_request(
+            crate::wire::jaeger_grpc::api_v2::Span {
+                start_time: Some(prost_types::Timestamp {
+                    seconds: 1,
+                    nanos: 2_000,
                 }),
-                spans: vec![crate::wire::jaeger_grpc::api_v2::Span {
-                    trace_id: vec![0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                    span_id: vec![0, 0, 0, 0, 0, 0, 0, 3],
-                    operation_name: "GET /grpc".into(),
-                    start_time: Some(prost_types::Timestamp {
-                        seconds: 1,
-                        nanos: 2_000,
-                    }),
-                    duration: Some(prost_types::Duration {
-                        seconds: 0,
-                        nanos: 25_000,
-                    }),
-                    tags: vec![
-                        crate::wire::jaeger_grpc::api_v2::KeyValue {
-                            key: "span.kind".into(),
-                            v_type: crate::wire::jaeger_grpc::api_v2::ValueType::String.into(),
-                            v_str: "server".into(),
-                            ..Default::default()
-                        },
-                        crate::wire::jaeger_grpc::api_v2::KeyValue {
-                            key: "error".into(),
-                            v_type: crate::wire::jaeger_grpc::api_v2::ValueType::Bool.into(),
-                            v_bool: true,
-                            ..Default::default()
-                        },
-                    ],
-                    ..Default::default()
-                }],
-            }),
-        });
+                tags: vec![
+                    crate::wire::jaeger_grpc::api_v2::KeyValue {
+                        key: "span.kind".into(),
+                        v_type: crate::wire::jaeger_grpc::api_v2::ValueType::String.into(),
+                        v_str: "server".into(),
+                        ..Default::default()
+                    },
+                    crate::wire::jaeger_grpc::api_v2::KeyValue {
+                        key: "error".into(),
+                        v_type: crate::wire::jaeger_grpc::api_v2::ValueType::Bool.into(),
+                        v_bool: true,
+                        ..Default::default()
+                    },
+                ],
+                ..checkout_grpc_span()
+            },
+        ));
         req.metadata_mut()
             .insert(TENANT_HEADER, "tenant-a".parse().unwrap());
         req.extensions_mut().insert(Principal::Unauthenticated);
@@ -689,8 +679,10 @@ overrides:
         ([first, second, other_tenant], sink)
     }
 
+    /// The second push for `tenant-a` is refused with Tempo's rate-limit
+    /// error, while `tenant-b` still has its own budget.
     #[tokio::test]
-    async fn shared_ingest_rate_limit_is_per_tenant() {
+    async fn ingest_rate_limit_is_per_tenant() {
         let ([first, second, other_tenant], sink) = push_twice_then_other_tenant().await;
 
         assert2::assert!(first.status() == StatusCode::OK);
@@ -703,18 +695,6 @@ overrides:
                 .as_str()
                 .is_some_and(|message| message.contains("ingestion rate"))
         );
-        check!(other_tenant.status() == StatusCode::OK);
-        assert2::assert!(sink.count() == 2);
-        assert2::assert!(sink.tenant(0) == "tenant-a".to_string());
-        assert2::assert!(sink.tenant(1) == "tenant-b".to_string());
-    }
-
-    #[tokio::test]
-    async fn ingest_rate_limit_is_per_tenant() {
-        let ([first, second, other_tenant], sink) = push_twice_then_other_tenant().await;
-
-        check!(first.status() == StatusCode::OK);
-        check!(second.status() == StatusCode::TOO_MANY_REQUESTS);
         check!(other_tenant.status() == StatusCode::OK);
         assert2::assert!(sink.count() == 2);
         assert2::assert!(sink.tenant(0) == "tenant-a".to_string());

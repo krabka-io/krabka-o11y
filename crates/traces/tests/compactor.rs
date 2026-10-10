@@ -221,6 +221,20 @@ fn rec_with_method(span: FixtureSpan, method: &str) -> SpanRecord {
 }
 
 /// Read a promoted string column, which the write path dictionary-encodes.
+/// Asserts the compacted block at `object_key` holds the `GET` span at 100 ns
+/// then the `POST` span at 200 ns, each with its method in the promoted
+/// `attr.http.method` column.
+async fn assert_get_then_post_methods(store: Arc<dyn ObjectStore>, object_key: &str) {
+    let batches = read_block(store, object_key).await.unwrap();
+    let batch = &batches[0];
+    check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
+    check!(
+        promoted_strings(batch, "attr.http.method")
+            == vec![Some("GET".to_string()), Some("POST".to_string())],
+        "every row's method is in the promoted column, filled from the generic attributes where its block did not promote it"
+    );
+}
+
 fn promoted_strings(batch: &RecordBatch, column: &str) -> Vec<Option<String>> {
     let dictionary = batch
         .column_by_name(column)
@@ -327,13 +341,7 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
     .await
     .expect("a promoted block compacts");
 
-    let batches = read_block(store, &meta.object_key).await.unwrap();
-    let batch = &batches[0];
-    check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
-    check!(
-        promoted_strings(batch, "attr.http.method")
-            == vec![Some("GET".to_string()), Some("POST".to_string())]
-    );
+    assert_get_then_post_methods(store, &meta.object_key).await;
 }
 
 /// An operator can add `--promote-span-attr` between two flushes, and the
@@ -398,14 +406,7 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
     .await
     .expect("mixed inputs compact");
 
-    let batches = read_block(store, &meta.object_key).await.unwrap();
-    let batch = &batches[0];
-    check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
-    check!(
-        promoted_strings(batch, "attr.http.method")
-            == vec![Some("GET".to_string()), Some("POST".to_string())],
-        "the row from the unpromoted block is filled from its generic attributes"
-    );
+    assert_get_then_post_methods(store, &meta.object_key).await;
 }
 
 /// The span block declares `[trace_id, start_unix_nano]` as its sort key, and

@@ -134,6 +134,26 @@ mod tests {
         store
     }
 
+    // One trace of 1ns spans, numbered from 1, each named `<svc>-<suffix>`
+    // and carrying the `svc` attribute its name starts with.
+    fn prefixed_svc_store(span_names: &[&'static str]) -> InMemorySpanStore {
+        let spans = (1..)
+            .zip(span_names.iter().copied())
+            .map(|(id, name)| {
+                let (svc, _) = name.split_once('-').expect("span name is `<svc>-<suffix>`");
+                SvcSpan {
+                    id,
+                    name,
+                    duration_nanos: 1,
+                    svc,
+                    ..SvcSpan::default()
+                }
+                .build()
+            })
+            .collect();
+        store_with_traces(vec![spans])
+    }
+
     // Two `api` spans and one `db` span.
     fn api_db_spans() -> Vec<InputSpan> {
         vec![
@@ -881,17 +901,7 @@ mod tests {
 
     #[tokio::test]
     async fn count_by_filter_keeps_spans_from_passing_groups() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 1, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 1, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 1, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
-        );
+        let store = prefixed_svc_store(&["api-a", "api-b", "db-a"]);
         let out = planned("{ .svc != nil } | count() | by(span.svc) > 1", &store)
             .await
             .unwrap();
@@ -900,18 +910,7 @@ mod tests {
 
     #[tokio::test]
     async fn count_filter_accepts_literal_arithmetic_threshold() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 1, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 1, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "api-c", 1, vec![("svc", AttrValue::Str("api".into()))]),
-                span(4, "db-a", 1, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
-        );
+        let store = prefixed_svc_store(&["api-a", "api-b", "api-c", "db-a"]);
 
         let out = planned("{ .svc != nil } | count() | by(span.svc) > 1 + 1", &store)
             .await

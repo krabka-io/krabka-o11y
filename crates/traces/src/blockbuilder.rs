@@ -123,48 +123,62 @@ mod tests {
         }
     }
 
-    #[test]
-    fn collect_tags_indexes_event_and_link_intrinsics() {
+    /// One tag and one value that `collect_tags` indexes for it.
+    struct IndexedTag {
+        tag: &'static str,
+        value: &'static str,
+    }
+
+    /// The tags `span()` indexes: its event and link intrinsics and its service.
+    const SPAN_TAGS: [IndexedTag; 5] = [
+        IndexedTag {
+            tag: "event:name",
+            value: "exception",
+        },
+        IndexedTag {
+            tag: "event:timeSinceStart",
+            value: "50",
+        },
+        IndexedTag {
+            tag: "link:spanID",
+            value: "0808080808080808",
+        },
+        IndexedTag {
+            tag: "link:traceID",
+            value: "09090909090909090909090909090909",
+        },
+        IndexedTag {
+            tag: "service.name",
+            value: "api",
+        },
+    ];
+
+    /// Asserts that `collect_tags` over `span` indexes exactly the tags of
+    /// `span()` plus `extra_tags`, each with its one value.
+    fn assert_collects_span_tags_and(span: Span, extra_tags: &[IndexedTag]) {
         let mut tag_names = BTreeSet::new();
         let mut tag_values = BTreeMap::new();
 
-        collect_tags(&[span()], &mut tag_names, &mut tag_values);
+        collect_tags(&[span], &mut tag_names, &mut tag_values);
 
-        assert2::assert!(
-            tag_names
-                == BTreeSet::from([
-                    "event:name".to_string(),
-                    "event:timeSinceStart".to_string(),
-                    "link:spanID".to_string(),
-                    "link:traceID".to_string(),
-                    "service.name".to_string(),
-                ])
-        );
-        assert2::assert!(
-            tag_values
-                == BTreeMap::from([
-                    (
-                        "event:name".to_string(),
-                        BTreeSet::from(["exception".to_string()])
-                    ),
-                    (
-                        "event:timeSinceStart".to_string(),
-                        BTreeSet::from(["50".to_string()])
-                    ),
-                    (
-                        "link:spanID".to_string(),
-                        BTreeSet::from(["0808080808080808".to_string()])
-                    ),
-                    (
-                        "link:traceID".to_string(),
-                        BTreeSet::from(["09090909090909090909090909090909".to_string()])
-                    ),
-                    (
-                        "service.name".to_string(),
-                        BTreeSet::from(["api".to_string()])
-                    ),
-                ])
-        );
+        let expected_values = SPAN_TAGS
+            .iter()
+            .chain(extra_tags)
+            .map(|indexed| {
+                (
+                    indexed.tag.to_string(),
+                    BTreeSet::from([indexed.value.to_string()]),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let expected_names = expected_values.keys().cloned().collect::<BTreeSet<_>>();
+        assert2::assert!(tag_names == expected_names);
+        assert2::assert!(tag_values == expected_values);
+    }
+
+    #[test]
+    fn collect_tags_indexes_event_and_link_intrinsics() {
+        assert_collects_span_tags_and(span(), &[]);
     }
 
     #[test]
@@ -178,55 +192,19 @@ mod tests {
             key: "link.kind".into(),
             value: AttrValue::Str("retry".into()),
         }];
-        let mut tag_names = BTreeSet::new();
-        let mut tag_values = BTreeMap::new();
 
-        collect_tags(&[span], &mut tag_names, &mut tag_values);
-
-        assert2::assert!(
-            tag_names
-                == BTreeSet::from([
-                    "cache.key".to_string(),
-                    "event:name".to_string(),
-                    "event:timeSinceStart".to_string(),
-                    "link.kind".to_string(),
-                    "link:spanID".to_string(),
-                    "link:traceID".to_string(),
-                    "service.name".to_string(),
-                ])
-        );
-        assert2::assert!(
-            tag_values
-                == BTreeMap::from([
-                    (
-                        "cache.key".to_string(),
-                        BTreeSet::from(["users".to_string()])
-                    ),
-                    (
-                        "event:name".to_string(),
-                        BTreeSet::from(["exception".to_string()])
-                    ),
-                    (
-                        "event:timeSinceStart".to_string(),
-                        BTreeSet::from(["50".to_string()])
-                    ),
-                    (
-                        "link.kind".to_string(),
-                        BTreeSet::from(["retry".to_string()])
-                    ),
-                    (
-                        "link:spanID".to_string(),
-                        BTreeSet::from(["0808080808080808".to_string()])
-                    ),
-                    (
-                        "link:traceID".to_string(),
-                        BTreeSet::from(["09090909090909090909090909090909".to_string()])
-                    ),
-                    (
-                        "service.name".to_string(),
-                        BTreeSet::from(["api".to_string()])
-                    ),
-                ])
+        assert_collects_span_tags_and(
+            span,
+            &[
+                IndexedTag {
+                    tag: "cache.key",
+                    value: "users",
+                },
+                IndexedTag {
+                    tag: "link.kind",
+                    value: "retry",
+                },
+            ],
         );
     }
 
@@ -235,55 +213,19 @@ mod tests {
         let mut span = span();
         span.instrumentation_scope = "otel-rust".into();
         span.instrumentation_version = "1.2.3".into();
-        let mut tag_names = BTreeSet::new();
-        let mut tag_values = BTreeMap::new();
 
-        collect_tags(&[span], &mut tag_names, &mut tag_values);
-
-        assert2::assert!(
-            tag_names
-                == BTreeSet::from([
-                    "event:name".to_string(),
-                    "event:timeSinceStart".to_string(),
-                    "instrumentation:name".to_string(),
-                    "instrumentation:version".to_string(),
-                    "link:spanID".to_string(),
-                    "link:traceID".to_string(),
-                    "service.name".to_string(),
-                ])
-        );
-        assert2::assert!(
-            tag_values
-                == BTreeMap::from([
-                    (
-                        "event:name".to_string(),
-                        BTreeSet::from(["exception".to_string()])
-                    ),
-                    (
-                        "event:timeSinceStart".to_string(),
-                        BTreeSet::from(["50".to_string()])
-                    ),
-                    (
-                        "instrumentation:name".to_string(),
-                        BTreeSet::from(["otel-rust".to_string()])
-                    ),
-                    (
-                        "instrumentation:version".to_string(),
-                        BTreeSet::from(["1.2.3".to_string()])
-                    ),
-                    (
-                        "link:spanID".to_string(),
-                        BTreeSet::from(["0808080808080808".to_string()])
-                    ),
-                    (
-                        "link:traceID".to_string(),
-                        BTreeSet::from(["09090909090909090909090909090909".to_string()])
-                    ),
-                    (
-                        "service.name".to_string(),
-                        BTreeSet::from(["api".to_string()])
-                    ),
-                ])
+        assert_collects_span_tags_and(
+            span,
+            &[
+                IndexedTag {
+                    tag: "instrumentation:name",
+                    value: "otel-rust",
+                },
+                IndexedTag {
+                    tag: "instrumentation:version",
+                    value: "1.2.3",
+                },
+            ],
         );
     }
 }
@@ -332,7 +274,7 @@ pub use flush_accumulator::FlushAccumulator;
 use flush_and_commit::flush_and_commit;
 pub use flush_partition_windows::flush_partition_windows;
 pub use group_by_trace::group_by_trace;
-use insert_tag_value::insert_tag_value;
+pub(crate) use insert_tag_value::insert_tag_value;
 pub use object_key::object_key;
 pub use partition_window::PartitionWindow;
 pub use prefixed_object_key::prefixed_object_key;
