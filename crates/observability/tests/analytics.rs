@@ -338,12 +338,7 @@ async fn index_volume_range_endpoint_returns_matrix_without_target_labels() {
 
 #[tokio::test]
 async fn index_volume_endpoints_default_missing_start_to_recent_range() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     for endpoint in ["index/volume", "index/volume_range"] {
         let response = Tenant("tenant-a")
@@ -368,12 +363,7 @@ async fn index_volume_endpoints_default_missing_start_to_recent_range() {
 
 #[tokio::test]
 async fn index_stats_endpoint_requires_start_parameter() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a")
         .get(
@@ -392,12 +382,7 @@ async fn index_stats_endpoint_requires_start_parameter() {
 
 #[tokio::test]
 async fn index_volume_endpoints_default_missing_end_to_current_time() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     for endpoint in ["index/volume", "index/volume_range"] {
         let response = Tenant("tenant-a")
@@ -418,12 +403,7 @@ async fn index_volume_endpoints_default_missing_end_to_current_time() {
 
 #[tokio::test]
 async fn index_stats_endpoint_requires_end_parameter() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a")
         .get(
@@ -442,12 +422,7 @@ async fn index_stats_endpoint_requires_end_parameter() {
 
 #[tokio::test]
 async fn index_stats_endpoint_rejects_loki_query_ranges_over_limit() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000").await;
 
@@ -460,12 +435,7 @@ async fn index_stats_endpoint_rejects_loki_query_ranges_over_limit() {
 
 #[tokio::test]
 async fn index_volume_range_endpoint_returns_loki_error_for_zero_step() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=1.0&step=0").await;
 
@@ -479,12 +449,7 @@ async fn index_volume_range_endpoint_returns_loki_error_for_zero_step() {
 
 #[tokio::test]
 async fn index_volume_endpoint_returns_loki_error_for_invalid_aggregate_by() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=1.0&aggregateBy=bogus").await;
 
@@ -495,12 +460,7 @@ async fn index_volume_endpoint_returns_loki_error_for_invalid_aggregate_by() {
 
 #[tokio::test]
 async fn index_endpoints_return_loki_error_for_invalid_logql() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     for endpoint in ["index/stats", "index/volume", "index/volume_range"] {
         let response = Tenant("tenant-a")
@@ -714,17 +674,7 @@ async fn patterns_endpoint_excludes_entries_at_end_bound() {
 
 #[tokio::test]
 async fn patterns_endpoint_accepts_form_encoded_post_body() {
-    let (app, _) = block_app(
-        labels([("app", "api")]),
-        BlockSpan {
-            first: 100_000_000,
-            last: 1_100_000_000,
-        },
-        &[
-            log_entry(100_000_000, "status=500 user=100 route=/checkout"),
-            log_entry(1_100_000_000, "status=200 user=200 route=/checkout"),
-        ],
-    );
+    let app = two_checkout_lines_app(labels([("app", "api")]));
 
     let response = post_form(
         &app,
@@ -733,37 +683,12 @@ async fn patterns_endpoint_accepts_form_encoded_post_body() {
     )
     .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "pattern": "status=<_> user=<_> route=/checkout",
-                        "samples": [
-                            [0, 1],
-                            [1, 1]
-                        ]
-                    }
-                ]
-            })
-    );
+    assert_one_checkout_pattern(response).await;
 }
 
 #[tokio::test]
 async fn patterns_endpoint_accepts_form_post_query_with_raw_ampersand() {
-    let (app, _) = block_app(
-        labels([("app", "api&edge")]),
-        BlockSpan {
-            first: 100_000_000,
-            last: 1_100_000_000,
-        },
-        &[
-            log_entry(100_000_000, "status=500 user=100 route=/checkout"),
-            log_entry(1_100_000_000, "status=200 user=200 route=/checkout"),
-        ],
-    );
+    let app = two_checkout_lines_app(labels([("app", "api&edge")]));
 
     let response = post_form(
         &app,
@@ -772,32 +697,12 @@ async fn patterns_endpoint_accepts_form_post_query_with_raw_ampersand() {
     )
     .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "pattern": "status=<_> user=<_> route=/checkout",
-                        "samples": [
-                            [0, 1],
-                            [1, 1]
-                        ]
-                    }
-                ]
-            })
-    );
+    assert_one_checkout_pattern(response).await;
 }
 
 #[tokio::test]
 async fn patterns_endpoint_returns_loki_error_for_invalid_logql() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a")
         .get(
@@ -954,19 +859,7 @@ async fn detected_labels_endpoint_reports_stream_label_cardinality() {
 
     assert!(response.status() == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "detectedLabels": [
-                    {
-                        "label": "app",
-                        "cardinality": 1
-                    },
-                    {
-                        "label": "env",
-                        "cardinality": 2
-                    }
-                ]
-            })
+        json_body(response).await == AppAndEnvCardinalities { app: 1, env: 2 }.detected_labels()
     );
 }
 
@@ -1010,19 +903,7 @@ async fn detected_labels_endpoint_defaults_missing_query_to_all_streams() {
 
     assert!(response.status() == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "detectedLabels": [
-                    {
-                        "label": "app",
-                        "cardinality": 2
-                    },
-                    {
-                        "label": "env",
-                        "cardinality": 1
-                    }
-                ]
-            })
+        json_body(response).await == AppAndEnvCardinalities { app: 2, env: 1 }.detected_labels()
     );
 }
 
@@ -1044,19 +925,7 @@ async fn detected_labels_endpoint_ignores_malformed_step_and_limit_like_loki() {
 
     assert!(response.status() == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == json!({
-                "detectedLabels": [
-                    {
-                        "label": "app",
-                        "cardinality": 1
-                    },
-                    {
-                        "label": "env",
-                        "cardinality": 2
-                    }
-                ]
-            })
+        json_body(response).await == AppAndEnvCardinalities { app: 1, env: 2 }.detected_labels()
     );
 }
 
@@ -1187,12 +1056,7 @@ async fn detected_field_values_endpoint_accepts_step_duration_parameter() {
 
 #[tokio::test]
 async fn detected_fields_endpoint_rejects_invalid_step_parameter() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a")
         .get(
@@ -1211,12 +1075,7 @@ async fn detected_fields_endpoint_rejects_invalid_step_parameter() {
 
 #[tokio::test]
 async fn detected_fields_endpoint_returns_loki_error_for_zero_step() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a")
         .get(
@@ -1234,12 +1093,7 @@ async fn detected_fields_endpoint_returns_loki_error_for_zero_step() {
 
 #[tokio::test]
 async fn detected_fields_endpoint_returns_loki_error_for_invalid_logql() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a")
         .get(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D")
@@ -1254,12 +1108,7 @@ async fn detected_fields_endpoint_returns_loki_error_for_invalid_logql() {
 
 #[tokio::test]
 async fn detected_fields_endpoint_rejects_loki_query_ranges_over_limit() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000").await;
 
@@ -1272,12 +1121,7 @@ async fn detected_fields_endpoint_rejects_loki_query_ranges_over_limit() {
 
 #[tokio::test]
 async fn detected_labels_endpoint_rejects_loki_query_ranges_over_limit() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a")
         .get(
@@ -1295,12 +1139,7 @@ async fn detected_labels_endpoint_rejects_loki_query_ranges_over_limit() {
 
 #[tokio::test]
 async fn detected_field_values_endpoint_rejects_loki_query_ranges_over_limit() {
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    );
-    let app = loki_router(state);
+    let app = empty_querier_app();
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000").await;
 
@@ -1386,5 +1225,76 @@ async fn analytics_endpoints_read_entries_still_in_the_hot_tail() {
         let response = Tenant("tenant-a").get(&app, uri).await;
         check!(response.status() == StatusCode::OK, "{uri}");
         check!(json_body(response).await == expected, "{uri}");
+    }
+}
+
+/// A querier with no blocks and no series, over a fresh data root.
+fn empty_querier_app() -> Router {
+    loki_router(QuerierState::new(
+        tempfile::tempdir().unwrap().keep(),
+        LabelIndex::default(),
+        BlockIndex::default(),
+    ))
+}
+
+/// A querier over one tenant-a block of `stream` that holds two `/checkout`
+/// lines, at 0.1 s and 1.1 s.
+fn two_checkout_lines_app(stream: LogLabels) -> Router {
+    block_app(
+        stream,
+        BlockSpan {
+            first: 100_000_000,
+            last: 1_100_000_000,
+        },
+        &[
+            log_entry(100_000_000, "status=500 user=100 route=/checkout"),
+            log_entry(1_100_000_000, "status=200 user=200 route=/checkout"),
+        ],
+    )
+    .0
+}
+
+/// Checks that a `patterns` response over [`two_checkout_lines_app`] finds
+/// the one `/checkout` pattern, once in each second.
+async fn assert_one_checkout_pattern(response: axum::response::Response) {
+    assert!(response.status() == StatusCode::OK);
+    assert!(
+        json_body(response).await
+            == json!({
+                "status": "success",
+                "data": [
+                    {
+                        "pattern": "status=<_> user=<_> route=/checkout",
+                        "samples": [
+                            [0, 1],
+                            [1, 1]
+                        ]
+                    }
+                ]
+            })
+    );
+}
+
+/// How many values the `app` and `env` labels take in a `detected_labels`
+/// answer.
+struct AppAndEnvCardinalities {
+    app: u64,
+    env: u64,
+}
+
+impl AppAndEnvCardinalities {
+    fn detected_labels(&self) -> serde_json::Value {
+        json!({
+            "detectedLabels": [
+                {
+                    "label": "app",
+                    "cardinality": self.app
+                },
+                {
+                    "label": "env",
+                    "cardinality": self.env
+                }
+            ]
+        })
     }
 }

@@ -106,6 +106,7 @@ mod is_ident_start;
 mod parse_bytes_literal;
 mod parse_prometheus_duration_literal;
 mod quoted_char;
+mod read_quoted_body;
 
 use bytes_unit_multiplier::bytes_unit_multiplier;
 pub(crate) use decode_quoted_escape::decode_quoted_escape;
@@ -117,3 +118,4 @@ pub(crate) use is_ident_start::is_ident_start;
 pub(crate) use parse_bytes_literal::parse_bytes_literal;
 pub(crate) use parse_prometheus_duration_literal::parse_prometheus_duration_literal;
 pub(crate) use quoted_char::QuotedChar;
+pub(crate) use read_quoted_body::{QuotedBodyError, read_quoted_body};

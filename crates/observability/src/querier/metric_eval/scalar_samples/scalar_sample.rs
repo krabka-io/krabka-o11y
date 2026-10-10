@@ -2,6 +2,7 @@ use super::{
     METRIC_DECIMAL_SCALE, Rational, ScalarComparisonOp, decimal_scaled_numerator, gcd_signed,
     impl_rational_division_ops, rational_to_f64,
 };
+use crate::{MetricValue, format_metric_value};
 
 impl_rational_division_ops!(ScalarSample);
 
@@ -80,27 +81,10 @@ impl ScalarSample {
     }
 
     pub(crate) fn format(self) -> String {
-        let negative = self.numerator < 0;
-        let numerator = self.numerator.unsigned_abs();
-        let whole = numerator / self.denominator;
-        let mut remainder = numerator % self.denominator;
-        let sign = if negative { "-" } else { "" };
-        if remainder == 0 {
-            return format!("{sign}{whole}");
-        }
-
-        let mut decimals = String::new();
-        while remainder != 0 && decimals.len() < 9 {
-            remainder *= 10;
-            let digit =
-                u8::try_from(remainder / self.denominator).expect("decimal digit is less than 10");
-            decimals.push(char::from(b'0' + digit));
-            remainder %= self.denominator;
-        }
-        while decimals.ends_with('0') {
-            decimals.pop();
-        }
-        format!("{sign}{whole}.{decimals}")
+        format_metric_value(MetricValue {
+            numerator: self.numerator,
+            denominator: self.denominator,
+        })
     }
 
     pub(crate) fn format_fixed_six(self) -> String {

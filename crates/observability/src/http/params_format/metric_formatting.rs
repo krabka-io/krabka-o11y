@@ -26,6 +26,7 @@ mod format_metric_scalar_comparison_expression;
 mod format_metric_scalar_comparison_operator;
 mod format_metric_scalar_vector_expression;
 mod format_metric_vector_comparison_expression;
+mod format_metric_vector_operation;
 mod format_metric_vector_set_expression;
 mod format_mixed_metric_vector_expression;
 mod format_scalar_text;
@@ -55,6 +56,7 @@ pub(crate) use format_metric_scalar_comparison_expression::format_metric_scalar_
 pub(crate) use format_metric_scalar_comparison_operator::format_metric_scalar_comparison_operator;
 pub(crate) use format_metric_scalar_vector_expression::format_metric_scalar_vector_expression;
 pub(crate) use format_metric_vector_comparison_expression::format_metric_vector_comparison_expression;
+pub(crate) use format_metric_vector_operation::format_metric_vector_operation;
 pub(crate) use format_metric_vector_set_expression::format_metric_vector_set_expression;
 pub(crate) use format_mixed_metric_vector_expression::format_mixed_metric_vector_expression;
 pub(crate) use format_scalar_text::format_scalar_text;

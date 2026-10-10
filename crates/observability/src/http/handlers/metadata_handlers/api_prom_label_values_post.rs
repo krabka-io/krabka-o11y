@@ -1,6 +1,6 @@
 use super::{
-    Bytes, HeaderMap, Path, QuerierState, RawQuery, RequestSecurity, Response, State,
-    api_prom_label_names_post,
+    Bytes, HeaderMap, HttpQueryError, Path, PostedQueryRequest, QuerierState, RawQuery,
+    RequestSecurity, Response, State, api_prom_label_names_post,
 };
 
 /// Loki's legacy `/api/prom/label/{name}/values` answers a POST exactly as
@@ -10,8 +10,14 @@ pub(crate) async fn api_prom_label_values_post(
     security: RequestSecurity,
     headers: HeaderMap,
     Path(_name): Path<String>,
-    raw_query: RawQuery,
+    RawQuery(raw_query): RawQuery,
     body: Bytes,
-) -> Response {
-    api_prom_label_names_post(state, security, headers, raw_query, body).await
+) -> Result<Response, HttpQueryError> {
+    let request = PostedQueryRequest {
+        security,
+        headers,
+        raw_query,
+        body,
+    };
+    api_prom_label_names_post(state, request).await
 }

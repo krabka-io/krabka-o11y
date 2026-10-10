@@ -1,10 +1,10 @@
 use std::borrow::Borrow;
 
 use super::{
-    Arc, BTreeMap, ColdBlockScan, LabelIndex, MetricQuery, MetricWindow, QueryError, QueryHotTail,
-    StreamPlan, TimeRange, Value, append_matching_hot_metric_record, apply_absent_over_time,
-    checked_eval_times, collect_object_store_metric_log_batches, format_metric_samples,
-    loki_matrix_response_with_warnings, merge_metric_samples, metric_samples_from_batches,
+    Arc, BTreeMap, ColdBlockScan, HotTailMetricSamples, LabelIndex, MetricQuery, QueryError,
+    QueryHotTail, StreamPlan, TimeRange, Value, checked_eval_times,
+    collect_object_store_metric_log_batches, loki_matrix_response_with_warnings,
+    merge_metric_samples, metric_samples_from_batches,
 };
 use crate::WalLogRecord;
 
@@ -67,25 +67,13 @@ pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_f
         }
     }
 
-    for record in hot_tail.records {
-        let record: &WalLogRecord = record.borrow();
-        append_matching_hot_metric_record(
-            &mut samples,
-            plan,
-            record,
-            hot_tail.frontier,
-            MetricWindow {
-                query,
-                eval_times: &eval_times,
-                range_ns: query.range_ns.0,
-                delete_filters: hot_tail.delete_filters,
-            },
-        )?;
+    let series = HotTailMetricSamples {
+        plan,
+        query,
+        eval_times: &eval_times,
+        hot_tail,
     }
-    apply_absent_over_time(&mut samples, query, &eval_times);
+    .merge_into(samples)?;
 
-    Ok(loki_matrix_response_with_warnings(
-        format_metric_samples(samples, query),
-        &warnings,
-    ))
+    Ok(loki_matrix_response_with_warnings(series, &warnings))
 }

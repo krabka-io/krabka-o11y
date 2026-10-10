@@ -35,6 +35,7 @@ mod metric_scalar_comparison_matches;
 mod metric_series_labels;
 mod metric_vector_group_modifier;
 mod metric_vector_matching_key;
+mod sample_value_slot;
 mod scalar_operands;
 mod sort_loki_metric_results_by_labels;
 
@@ -69,5 +70,6 @@ pub(crate) use metric_scalar_comparison_matches::metric_scalar_comparison_matche
 pub(crate) use metric_series_labels::metric_series_labels;
 pub(crate) use metric_vector_group_modifier::metric_vector_group_modifier;
 pub(crate) use metric_vector_matching_key::metric_vector_matching_key;
+use sample_value_slot::{SampleValueSlot, sample_value_slot};
 pub(crate) use scalar_operands::{ScalarOperands, ScalarSide};
 pub(crate) use sort_loki_metric_results_by_labels::sort_loki_metric_results_by_labels;

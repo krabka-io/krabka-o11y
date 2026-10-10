@@ -1,7 +1,7 @@
 use super::{
-    AuditOutcome, HeaderMap, HttpQueryError, OPERATION_RULE_GROUP_DELETE, Path, QuerierState,
-    RESOURCE_RULE_GROUP, RESOURCE_TENANT, RequestSecurity, Response, State, StatusCode,
-    TenantErrorSurface, authorized_ruler_tenant, json, json_response, resource, text_response,
+    AuditOutcome, HttpQueryError, OPERATION_RULE_GROUP_DELETE, Path, QuerierState,
+    RESOURCE_RULE_GROUP, RESOURCE_TENANT, RequestSecurity, Response, RulerTenant, State,
+    StatusCode, json, json_response, resource, text_response,
 };
 
 /// `DELETE /loki/api/v1/rules/{namespace}/{group_name}`: delete one rule group.
@@ -13,10 +13,8 @@ pub(crate) async fn delete_loki_rule_group(
     State(state): State<QuerierState>,
     security: RequestSecurity,
     Path((namespace, group_name)): Path<(String, String)>,
-    headers: HeaderMap,
+    RulerTenant(tenant): RulerTenant,
 ) -> Result<Response, HttpQueryError> {
-    let tenant =
-        authorized_ruler_tenant(&state, &security, &headers, TenantErrorSurface::Ruler).await?;
     let resources = vec![
         resource(RESOURCE_TENANT, tenant.as_str()),
         resource(RESOURCE_RULE_GROUP, format!("{namespace}/{group_name}")),

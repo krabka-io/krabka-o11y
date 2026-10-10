@@ -39,7 +39,7 @@ mod ruler_status_page;
 mod validate_loki_rule;
 mod validate_loki_rule_group;
 
-pub(crate) use authorized_ruler_tenant::authorized_ruler_tenant;
+pub(crate) use authorized_ruler_tenant::{RulerTenant, authorized_ruler_tenant};
 pub(crate) use create_loki_rule_group::create_loki_rule_group;
 pub(crate) use delete_loki_rule_group::delete_loki_rule_group;
 pub(crate) use delete_loki_rule_namespace::delete_loki_rule_namespace;

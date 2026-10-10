@@ -16,10 +16,13 @@ use krabka_blockstore::TenantId;
 use rcgen::{CertificateParams, DnType, KeyPair};
 use tempfile::TempDir;
 
+#[path = "../../tests/support/recorded_security_events.rs"]
+mod recorded_security_events;
 #[path = "../../tests/support/server_security_pki.rs"]
 mod server_security_pki;
 
-use server_security_pki::{Leaf, Pem, RecordedEvents, authority, sha256_hex, tenant};
+use recorded_security_events::{RecordedEvents, tenant};
+use server_security_pki::{Leaf, Pem, authority, sha256_hex};
 
 use super::{
     AdminDenied, AuthFailureReason, AuthMethod, ClientIdentity, PeerAddr, Principal,
@@ -59,11 +62,11 @@ impl SecurityEvents for RecordedEvents {
     }
 
     fn tenant_denied(&self, principal: &str, _method: AuthMethod, tenant: &TenantId) {
-        self.push(format!("tenant denied {principal} {tenant}"));
+        self.push_tenant_denied(principal, tenant);
     }
 
     fn admin_denied(&self, principal: &str, _method: AuthMethod) {
-        self.push(format!("admin denied {principal}"));
+        self.push_admin_denied(principal);
     }
 }
 

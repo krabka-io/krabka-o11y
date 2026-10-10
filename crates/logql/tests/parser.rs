@@ -62,17 +62,19 @@ fn empty_pipeline_preserves_complete_metadata_fields_and_matches_original_stream
         ("__error__".into(), String::new()),
         ("__error_details__".into(), "metadata-details".into()),
     ]);
-    let expected_fields = BTreeMap::from([
-        ("app".into(), "api".into()),
-        ("app_extracted".into(), "shadow".into()),
-        ("collision".into(), "stream".into()),
-        ("collision_extracted".into(), "metadata".into()),
-        ("collision_extracted_extracted".into(), "direct".into()),
-        ("empty".into(), "metadata-empty".into()),
-        ("only_metadata".into(), "present".into()),
-        ("__error__".into(), String::new()),
-        ("__error_details__".into(), "metadata-details".into()),
-    ]);
+    // Metadata fields carry over; a stream label keeps its name and pushes a
+    // colliding metadata field to an `_extracted` suffix.
+    let mut expected_fields = metadata.clone();
+    expected_fields.extend(
+        [
+            ("app", "api"),
+            ("app_extracted", "shadow"),
+            ("collision", "stream"),
+            ("collision_extracted", "metadata"),
+            ("collision_extracted_extracted", "direct"),
+        ]
+        .map(|(name, field)| (name.to_owned(), field.to_owned())),
+    );
     let line = "raw \0\u{1b}[31m\n東京";
     for (selector, matches) in [
         (r#"{app="api"}"#, true),
@@ -2523,10 +2525,8 @@ fn parses_metric_binary_arithmetic_query() {
     .unwrap();
 
     check!(query.op == krabka_logql::MetricScalarArithmeticOp::Divide);
-    check!(query.left.aggregation == RangeAggregation::CountOverTime);
-    check!(query.left.range_ns == DurationNanos(30_000_000_000));
-    check!(query.right.aggregation == RangeAggregation::CountOverTime);
-    check!(query.right.range_ns == DurationNanos(30_000_000_000));
+    check_count_over_time_30s(&query.left);
+    check_count_over_time_30s(&query.right);
 }
 
 #[test]
@@ -2647,10 +2647,8 @@ fn parses_metric_binary_comparison_query() {
 
     check!(query.op == ComparisonOp::Greater);
     check!(query.bool_modifier);
-    check!(query.left.aggregation == RangeAggregation::CountOverTime);
-    check!(query.left.range_ns == DurationNanos(30_000_000_000));
-    check!(query.right.aggregation == RangeAggregation::CountOverTime);
-    check!(query.right.range_ns == DurationNanos(30_000_000_000));
+    check_count_over_time_30s(&query.left);
+    check_count_over_time_30s(&query.right);
 }
 
 #[test]
@@ -2661,10 +2659,8 @@ fn parses_metric_binary_set_query() {
     .unwrap();
 
     check!(query.op == krabka_logql::MetricBinarySetOp::And);
-    check!(query.left.aggregation == RangeAggregation::CountOverTime);
-    check!(query.left.range_ns == DurationNanos(30_000_000_000));
-    check!(query.right.aggregation == RangeAggregation::CountOverTime);
-    check!(query.right.range_ns == DurationNanos(30_000_000_000));
+    check_count_over_time_30s(&query.left);
+    check_count_over_time_30s(&query.right);
 }
 
 #[test]
@@ -3075,25 +3071,30 @@ fn parses_compound_prometheus_duration_metric_query() {
 }
 
 #[test]
-fn parses_metric_query_with_range_offset() {
-    let query =
-        parse_metric_query(r#"count_over_time({app="api"} |= "error" [10s] offset 5m)"#).unwrap();
+fn parses_metric_query_with_positive_and_negative_range_offsets() {
+    for (text, offset_ns) in [
+        (
+            r#"count_over_time({app="api"} |= "error" [10s] offset 5m)"#,
+            OffsetNanos(300_000_000_000),
+        ),
+        (
+            r#"count_over_time({app="api"} |= "error" [10s] offset -5m)"#,
+            OffsetNanos(-300_000_000_000),
+        ),
+    ] {
+        let query = parse_metric_query(text).unwrap();
 
-    check!(query.aggregation == RangeAggregation::CountOverTime);
-    check!(query.stream == parse_query(r#"{app="api"} |= "error""#).unwrap());
-    check!(query.range_ns == DurationNanos(10_000_000_000));
-    check!(query.offset_ns == OffsetNanos(300_000_000_000));
-}
-
-#[test]
-fn parses_metric_query_with_negative_range_offset() {
-    let query =
-        parse_metric_query(r#"count_over_time({app="api"} |= "error" [10s] offset -5m)"#).unwrap();
-
-    check!(query.aggregation == RangeAggregation::CountOverTime);
-    check!(query.stream == parse_query(r#"{app="api"} |= "error""#).unwrap());
-    check!(query.range_ns == DurationNanos(10_000_000_000));
-    check!(query.offset_ns == OffsetNanos(-300_000_000_000));
+        check!(
+            query.aggregation == RangeAggregation::CountOverTime,
+            "{text}"
+        );
+        check!(
+            query.stream == parse_query(r#"{app="api"} |= "error""#).unwrap(),
+            "{text}"
+        );
+        check!(query.range_ns == DurationNanos(10_000_000_000), "{text}");
+        check!(query.offset_ns == offset_ns, "{text}");
+    }
 }
 
 #[test]
@@ -3240,17 +3241,10 @@ fn parses_count_values_vector_aggregation_metric_query() {
 
     check!(
         query
-            == MetricQuery {
-                aggregation: RangeAggregation::CountOverTime,
-                vector_aggregation: Some(VectorAggregation {
-                    op: VectorAggregationOp::CountValues("events".to_string()),
-                    grouping: Some(VectorGrouping::By(vec!["env".to_string()])),
-                }),
-                range_grouping: None,
-                stream: parse_query(r#"{app="api"}"#).unwrap(),
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
+            == api_count_over_time_30s(VectorAggregation {
+                op: VectorAggregationOp::CountValues("events".to_string()),
+                grouping: Some(VectorGrouping::By(vec!["env".to_string()])),
+            })
     );
 }
 
@@ -3261,17 +3255,10 @@ fn parses_topk_vector_aggregation_metric_query() {
 
     check!(
         query
-            == MetricQuery {
-                aggregation: RangeAggregation::CountOverTime,
-                vector_aggregation: Some(VectorAggregation {
-                    op: VectorAggregationOp::TopK(2),
-                    grouping: Some(VectorGrouping::By(vec!["env".to_string()])),
-                }),
-                range_grouping: None,
-                stream: parse_query(r#"{app="api"}"#).unwrap(),
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
+            == api_count_over_time_30s(VectorAggregation {
+                op: VectorAggregationOp::TopK(2),
+                grouping: Some(VectorGrouping::By(vec!["env".to_string()])),
+            })
     );
 }
 
@@ -3739,13 +3726,7 @@ fn typed_time_functions_compose_layouts_zones_printf_and_wrapping_epochs() {
         check!(result.line == expected);
         check!(!result.fields.contains_key("__error__"));
     }
-    let query = parse_query(r#"{app="api"} | line_format `{{ unixToTime "soon" | date "2006" }}`"#)
-        .unwrap();
-    let result = query
-        .evaluate_with_fields(&labels, "original", &BTreeMap::new())
-        .unwrap();
-    check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
-    check!(result.line == "original");
+    check_line_format_fails_at_runtime(r#"{{ unixToTime "soon" | date "2006" }}"#);
 }
 
 #[test]
@@ -3839,12 +3820,7 @@ fn go_numeric_constants_keep_float_complex_and_execution_overflow_semantics() {
         "{{printf \"%v\" 18446744073709551615}}",
         "{{lt 2i 3i}}",
     ] {
-        let query = parse_query(&format!(r#"{{app="api"}} | line_format `{template}`"#)).unwrap();
-        let result = query
-            .evaluate_with_fields(&labels, "original", &BTreeMap::new())
-            .unwrap();
-        check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
-        check!(result.line == "original");
+        check_line_format_fails_at_runtime(template);
     }
 }
 
@@ -4157,6 +4133,36 @@ fn json_parser_preserves_physical_key_order_duplicate_keys_and_numeric_text() {
                 ("flag".into(), "true".into()),
             ])
     );
+}
+
+/// Checks that a `count_over_time` side of a binary query spans 30 seconds.
+fn check_count_over_time_30s(side: &MetricQuery) {
+    check!(side.aggregation == RangeAggregation::CountOverTime);
+    check!(side.range_ns == DurationNanos(30_000_000_000));
+}
+
+/// The `count_over_time({app="api"} [30s])` query under `vector_aggregation`.
+fn api_count_over_time_30s(vector_aggregation: VectorAggregation) -> MetricQuery {
+    MetricQuery {
+        aggregation: RangeAggregation::CountOverTime,
+        vector_aggregation: Some(vector_aggregation),
+        range_grouping: None,
+        stream: parse_query(r#"{app="api"}"#).unwrap(),
+        range_ns: DurationNanos(30_000_000_000),
+        offset_ns: OffsetNanos(0),
+    }
+}
+
+/// Checks that a `line_format` template parses but fails when rendered,
+/// which keeps the original line and sets `__error__`.
+fn check_line_format_fails_at_runtime(template: &str) {
+    let result = ApiLine {
+        query: &format!(r#"{{app="api"}} | line_format `{template}`"#),
+        line: "original",
+    }
+    .evaluate();
+    check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
+    check!(result.line == "original");
 }
 
 fn app_api_labels() -> BTreeMap<String, String> {

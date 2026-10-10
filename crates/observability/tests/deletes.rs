@@ -28,15 +28,7 @@ use tower::ServiceExt as _;
 
 #[tokio::test]
 async fn compactor_delete_endpoint_tracks_and_cancels_delete_requests() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let config = ServiceConfig {
-        data_root: dir,
-        index_prefix: Some("observability/logs".to_string()),
-        ..minimal_service_config(Role::BlockBuilder)
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let app = compactor_app_over(tempfile::tempdir().unwrap().keep()).await;
 
     let create_response = Tenant("tenant-a").send(&app, Method::POST, "/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=1591616227&end=1591619692").await;
     assert!(create_response.status() == StatusCode::NO_CONTENT);
@@ -67,15 +59,7 @@ async fn compactor_delete_endpoint_tracks_and_cancels_delete_requests() {
 
 #[tokio::test]
 async fn compactor_delete_endpoint_accepts_form_post_query_with_raw_ampersand() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let config = ServiceConfig {
-        data_root: dir,
-        index_prefix: Some("observability/logs".to_string()),
-        ..minimal_service_config(Role::BlockBuilder)
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let app = compactor_app_over(tempfile::tempdir().unwrap().keep()).await;
 
     let create_response = post_form(
         &app,
@@ -148,15 +132,10 @@ async fn compactor_delete_endpoint_rejects_invalid_requests() {
 
 #[tokio::test]
 async fn compactor_delete_requests_filter_querier_stream_results() {
-    let delete_requests = SharedLogDeleteRequests::default();
-    create_delete_request_with(&block_builder_config(), &delete_requests).await;
-
-    let (dir, block_bytes) = secret_lines_manifest();
-    let querier_app = querier_over(
-        dir,
-        ServiceDependencies::default().with_delete_requests(delete_requests),
-    )
-    .await;
+    let SecretLinesQuerier {
+        querier_app,
+        block_bytes,
+    } = SecretLinesQuerier::after_a_secret_delete_request().await;
 
     let response = Tenant("tenant-a").get(&querier_app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=14000000000&end=17000000001&direction=forward").await;
 
@@ -167,15 +146,7 @@ async fn compactor_delete_requests_filter_querier_stream_results() {
 async fn compactor_delete_requests_persist_for_configured_querier() {
     let (dir, block_bytes) = secret_lines_manifest();
 
-    let compactor_config = ServiceConfig {
-        data_root: dir.clone(),
-        index_prefix: Some("observability/logs".to_string()),
-        ..minimal_service_config(Role::BlockBuilder)
-    };
-    let compactor_app =
-        build_service_router(&compactor_config, ServiceDependencies::default(), None)
-            .await
-            .unwrap();
+    let compactor_app = compactor_app_over(dir.clone()).await;
     let delete_response = Tenant("tenant-a").send(&compactor_app, Method::POST, "/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=14&end=16").await;
     assert!(delete_response.status() == StatusCode::NO_CONTENT);
 
@@ -187,15 +158,10 @@ async fn compactor_delete_requests_persist_for_configured_querier() {
 
 #[tokio::test]
 async fn compactor_delete_requests_filter_querier_metric_results() {
-    let delete_requests = SharedLogDeleteRequests::default();
-    create_delete_request_with(&block_builder_config(), &delete_requests).await;
-
-    let (dir, block_bytes) = secret_lines_manifest();
-    let querier_app = querier_over(
-        dir,
-        ServiceDependencies::default().with_delete_requests(delete_requests),
-    )
-    .await;
+    let SecretLinesQuerier {
+        querier_app,
+        block_bytes,
+    } = SecretLinesQuerier::after_a_secret_delete_request().await;
 
     let response = Tenant("tenant-a").get(&querier_app, "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B10s%5D%29&time=17000000000").await;
 
@@ -551,6 +517,45 @@ fn secret_lines_manifest() -> (std::path::PathBuf, u64) {
     block_index.insert(block);
     write_log_index_manifest(&dir, &label_index, &block_index).unwrap();
     (dir, block_bytes)
+}
+
+/// The block-builder's router, which serves the delete API, over `data_root`.
+async fn compactor_app_over(data_root: std::path::PathBuf) -> axum::Router {
+    let config = ServiceConfig {
+        data_root,
+        ..block_builder_config()
+    };
+    build_service_router(&config, ServiceDependencies::default(), None)
+        .await
+        .unwrap()
+}
+
+/// A querier over [`secret_lines_manifest`] that shares its delete requests
+/// with a compactor.
+struct SecretLinesQuerier {
+    querier_app: axum::Router,
+    /// The size of the manifest's one block.
+    block_bytes: u64,
+}
+
+impl SecretLinesQuerier {
+    /// The querier, after tenant-a asked the compactor to delete its "secret"
+    /// lines from 14 s to 16 s.
+    async fn after_a_secret_delete_request() -> Self {
+        let delete_requests = SharedLogDeleteRequests::default();
+        create_delete_request_with(&block_builder_config(), &delete_requests).await;
+
+        let (dir, block_bytes) = secret_lines_manifest();
+        let querier_app = querier_over(
+            dir,
+            ServiceDependencies::default().with_delete_requests(delete_requests),
+        )
+        .await;
+        Self {
+            querier_app,
+            block_bytes,
+        }
+    }
 }
 
 async fn querier_over(

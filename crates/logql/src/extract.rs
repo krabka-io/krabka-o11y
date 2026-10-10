@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    DestinationLabel, JsonExpressionPath, ParseError, SourceLabel, template::template_parse_error,
-    util::decode_quoted_escape,
+    DestinationLabel, JsonExpressionPath, ParseError, SourceLabel,
+    template::template_parse_error,
+    util::{QuotedBodyError, decode_quoted_escape, read_quoted_body},
 };
 
 #[cfg(test)]

@@ -9,7 +9,9 @@ use super::{
     spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller,
     spawn_wal_hot_tail_connect_and_poll,
 };
-use crate::{ConfiguredObjectStore, RoleReadiness, SharedCompactionFrontier, spawn_logs_ruler};
+use crate::{
+    ConfiguredObjectStore, QuerierState, RoleReadiness, SharedCompactionFrontier, spawn_logs_ruler,
+};
 
 /// The querier's read routes, and the tasks that keep them able to answer.
 ///
@@ -71,37 +73,25 @@ pub(crate) async fn querier_routes_with_shutdown(
         state = state.with_hot_tail_source(hot_tail.source, hot_tail.frontier);
     } else if let Some(wal_consumer) = dependencies.wal_consumer {
         // Pre-connected consumer supplied directly (e.g. by tests).
-        let hot_tail = BufferedLogHotTail::with_bucket_width(config.querier_hot_tail_bucket_width);
-        let LoadedFrontier {
-            frontier,
-            refresher,
-        } = FrontierRefresh {
+        let started = FrontierRefresh {
             config,
             configured_store: configured_store.as_ref(),
             object_store,
             token: &token,
         }
-        .load(&hot_tail)
+        .start_hot_tail(&mut background_tasks)
         .await?;
-        // Named and kept, not dropped: the refresher is the only thing that
-        // moves the querier's frontier forward, and a querier answering from
-        // a frozen frontier says nothing about it.
-        background_tasks.extend(refresher.map(|task| (FRONTIER_REFRESHER, task)));
         background_tasks.push((
             "querier WAL hot-tail",
             spawn_log_hot_tail_poller(
                 wal_consumer,
-                hot_tail.clone(),
-                frontier.clone(),
+                started.hot_tail.clone(),
+                started.frontier.clone(),
                 config.querier_hot_tail_interval,
                 token.clone(),
             ),
         ));
-        if let Some(frontier) = frontier {
-            state = state.with_hot_tail_shared_frontier(hot_tail, frontier);
-        } else {
-            state = state.with_hot_tail(hot_tail, i64::MIN);
-        }
+        state = started.serve_from(state);
     } else if let Some(deferred) = dependencies.deferred_wal_consumer_connect {
         // A deferred querier cannot answer correctly without the hot tail it
         // reads recent logs from. The task that connects it marks this gate,
@@ -110,30 +100,22 @@ pub(crate) async fn querier_routes_with_shutdown(
         let wal_tail = readiness.gate("wal-tail");
         // Deferred connect: the consumer connects asynchronously so the
         // querier's HTTP port binds without waiting for the broker to be ready (FIX B2).
-        let hot_tail = BufferedLogHotTail::with_bucket_width(config.querier_hot_tail_bucket_width);
-        let LoadedFrontier {
-            frontier,
-            refresher,
-        } = FrontierRefresh {
+        let started = FrontierRefresh {
             config,
             configured_store: configured_store.as_ref(),
             object_store,
             token: &token,
         }
-        .load(&hot_tail)
+        .start_hot_tail(&mut background_tasks)
         .await?;
-        // Named and kept, not dropped: the refresher is the only thing that
-        // moves the querier's frontier forward, and a querier answering from
-        // a frozen frontier says nothing about it.
-        background_tasks.extend(refresher.map(|task| (FRONTIER_REFRESHER, task)));
 
         // Spawn the consumer connect + poll loop in a background task.
         background_tasks.push((
             "querier WAL hot-tail",
             spawn_wal_hot_tail_connect_and_poll(
                 deferred,
-                hot_tail.clone(),
-                frontier.clone(),
+                started.hot_tail.clone(),
+                started.frontier.clone(),
                 token.clone(),
                 config.querier_hot_tail_interval,
                 config.querier_dependency_reconnect_interval,
@@ -141,11 +123,7 @@ pub(crate) async fn querier_routes_with_shutdown(
             ),
         ));
 
-        if let Some(frontier) = frontier {
-            state = state.with_hot_tail_shared_frontier(hot_tail, frontier);
-        } else {
-            state = state.with_hot_tail(hot_tail, i64::MIN);
-        }
+        state = started.serve_from(state);
     }
     state = state.with_metrics(metrics);
     background_tasks.push(("logs ruler", spawn_logs_ruler(state.clone(), token)));
@@ -171,7 +149,43 @@ struct LoadedFrontier {
 /// The name a querier's frontier refresher runs under.
 const FRONTIER_REFRESHER: &str = "querier compaction frontier";
 
+/// A querier's WAL hot tail, and the compaction frontier it filters by.
+struct StartedHotTail {
+    hot_tail: BufferedLogHotTail,
+    frontier: Option<SharedCompactionFrontier>,
+}
+
+impl StartedHotTail {
+    /// `state`, answering recent reads from this hot tail.
+    fn serve_from(self, state: QuerierState) -> QuerierState {
+        match self.frontier {
+            Some(frontier) => state.with_hot_tail_shared_frontier(self.hot_tail, frontier),
+            None => state.with_hot_tail(self.hot_tail, i64::MIN),
+        }
+    }
+}
+
 impl FrontierRefresh<'_> {
+    /// Creates the querier's hot tail and loads the frontier it filters by.
+    /// The frontier's refresher, when the store can refresh it, joins
+    /// `background_tasks`.
+    async fn start_hot_tail(
+        self,
+        background_tasks: &mut Vec<(&'static str, JoinHandle<()>)>,
+    ) -> Result<StartedHotTail, ServiceConfigError> {
+        let hot_tail =
+            BufferedLogHotTail::with_bucket_width(self.config.querier_hot_tail_bucket_width);
+        let LoadedFrontier {
+            frontier,
+            refresher,
+        } = self.load(&hot_tail).await?;
+        // Named and kept, not dropped: the refresher is the only thing that
+        // moves the querier's frontier forward, and a querier answering from
+        // a frozen frontier says nothing about it.
+        background_tasks.extend(refresher.map(|task| (FRONTIER_REFRESHER, task)));
+        Ok(StartedHotTail { hot_tail, frontier })
+    }
+
     /// Loads the frontier and, when the store can refresh it, spawns the task
     /// that does.
     async fn load(

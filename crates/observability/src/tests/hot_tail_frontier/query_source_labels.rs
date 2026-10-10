@@ -43,37 +43,17 @@ async fn source_labels_preserve_distinct_and_both_tail_encodings() {
         (LokiStreamEncoding::Folded, folded.clone()),
         (LokiStreamEncoding::CategorizeLabels, categorized.clone()),
     ] {
-        let actual = execute_stream_query_with_hot_tail_frontier_and_deletes(
-            ".",
-            &plan,
-            &LabelIndex::default(),
-            &records,
-            &frontier,
-            &[],
-            encoding,
-        )
-        .await
-        .unwrap();
+        let scan = HotTailScan {
+            plan: &plan,
+            records: &records,
+            frontier: &frontier,
+        };
         assert!(
-            actual == json!({"status":"success","data":{"resultType":"streams","result":expected}})
+            scan.streams(encoding).await
+                == json!({"status":"success","data":{"resultType":"streams","result":expected}})
         );
-        let backfill = execute_tail_query_with_frontier_and_deletes(
-            &plan,
-            &records,
-            &frontier,
-            &[],
-            encoding,
-            false,
-        );
-        assert!(backfill == json!({"streams":expected}));
-        let live = execute_tail_query_with_frontier_and_deletes(
-            &plan,
-            &records,
-            &frontier,
-            &[],
-            encoding,
-            true,
-        );
+        assert!(scan.tail(encoding, TailMode::Backfill) == json!({"streams":expected}));
+        let live = scan.tail(encoding, TailMode::Live);
         let expected_live = if encoding == LokiStreamEncoding::Folded {
             json!([
                 {"stream":{"app":"api","method":"GET"},"values":[["10","line-10"],["20","line-20"]]},
@@ -105,31 +85,61 @@ async fn source_labels_preserve_distinct_and_both_tail_encodings() {
             ]),
         ),
     ] {
-        let actual = execute_stream_query_with_hot_tail_frontier_and_deletes(
+        let scan = HotTailScan {
+            plan: &plan,
+            records: &records,
+            frontier: &frontier,
+        };
+        assert!(
+            scan.streams(encoding).await
+                == json!({"status":"success","data":{"resultType":"streams","result":expected}})
+        );
+        for mode in [TailMode::Backfill, TailMode::Live] {
+            assert!(scan.tail(encoding, mode) == json!({"streams":expected}));
+        }
+    }
+    assert!(records == original);
+}
+
+/// The hot-tail records a query scans, with no blocks and no deletes.
+struct HotTailScan<'a> {
+    plan: &'a krabka_logql::StreamPlan,
+    records: &'a [WalLogRecord],
+    frontier: &'a CompactionFrontier,
+}
+
+/// Which part of a tail the scan answers.
+#[derive(Clone, Copy)]
+enum TailMode {
+    /// The records a tail sends when it connects.
+    Backfill,
+    /// The records a connected tail streams.
+    Live,
+}
+
+impl HotTailScan<'_> {
+    async fn streams(&self, encoding: LokiStreamEncoding) -> serde_json::Value {
+        execute_stream_query_with_hot_tail_frontier_and_deletes(
             ".",
-            &plan,
+            self.plan,
             &LabelIndex::default(),
-            &records,
-            &frontier,
+            self.records,
+            self.frontier,
             &[],
             encoding,
         )
         .await
-        .unwrap();
-        assert!(
-            actual == json!({"status":"success","data":{"resultType":"streams","result":expected}})
-        );
-        for live in [false, true] {
-            let actual = execute_tail_query_with_frontier_and_deletes(
-                &plan,
-                &records,
-                &frontier,
-                &[],
-                encoding,
-                live,
-            );
-            assert!(actual == json!({"streams":expected}));
-        }
+        .unwrap()
     }
-    assert!(records == original);
+
+    fn tail(&self, encoding: LokiStreamEncoding, mode: TailMode) -> serde_json::Value {
+        execute_tail_query_with_frontier_and_deletes(
+            self.plan,
+            self.records,
+            self.frontier,
+            &[],
+            encoding,
+            matches!(mode, TailMode::Live),
+        )
+    }
 }

@@ -176,16 +176,11 @@ async fn status_services_endpoint_returns_loki_service_states() {
 
 #[tokio::test]
 async fn status_memberlist_endpoint_reports_memberlist_not_configured() {
-    let state = fixture();
-    let querier = loki_router(state);
-    let distributor = distributor_router(InMemoryWalSink::default());
-    let compactor = build_service_router(
-        &test_service_config(Role::BlockBuilder, tempfile::tempdir().unwrap().keep()),
-        ServiceDependencies::default(),
-        None,
-    )
-    .await
-    .unwrap();
+    let RoleRouters {
+        querier,
+        distributor,
+        compactor,
+    } = RoleRouters::new().await;
 
     for app in [querier, distributor, compactor] {
         let response = send_bare(&app, Method::GET, "/memberlist").await;
@@ -197,16 +192,11 @@ async fn status_memberlist_endpoint_reports_memberlist_not_configured() {
 
 #[tokio::test]
 async fn status_ring_aliases_return_loki_ring_pages() {
-    let state = fixture();
-    let querier = loki_router(state);
-    let distributor = distributor_router(InMemoryWalSink::default());
-    let compactor = build_service_router(
-        &test_service_config(Role::BlockBuilder, tempfile::tempdir().unwrap().keep()),
-        ServiceDependencies::default(),
-        None,
-    )
-    .await
-    .unwrap();
+    let RoleRouters {
+        querier,
+        distributor,
+        compactor,
+    } = RoleRouters::new().await;
 
     for (app, path) in [
         (querier.clone(), "/ring"),
@@ -376,4 +366,28 @@ async fn services_ring_and_ready_agree_across_a_drain() {
     check!(status == StatusCode::NO_CONTENT);
 
     check_serving_pages(&app).await;
+}
+
+/// One router for each of the querier, distributor and compactor roles.
+struct RoleRouters {
+    querier: axum::Router,
+    distributor: axum::Router,
+    compactor: axum::Router,
+}
+
+impl RoleRouters {
+    async fn new() -> Self {
+        let compactor = build_service_router(
+            &test_service_config(Role::BlockBuilder, tempfile::tempdir().unwrap().keep()),
+            ServiceDependencies::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        Self {
+            querier: loki_router(fixture()),
+            distributor: distributor_router(InMemoryWalSink::default()),
+            compactor,
+        }
+    }
 }

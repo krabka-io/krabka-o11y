@@ -7,12 +7,12 @@ use super::{
     MetricLabelJoin, MetricLabelReplace, MetricQuery, MetricScalarArithmetic,
     MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
     MetricVectorMatching, OffsetNanos, ParseError, ParserStage, PatternParser, PipelineStage,
-    Quantile, QuantileDenominator, QuantileNumerator, QuotedChar, RangeAggregation,
-    RangeAggregationKind, RegexpParser, SourceLabel, StreamQuery, UnwrapExpression,
-    VectorAggregation, VectorAggregationOp, VectorGrouping, decode_quoted_escape, duration_unit,
+    Quantile, QuantileDenominator, QuantileNumerator, QuotedBodyError, QuotedChar,
+    RangeAggregation, RangeAggregationKind, RegexpParser, SourceLabel, StreamQuery,
+    UnwrapExpression, VectorAggregation, VectorAggregationOp, VectorGrouping, duration_unit,
     field_filter_expression_to_pipeline_stage, gcd_u64, is_ident_char, is_ident_start,
     parse_bytes_literal, parse_metric_subexpression, parse_prometheus_duration_literal,
-    range_aggregation_supports_grouping,
+    range_aggregation_supports_grouping, read_quoted_body,
 };
 
 const EXPECTED_METRIC_EXPRESSION: &str = "expected metric expression";
@@ -1447,22 +1447,13 @@ impl<'a> Parser<'a> {
         }
 
         self.expect('"')?;
-        let mut out = String::new();
-        while let Some(ch) = self.peek() {
-            self.pos = self.pos.saturating_add(ch.len_utf8());
-            match ch {
-                '"' => return Ok(out),
-                '\\' => {
-                    let Some(escaped) = self.peek() else {
-                        return Err(self.error("expected escaped character"));
-                    };
-                    self.pos = self.pos.saturating_add(escaped.len_utf8());
-                    out.push(decode_quoted_escape(escaped));
-                }
-                _ => out.push(ch),
-            }
-        }
-        Err(self.error("expected closing quote"))
+        let body = read_quoted_body(self.input, &mut self.pos);
+        body.map_err(|error| {
+            self.error(match error {
+                QuotedBodyError::DanglingEscape => "expected escaped character",
+                QuotedBodyError::Unterminated => "expected closing quote",
+            })
+        })
     }
 
     pub(crate) fn expect(&mut self, expected: char) -> Result<(), ParseError> {

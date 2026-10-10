@@ -1,4 +1,4 @@
-use super::{HttpQueryError, decode_form_component};
+use super::{DecodedQueryPair, HttpQueryError, decode_query_pair};
 
 pub(crate) fn parse_cancel_delete_request_params(
     raw_query: Option<&str>,
@@ -8,9 +8,7 @@ pub(crate) fn parse_cancel_delete_request_params(
         return Err(HttpQueryError::MissingQueryParameter("request_id"));
     };
     for pair in raw_query.split('&').filter(|pair| !pair.is_empty()) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = decode_form_component(key)?;
-        let value = decode_form_component(value)?;
+        let DecodedQueryPair { key, value } = decode_query_pair(pair)?;
         match key.as_str() {
             "request_id" => request_id = Some(value),
             "force" => match value.as_str() {

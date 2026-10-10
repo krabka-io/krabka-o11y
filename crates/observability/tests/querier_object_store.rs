@@ -77,11 +77,17 @@ async fn query_endpoint_can_build_querier_from_object_store_shard_catalog_config
 
 /// A querier over a tenant manifest in an object store, with a hot tail of
 /// the same rows, and one cold block fetch at a time.
+/// A querier over a tenant-a manifest in a local object store, and a hot
+/// tail.
 struct HotAndColdQuerier<'a> {
     object_dir: &'a Path,
     data_root: &'a Path,
     prefix: &'a ObjectPath,
-    hot_tail: InMemoryWalSink,
+    /// The indexes the manifest is written from.
+    label_index: &'a LabelIndex,
+    block_index: &'a BlockIndex,
+    /// The hot tail's lines, each at 30 ns.
+    hot_lines: Vec<HotLine<'a>>,
 }
 
 async fn hot_and_cold_router(querier: HotAndColdQuerier<'_>) -> Router {
@@ -89,8 +95,20 @@ async fn hot_and_cold_router(querier: HotAndColdQuerier<'_>) -> Router {
         object_dir,
         data_root,
         prefix,
-        hot_tail,
+        label_index,
+        block_index,
+        hot_lines,
     } = querier;
+    let hot_tail = hot_tail_at_30ns(hot_lines).await;
+    write_tenant_log_index_manifest_to_object_store(
+        &LocalFileSystem::new_with_prefix(object_dir).unwrap(),
+        prefix,
+        "tenant-a",
+        label_index,
+        block_index,
+    )
+    .await
+    .unwrap();
     let config = ServiceConfig {
         target: Role::Querier,
         object_store_url: Some(format!("file://{}", object_dir.display())),
@@ -117,18 +135,23 @@ struct HotLine<'a> {
     user: &'a str,
 }
 
-async fn append_hot(hot_tail: &InMemoryWalSink, hot_line: HotLine<'_>) {
+/// A hot tail that holds `hot_lines`, each at 30 ns.
+async fn hot_tail_at_30ns<'a>(hot_lines: impl IntoIterator<Item = HotLine<'a>>) -> InMemoryWalSink {
+    let hot_tail = InMemoryWalSink::default();
+    for hot_line in hot_lines {
+        hot_tail
+            .append(WalLogRecord {
+                tenant: "tenant-a".into(),
+                labels: hot_line.source.clone(),
+                timestamp_ns: 30,
+                line: hot_line.line.into(),
+                structured_metadata: labels([("user", hot_line.user)]),
+                position: None,
+            })
+            .await
+            .unwrap();
+    }
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".into(),
-            labels: hot_line.source.clone(),
-            timestamp_ns: 30,
-            line: hot_line.line.into(),
-            structured_metadata: labels([("user", hot_line.user)]),
-            position: None,
-        })
-        .await
-        .unwrap();
 }
 
 /// How a query response encodes stream labels and structured metadata.
@@ -209,32 +232,20 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
             .unwrap(),
         );
     }
-    write_tenant_log_index_manifest_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &label_index,
-        &block_index,
-    )
-    .await
-    .unwrap();
-    let hot_tail = InMemoryWalSink::default();
-    for (source, _) in &sources {
-        append_hot(
-            &hot_tail,
-            HotLine {
-                source,
-                line: "line-30",
-                user: "alice",
-            },
-        )
-        .await;
-    }
     let app = hot_and_cold_router(HotAndColdQuerier {
         object_dir: object_dir.path(),
         data_root: data_root.path(),
         prefix: &prefix,
-        hot_tail,
+        label_index: &label_index,
+        block_index: &block_index,
+        hot_lines: sources
+            .iter()
+            .map(|(source, _)| HotLine {
+                source,
+                line: "line-30",
+                user: "alice",
+            })
+            .collect(),
     })
     .await;
     for encoding in [LabelEncoding::Flat, LabelEncoding::Categorized] {
@@ -316,32 +327,20 @@ async fn nonadjacent_hot_and_cold_rows_keep_unique_entries_and_metadata() {
                 .unwrap(),
             );
         }
-        write_tenant_log_index_manifest_to_object_store(
-            &store,
-            &prefix,
-            "tenant-a",
-            &label_index,
-            &block_index,
-        )
-        .await
-        .unwrap();
-        let hot_tail = InMemoryWalSink::default();
-        for (line, user) in newest_rows {
-            append_hot(
-                &hot_tail,
-                HotLine {
-                    source: &source,
-                    line,
-                    user,
-                },
-            )
-            .await;
-        }
         let app = hot_and_cold_router(HotAndColdQuerier {
             object_dir: object_dir.path(),
             data_root: data_root.path(),
             prefix: &prefix,
-            hot_tail,
+            label_index: &label_index,
+            block_index: &block_index,
+            hot_lines: newest_rows
+                .into_iter()
+                .map(|(line, user)| HotLine {
+                    source: &source,
+                    line,
+                    user,
+                })
+                .collect(),
         })
         .await;
         for encoding in [LabelEncoding::Flat, LabelEncoding::Categorized] {

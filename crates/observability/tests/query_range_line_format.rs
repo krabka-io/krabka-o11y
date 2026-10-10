@@ -14,44 +14,14 @@ use tower::ServiceExt as _;
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_can_reference_log_timestamp() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%7C%20line_format%20%60%7B%7B%20__timestamp__%20%7C%20unixEpochNanos%20%7D%7D%60&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "19"]])));
+    let values = query_range_values("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%7C%20line_format%20%60%7B%7B%20__timestamp__%20%7C%20unixEpochNanos%20%7D%7D%60&start=0.000000000&end=0.000000030").await;
+    assert!(values == Some(json!([["19", "19"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_accepts_line_and_timestamp_aliases() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%7C%20line_format%20%60%7B%7B%20line%20%7D%7D%20%7B%7B%20timestamp%20%7C%20unixEpochNanos%20%7D%7D%60&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "api error 19"]])));
+    let values = query_range_values("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%7C%20line_format%20%60%7B%7B%20line%20%7D%7D%20%7B%7B%20timestamp%20%7C%20unixEpochNanos%20%7D%7D%60&start=0.000000000&end=0.000000030").await;
+    assert!(values == Some(json!([["19", "api error 19"]])));
 }
 
 #[tokio::test]
@@ -338,30 +308,11 @@ async fn query_range_endpoint_line_format_applies_conditional_template_blocks() 
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_control_template_variable_declarations() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ if $line := __line__ }}line={{ $line }}{{ else }}missing={{ $line }}{{ end }}|{{ with $payload := fromJson "{\"route\":\"checkout\"}" }}route={{ .route }}/{{ $payload.route }}{{ else }}missing={{ $payload }}{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(
-        body.pointer("/data/result/0/values")
-            == Some(&json!([["19", "line=api error|route=checkout/checkout"]]))
-    );
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ if $line := __line__ }}line={{ $line }}{{ else }}missing={{ $line }}{{ end }}|{{ with $payload := fromJson "{\"route\":\"checkout\"}" }}route={{ .route }}/{{ $payload.route }}{{ else }}missing={{ $payload }}{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "line=api error|route=checkout/checkout"]])));
 }
 
 #[tokio::test]
@@ -375,33 +326,11 @@ async fn query_range_endpoint_line_format_can_reference_root_fields() {
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_json_template_truthiness() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ if fromJson "[]" }}array{{ else }}empty-array{{ end }}|{{ if fromJson "{}" }}object{{ else }}empty-object{{ end }}|{{ if fromJson "0" }}number{{ else }}empty-number{{ end }}|{{ with fromJson "{\"method\":\"GET\"}" }}{{ .method }}{{ else }}missing{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(
-        body.pointer("/data/result/0/values")
-            == Some(&json!([[
-                "19",
-                "empty-array|empty-object|empty-number|GET"
-            ]]))
-    );
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ if fromJson "[]" }}array{{ else }}empty-array{{ end }}|{{ if fromJson "{}" }}object{{ else }}empty-object{{ end }}|{{ if fromJson "0" }}number{{ else }}empty-number{{ end }}|{{ with fromJson "{\"method\":\"GET\"}" }}{{ .method }}{{ else }}missing{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "empty-array|empty-object|empty-number|GET"]])));
 }
 
 #[tokio::test]
@@ -451,6 +380,27 @@ async fn query_range_endpoint_line_format_reassigns_template_variables() {
 
 /// POSTs `form_body` to tenant-a's `query_range` over the shared fixture,
 /// checks that it succeeds, and returns the first result's values.
+/// The values of the first stream that `tenant-a` gets for the `GET` of
+/// `uri` over the fixture.
+async fn query_range_values(uri: &str) -> Option<Value> {
+    let response = loki_router(fixture())
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(response.status() == StatusCode::OK);
+    json_body(response)
+        .await
+        .pointer("/data/result/0/values")
+        .cloned()
+}
+
 async fn posted_query_range_values(form_body: &str) -> Option<Value> {
     let response = loki_router(fixture())
         .oneshot(

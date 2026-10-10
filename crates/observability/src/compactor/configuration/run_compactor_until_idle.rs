@@ -2,7 +2,7 @@ use super::{
     BlockDescriptor, ObjectStore, ServiceConfig, ServiceConfigError, ServiceDependencies,
     ServiceRuntimeError, TenantCompactionIndexCache, advance_and_persist_compaction_frontier,
     build_compactor_configured_object_store, compactor_delete_requests_for_config,
-    compactor_object_store, effective_object_store_prefix, load_existing_compaction_frontier,
+    compactor_object_store, load_existing_compaction_frontier,
     materialize_delete_requests_in_existing_local_manifest_blocks,
     materialize_deletes_then_compact_next_kafka_wal_batch, validate_compactor_policy,
 };
@@ -63,13 +63,8 @@ impl CompactorRun<'_> {
                 .unwrap_or_else(krabka_blockstore::ObjectStoreMetrics::unregistered),
         )
         .await?;
-        let (store, object_store_prefix) =
-            compactor_object_store(object_store, configured_store.as_ref())?;
-        let index_prefix = config
-            .index_prefix
-            .as_deref()
-            .ok_or(ServiceConfigError::MissingCompactorIndexPrefix)?;
-        let prefix = effective_object_store_prefix(object_store_prefix, index_prefix);
+        let (store, prefix) =
+            compactor_object_store(config, object_store, configured_store.as_ref())?;
         let compaction_frontier = dependencies.compaction_frontier.unwrap_or_default();
         let delete_requests =
             compactor_delete_requests_for_config(config, dependencies.delete_requests)?;

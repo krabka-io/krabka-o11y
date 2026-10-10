@@ -1,3 +1,5 @@
+use crate::http::params_format::QuotedTextScanner;
+
 /// Splits `query` at the first operator that sits outside every quote,
 /// parenthesis, bracket and brace, and returns the left side, the operator,
 /// and the right side with its leading whitespace trimmed.
@@ -11,21 +13,12 @@ pub(crate) fn split_top_level_query(
     let mut parens = 0_i32;
     let mut brackets = 0_i32;
     let mut braces = 0_i32;
-    let mut quote = None;
-    let mut escaped = false;
+    let mut quotes = QuotedTextScanner::default();
     for (index, ch) in query.char_indices() {
-        if let Some(quote_ch) = quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == quote_ch {
-                quote = None;
-            }
+        if quotes.in_quotes(ch) {
             continue;
         }
         match ch {
-            '"' | '`' => quote = Some(ch),
             '(' => parens += 1,
             ')' => parens -= 1,
             '[' => brackets += 1,

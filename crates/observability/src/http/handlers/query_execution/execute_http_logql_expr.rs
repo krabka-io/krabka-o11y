@@ -1,9 +1,9 @@
 use super::{
     ComparisonResult, HttpMetricQuery, HttpQueryError, HttpQueryScope, HttpStreamQuery,
     LabelReplaceArguments, LogqlExpr, LokiStreamEncoding, LokiStreamOptions, MetricComparison,
-    QueryKind, SampleOrder, ScalarArithmetic, ScalarComparison, ScalarLiteral, ScalarSide,
-    ScalarVectorExpressionResult, TimeRange, Value, VariantsDefinition, VectorArithmetic,
-    VectorComparison, add_loki_query_stats, apply_label_join_fields,
+    MetricVectorMatching, QueryKind, SampleOrder, ScalarArithmetic, ScalarComparison,
+    ScalarLiteral, ScalarSide, ScalarVectorExpressionResult, TimeRange, Value, VariantsDefinition,
+    VectorArithmetic, VectorComparison, add_loki_query_stats, apply_label_join_fields,
     apply_label_replace_to_loki_result, apply_metric_binary_arithmetic_to_loki_result,
     apply_metric_binary_comparison_to_loki_result, apply_metric_binary_set_to_loki_result,
     apply_metric_selection, apply_nested_vector_aggregation,
@@ -245,25 +245,16 @@ pub(crate) async fn execute_http_logql_expr(
                 )?;
                 return Ok(value);
             }
-            let left_is_vector = is_scalar_vector_only(left);
-            let right_is_vector = is_scalar_vector_only(right);
-            let mut left = scope.execute(left).await?;
-            let right = scope.execute(right).await?;
+            let mut operands = BinaryOperands::evaluate(scope, left, right).await?;
             apply_metric_binary_arithmetic_to_loki_result(
-                &mut left,
-                &right,
+                &mut operands.left,
+                &operands.right,
                 VectorArithmetic {
                     op: *op,
                     matching: matching.as_ref(),
                 },
             );
-            if left_is_vector || right_is_vector {
-                retain_metric_binary_on_labels(&mut left, matching.as_ref());
-                if left_is_vector && !right_is_vector {
-                    merge_loki_query_stats(&mut left["data"]["stats"], &right["data"]["stats"]);
-                }
-            }
-            Ok(left)
+            Ok(operands.into_matched_result(matching.as_ref()))
         }
         LogqlExpr::Comparison {
             left,
@@ -295,25 +286,16 @@ pub(crate) async fn execute_http_logql_expr(
                 )?;
                 return Ok(value);
             }
-            let left_is_vector = is_scalar_vector_only(left);
-            let right_is_vector = is_scalar_vector_only(right);
-            let mut left = scope.execute(left).await?;
-            let right = scope.execute(right).await?;
+            let mut operands = BinaryOperands::evaluate(scope, left, right).await?;
             apply_metric_binary_comparison_to_loki_result(
-                &mut left,
-                &right,
+                &mut operands.left,
+                &operands.right,
                 VectorComparison {
                     comparison,
                     matching: matching.as_ref(),
                 },
             );
-            if left_is_vector || right_is_vector {
-                retain_metric_binary_on_labels(&mut left, matching.as_ref());
-                if left_is_vector && !right_is_vector {
-                    merge_loki_query_stats(&mut left["data"]["stats"], &right["data"]["stats"]);
-                }
-            }
-            Ok(left)
+            Ok(operands.into_matched_result(matching.as_ref()))
         }
         LogqlExpr::Set {
             left,
@@ -321,16 +303,65 @@ pub(crate) async fn execute_http_logql_expr(
             matching,
             right,
         } => {
-            let left_is_vector = is_scalar_vector_only(left);
-            let right_is_vector = is_scalar_vector_only(right);
-            let mut left = scope.execute(left).await?;
-            let right = scope.execute(right).await?;
-            apply_metric_binary_set_to_loki_result(&mut left, &right, *op, matching.as_ref());
-            if left_is_vector && !right_is_vector {
-                merge_loki_query_stats(&mut left["data"]["stats"], &right["data"]["stats"]);
-            }
-            Ok(left)
+            let mut operands = BinaryOperands::evaluate(scope, left, right).await?;
+            apply_metric_binary_set_to_loki_result(
+                &mut operands.left,
+                &operands.right,
+                *op,
+                matching.as_ref(),
+            );
+            Ok(operands.into_result())
         }
+    }
+}
+
+/// Both operands of a vector-to-vector binary operator, evaluated, and
+/// whether each is built from literals alone.
+struct BinaryOperands {
+    left: Value,
+    right: Value,
+    left_is_vector: bool,
+    right_is_vector: bool,
+}
+
+impl BinaryOperands {
+    async fn evaluate(
+        scope: LogqlExprScope<'_>,
+        left: &LogqlExpr,
+        right: &LogqlExpr,
+    ) -> Result<Self, HttpQueryError> {
+        let left_is_vector = is_scalar_vector_only(left);
+        let right_is_vector = is_scalar_vector_only(right);
+        Ok(Self {
+            left: scope.execute(left).await?,
+            right: scope.execute(right).await?,
+            left_is_vector,
+            right_is_vector,
+        })
+    }
+
+    /// The left operand, which holds the result, with the right operand's
+    /// stats when only the left is literal.
+    fn into_result(self) -> Value {
+        let Self {
+            mut left,
+            right,
+            left_is_vector,
+            right_is_vector,
+        } = self;
+        if left_is_vector && !right_is_vector {
+            merge_loki_query_stats(&mut left["data"]["stats"], &right["data"]["stats"]);
+        }
+        left
+    }
+
+    /// As [`Self::into_result`], after keeping only the `on` labels when
+    /// either operand is literal.
+    fn into_matched_result(mut self, matching: Option<&MetricVectorMatching>) -> Value {
+        if self.left_is_vector || self.right_is_vector {
+            retain_metric_binary_on_labels(&mut self.left, matching);
+        }
+        self.into_result()
     }
 }
 

@@ -3,7 +3,12 @@ use clap::{Parser, ValueEnum as _};
 use krabka_observability::{
     QuerierIndexSource, Role, ServiceConfig, build_service_dependencies, run,
 };
-use krabka_units::{bytes, kibibytes, millis, nanos};
+use krabka_units::{kibibytes, millis};
+
+#[path = "support/scoped_querier_config.rs"]
+mod scoped_querier_config;
+
+use scoped_querier_config::scoped_querier_config;
 
 #[test]
 fn parses_explicit_service_targets() {
@@ -119,25 +124,12 @@ fn parses_querier_object_store_shard_catalog_config() {
     assert!(
         config
             == ServiceConfig {
-                target: Role::Querier,
-                listen_addr: "127.0.0.1:3200".parse().unwrap(),
-                object_store_url: Some("s3://krabka-observability".to_string()),
                 wal_bootstrap_server: None,
                 wal_topic: "__krabka_observability_logs_wal".to_string(),
                 wal_group_id: "krabka-observability-block-builder".to_string(),
-                data_root: "/var/lib/krabka-observability".into(),
-                querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
-                tenant: Some("tenant-a".to_string()),
-                index_prefix: Some("observability/logs".to_string()),
-                query_start_ns: Some(10),
-                query_end_ns: Some(30),
-                max_query_range: Some(nanos(20)),
-                max_query_series: Some(10),
-                max_query_read: Some(kibibytes(1)),
-                max_query_string_bytes: Some(bytes(64)),
                 max_ingest_body: None,
                 wal_append_timeout: None,
-                ..ServiceConfig::default()
+                ..scoped_querier_config()
             }
     );
 }

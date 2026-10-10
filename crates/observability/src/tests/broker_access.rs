@@ -7,7 +7,7 @@ use super::prelude::{
     CancellationToken, IngestLimitError, Instant, LogIngestLimiter, LogQueryAuthorizer, Mutex,
     NonZeroUsize, PatternType, PermissionType, Principal, QueryAuthorizationError, ResourceType,
     SecurityEventSink, ServiceConfig, ServiceConfigError, TenantGrant, TenantId, TenantLru, Time,
-    TimeExt, WalLogRecord, acl_set_from_describe, async_trait, check, check_tenant_wal_read_acl,
+    TimeExt, acl_set_from_describe, async_trait, check, check_tenant_wal_read_acl,
     check_tenant_wal_write_acl, millis, secs, wal_topic_acl_filters,
 };
 

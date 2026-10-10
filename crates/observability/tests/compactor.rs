@@ -420,6 +420,23 @@ impl CompactionTarget {
             .collect()
     }
 
+    /// Checks that `descriptor` is the one block indexed under the
+    /// `{app="api", env="prod"}` series, and returns that series.
+    fn check_indexed_under_api_series(
+        &mut self,
+        descriptor: &BlockDescriptor,
+    ) -> krabka_blockstore::SeriesFingerprint {
+        let api = self
+            .label_index
+            .insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+        check!(
+            self.block_index
+                .match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
+                == vec![descriptor.clone()]
+        );
+        api
+    }
+
     /// Checks that nothing was indexed for tenant-a.
     fn check_nothing_indexed(&self) {
         check!(self.label_index.label_names("tenant-a").is_empty());
@@ -476,18 +493,10 @@ async fn compactor_commits_partition_offset_after_writing_block_and_index() {
         .unwrap();
 
     let key = BlockKey::new("tenant-a", 0, 42, 43, TimeRange::new(10, 19).unwrap());
-    let api = target
-        .label_index
-        .insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
 
     check!(descriptor.key == key);
     check!(target.committer.committed == committed_through(0, 43));
-    check!(
-        target
-            .block_index
-            .match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
-            == vec![descriptor.clone()]
-    );
+    let api = target.check_indexed_under_api_series(&descriptor);
 
     assert!(target.block_lines(&key).await == ["api ok", "api error"]);
 
@@ -508,18 +517,10 @@ async fn compactor_decodes_kafka_wal_records_before_writing_block() {
     let descriptor = target.compact_kafka(ok_then_error(2)).await.unwrap();
 
     let key = BlockKey::new("tenant-a", 2, 42, 43, TimeRange::new(10, 19).unwrap());
-    let api = target
-        .label_index
-        .insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
 
     check!(descriptor.key == key);
     check!(target.committer.committed == committed_through(2, 43));
-    check!(
-        target
-            .block_index
-            .match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
-            == vec![descriptor.clone()]
-    );
+    target.check_indexed_under_api_series(&descriptor);
 
     assert!(target.block_lines(&key).await == ["api ok", "api error"]);
 }
@@ -678,10 +679,24 @@ async fn object_block_lines(store: &LocalFileSystem, key: &BlockKey) -> Vec<Stri
 }
 
 /// A compactor whose data root, and so its delete-request store, is `dir`.
-fn deleting_compactor_config(dir: &tempfile::TempDir) -> ServiceConfig {
-    let mut config = compactor_config("observability/logs");
-    config.data_root = dir.path().to_path_buf();
-    config
+/// A compactor whose data root and object store share one temporary
+/// directory, so it can materialize delete requests in both.
+struct DeletingCompactor {
+    dir: tempfile::TempDir,
+    store: LocalFileSystem,
+    config: ServiceConfig,
+}
+
+impl DeletingCompactor {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+        let config = ServiceConfig {
+            data_root: dir.path().to_path_buf(),
+            ..compactor_config("observability/logs")
+        };
+        Self { dir, store, config }
+    }
 }
 
 const SECRET_LINES: [&str; 3] = ["api ok", "api secret", "api later secret"];
@@ -759,9 +774,11 @@ fn check_one_block_for(loaded_blocks: &BlockIndex, key: &BlockKey, api: u64) {
 
 #[tokio::test]
 async fn compactor_runtime_materializes_active_delete_requests_in_written_blocks() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let config = deleting_compactor_config(&dir);
+    let DeletingCompactor {
+        dir: _dir,
+        store,
+        config,
+    } = DeletingCompactor::new();
     let app = build_service_router(&config, ServiceDependencies::default(), Some(&store))
         .await
         .unwrap();
@@ -800,9 +817,11 @@ async fn compactor_runtime_materializes_active_delete_requests_in_written_blocks
 
 #[tokio::test]
 async fn compactor_runtime_materializes_active_delete_requests_in_existing_blocks() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let config = deleting_compactor_config(&dir);
+    let DeletingCompactor {
+        dir: _dir,
+        store,
+        config,
+    } = DeletingCompactor::new();
     let prefix = ObjectPath::from("observability/logs");
     let (label_index, api) = api_label_index();
     let (key, rows) = SecretBlock {
@@ -838,9 +857,7 @@ async fn compactor_runtime_materializes_active_delete_requests_in_existing_block
 
 #[tokio::test]
 async fn compactor_runtime_materializes_active_delete_requests_in_existing_local_manifest_blocks() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let config = deleting_compactor_config(&dir);
+    let DeletingCompactor { dir, store, config } = DeletingCompactor::new();
     let (label_index, api) = api_label_index();
     let (key, rows) = SecretBlock {
         api,
@@ -872,9 +889,11 @@ async fn compactor_runtime_deletes_existing_shard_rows_without_a_catalog() {
 }
 
 async fn delete_existing_shard(catalog_exists: bool) {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let config = deleting_compactor_config(&dir);
+    let DeletingCompactor {
+        dir: _dir,
+        store,
+        config,
+    } = DeletingCompactor::new();
     let prefix = ObjectPath::from("observability/logs");
     let (label_index, api) = api_label_index();
     let (key, rows) = SecretBlock {
@@ -1585,24 +1604,9 @@ async fn compactor_service_listener_serves_http_while_polling_wal() {
     let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     let config = compactor_config("observability/logs");
     let dependencies = one_api_ok_poll(PartitionIndex(6));
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server_store = Arc::clone(&store);
-    let server = tokio::spawn(async move {
-        serve_service_listener(listener, config, dependencies, Some(server_store.as_ref()))
-            .await
-            .unwrap();
-    });
+    let SpawnedListener { addr, server } = spawn_listener_over(&store, config, dependencies).await;
 
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    stream
-        .write_all(
-            format!("GET /ready HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").as_bytes(),
-        )
-        .await
-        .unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await.unwrap();
+    let response = get_ready(addr).await;
 
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(response.ends_with("ready\n"));
@@ -1738,12 +1742,7 @@ async fn compactor_service_stops_serving_when_its_wal_consumer_loop_panics() {
     let config = compactor_config("observability/logs");
     let trigger = Arc::new(tokio::sync::Notify::new());
     let dependencies = panicking_wal_dependencies(&trigger);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server_store = Arc::clone(&store);
-    let server = tokio::spawn(async move {
-        serve_service_listener(listener, config, dependencies, Some(server_store.as_ref())).await
-    });
+    let SpawnedListener { addr, server } = spawn_listener_over(&store, config, dependencies).await;
 
     // The consumer is parked on the trigger, so the service is demonstrably
     // serving while a live consumer sits behind it.
@@ -1806,6 +1805,28 @@ async fn querier_service_stops_serving_when_its_spawned_wal_consumer_loop_panics
 }
 
 /// One `GET /ready`, read to end over a `Connection: close` request.
+/// A service listener on `127.0.0.1`, serving on a spawned task.
+struct SpawnedListener {
+    addr: std::net::SocketAddr,
+    server: tokio::task::JoinHandle<Result<(), ServiceRuntimeError>>,
+}
+
+/// Binds `127.0.0.1:0` and serves `config` with `dependencies` over `store`
+/// on a spawned task.
+async fn spawn_listener_over(
+    store: &Arc<LocalFileSystem>,
+    config: ServiceConfig,
+    dependencies: ServiceDependencies,
+) -> SpawnedListener {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_store = Arc::clone(store);
+    let server = tokio::spawn(async move {
+        serve_service_listener(listener, config, dependencies, Some(server_store.as_ref())).await
+    });
+    SpawnedListener { addr, server }
+}
+
 async fn get_ready(addr: std::net::SocketAddr) -> String {
     let mut stream = TcpStream::connect(addr).await.unwrap();
     stream
@@ -2147,11 +2168,14 @@ async fn run_compactor_with_retention_overrides(run: RetentionOverridesRun<'_>) 
 
 #[tokio::test]
 async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes_its_object() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let prefix = ObjectPath::from("observability/logs");
-    let (expired, kept) = seed_expired_and_kept_blocks(&store, &prefix).await;
+    let SeededRetentionStore {
+        _dir,
+        store,
+        prefix,
+        expired,
+        kept,
+    } = SeededRetentionStore::new().await;
 
     sweep_with_one_hour_retention(&config, &store, &expired).await;
 
@@ -2191,11 +2215,14 @@ async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes
 
 #[tokio::test]
 async fn the_retention_sweep_keeps_an_empty_shard_manifest_in_the_catalog() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let prefix = ObjectPath::from("observability/logs");
-    let (expired, kept) = seed_expired_and_kept_blocks(&store, &prefix).await;
+    let SeededRetentionStore {
+        _dir,
+        store,
+        prefix,
+        expired,
+        kept,
+    } = SeededRetentionStore::new().await;
     check!(
         read_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
             .await
@@ -2651,6 +2678,34 @@ async fn compact_one_record_through_one_failed_put(store: &RecordingObjectStore)
 
     assert!(descriptors.len() == 1);
     assert!(store.failed_put_count() == 1);
+}
+
+/// A local object store that [`seed_expired_and_kept_blocks`] seeded under
+/// `observability/logs`.
+struct SeededRetentionStore {
+    _dir: tempfile::TempDir,
+    store: LocalFileSystem,
+    prefix: ObjectPath,
+    /// The block two hours old.
+    expired: BlockKey,
+    /// The block one minute old.
+    kept: BlockKey,
+}
+
+impl SeededRetentionStore {
+    async fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+        let prefix = ObjectPath::from("observability/logs");
+        let (expired, kept) = seed_expired_and_kept_blocks(&store, &prefix).await;
+        Self {
+            _dir: dir,
+            store,
+            prefix,
+            expired,
+            kept,
+        }
+    }
 }
 
 /// Seeds tenant-a with a block two hours old and a block one minute old, and

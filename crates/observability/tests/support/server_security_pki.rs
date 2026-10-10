@@ -1,11 +1,11 @@
-//! Certificate authorities, leaf certificates, and an event log, shared by
-//! the `server_security` unit tests and the `server_security` suite.
+//! Certificate authorities and leaf certificates, shared by the
+//! `server_security` unit tests and the `server_security` and
+//! `service_security` suites.
 //!
-//! Both reach this file with `#[path]`, so it names only external crates.
+//! Each reaches this file with `#[path]`, so it names only external crates.
 
-use std::{fmt::Write as _, sync::Mutex};
+use std::fmt::Write as _;
 
-use krabka_blockstore::TenantId;
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
@@ -21,11 +21,6 @@ pub fn sha256_hex(token: &str) -> String {
             write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
             hex
         })
-}
-
-/// The tenant `id`, which the test asserts is valid.
-pub fn tenant(id: &str) -> TenantId {
-    TenantId::new(id).expect("a valid tenant id")
 }
 
 /// A certificate and its private key, as PEM.
@@ -81,28 +76,5 @@ impl Leaf<'_> {
             certificate: certificate.pem(),
             key: key.serialize_pem(),
         }
-    }
-}
-
-/// Every event, as text, so a test can compare whole sequences and search
-/// them for credential bytes.
-#[derive(Default)]
-pub struct RecordedEvents(Mutex<Vec<String>>);
-
-impl RecordedEvents {
-    pub fn take(&self) -> Vec<String> {
-        std::mem::take(
-            &mut *self
-                .0
-                .lock()
-                .expect("no test panics while holding the lock"),
-        )
-    }
-
-    pub fn push(&self, event: String) {
-        self.0
-            .lock()
-            .expect("no test panics while holding the lock")
-            .push(event);
     }
 }

@@ -10,17 +10,7 @@ use super::*;
 #[test]
 pub(crate) fn an_unspaced_set_operator_is_reported_at_its_own_column() {
     let error = super::super::prelude::unspaced_vector_set_operator_error;
-    let column = |query: &str| {
-        error(query).map(|message| {
-            message
-                .split("col ")
-                .nth(1)
-                .and_then(|rest| rest.split(':').next())
-                .expect("the message names a column")
-                .parse::<usize>()
-                .expect("the column is a number")
-        })
-    };
+    let column = |query: &str| error(query).as_deref().map(reported_column);
 
     // All three operators, each glued to the closing parenthesis.
     check!(column("vector(1)and vector(2)") == Some(10));

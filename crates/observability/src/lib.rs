@@ -336,9 +336,9 @@ pub(crate) use self::{
             query_execution::{execute_http_query_for_tenant, execute_http_query_for_tenant_inner},
             request_types::{
                 DetectedFieldStats, DetectedFieldType, DetectedFieldsParams, DetectedLabelsParams,
-                PatternsParams, QueryParams, SeriesParams, VolumeAggregateBy, VolumeKind,
-                VolumeParams, api_prom_query, api_prom_query_post, api_prom_query_range,
-                api_prom_query_range_post, build_info, detected_field_values,
+                PatternsParams, PostedQueryRequest, QueryParams, SeriesParams, VolumeAggregateBy,
+                VolumeKind, VolumeParams, api_prom_query, api_prom_query_post,
+                api_prom_query_range, api_prom_query_range_post, build_info, detected_field_values,
                 detected_field_values_post, detected_fields, detected_fields_post, detected_labels,
                 detected_labels_post, format_query, format_query_post, label_names,
                 label_names_post, patterns, patterns_post, query, query_post, query_range,
@@ -353,12 +353,12 @@ pub(crate) use self::{
                 parse_volume_params, split_query_param_pairs, validate_loki_tail_delay_for,
             },
             value_decoding::{
-                LOKI_DEFAULT_QUERY_RANGE, LOKI_DEFAULT_TAIL_LIMIT,
+                DecodedQueryPair, LOKI_DEFAULT_QUERY_RANGE, LOKI_DEFAULT_TAIL_LIMIT,
                 LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS, LOKI_MAX_TAIL_DELAY,
                 LOKI_METADATA_DEFAULT_INDEX_RANGE, LokiDirection, QueryKind, authorized_tenant,
-                authorized_tenants, current_unix_time_ns, decode_form_component, loki_direction,
-                optional_start_end_range, parse_decimal_seconds_timestamp, parse_usize_query_param,
-                start_or_since, time_range,
+                authorized_tenants, current_unix_time_ns, decode_form_component, decode_query_pair,
+                loki_direction, optional_start_end_range, parse_decimal_seconds_timestamp,
+                parse_usize_query_param, start_or_since, time_range,
             },
         },
         params_format::{
@@ -508,7 +508,8 @@ pub(crate) use self::{
         },
         scan::{
             metric_scans::{
-                append_matching_log_batches, collect_object_store_metric_log_batches,
+                HotTailMetricSamples, append_matching_log_batches,
+                collect_object_store_metric_log_batches,
                 execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes,
                 execute_metric_query_range_with_deletes,
                 execute_metric_query_range_with_hot_tail_frontier_and_deletes,

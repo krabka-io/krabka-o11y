@@ -31,6 +31,7 @@ mod execute_metric_query_with_hot_tail_frontier_and_deletes;
 mod execute_tail_query;
 mod execute_tail_query_with_frontier;
 mod execute_tail_query_with_frontier_and_deletes;
+mod hot_tail_metric_samples;
 
 pub(crate) use append_matching_log_batches::append_matching_log_batches;
 pub(crate) use collect_object_store_metric_log_batches::collect_object_store_metric_log_batches;
@@ -51,3 +52,4 @@ pub(crate) use execute_metric_query_with_hot_tail_frontier_and_deletes::execute_
 pub use execute_tail_query::execute_tail_query;
 pub use execute_tail_query_with_frontier::execute_tail_query_with_frontier;
 pub(crate) use execute_tail_query_with_frontier_and_deletes::execute_tail_query_with_frontier_and_deletes;
+pub(crate) use hot_tail_metric_samples::HotTailMetricSamples;

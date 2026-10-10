@@ -1,15 +1,13 @@
 use super::{
-    HttpQueryError, QueryParams, decode_form_component, parse_loki_duration_query_param,
-    parse_loki_tail_delay_for_query_param, parse_loki_timestamp_query_param,
-    parse_usize_query_param, split_query_param_pairs,
+    DecodedQueryPair, HttpQueryError, QueryParams, QueryWindowNanos, decode_query_pair,
+    parse_loki_duration_query_param, parse_loki_tail_delay_for_query_param,
+    parse_loki_timestamp_query_param, parse_usize_query_param, split_query_param_pairs,
 };
 
 pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams, HttpQueryError> {
     let mut query = None;
     let mut time = None;
-    let mut start = None;
-    let mut end = None;
-    let mut since = None;
+    let mut window = QueryWindowNanos::default();
     let mut step = None;
     let mut interval = None;
     let mut limit = None;
@@ -35,9 +33,9 @@ pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams,
             "targetBytesPerShard",
         ],
     ) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = decode_form_component(key)?;
-        let value = decode_form_component(value)?;
+        let pair = decode_query_pair(pair)?;
+        window.record(&pair)?;
+        let DecodedQueryPair { key, value } = pair;
 
         match key.as_str() {
             "query" if query.is_none() => query = Some(value),
@@ -61,15 +59,6 @@ pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams,
                 }
                 time = Some(timestamp);
             }
-            "start" if start.is_none() => {
-                start = Some(parse_loki_timestamp_query_param("start", &value)?);
-            }
-            "end" if end.is_none() => {
-                end = Some(parse_loki_timestamp_query_param("end", &value)?);
-            }
-            "since" if since.is_none() => {
-                since = Some(parse_loki_duration_query_param("since", &value)?);
-            }
             "step" if step.is_none() => {
                 step = Some(parse_loki_duration_query_param("step", &value)?);
             }
@@ -85,6 +74,7 @@ pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams,
         }
     }
 
+    let QueryWindowNanos { start, end, since } = window;
     Ok(QueryParams {
         query: query.ok_or(HttpQueryError::MissingQueryParameter("query"))?,
         time,

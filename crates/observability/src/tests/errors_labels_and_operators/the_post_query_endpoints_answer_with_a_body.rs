@@ -13,6 +13,12 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
     headers.insert("X-Scope-OrgID", "tenant-a".parse().expect("a header value"));
     let body =
         || axum::body::Bytes::from_static(b"query=%7Bapp%3D%22web%22%7D&start=0&end=10000000001");
+    let request = || super::super::prelude::PostedQueryRequest {
+        security: super::super::prelude::RequestSecurity::unauthenticated(),
+        headers: headers.clone(),
+        raw_query: None,
+        body: body(),
+    };
     let read = |response: axum::response::Response| async move {
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
@@ -24,47 +30,19 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
     for (name, response) in [
         (
             "detected_fields",
-            super::super::prelude::detected_fields_post(
-                State(state.clone()),
-                super::super::prelude::RequestSecurity::unauthenticated(),
-                headers.clone(),
-                axum::extract::RawQuery(None),
-                body(),
-            )
-            .await,
+            super::super::prelude::detected_fields_post(State(state.clone()), request()).await,
         ),
         (
             "detected_labels",
-            super::super::prelude::detected_labels_post(
-                State(state.clone()),
-                super::super::prelude::RequestSecurity::unauthenticated(),
-                headers.clone(),
-                axum::extract::RawQuery(None),
-                body(),
-            )
-            .await,
+            super::super::prelude::detected_labels_post(State(state.clone()), request()).await,
         ),
         (
             "index_volume",
-            super::super::prelude::index_volume_post(
-                State(state.clone()),
-                super::super::prelude::RequestSecurity::unauthenticated(),
-                headers.clone(),
-                axum::extract::RawQuery(None),
-                body(),
-            )
-            .await,
+            super::super::prelude::index_volume_post(State(state.clone()), request()).await,
         ),
         (
             "label_names",
-            super::super::prelude::api_prom_label_names_post(
-                State(state.clone()),
-                super::super::prelude::RequestSecurity::unauthenticated(),
-                headers.clone(),
-                axum::extract::RawQuery(None),
-                body(),
-            )
-            .await,
+            super::super::prelude::api_prom_label_names_post(State(state.clone()), request()).await,
         ),
     ] {
         let (status, bytes) = read(response.into_response()).await;

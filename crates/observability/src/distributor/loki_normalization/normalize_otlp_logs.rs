@@ -25,16 +25,9 @@ pub(crate) fn normalize_otlp_logs(
         )?;
 
         for scope_logs in resource_logs.scope_logs {
-            let scope = scope_logs.scope.as_ref();
             let inherited_metadata = otlp_scope_metadata(
                 &resource_metadata,
-                &OtlpScope {
-                    attributes: scope
-                        .and_then(|scope| scope.attributes.as_deref())
-                        .unwrap_or_default(),
-                    name: scope.map_or("", |scope| scope.name.as_str()),
-                    version: scope.map_or("", |scope| scope.version.as_str()),
-                },
+                &OtlpScope::from_json(scope_logs.scope.as_ref()),
                 limits,
             )?;
             let labels = otlp_stream_labels(&resource_labels, limits)?;

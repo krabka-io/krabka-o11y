@@ -41,13 +41,16 @@ use rcgen::{CertifiedIssuer, ExtendedKeyUsagePurpose, KeyPair};
 use tempfile::TempDir;
 use tokio::{io::AsyncReadExt as _, net::TcpListener};
 
+#[path = "support/recorded_security_events.rs"]
+mod recorded_security_events;
 #[path = "support/secure_router.rs"]
 mod secure_router;
 #[path = "support/server_security_pki.rs"]
 mod server_security_pki;
 
+use recorded_security_events::{RecordedEvents, tenant};
 use secure_router::{SecureRouter, serve_secure_router};
-use server_security_pki::{Leaf, Pem, RecordedEvents, authority, sha256_hex, tenant};
+use server_security_pki::{Leaf, Pem, authority, sha256_hex};
 
 const GRAFANA_TOKEN: &str = "grafana-7c1f0e9a4b2d8e6f3a5c7b9d1e0f2a4c";
 const OPS_TOKEN: &str = "ops-2b4d6f8a0c1e3a5b7c9d0e2f4a6b8c0d";
@@ -203,11 +206,11 @@ impl SecurityEvents for RecordedEvents {
     }
 
     fn tenant_denied(&self, principal: &str, _method: AuthMethod, tenant: &TenantId) {
-        self.push(format!("tenant denied {principal} {tenant}"));
+        self.push_tenant_denied(principal, tenant);
     }
 
     fn admin_denied(&self, principal: &str, _method: AuthMethod) {
-        self.push(format!("admin denied {principal}"));
+        self.push_admin_denied(principal);
     }
 }
 

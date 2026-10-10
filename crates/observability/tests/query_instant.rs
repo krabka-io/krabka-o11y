@@ -258,62 +258,12 @@ async fn query_endpoint_applies_limit_to_stream_results() {
 
 #[tokio::test]
 async fn query_endpoint_applies_backward_direction_before_limit() {
-    let hot_tail = InMemoryWalSink::default();
-    hot_tail
-        .append(api_prod_wal_record(20, "api hot error"))
-        .await
-        .unwrap();
-    let state = fixture().with_hot_tail(hot_tail, 19);
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=backward&limit=1").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "streams",
-            data_result: api_prod_streams(json!([["20", "api hot error"]])),
-            stats: LokiStatsCounts {
-                store_bytes: 1846,
-                store_lines: 0,
-                ingester_lines: 1,
-                chunks: 1,
-            }
-            .expected_stats(),
-        }
-        .json(),
-    )
-    .await;
+    assert_serves_only_the_hot_error("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=backward&limit=1").await;
 }
 
 #[tokio::test]
 async fn query_endpoint_defaults_to_backward_direction_before_limit() {
-    let hot_tail = InMemoryWalSink::default();
-    hot_tail
-        .append(api_prod_wal_record(20, "api hot error"))
-        .await
-        .unwrap();
-    let state = fixture().with_hot_tail(hot_tail, 19);
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&limit=1").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "streams",
-            data_result: api_prod_streams(json!([["20", "api hot error"]])),
-            stats: LokiStatsCounts {
-                store_bytes: 1846,
-                store_lines: 0,
-                ingester_lines: 1,
-                chunks: 1,
-            }
-            .expected_stats(),
-        }
-        .json(),
-    )
-    .await;
+    assert_serves_only_the_hot_error("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&limit=1").await;
 }
 
 #[tokio::test]
@@ -463,4 +413,35 @@ async fn query_endpoint_rejects_planned_block_bytes_over_configured_limit() {
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "bytes");
+}
+
+/// Checks that `uri`, a stream query with `limit=1`, answers with only the
+/// newest line: `api hot error`, which the hot tail holds at 20 ns, above the
+/// fixture's frontier.
+async fn assert_serves_only_the_hot_error(uri: &str) {
+    let hot_tail = InMemoryWalSink::default();
+    hot_tail
+        .append(api_prod_wal_record(20, "api hot error"))
+        .await
+        .unwrap();
+    let app = loki_router(fixture().with_hot_tail(hot_tail, 19));
+
+    let response = Tenant("tenant-a").get(&app, uri).await;
+
+    assert_json_ok(
+        response,
+        &LokiSuccess {
+            result_type: "streams",
+            data_result: api_prod_streams(json!([["20", "api hot error"]])),
+            stats: LokiStatsCounts {
+                store_bytes: 1846,
+                store_lines: 0,
+                ingester_lines: 1,
+                chunks: 1,
+            }
+            .expected_stats(),
+        }
+        .json(),
+    )
+    .await;
 }

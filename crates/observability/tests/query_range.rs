@@ -54,6 +54,25 @@ fn check_parquet_schema<'a>(
         .unwrap()
 }
 
+/// The matrix of the one `{app="api", env="prod"}` series, with `values`.
+fn api_prod_matrix(values: &Value) -> Value {
+    json!([
+        {
+            "metric": {
+                "app": "api",
+                "env": "prod"
+            },
+            "values": values
+        }
+    ])
+}
+
+/// The matrix of the one `{app="api", env="prod"}` series, with `value` at
+/// 30 ns.
+fn api_prod_matrix_at_30ns(value: &str) -> Value {
+    api_prod_matrix(&json!([[0.000_000_03, value]]))
+}
+
 // The answer `tenant-a` gets from the fixture for `uri`: a success of
 // `result_type` that carries `data_result` and `stats`.
 struct FixtureAnswer<'a> {
@@ -135,18 +154,7 @@ async fn query_range_endpoint_applies_metric_binary_arithmetic() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_03, "2"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix_at_30ns("2"),
         stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
     }
     .assert_served()
@@ -158,18 +166,7 @@ async fn query_range_endpoint_applies_bool_metric_binary_comparison() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%3C%20bool%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_03, "0"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix_at_30ns("0"),
         stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
     }
     .assert_served()
@@ -230,18 +227,7 @@ async fn query_range_endpoint_applies_bool_metric_query_scalar_comparison() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%3E%20bool%200&start=0.000000000&end=0.000000030",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_03, "1"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix_at_30ns("1"),
         stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
     }
     .assert_served()
@@ -253,18 +239,7 @@ async fn query_range_endpoint_applies_bool_scalar_metric_query_comparison() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=0%20%3E%20bool%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_03, "0"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix_at_30ns("0"),
         stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
     }
     .assert_served()
@@ -276,18 +251,7 @@ async fn query_range_endpoint_applies_metric_query_scalar_arithmetic() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202&start=0.000000000&end=0.000000030",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_03, "2"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix_at_30ns("2"),
         stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
     }
     .assert_served()
@@ -299,18 +263,7 @@ async fn query_range_endpoint_applies_scalar_metric_query_arithmetic() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=2%20%2A%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_03, "2"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix_at_30ns("2"),
         stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
     }
     .assert_served()
@@ -727,18 +680,7 @@ async fn query_range_endpoint_returns_count_over_time_matrix_json() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_03, "1"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix_at_30ns("1"),
         stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
     }
     .assert_served()
@@ -773,18 +715,7 @@ async fn query_range_endpoint_applies_negative_count_over_time_offset() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B1ns%5D%20offset%20-9ns%29&start=0.000000010&end=0.000000010&step=1ns",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_01, "1"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix(&json!([[0.000_000_01, "1"]])),
         stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
     }
     .assert_served()
@@ -796,18 +727,7 @@ async fn query_range_endpoint_accepts_range_selector_before_pipeline() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%20%7C%3D%20%22error%22%29&start=0.000000000&end=0.000000030",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_03, "1"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix_at_30ns("1"),
         stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
     }
     .assert_served()
@@ -1064,19 +984,7 @@ async fn query_range_endpoint_treats_integer_step_as_seconds() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=10000000020&step=10",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [10, "1"],
-                    [20, "1"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix(&json!([[10, "1"], [20, "1"]])),
         stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
     }
     .assert_served()
@@ -1088,19 +996,7 @@ async fn query_range_endpoint_accepts_float_seconds_step_for_count_over_time_mat
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=0.000000030&step=0.000000010",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_02, "1"],
-                    [0.000_000_03, "1"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix(&json!([[0.000_000_02, "1"], [0.000_000_03, "1"]])),
         stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
     }
     .assert_served()
@@ -1112,19 +1008,7 @@ async fn query_range_endpoint_accepts_duration_step_for_count_over_time_matrix_j
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=10000000020&step=10s",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [10, "1"],
-                    [20, "1"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix(&json!([[10, "1"], [20, "1"]])),
         stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
     }
     .assert_served()
@@ -1159,19 +1043,7 @@ async fn query_range_endpoint_accepts_millisecond_duration_step_for_grafana() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=1.000000020&step=1000ms",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [1, "1"],
-                    [2, "1"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix(&json!([[1, "1"], [2, "1"]])),
         stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
     }
     .assert_served()
@@ -1183,19 +1055,7 @@ async fn query_range_endpoint_accepts_compound_duration_range_selector() {
     FixtureAnswer {
         uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B1m30s%5D%29&start=0.000000020&end=0.000000030&step=10ns",
         result_type: "matrix",
-        data_result: json!([
-            {
-                "metric": {
-                    "app": "api",
-
-                    "env": "prod"
-                },
-                "values": [
-                    [0.000_000_02, "1"],
-                    [0.000_000_03, "1"]
-                ]
-            }
-        ]),
+        data_result: api_prod_matrix(&json!([[0.000_000_02, "1"], [0.000_000_03, "1"]])),
         stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
     }
     .assert_served()

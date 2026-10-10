@@ -91,6 +91,34 @@ pub(crate) struct OtlpScope<'a, A> {
     pub(crate) version: &'a str,
 }
 
+impl<'a> OtlpScope<'a, OtlpKeyValue> {
+    /// The scope of an OTLP/JSON `scopeLogs` entry.
+    pub(crate) fn from_json(scope: Option<&'a crate::distributor::router::OtlpScope>) -> Self {
+        Self {
+            attributes: scope
+                .and_then(|scope| scope.attributes.as_deref())
+                .unwrap_or_default(),
+            name: scope.map_or("", |scope| scope.name.as_str()),
+            version: scope.map_or("", |scope| scope.version.as_str()),
+        }
+    }
+}
+
+impl<'a> OtlpScope<'a, ProtoKeyValue> {
+    /// The scope of an OTLP/protobuf `ScopeLogs` message.
+    pub(crate) fn from_proto(
+        scope: Option<&'a opentelemetry_proto::tonic::common::v1::InstrumentationScope>,
+    ) -> Self {
+        Self {
+            attributes: scope
+                .map(|scope| scope.attributes.as_slice())
+                .unwrap_or_default(),
+            name: scope.map_or("", |scope| scope.name.as_str()),
+            version: scope.map_or("", |scope| scope.version.as_str()),
+        }
+    }
+}
+
 /// The structured metadata every record of `scope` inherits: the resource
 /// metadata, the scope attributes the tenant's rules keep, and the scope's
 /// name and version when they are not empty.

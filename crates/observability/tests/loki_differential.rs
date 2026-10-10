@@ -72,6 +72,26 @@ use tracing_subscriber::{Registry, layer::SubscriberExt as _, util::SubscriberIn
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+/// The test's undeclared outputs directory, which is `target` when Bazel does
+/// not name one, created if it is missing.
+fn test_output_dir() -> TestResult<std::path::PathBuf> {
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::path::PathBuf::from("../../target"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&output)?;
+    Ok(output)
+}
+
+/// Writes `report` as pretty JSON to `file_name` in [`test_output_dir`].
+fn write_test_output(file_name: &str, report: &impl serde::Serialize) -> TestResult {
+    std::fs::write(
+        test_output_dir()?.join(file_name),
+        serde_json::to_vec_pretty(report)?,
+    )?;
+    Ok(())
+}
+
 /// The deadline for a container to start, which includes the image pull.
 ///
 /// `AsyncRunner::start` waits for the pull with no bound of its own. A stalled
@@ -313,18 +333,13 @@ async fn loki_corpus_matches_krabka() -> TestResult {
         }
     }
 
-    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
-        || std::path::PathBuf::from("../../target"),
-        std::path::PathBuf::from,
-    );
-    std::fs::create_dir_all(&output)?;
-    std::fs::write(
-        output.join("loki-supported-template-functions.json"),
-        serde_json::to_vec_pretty(&json!({
+    write_test_output(
+        "loki-supported-template-functions.json",
+        &json!({
             "schema_version": 1, "upstream_source": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
             "timeline_base_ns": timeline.base_ns,
             "planned": template_functions::CASES.len(), "cases": template_cases,
-        }))?,
+        }),
     )?;
     krabka.shutdown();
     // How much was actually asked. An empty divergence list over four queries
@@ -383,11 +398,7 @@ async fn upstream_loki_remote_correctness_matches_krabka() -> TestResult {
         }
     }
     wait_for_remote_fixture(&client, &[&loki_base, &krabka.query_url], &fixture).await?;
-    let report_dir = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
-        || std::path::PathBuf::from("../../target"),
-        std::path::PathBuf::from,
-    );
-    std::fs::create_dir_all(&report_dir)?;
+    let report_dir = test_output_dir()?;
     std::fs::write(
         report_dir.join("loki-remote-dataset-metadata.json"),
         serde_json::to_vec_pretty(&fixture.metadata)?,

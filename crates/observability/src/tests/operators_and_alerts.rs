@@ -1,3 +1,5 @@
+use reported_column::reported_column;
+
 use super::prelude::{MetricScalarArithmeticOp, check};
 
 mod a_leading_vector_group_modifier_is_peeled_with_its_labels;
@@ -7,3 +9,4 @@ mod an_alert_fires_once_it_has_held_for_its_configured_duration;
 mod an_unspaced_set_operator_is_reported_at_its_own_column;
 mod evaluating_one_alert_rule_leaves_the_other_rules_states_alone;
 mod every_promql_scalar_operator_parses_to_its_own_variant;
+mod reported_column;

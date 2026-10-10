@@ -4553,7 +4553,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4610,7 +4610,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4659,7 +4659,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4716,7 +4716,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4765,7 +4765,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4814,7 +4814,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4863,7 +4863,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4920,7 +4920,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4969,7 +4969,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5018,7 +5018,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5067,7 +5067,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5122,7 +5122,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5179,7 +5179,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5230,7 +5230,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5289,7 +5289,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5338,7 +5338,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5393,7 +5393,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5416,7 +5416,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5439,7 +5439,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5462,7 +5462,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5485,7 +5485,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5508,7 +5508,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5531,7 +5531,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5554,7 +5554,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5577,7 +5577,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5600,7 +5600,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5623,7 +5623,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5646,7 +5646,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5669,7 +5669,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5692,7 +5692,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5715,7 +5715,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5738,7 +5738,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -7615,7 +7615,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7652,7 +7652,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7689,7 +7689,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7726,7 +7726,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7763,7 +7763,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7800,7 +7800,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7837,7 +7837,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7874,7 +7874,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7911,7 +7911,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7948,7 +7948,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -7985,7 +7985,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8022,7 +8022,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8059,7 +8059,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8096,7 +8096,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8133,7 +8133,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8170,7 +8170,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8207,7 +8207,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8244,7 +8244,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8281,7 +8281,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8318,7 +8318,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8355,7 +8355,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8392,7 +8392,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8429,7 +8429,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8466,7 +8466,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8503,7 +8503,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8540,7 +8540,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8577,7 +8577,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8614,7 +8614,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8651,7 +8651,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8688,7 +8688,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8725,7 +8725,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8762,7 +8762,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8799,7 +8799,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8836,7 +8836,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8873,7 +8873,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8910,7 +8910,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8947,7 +8947,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -8984,7 +8984,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9021,7 +9021,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9058,7 +9058,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9095,7 +9095,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9132,7 +9132,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9169,7 +9169,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9206,7 +9206,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9243,7 +9243,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9280,7 +9280,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9317,7 +9317,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9354,7 +9354,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9391,7 +9391,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9428,7 +9428,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9465,7 +9465,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9502,7 +9502,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9539,7 +9539,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9576,7 +9576,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9613,7 +9613,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9650,7 +9650,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9687,7 +9687,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9724,7 +9724,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9761,7 +9761,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9798,7 +9798,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9835,7 +9835,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9872,7 +9872,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9909,7 +9909,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9946,7 +9946,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -9983,7 +9983,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10020,7 +10020,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10057,7 +10057,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10094,7 +10094,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10131,7 +10131,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10168,7 +10168,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10205,7 +10205,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10242,7 +10242,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10279,7 +10279,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10316,7 +10316,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10353,7 +10353,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10390,7 +10390,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10427,7 +10427,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10464,7 +10464,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10501,7 +10501,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10538,7 +10538,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10575,7 +10575,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10612,7 +10612,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10649,7 +10649,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10686,7 +10686,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10723,7 +10723,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10760,7 +10760,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -10797,7 +10797,7 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3",
+        "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
@@ -11374,11 +11374,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11420,11 +11420,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11466,11 +11466,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11512,11 +11512,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11558,11 +11558,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11604,11 +11604,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11650,11 +11650,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11696,11 +11696,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11748,11 +11748,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11794,11 +11794,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11846,11 +11846,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11892,11 +11892,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11938,11 +11938,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -11984,11 +11984,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12030,11 +12030,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12090,11 +12090,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12150,11 +12150,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12202,11 +12202,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12254,11 +12254,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12300,11 +12300,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12346,11 +12346,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12401,11 +12401,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12461,11 +12461,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12521,11 +12521,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12581,11 +12581,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12633,11 +12633,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12679,11 +12679,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12739,11 +12739,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12785,11 +12785,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12837,11 +12837,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12883,11 +12883,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12935,11 +12935,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -12981,11 +12981,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -13041,11 +13041,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -13087,11 +13087,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -13139,11 +13139,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -13233,11 +13233,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -13285,11 +13285,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -13331,11 +13331,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },
@@ -13383,11 +13383,11 @@
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "572c1a06fc6e20977a811f65edf71b4f167a30d8d09ef298de819315b1508b5d"
+            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "5cd659205a930d97c0b74112628b8ceb4dbe22640aa90ec9244c1c7eaa26d7e3"
+            "sha256": "e141defc88ce891eaa5168159f1dc36e3eddf4442ce7678b4dc5a0945d9116ea"
           }
         ]
       },

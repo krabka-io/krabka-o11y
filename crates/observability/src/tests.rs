@@ -19,20 +19,6 @@ pub(crate) mod prelude {
 
     pub(crate) use assert2::check;
     pub(crate) use async_trait::async_trait;
-    pub(crate) use axum::{
-        Extension, Router,
-        body::Bytes,
-        extract::{
-            Path, RawQuery, State,
-            ws::{Message, WebSocket, WebSocketUpgrade},
-        },
-        http::{
-            HeaderMap, StatusCode,
-            header::{ACCEPT, CONTENT_ENCODING, CONTENT_TYPE},
-        },
-        response::{IntoResponse, Response},
-        routing::{get, post},
-    };
     pub(crate) use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     pub(crate) use clap::{Parser, ValueEnum};
     pub(crate) use datafusion::{
@@ -98,17 +84,6 @@ pub(crate) mod prelude {
         ObjectStore, ObjectStoreExt, local::LocalFileSystem, parse_url_opts,
         path::Path as ObjectPath,
     };
-    pub(crate) use opentelemetry_proto::tonic::{
-        collector::logs::v1::{
-            ExportLogsServiceRequest as ProtoExportLogsServiceRequest,
-            ExportLogsServiceResponse as ProtoExportLogsServiceResponse,
-            logs_service_server::{LogsService, LogsServiceServer},
-        },
-        common::v1::{
-            AnyValue as ProtoAnyValue, KeyValue as ProtoKeyValue, any_value as proto_any_value,
-        },
-        logs::v1::LogRecord as ProtoLogRecord,
-    };
     pub(crate) use parquet::arrow::arrow_writer::ArrowWriter;
     pub(crate) use prost::Message as _;
     pub(crate) use regex::Regex;
@@ -137,6 +112,8 @@ pub(crate) mod prelude {
         shard_index_cache::*, tenant_resolution::*, vector_binary_operations::*, *,
     };
     pub use crate::ids::{Offset, PartitionIndex};
+    // The crate root's own imports (axum, OTLP protos, and the rest).
+    pub(crate) use crate::*;
     pub(crate) use crate::{
         compactor::{
             configuration::*, delete_materialization::*, frontier::*, object_store_support::*,
@@ -189,6 +166,7 @@ pub(crate) mod prelude {
 
 mod acl_quota_and_buffers;
 mod alerts_and_params;
+mod api_record_for_test;
 mod broker_access;
 mod cache_post_and_rules;
 mod compaction_and_query_limits;

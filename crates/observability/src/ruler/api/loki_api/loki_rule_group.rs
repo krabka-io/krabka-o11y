@@ -1,16 +1,16 @@
 use super::{
-    HeaderMap, HttpQueryError, Path, QuerierState, RequestSecurity, Response, State, StatusCode,
-    TenantErrorSurface, authorized_ruler_tenant, loki_yaml_response, text_response,
+    HttpQueryError, Path, QuerierState, RequestSecurity, Response, RulerTenant, State, StatusCode,
+    loki_yaml_response, text_response,
 };
 
 pub(crate) async fn loki_rule_group(
     State(state): State<QuerierState>,
-    security: RequestSecurity,
+    // Extracted ahead of the path, so a request without a principal is
+    // refused first; `RulerTenant` reads the principal again.
+    _security: RequestSecurity,
     Path((namespace, group_name)): Path<(String, String)>,
-    headers: HeaderMap,
+    RulerTenant(tenant): RulerTenant,
 ) -> Result<Response, HttpQueryError> {
-    let tenant =
-        authorized_ruler_tenant(&state, &security, &headers, TenantErrorSurface::Ruler).await?;
     let rules = state
         .rules
         .tenants
