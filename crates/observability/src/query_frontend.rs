@@ -410,10 +410,23 @@ fn state_for_bounds(state: &QuerierState, tenant: &str, bounds: FingerprintBound
     if bounds == full_fingerprint_bounds() {
         return state.clone();
     }
+    state_for_partial_bounds(state, tenant, bounds)
+}
+
+// Keep bounded-index preparation out of full-range request code.
+#[inline(never)]
+fn state_for_partial_bounds(
+    state: &QuerierState,
+    tenant: &str,
+    bounds: FingerprintBounds,
+) -> QuerierState {
     let mut label_index = LabelIndex::default();
-    for (fingerprint, labels) in state.label_index.tenant_series(tenant) {
-        if (bounds.min..=bounds.max).contains(&fingerprint) {
-            label_index.insert_series(tenant, labels);
+    // Select fingerprints before copying labels: most tenant series are outside
+    // this shard. The resulting index still uses the canonical source labels.
+    let fingerprints = state.label_index.match_series(tenant, &[]);
+    for fingerprint in fingerprints.range(bounds.min..=bounds.max) {
+        if let Some(labels) = state.label_index.labels_for(tenant, *fingerprint) {
+            label_index.insert_series(tenant, labels.clone());
         }
     }
     let mut state = state.clone();

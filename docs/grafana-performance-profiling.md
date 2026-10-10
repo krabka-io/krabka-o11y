@@ -1253,3 +1253,89 @@ separate from normal PR CI. This round adds no fresh native deployment
 comparison. Ingest wait attribution, bounded shard label-index rebuilding,
 metadata enumeration and larger native comparisons remain unfinished;
 overall performance parity is unqualified.
+
+## Bounded shard label selection
+
+A focused 20,000-stream sharded capture after immutable index sharing still
+attributes 8.81% of cumulative samples to `state_for_bounds`, including 5.15%
+in `LabelIndex::tenant_series`. That method copies every tenant label set
+into an owned vector before the frontend filters shard bounds. Loki instead
+reuses label and chunk buffers while walking postings; the pinned
+[source comparison](grafana-upstream-source-comparison.md#loki) describes its
+callback ownership contract.
+
+The initial candidate collects tenant fingerprints, selects the inclusive
+shard range, then borrows and copies only those labels into the existing
+bounded index. It preserves canonical labels and tenant selection, while
+still constructing the full tenant fingerprint set and rebuilding a bounded
+index. The same filesystem frontend fixture passes all 48 complete payload
+checks, with three alternating pairs for sharded and unsharded broad requests
+at four sizes, on the current VM.
+
+At 100,000 streams, the initial sharded median falls from 17.364 to 16.289
+seconds, with a median paired ratio of 0.9444. The 20,000-stream unsharded
+control regresses by paired ratio 1.0825; its independently computed medians
+are 2.343 and 2.357 seconds, with overlapping run ranges. The 5,000-stream
+sharded paired ratio is also 1.0249, with overlapping ranges. All observations
+remain in the [initial experiment record](../qualification/shard-label-selection-2026-10-10.json).
+
+Matched-count CPU captures include fixture creation, one verification request
+and three timed sharded requests at 20,000 streams, with zero lost samples.
+Reported bounded preparation falls from 8.81% to 3.11% of cumulative samples.
+The candidate has no `tenant_series` entry at the 0.5% reporting threshold.
+These are whole-process attribution percentages; cumulative callers overlap
+and do not establish query-only CPU ratios.
+
+Heap captures include fixture creation, one verification request and three
+timed sharded requests at 5,000 streams. Allocation calls fall from 13,438,770
+to 12,337,038; peak heap remains 80.43 MB. Instrumented RSS falls from 245.31
+to 226.76 MB. These are whole-process counts and include profiler overhead.
+All 148 querier, object-store and range-query tests pass, along with production
+and full unit-source Clippy checks.
+
+The separate [refinement record](../qualification/shard-label-selection-refined-2026-10-10.json)
+isolates bounded preparation in a non-inlined helper. Its largest unsharded
+control still regresses by paired ratio 1.0647. Both direct builds used
+different Rust crate metadata tags from the baseline, which can change code
+layout. The records retain that confound; they do not attribute the control
+changes to the algorithm or inlining alone.
+
+The [final repeat](../qualification/shard-label-selection-matched-2026-10-10.json)
+keeps the refined source and matches the baseline metadata tags for both the
+observability library and fixture. All 48 measurements verify complete
+payloads, with three alternating pairs. The retained candidate has these
+results:
+
+| Request | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| Sharded, 5,000 streams | 0.468 s | 0.425 s | 0.9125 |
+| Sharded, 20,000 streams | 2.655 s | 2.456 s | 0.9376 |
+| Sharded, 100,000 streams | 18.070 s | 16.950 s | 0.9714 |
+| Unsharded, 1,000 streams | 0.0563 s | 0.0601 s | 1.0663 |
+| Unsharded, 100,000 streams | 14.579 s | 14.304 s | 0.9984 |
+
+The 5,000- and 20,000-stream sharded ranges are disjoint in these three pairs.
+The largest sharded result is smaller by median paired ratio, with overlapping
+ranges and one slower candidate pair. The smallest unsharded control retains
+a 6.6% paired regression with overlapping ranges. Medians and paired ratios
+are distinct statistics; all ranges remain in the record. This repeat removes
+the metadata-tag difference but does not prove that it caused the earlier
+regressions.
+
+The final CPU capture loses no samples and attributes 2.74% of cumulative
+samples to the partial-bounds helper, against the baseline's 8.81% bounded
+preparation entry. Scope remains fixture creation, one verification request
+and three timed sharded requests. Final whole-process heap counts fall from
+13,438,776 to 12,337,011, with peak heap 80.43/80.42 MB and instrumented RSS
+242.68/226.03 MB. Each capture includes fixture construction, one verification
+and three timed requests at 5,000 streams. These attribution and allocation
+figures do not establish query-only CPU or general memory savings.
+
+The final build again passes 148 integration tests and production/full
+unit-source Clippy. Source snapshots, exact compiler options, ELF identities,
+verified archives, all failed and completed experiments and reproduction
+commands are retained. Each experiment's evidence manifest remains separate.
+This round adds no native deployment comparison or overall upstream parity
+claim. Borrowed fingerprint-range traversal, avoiding repeated bounded-index
+rebuilds, native ingest wait attribution and larger native comparisons remain
+unfinished.

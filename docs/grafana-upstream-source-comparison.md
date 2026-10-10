@@ -322,6 +322,22 @@ snapshot valid; tenant keys, TTLs and compaction-frontier generation handling
 are preserved. Bounded shard preparation still rebuilds a label index and
 remains a separate cost to investigate.
 
+Loki's
+[`ForSeries` loop](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/tsdb/single_file_index.go#L159-L200)
+reuses a label variable and pooled chunk metadata while iterating postings;
+callbacks must not retain those reused arguments. Krabka's bounded shard
+preparation previously collected an owned copy of every tenant series before
+filtering its fingerprint range. The new path selects fingerprints first,
+then borrows canonical labels and copies only included series into the bounded
+index. It still constructs a tenant-wide fingerprint set and rebuilds the
+bounded index. The first measured candidate reduces allocation calls but has
+a broad unsharded control regression; its separate investigation record
+preserves that result before refinement. The retained implementation isolates
+bounded work in a non-inlined helper. Its final measurement matches the
+baseline Rust metadata tags after earlier direct builds exposed a code-layout
+confound; the [profiling record](grafana-performance-profiling.md#bounded-shard-label-selection)
+retains every control and does not attribute those differences to one cause.
+
 ## Tempo
 
 Tempo checks Parquet dictionaries, column chunks and page bounds before it

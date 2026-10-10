@@ -1,0 +1,403 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "source_commit": "1a1a9b6cd3bcf3269952aafbc8629477c84a8ee7",
+  "execution": "Current VM only; no GCP VM launches",
+  "baseline": "Preceding immutable-query-index snapshot candidate",
+  "baseline_binary": {
+    "path": "qualification/evidence/query-state-sharing-2026-10-10/binaries/candidate/log-query-frontend",
+    "sha256": "9ce9fd612e73bc4c43a080ad06bcf2c2e80bb834d23ca4fce35e8931ea2096dc"
+  },
+  "fixture": {
+    "streams": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "rows_per_stream": 10,
+    "seed": "0x10C5_B10C",
+    "metadata_bytes": 64,
+    "storage": "Local filesystem with real Parquet and tenant manifests",
+    "result_cache_ttl_seconds": 0,
+    "index_cache_ttl_seconds": 3600,
+    "cases": [
+      "all",
+      "all_sharded",
+      "sparse",
+      "rare",
+      "single",
+      "none",
+      "label_values"
+    ],
+    "verification": "API envelope and complete labels/rows compared with independent input ledger; execution statistics omitted because timing/cache counters vary",
+    "timing_scope": "In-process HTTP handler preparation, warmed index-cache lookup, planning, Parquet reads, shard execution, serialization and body consumption; fixture construction and verification excluded; filesystem pages warmed by verification"
+  },
+  "host": {
+    "hostname": "bce6f61f7cac",
+    "cpu_quota": 4,
+    "affinity_available": "0-4",
+    "model": "AMD EPYC 9V74",
+    "memory_gib": 17,
+    "filesystem_bytes": 33770192896
+  },
+  "evidence_directory": "qualification/evidence/shard-label-selection-refined-2026-10-10",
+  "baseline_source_sha256": "8b66ea308b482608cc0b5267463a2185fe9a3b0ec6a2b25d27acf5840c3c711a",
+  "implementation": "Select tenant fingerprints, restrict to inclusive shard bounds, then borrow canonical source labels and clone only included series into the existing bounded index. The tenant-wide fingerprint set and bounded index rebuild remain. Isolate partial-bounds preparation in a non-inlined helper; full bounds return a shared state clone.",
+  "sources_sha256": {
+    "crates/observability/src/query_frontend.rs": "b21f133e295bdafd31ea951a7aa3b45da9eed41f59cc044409048db08067b97a"
+  },
+  "fixture_source_sha256": {
+    "benches/benches/log_query_frontend.rs": "604af4c3c84fd256b2be8b423d2b412d5acf61f55ee1027b8890d3cf97db0201",
+    "benches/examples/log_query_frontend_profile.rs": "29689d23168768440cde7535e9e0bfebcf1a930e080002a0318e54002ed8bf0c",
+    "benches/src/lib.rs": "0cba0f191457f42e2e6f9d30c67c6dfd7e07c7e319b9f95c700298951ea334e9",
+    "benches/src/log_frontend.rs": "39814b39b61f18d713cac2cae456366ce74418c1f4807d6d475aa0893cf6c3bb",
+    "benches/src/log_queries.rs": "0be3658c3f7bf070ec27ce67c8d29804e81a4588f617b2f98272713293a53733"
+  },
+  "measurement_plan": {
+    "paired_runs": 3,
+    "alternating_order": true,
+    "affinity": [
+      4
+    ],
+    "expected_measurements": 48,
+    "cases": [
+      "all",
+      "all_sharded"
+    ],
+    "streams": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "timeout_seconds": 360
+  },
+  "validation": {
+    "passed_tests": 148,
+    "suites": {
+      "querier": 70,
+      "querier_object_store": 22,
+      "query_range": 56
+    },
+    "clippy": "all,pedantic with -D warnings: production and full unit source",
+    "fixture": "Same verified frontend fixture as preceding round; complete payload equality excludes variable execution statistics",
+    "numeric_benchmark_budgets_changed": false,
+    "tool_checks": [
+      "bazel run //tools/format",
+      "git diff --check"
+    ],
+    "refined_status": "148 integration tests and production/full-unit-source Clippy pass"
+  },
+  "build": {
+    "rustc": "1.98.1",
+    "opt_level": 3,
+    "debuginfo": "line-tables-only",
+    "force_frame_pointers": true,
+    "codegen_units": 16,
+    "lto": false,
+    "baseline": "Unmodified preceding immutable-index candidate ELF; fixture source hashes are unchanged.",
+    "candidate": "Fresh refined observability library with separate non-inlined partial-bounds helper, fixture and driver; same cached dependency graph and compiler flags.",
+    "validation_scope": "Recorded direct compiler and Clippy commands; normal Cargo and Bazel CI remains separate.",
+    "archive": "Original candidate library gzip archive verified against original SHA before debug/bitcode stripping, with metadata and allocated code/data identity proof.",
+    "cache_recovery": "104 dependencies restored from verified original archives and debug-stripped to prior verified hashes when necessary. Initial recovery failures remain in the initial experiment; refined restoration succeeded.",
+    "disk_recovery": "Disk cleanup provenance is retained in the initial experiment; no further measured executable or frozen evidence removed.",
+    "metadata_tags": {
+      "baseline_observability_and_fixture": "query_state_candidate",
+      "candidate_observability_and_fixture": "shard_label_refined_candidate"
+    },
+    "comparability": "Optimization, code-generation-unit, debug and frame-pointer flags match. Crate metadata tags differ, which can change code layout and confound controls; the next experiment preserves baseline tags."
+  },
+  "native_comparison": {
+    "performed_this_round": false,
+    "performance_parity_established": false,
+    "scope": "Focused source-driver experiment on bounded shard preparation; no deployment performance claim."
+  },
+  "next_investigations": [
+    "Replace tenant-wide fingerprint-set construction with a borrowed index range after profiling and compatibility validation.",
+    "Avoid repeated bounded-index rebuilding where request lifetime and admission memory allow sharing.",
+    "Attribute native ingest wait and complete larger native comparisons on this VM."
+  ],
+  "upstream": {
+    "commit": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+    "source_url": "https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/tsdb/single_file_index.go#L159-L200",
+    "source_sha256": "80b309ca93b7a3b81079e7562c99fbea6a9719bce830b9902fc135a8fd4b3279",
+    "finding": "Loki iterates postings while reusing the labels variable and pooled chunk metadata. The callback must not retain its reused arguments. Krabka previously copied all tenant labels into an owned vector per bounded shard before filtering; the candidate copies only included labels into the existing bounded index. A tenant-wide fingerprint set and bounded-index rebuild remain."
+  },
+  "initial_experiment": "qualification/shard-label-selection-2026-10-10.json",
+  "candidate_binary": {
+    "path": "qualification/evidence/shard-label-selection-refined-2026-10-10/binaries/candidate/log-query-frontend",
+    "sha256": "335b735bdd942a79ec43d52cb6b0408061eb07dba1834943956dc7cb62d934b3",
+    "bytes": 226454864
+  },
+  "timings": {
+    "measurements": 48,
+    "verified": 48,
+    "censored": 0,
+    "cases": [
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.054083472333333334,
+          "min": 0.05407147466666667,
+          "max": 0.06610143733333333
+        },
+        "candidate_seconds": {
+          "median": 0.056121256,
+          "min": 0.05498466366666666,
+          "max": 0.06446482466666667
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9752408913831385,
+          1.0166629710418555,
+          1.0379087373882363
+        ],
+        "median_paired_ratio": 1.0166629710418555
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.06422268033333334,
+          "min": 0.05653912466666666,
+          "max": 0.067089416
+        },
+        "candidate_seconds": {
+          "median": 0.05974590466666666,
+          "min": 0.05869765266666666,
+          "max": 0.062145681
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9263112530298371,
+          0.9302929176510388,
+          1.0381775984811557
+        ],
+        "median_paired_ratio": 0.9302929176510388
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.39280589266666666,
+          "min": 0.3885598426666667,
+          "max": 0.4559170426666667
+        },
+        "candidate_seconds": {
+          "median": 0.4044288956666667,
+          "min": 0.3968503503333333,
+          "max": 0.426176492
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9347676268193141,
+          1.0408406923656635,
+          1.0102963263590823
+        ],
+        "median_paired_ratio": 1.0102963263590823
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.451496157,
+          "min": 0.4336733803333333,
+          "max": 0.45793256266666665
+        },
+        "candidate_seconds": {
+          "median": 0.4224968603333334,
+          "min": 0.396267272,
+          "max": 0.45375088833333327
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9137458971897654,
+          0.9226180769347752,
+          1.004993910354221
+        ],
+        "median_paired_ratio": 0.9226180769347752
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 2.371178294,
+          "min": 2.280447277,
+          "max": 2.432317436
+        },
+        "candidate_seconds": {
+          "median": 2.31973446,
+          "min": 2.202947476,
+          "max": 2.424545279
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9968046288346387,
+          0.9660155260848856,
+          0.9783045272765136
+        ],
+        "median_paired_ratio": 0.9783045272765136
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 2.594467496,
+          "min": 2.485761997,
+          "max": 2.767108195
+        },
+        "candidate_seconds": {
+          "median": 2.3280111310000002,
+          "min": 2.266763267,
+          "max": 2.334986534
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9393443687762678,
+          0.8736911410510112,
+          0.8413155420545456
+        ],
+        "median_paired_ratio": 0.8736911410510112
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 13.300256485,
+          "min": 13.172678995,
+          "max": 14.682831727
+        },
+        "candidate_seconds": {
+          "median": 14.150618464,
+          "min": 13.735718946,
+          "max": 15.632435927
+        },
+        "paired_candidate_baseline_ratios": [
+          1.0742399833299818,
+          1.0327409070262001,
+          1.064674459099997
+        ],
+        "median_paired_ratio": 1.064674459099997
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 17.756080586,
+          "min": 16.188663059,
+          "max": 18.364076011
+        },
+        "candidate_seconds": {
+          "median": 16.471705128,
+          "min": 15.740817789,
+          "max": 16.758235434
+        },
+        "paired_candidate_baseline_ratios": [
+          0.8571527246767721,
+          1.0174839681305643,
+          0.9438026231539655
+        ],
+        "median_paired_ratio": 0.9438026231539655
+      }
+    ],
+    "verification": "One independently verified complete API payload before each process timed queries; execution statistics excluded.",
+    "query_seconds": "Total timed handler/body time divided by the number of timed requests; fixture setup and verification excluded."
+  },
+  "cpu": {
+    "scope": "Whole process: fixture construction, one verification request and three timed sharded broad requests at 20000 streams.",
+    "frequency_hz": 199,
+    "event": "cpu-clock:u",
+    "stack_bytes": 8192,
+    "mmap_pages": 512,
+    "report_threshold_percent": 0.5,
+    "captures": {
+      "baseline": {
+        "report": "baseline-20000-sharded-perf-flat-resolved.txt",
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 11804018625
+      },
+      "candidate": {
+        "report": "candidate-20000-sharded-perf-flat-resolved.txt",
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 11743717125
+      }
+    },
+    "limitation": "Captures include fixture construction and verification. Cumulative caller percentages can overlap and do not establish query-only CPU ratios."
+  },
+  "heap": {
+    "scope": "Whole process including fixture construction and one verification request; timed request counts vary by case as recorded.",
+    "captures": [
+      {
+        "case": "all_sharded",
+        "variant": "baseline",
+        "report": "baseline-5000-sharded-heap.txt",
+        "streams": 5000,
+        "timed_queries": 3,
+        "verification_queries": 1,
+        "allocation_calls": 13438780,
+        "temporary_allocations": 1168481,
+        "peak_heap": "80.43M",
+        "peak_rss_including_profiler": "236.45M"
+      },
+      {
+        "case": "all_sharded",
+        "variant": "candidate",
+        "report": "candidate-5000-sharded-heap.txt",
+        "streams": 5000,
+        "timed_queries": 3,
+        "verification_queries": 1,
+        "allocation_calls": 12337050,
+        "temporary_allocations": 1168081,
+        "peak_heap": "80.43M",
+        "peak_rss_including_profiler": "230.84M"
+      }
+    ],
+    "limitation": "Counts are not per-query allocations; RSS includes heaptrack overhead."
+  },
+  "decision": "Refinement improves 20000-stream controls but largest unsharded paired control regresses about 6.5%. Do not attribute this to the algorithm while crate metadata tags differ; repeat with baseline tags.",
+  "reproduction_scripts_sha256": {
+    "analyze-shard-label-profiles.py": "73f60d32d38c0398aab220287b16d77e41ca7798a77cad083a0157ac7a5ea4b1",
+    "analyze-shard-label-refined-profiles.py": "0ac1a49daef8c68e42cedfb0f906a2747625257cb82f61fc99ca2c7db2cefd67",
+    "archive-shard-label-artifact.py": "c772c7135f4ef1b40609d51bf0bea4b2a21b88120ef9d5982ece92b7733444e2",
+    "archive-shard-label-refined-artifact.py": "3fcc275adc0f5d937b1001609aaa69db8763d8e4727599bc724a5122f11eb558",
+    "build-shard-label-refined.py": "fbd9f60b4ea3cdab7759997e0587c72f1ab0c452deb2436d82b9bcdaa3482f66",
+    "build-shard-label.py": "80ad53404c21496a388682e17531c6f3e0fd592e7d7836aeab52bae2f7224138",
+    "clippy-shard-label-refined.py": "45d3bb5b1890f8d1863d97b5ed182e6a324416286478b213338b255952b61d9c",
+    "clippy-shard-label.py": "45641d481fd6f6ff08dc2b1d8445d9bc25d740bd84783d0102d6a476e4b3e9ea",
+    "compact-own-cargo-debug-cache-round2.py": "0e1c38e658fe450c72ce206287984e7a5027942627ade1ad1dc208cb2d897fdf",
+    "finalize-shard-label-record.py": "5353890b8d761997af7901791c3004464b758001f753b57f4d8b485526561a20",
+    "finalize-shard-label-refined-record.py": "9318a961f2bbbeed8a85d9b35838a3b7eb16b2679be2b31767c8958d40d7640a",
+    "profile-shard-label-after-pairs.py": "11a876347d643bcea7874a4f575d257d61c5f364094225e9b713eceb605fdaab",
+    "profile-shard-label-refined-after-pairs.py": "1602d212edb3682b3294a3baac8ae5acf3d4b8445cfa776196346f03140688c9",
+    "restore-shard-label-cache.py": "8b4e8d1879d0f27ecc89cf837f28a732bbca06989b4dd5c2abee646408a7e7b7",
+    "restore-shard-label-refined-cache.py": "0b589d2c91ae7abfe9349802d343c043eb7935252980fcd3ed66e80ded8c6248",
+    "run-shard-label-pairs.py": "3286ae018f9eb775d9fa4425edf88728c9d6c2cacecdac66ba66cc8e098ee20c",
+    "run-shard-label-refined-pairs.py": "752ab34e726abdd9c1cceaf98d1062b6e6b13aa6bc5ebdd55e38b34d0bc0e50a",
+    "summarize-shard-label-refined.py": "f61a939b272a428d829ace9ac539d4f942416e491ee16e70d7e6e274146adecd",
+    "summarize-shard-label.py": "b63a23862927d16a2102f2ac6ffa5f3099e80a9052a5535b72383d9c3378feda",
+    "test-shard-label-refined.py": "173966ea69e1ab8907812d58f294dc72291449e5cecbc1783c5face79ed44109",
+    "test-shard-label.py": "0b015ef7ada2f64e8addc9629991a7a6b365c2659edb2e7cc79d37d7822f6098"
+  },
+  "scope": "Completed bounded shard label-copy experiment; overall upstream performance parity remains unqualified.",
+  "raw_manifest": {
+    "path": "qualification/evidence/shard-label-selection-refined-2026-10-10/raw-manifest.json",
+    "sha256": "8d31ea28a7e4a44e813014ede654480f5aaf5f99e2bea92067e67caadd82cd90",
+    "files": 88,
+    "bytes": 760005601,
+    "scope": "All files in this evidence directory except the manifest itself. Baseline executable and its earlier build proofs remain in the separately frozen index-sharing evidence."
+  },
+  "superseded_by": "qualification/shard-label-selection-matched-2026-10-10.json"
+}
