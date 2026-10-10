@@ -1,14 +1,12 @@
-use super::{
-    Arc, Bytes, DistributorState, Extension, HeaderMap, Principal, Response, SpanPush, State,
-    decode_zipkin, push_spans,
-};
+use super::{PushRequest, Response, SpanPush, decode_zipkin, push_spans};
 
-pub(crate) async fn zipkin_push(
-    State(state): State<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
+pub(crate) async fn zipkin_push(request: PushRequest) -> Response {
+    let PushRequest {
+        state,
+        principal,
+        headers,
+        body,
+    } = request;
     push_spans(SpanPush {
         state: &state,
         principal: &principal,

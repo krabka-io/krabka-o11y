@@ -474,7 +474,7 @@ impl KrabkaSpanStore {
         let batches = collect_table(&ctx, &table).await?;
         let mut values = BTreeSet::new();
         for batch in &batches {
-            collect_attribute_tag_values(batch, tag, index_tag, &mut values)?;
+            collect_attribute_tag_values(batch, RequestedTag { tag, index_tag }, &mut values)?;
         }
         Ok(values)
     }

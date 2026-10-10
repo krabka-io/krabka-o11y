@@ -28,7 +28,14 @@ where
             Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
         },
     };
-    let (tags, _metrics, warnings) = match qf.tag_names(&tenant, scope, start_ns, end_ns).await {
+    let (tags, _metrics, warnings) = match qf
+        .tag_names(
+            &tenant,
+            scope,
+            krabka_blockstore::TimeRange { start_ns, end_ns },
+        )
+        .await
+    {
         Ok(out) => out,
         Err(err) => return backend_error_response(&err),
     };

@@ -1,7 +1,6 @@
 use super::{
-    Arc, CancellationToken, CollectorServiceServer, DistributorState, GrpcAuthenticationLayer,
-    GrpcServer, JaegerGrpcService, ServerSecurity, SocketAddr, bind_listener, grpc_incoming,
-    spawn_server,
+    CollectorServiceServer, GrpcAuthenticationLayer, GrpcServer, JaegerGrpcService,
+    ReceiverEndpoint, SocketAddr, bind_listener, grpc_incoming, spawn_server,
 };
 
 /// Serve the Jaeger API v2 gRPC trace receiver until cancelled, returning the
@@ -20,11 +19,14 @@ use super::{
 /// # Errors
 /// Returns an error when the listener cannot be bound.
 pub async fn serve_jaeger_grpc(
-    addr: SocketAddr,
-    state: Arc<DistributorState>,
-    security: &ServerSecurity,
-    shutdown: CancellationToken,
+    endpoint: ReceiverEndpoint<'_>,
 ) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+    let ReceiverEndpoint {
+        addr,
+        state,
+        security,
+        shutdown,
+    } = endpoint;
     let listener = bind_listener(addr, security).await?;
     let bound = listener.local_addr();
     let server = GrpcServer::builder()

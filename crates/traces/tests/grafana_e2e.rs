@@ -388,7 +388,7 @@ fn jaeger_compact_batch() -> Vec<u8> {
     span.field_header(9, 10); // tags (list<struct>)
     span.list_header(12, 2);
     span.string_tag("span.kind", "server");
-    span.bool_tag("error", true);
+    span.true_tag("error");
     span.stop(); // end span struct
     batch.stop(); // end batch struct
     out
@@ -895,6 +895,16 @@ struct QueryWindow {
     range: String,
 }
 
+/// What each stage of the full-surface test drives, and hands on to the next:
+/// the HTTP client, the Krabka pair, and the Grafana container with its base
+/// URL.
+struct GrafanaStack {
+    client: reqwest::Client,
+    krabka: KrabkaPair,
+    grafana: ContainerAsync<GenericImage>,
+    grafana_base: String,
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires Docker (Grafana + Prometheus containers)"]
 async fn grafana_e2e_full_surface() -> TestResult {
@@ -1076,10 +1086,12 @@ async fn grafana_e2e_full_surface() -> TestResult {
     assert2::assert!(body.contains("trace not found"));
 
     grafana_e2e_search(
-        client,
-        krabka,
-        grafana,
-        grafana_base,
+        GrafanaStack {
+            client,
+            krabka,
+            grafana,
+            grafana_base,
+        },
         QueryWindow {
             now_secs,
             metric_start,
@@ -1090,13 +1102,13 @@ async fn grafana_e2e_full_surface() -> TestResult {
     .await
 }
 
-async fn grafana_e2e_search(
-    client: reqwest::Client,
-    krabka: KrabkaPair,
-    grafana: ContainerAsync<GenericImage>,
-    grafana_base: String,
-    window: QueryWindow,
-) -> TestResult {
+async fn grafana_e2e_search(stack: GrafanaStack, window: QueryWindow) -> TestResult {
+    let GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    } = stack;
     let QueryWindow {
         now_secs,
         metric_start,
@@ -1184,10 +1196,12 @@ async fn grafana_e2e_search(
     assert2::assert!(search_contains_span_id_hex(&search, ERROR_SPAN_ID_HEX));
 
     grafana_e2e_tags(
-        client,
-        krabka,
-        grafana,
-        grafana_base,
+        GrafanaStack {
+            client,
+            krabka,
+            grafana,
+            grafana_base,
+        },
         QueryWindow {
             now_secs,
             metric_start,
@@ -1198,13 +1212,13 @@ async fn grafana_e2e_search(
     .await
 }
 
-async fn grafana_e2e_tags(
-    client: reqwest::Client,
-    krabka: KrabkaPair,
-    grafana: ContainerAsync<GenericImage>,
-    grafana_base: String,
-    window: QueryWindow,
-) -> TestResult {
+async fn grafana_e2e_tags(stack: GrafanaStack, window: QueryWindow) -> TestResult {
+    let GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    } = stack;
     let QueryWindow {
         now_secs,
         metric_start,
@@ -1322,10 +1336,12 @@ async fn grafana_e2e_tags(
     assert2::assert!(plain.contains(&"checkout-frontend"));
 
     grafana_e2e_metrics(
-        client,
-        krabka,
-        grafana,
-        grafana_base,
+        GrafanaStack {
+            client,
+            krabka,
+            grafana,
+            grafana_base,
+        },
         QueryWindow {
             now_secs,
             metric_start,
@@ -1336,13 +1352,13 @@ async fn grafana_e2e_tags(
     .await
 }
 
-async fn grafana_e2e_metrics(
-    client: reqwest::Client,
-    krabka: KrabkaPair,
-    grafana: ContainerAsync<GenericImage>,
-    grafana_base: String,
-    window: QueryWindow,
-) -> TestResult {
+async fn grafana_e2e_metrics(stack: GrafanaStack, window: QueryWindow) -> TestResult {
+    let GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    } = stack;
     let QueryWindow {
         now_secs,
         metric_start,
@@ -1486,15 +1502,22 @@ async fn grafana_e2e_metrics(
     assert2::assert!(status == ReqwestStatusCode::BAD_REQUEST);
     assert2::assert!(body.contains("end must be >= start"));
 
-    grafana_e2e_service_graph(client, krabka, grafana, grafana_base).await
+    grafana_e2e_service_graph(GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    })
+    .await
 }
 
-async fn grafana_e2e_service_graph(
-    client: reqwest::Client,
-    krabka: KrabkaPair,
-    grafana: ContainerAsync<GenericImage>,
-    grafana_base: String,
-) -> TestResult {
+async fn grafana_e2e_service_graph(stack: GrafanaStack) -> TestResult {
+    let GrafanaStack {
+        client,
+        krabka,
+        grafana,
+        grafana_base,
+    } = stack;
     // ----- §5: Service Graph full loop through real Prometheus. -----
     let prom = start_prometheus().await?;
     let prom_mapped = mapped_base_url(&prom, PROM_HTTP_PORT).await?;

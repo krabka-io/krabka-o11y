@@ -89,19 +89,6 @@ fn a_compacted_key_escapes_the_tenant_into_one_segment_that_reads_back() {
     }
 }
 
-fn rec(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> SpanRecord {
-    SpanRecord {
-        tenant: "tenant-a".into(),
-        span: FixtureSpan {
-            trace_id,
-            span_id,
-            parent,
-            start_ns,
-        }
-        .build(),
-    }
-}
-
 // Write a root span's block and then a block of its late child, and compact
 // the two. Returns the store, the index after the compaction, the planned
 // output key, and the output block's metadata.
@@ -115,7 +102,13 @@ async fn compact_root_and_late_child() -> (Arc<dyn ObjectStore>, TraceIndex, Str
         &mut index,
         "tenant-a",
         7,
-        &[rec([1; 16], 1, None, 100)],
+        &[FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 1,
+            parent: None,
+            start_ns: 100,
+        }
+        .record("tenant-a")],
         (10, 10),
     )
     .await
@@ -125,7 +118,13 @@ async fn compact_root_and_late_child() -> (Arc<dyn ObjectStore>, TraceIndex, Str
         &mut index,
         "tenant-a",
         7,
-        &[rec([1; 16], 2, Some(1), 200)],
+        &[FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 2,
+            parent: Some(1),
+            start_ns: 200,
+        }
+        .record("tenant-a")],
         (20, 20),
     )
     .await
@@ -217,14 +216,8 @@ async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
     check!(right.value(child) < right.value(root));
 }
 
-fn rec_with_method(
-    trace_id: [u8; 16],
-    span_id: u8,
-    parent: Option<u8>,
-    start_ns: i64,
-    method: &str,
-) -> SpanRecord {
-    let mut record = rec(trace_id, span_id, parent, start_ns);
+fn rec_with_method(span: FixtureSpan, method: &str) -> SpanRecord {
+    let mut record = span.record("tenant-a");
     record.span.span_attrs = vec![KeyValue {
         key: "http.method".into(),
         value: AttrValue::Str(method.into()),
@@ -293,7 +286,15 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method([1; 16], 1, None, 100, "GET")],
+        &[rec_with_method(
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 100,
+            },
+            "GET",
+        )],
         (10, 10),
         &promoted,
     )
@@ -304,7 +305,15 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method([1; 16], 2, Some(1), 200, "POST")],
+        &[rec_with_method(
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 2,
+                parent: Some(1),
+                start_ns: 200,
+            },
+            "POST",
+        )],
         (20, 20),
         &promoted,
     )
@@ -349,7 +358,15 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method([1; 16], 1, None, 100, "GET")],
+        &[rec_with_method(
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 100,
+            },
+            "GET",
+        )],
         (10, 10),
     )
     .await
@@ -359,7 +376,15 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method([1; 16], 2, Some(1), 200, "POST")],
+        &[rec_with_method(
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 2,
+                parent: Some(1),
+                start_ns: 200,
+            },
+            "POST",
+        )],
         (20, 20),
         &[PromotedSpanAttr::string("http.method")],
     )
@@ -405,7 +430,22 @@ async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
         &mut index,
         "tenant-a",
         7,
-        &[rec([2; 16], 1, None, 300), rec([1; 16], 2, None, 100)],
+        &[
+            FixtureSpan {
+                trace_id: [2; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 300,
+            }
+            .record("tenant-a"),
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 2,
+                parent: None,
+                start_ns: 100,
+            }
+            .record("tenant-a"),
+        ],
         (10, 10),
     )
     .await
@@ -415,7 +455,22 @@ async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
         &mut index,
         "tenant-a",
         7,
-        &[rec([2; 16], 3, Some(1), 400), rec([1; 16], 4, Some(2), 200)],
+        &[
+            FixtureSpan {
+                trace_id: [2; 16],
+                span_id: 3,
+                parent: Some(1),
+                start_ns: 400,
+            }
+            .record("tenant-a"),
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 4,
+                parent: Some(2),
+                start_ns: 200,
+            }
+            .record("tenant-a"),
+        ],
         (20, 20),
     )
     .await

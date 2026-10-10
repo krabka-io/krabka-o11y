@@ -43,9 +43,10 @@ impl<'out> CompactStructWriter<'out> {
         self.out.extend_from_slice(text.as_bytes());
     }
 
-    /// The compact protocol carries a boolean in the field's type nibble.
-    pub fn bool_field(&mut self, field_id: i16, flag: bool) {
-        self.field_header(if flag { 1 } else { 2 }, field_id);
+    /// Writes a `true` boolean field. The compact protocol carries a boolean
+    /// in the field's type nibble, and type 1 is `true`.
+    pub fn true_field(&mut self, field_id: i16) {
+        self.field_header(1, field_id);
     }
 
     pub fn field_header(&mut self, type_id: u8, field_id: i16) {
@@ -78,12 +79,13 @@ impl<'out> CompactStructWriter<'out> {
         tag.stop();
     }
 
-    /// Writes a Jaeger `Tag` struct with a boolean value as a list element.
-    pub fn bool_tag(&mut self, key: &str, flag: bool) {
+    /// Writes a Jaeger `Tag` struct with the boolean value `true` as a list
+    /// element.
+    pub fn true_tag(&mut self, key: &str) {
         let mut tag = self.nested_struct();
         tag.string_field(1, key);
         tag.i32_field(2, 3);
-        tag.bool_field(5, flag);
+        tag.true_field(5);
         tag.stop();
     }
 
@@ -140,9 +142,9 @@ pub fn encode_binary_sample_batch() -> Vec<u8> {
         field(out, T_I64, id);
         out.extend_from_slice(&value.to_be_bytes());
     }
-    fn bool_field(out: &mut Vec<u8>, id: i16, value: bool) {
+    fn true_field(out: &mut Vec<u8>, id: i16) {
         field(out, T_BOOL, id);
-        out.push(u8::from(value));
+        out.push(1);
     }
     fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
         string_field(out, 1, key);
@@ -150,10 +152,10 @@ pub fn encode_binary_sample_batch() -> Vec<u8> {
         string_field(out, 3, value);
         out.push(T_STOP);
     }
-    fn key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
+    fn key_value_true(out: &mut Vec<u8>, key: &str) {
         string_field(out, 1, key);
         i32_field(out, 2, 3);
-        bool_field(out, 5, value);
+        true_field(out, 5);
         out.push(T_STOP);
     }
 
@@ -181,7 +183,7 @@ pub fn encode_binary_sample_batch() -> Vec<u8> {
     out.extend_from_slice(&3_i32.to_be_bytes());
     key_value_string(&mut out, "span.kind", "server");
     key_value_string(&mut out, "http.method", "GET");
-    key_value_bool(&mut out, "error", true);
+    key_value_true(&mut out, "error");
     out.push(T_STOP);
     out.push(T_STOP);
     out

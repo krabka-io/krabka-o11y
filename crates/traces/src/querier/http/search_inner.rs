@@ -1,35 +1,35 @@
 use super::{
-    AppState, HeaderMap, IntoResponse, Json, Principal, QueryEnforcer, Response, SearchOptions,
-    SpanStore, StatusCode, Uri, duration_param, filter_search_duration, limit_error_response,
-    optional_usize_param, request_tenant, required_time_range, scan_options_param, search_json,
-    search_query,
+    IntoResponse, Json, QuerierRequest, QueryEnforcer, Response, SearchOptions, SpanStore,
+    StatusCode, duration_param, filter_search_duration, limit_error_response, optional_usize_param,
+    request_tenant, required_time_range, scan_options_param, search_json, search_query,
 };
 
-pub(crate) async fn search_inner<S>(
-    state: &AppState<S>,
-    principal: &Principal,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response
+pub(crate) async fn search_inner<S>(request: &QuerierRequest<S>) -> Response
 where
     S: SpanStore + 'static,
 {
-    let tenant = match request_tenant(&headers, principal, &state.cfg.tenant_policy) {
+    let QuerierRequest {
+        state,
+        principal,
+        headers,
+        uri,
+    } = request;
+    let tenant = match request_tenant(headers, principal, &state.cfg.tenant_policy) {
         Ok(tenant) => tenant,
         Err(rejection) => return *rejection,
     };
-    let query = match search_query(&uri) {
+    let query = match search_query(uri) {
         Ok(Some(query)) => query,
         Ok(None) => {
             return (StatusCode::BAD_REQUEST, "missing query parameter q").into_response();
         }
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let (start_ns, end_ns) = match required_time_range(&uri) {
+    let (start_ns, end_ns) = match required_time_range(uri) {
         Ok(range) => range,
         Err(rejection) => return *rejection,
     };
-    let limit = match optional_usize_param(&uri, "limit") {
+    let limit = match optional_usize_param(uri, "limit") {
         Ok(value) => value.unwrap_or(0),
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
@@ -49,19 +49,19 @@ where
         )
             .into_response();
     }
-    let spss = match optional_usize_param(&uri, "spss") {
+    let spss = match optional_usize_param(uri, "spss") {
         Ok(value) => value.unwrap_or(0),
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let min_duration = match duration_param(&uri, "minDuration") {
+    let min_duration = match duration_param(uri, "minDuration") {
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let max_duration = match duration_param(&uri, "maxDuration") {
+    let max_duration = match duration_param(uri, "maxDuration") {
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let scan_options = match scan_options_param(&uri) {
+    let scan_options = match scan_options_param(uri) {
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };

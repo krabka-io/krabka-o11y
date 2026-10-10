@@ -1,32 +1,32 @@
 use super::{
-    AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode,
-    TenantRequest, Uri, instant_metric_bounds, metrics_request, scan_options_param,
-    trace_metrics_instant_json,
+    IntoResponse, Json, QuerierRequest, Response, SpanStore, StatusCode, TenantRequest,
+    instant_metric_bounds, metrics_request, scan_options_param, trace_metrics_instant_json,
 };
 
-pub(crate) async fn query_instant_inner<S>(
-    state: &AppState<S>,
-    principal: &Principal,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response
+pub(crate) async fn query_instant_inner<S>(request: &QuerierRequest<S>) -> Response
 where
     S: SpanStore + 'static,
 {
+    let QuerierRequest {
+        state,
+        principal,
+        headers,
+        uri,
+    } = request;
     let (tenant, query) = match metrics_request(TenantRequest {
-        headers: &headers,
+        headers,
         principal,
         policy: &state.cfg.tenant_policy,
-        uri: &uri,
+        uri,
     }) {
         Ok(request) => request,
         Err(rejection) => return *rejection,
     };
-    let (start_ns, end_ns, step_ns, _) = match instant_metric_bounds(&uri) {
+    let (start_ns, end_ns, step_ns, _) = match instant_metric_bounds(uri) {
         Ok(bounds) => bounds,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let mut scan_options = match scan_options_param(&uri) {
+    let mut scan_options = match scan_options_param(uri) {
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };

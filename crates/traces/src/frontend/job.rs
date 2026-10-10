@@ -17,25 +17,22 @@ use krabka_units::{ByteSize, convert::ByteSizeExt};
 
 #[cfg(test)]
 mod tests {
+    use krabka_blockstore::TimeRange;
     use krabka_units::bytes;
 
     use super::*;
 
-    fn block(id: &str, start: i64, end: i64, rgs: &[u64]) -> BlockMetaInfo {
-        BlockMetaInfo::with_row_groups(
-            id,
-            krabka_blockstore::TimeRange {
-                start_ns: start,
-                end_ns: end,
-            },
-            rgs,
-        )
-    }
-
     #[test]
     fn small_block_is_one_job_plus_live() {
         // Query window ends at 300, frontier 200 => window reaches hot.
-        let blocks = vec![block("b1", 0, 100, &[500])];
+        let blocks = vec![BlockMetaInfo::with_row_groups(
+            "b1",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 100,
+            },
+            &[500],
+        )];
         let plan = plan_search_jobs(&blocks, 300, 200, bytes(10_000));
         assert2::assert!(
             plan == JobPlan {
@@ -56,7 +53,14 @@ mod tests {
     fn large_block_splits_into_row_group_jobs() {
         // size 30k > budget 10k, 3 row-groups => 3 row-group-range jobs, no Live
         // (query window ends at -10, before the frontier 0).
-        let blocks = vec![block("b2", -1000, -10, &[10_000, 10_000, 10_000])];
+        let blocks = vec![BlockMetaInfo::with_row_groups(
+            "b2",
+            TimeRange {
+                start_ns: -1000,
+                end_ns: -10,
+            },
+            &[10_000, 10_000, 10_000],
+        )];
         let plan = plan_search_jobs(&blocks, -10, 0, bytes(10_000));
         // Each job is a single-row-group range; no Live job.
         assert2::assert!(
@@ -97,7 +101,14 @@ mod tests {
 
     #[test]
     fn target_bytes_zero_never_splits() {
-        let blocks = vec![block("b", 0, 10, &[10_000, 10_000, 10_000])];
+        let blocks = vec![BlockMetaInfo::with_row_groups(
+            "b",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 10,
+            },
+            &[10_000, 10_000, 10_000],
+        )];
         let plan = plan_search_jobs(&blocks, i64::MAX, 0, bytes(0));
         let rg_jobs: Vec<_> = plan
             .jobs
@@ -118,8 +129,22 @@ mod tests {
     #[tokio::test]
     async fn mock_catalog_returns_overlapping_blocks() {
         let cat = MockCatalog::new(vec![
-            block("b1", 0, 100, &[500]),
-            block("b2", 500, 600, &[500]),
+            BlockMetaInfo::with_row_groups(
+                "b1",
+                TimeRange {
+                    start_ns: 0,
+                    end_ns: 100,
+                },
+                &[500],
+            ),
+            BlockMetaInfo::with_row_groups(
+                "b2",
+                TimeRange {
+                    start_ns: 500,
+                    end_ns: 600,
+                },
+                &[500],
+            ),
         ]);
         let got = cat.blocks("t1", 0, 200).await.unwrap();
         assert2::assert!(got.len() == 1);

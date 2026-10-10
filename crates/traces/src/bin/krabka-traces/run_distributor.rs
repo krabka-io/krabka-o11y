@@ -63,6 +63,12 @@ pub(crate) async fn run_distributor(
     let jaeger_http_addr: SocketAddr = cli.jaeger_http_listen.parse()?;
     let zipkin_addr: SocketAddr = cli.zipkin_listen.parse()?;
     let server = &security.server;
+    let endpoint = |addr: SocketAddr| distributor::ReceiverEndpoint {
+        addr,
+        state: Arc::clone(&state),
+        security: server,
+        shutdown: shutdown.clone(),
+    };
 
     // Seven listeners, one role. A distributor that has lost one of them still
     // binds the other six and still passes a liveness probe, while everything
@@ -71,51 +77,31 @@ pub(crate) async fn run_distributor(
     // which no `if let Err` in the task body could have seen -- ends the role.
     let mut tasks = SupervisedTasks::new(shutdown.clone());
 
-    let (grpc_bound, grpc) =
-        distributor::serve_otlp_grpc(grpc_addr, Arc::clone(&state), server, shutdown.clone())
-            .await?;
+    let (grpc_bound, grpc) = distributor::serve_otlp_grpc(endpoint(grpc_addr)).await?;
     tasks.adopt("traces distributor OTLP/gRPC", grpc);
     tracing::info!(%grpc_bound, "traces distributor OTLP/gRPC listening");
-    let (jaeger_grpc_bound, jaeger_grpc) = distributor::serve_jaeger_grpc(
-        jaeger_grpc_addr,
-        Arc::clone(&state),
-        server,
-        shutdown.clone(),
-    )
-    .await?;
+    let (jaeger_grpc_bound, jaeger_grpc) =
+        distributor::serve_jaeger_grpc(endpoint(jaeger_grpc_addr)).await?;
     tasks.adopt("traces distributor Jaeger gRPC", jaeger_grpc);
     tracing::info!(%jaeger_grpc_bound, "traces distributor Jaeger gRPC listening");
-    if let Some((jaeger_compact_bound, jaeger_compact)) = distributor::serve_jaeger_compact_udp(
-        jaeger_compact_addr,
-        Arc::clone(&state),
-        server,
-        shutdown.clone(),
-    )
-    .await?
+    if let Some((jaeger_compact_bound, jaeger_compact)) =
+        distributor::serve_jaeger_compact_udp(endpoint(jaeger_compact_addr)).await?
     {
         tasks.adopt("traces distributor Jaeger compact UDP", jaeger_compact);
         tracing::info!(%jaeger_compact_bound, "traces distributor Jaeger compact UDP listening");
     }
-    let (otlp_http_bound, otlp_http) =
-        distributor::serve(otlp_http_addr, Arc::clone(&state), server, shutdown.clone()).await?;
+    let (otlp_http_bound, otlp_http) = distributor::serve(endpoint(otlp_http_addr)).await?;
     tasks.adopt("traces distributor OTLP/HTTP", otlp_http);
     tracing::info!(%otlp_http_bound, "traces distributor OTLP/HTTP listening");
-    let (jaeger_http_bound, jaeger_http) = distributor::serve(
-        jaeger_http_addr,
-        Arc::clone(&state),
-        server,
-        shutdown.clone(),
-    )
-    .await?;
+    let (jaeger_http_bound, jaeger_http) = distributor::serve(endpoint(jaeger_http_addr)).await?;
     tasks.adopt("traces distributor Jaeger thrift HTTP", jaeger_http);
     tracing::info!(%jaeger_http_bound, "traces distributor Jaeger thrift HTTP listening");
-    let (zipkin_bound, zipkin) =
-        distributor::serve(zipkin_addr, Arc::clone(&state), server, shutdown.clone()).await?;
+    let (zipkin_bound, zipkin) = distributor::serve(endpoint(zipkin_addr)).await?;
     tasks.adopt("traces distributor Zipkin HTTP", zipkin);
     tracing::info!(%zipkin_bound, "traces distributor Zipkin HTTP listening");
     if serve_primary_listen {
         let addr: SocketAddr = cli.listen.parse()?;
-        let (bound, primary) = distributor::serve(addr, state, server, shutdown.clone()).await?;
+        let (bound, primary) = distributor::serve(endpoint(addr)).await?;
         tasks.adopt("traces distributor HTTP", primary);
         tracing::info!(%bound, "traces distributor listening");
     }

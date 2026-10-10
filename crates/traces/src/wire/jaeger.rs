@@ -71,7 +71,7 @@ pub(crate) mod test_support {
         span.list_header(12, 3);
         span.string_tag("span.kind", "server");
         span.string_tag("http.method", "GET");
-        span.bool_tag("error", true);
+        span.true_tag("error");
         span.field_header(9, 11);
         span.list_header(12, 1);
         write_log(&mut span);

@@ -1,18 +1,21 @@
 use super::{
-    AppState, Extension, HeaderMap, Path, Principal, Response, SpanStore, State, TagValuesRequest,
-    Uri, search_tag_values_inner, search_tag_values_v2_json,
+    Path, QuerierRequest, Response, SpanStore, TagValuesRequest, search_tag_values_inner,
+    search_tag_values_v2_json,
 };
 
 pub(crate) async fn search_tag_values_v2<S>(
-    State(state): State<AppState<S>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    request: QuerierRequest<S>,
     Path(tag): Path<String>,
-    uri: Uri,
 ) -> Response
 where
     S: SpanStore + 'static,
 {
+    let QuerierRequest {
+        state,
+        principal,
+        headers,
+        uri,
+    } = request;
     let start = std::time::Instant::now();
     let resp = search_tag_values_inner(
         &state,

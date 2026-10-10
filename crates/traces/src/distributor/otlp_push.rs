@@ -1,11 +1,12 @@
 use super::*;
 
-pub(crate) async fn otlp_push(
-    State(state): State<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
+pub(crate) async fn otlp_push(request: PushRequest) -> Response {
+    let PushRequest {
+        state,
+        principal,
+        headers,
+        body,
+    } = request;
     let start = std::time::Instant::now();
     let body_size = ByteSize::from_bytes(body.len() as u64);
     // One ingest span per request (NOT per span-record). The tenant and the

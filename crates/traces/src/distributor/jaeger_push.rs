@@ -1,14 +1,15 @@
 use super::{
-    Arc, Bytes, DistributorState, Extension, HeaderMap, Principal, Response, SpanPush, State,
-    decode_jaeger_binary_thrift, decode_jaeger_thrift, is_jaeger_binary_thrift, push_spans,
+    PushRequest, Response, SpanPush, decode_jaeger_binary_thrift, decode_jaeger_thrift,
+    is_jaeger_binary_thrift, push_spans,
 };
 
-pub(crate) async fn jaeger_push(
-    State(state): State<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
+pub(crate) async fn jaeger_push(request: PushRequest) -> Response {
+    let PushRequest {
+        state,
+        principal,
+        headers,
+        body,
+    } = request;
     let binary = is_jaeger_binary_thrift(&headers);
     push_spans(SpanPush {
         state: &state,

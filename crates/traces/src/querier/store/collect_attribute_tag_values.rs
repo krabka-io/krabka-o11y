@@ -3,12 +3,20 @@ use super::{
     attr_values_with_resource, event_values, link_values, typed_value_parts,
 };
 
+/// The tag a tag-values request names, and the key the trace index holds it
+/// under.
+#[derive(Clone, Copy)]
+pub(crate) struct RequestedTag<'a> {
+    pub(crate) tag: &'a str,
+    pub(crate) index_tag: &'a str,
+}
+
 pub(crate) fn collect_attribute_tag_values(
     batch: &RecordBatch,
-    tag: &str,
-    index_tag: &str,
+    requested: RequestedTag<'_>,
     values: &mut BTreeSet<(String, String)>,
 ) -> Result<(), TraceqlError> {
+    let RequestedTag { tag, index_tag } = requested;
     for row in 0..batch.num_rows() {
         for (key, value) in attr_values_with_resource(batch, row, true)? {
             let matches = if let Some(key) = key.strip_prefix(RESOURCE_ATTR_PREFIX) {

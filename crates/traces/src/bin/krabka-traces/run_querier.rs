@@ -1,4 +1,4 @@
-use krabka_observability::{RoleReadiness, SupervisedTasks};
+use krabka_observability::SupervisedTasks;
 use krabka_traces::frontend::{HttpReadinessProbe, QuerierHealth, QuerierScheme, ReadinessProbe};
 
 use super::*;
@@ -12,14 +12,17 @@ use super::*;
 /// serving. Nothing is served on it until the startup below finishes, so a
 /// probe arriving in that window waits rather than being answered wrongly.
 pub(crate) async fn run_querier(
-    cli: Cli,
-    metrics: ServiceMetrics,
-    readiness: RoleReadiness,
-    shutdown: CancellationToken,
-    listener: tokio::net::TcpListener,
+    role: ListeningRole<'_>,
     object_store: &SharedObjectStore,
-    security: &ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let ListeningRole {
+        cli,
+        metrics,
+        readiness,
+        shutdown,
+        listener,
+        security,
+    } = role;
     // Registered before any of the work, and in the order the start meets it.
     // The object store, the index snapshot and the embedded live-store
     // consumer are all built before the router is served, so the honest report

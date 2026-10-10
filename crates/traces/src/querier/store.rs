@@ -1595,7 +1595,15 @@ mod tests {
         assert2::assert!(!accepts("name", "other"));
 
         let mut values = BTreeSet::new();
-        collect_attribute_tag_values(out, "http.method", "service.version", &mut values).unwrap();
+        collect_attribute_tag_values(
+            out,
+            RequestedTag {
+                tag: "http.method",
+                index_tag: "service.version",
+            },
+            &mut values,
+        )
+        .unwrap();
         assert2::assert!(
             values
                 == BTreeSet::from([
@@ -1606,8 +1614,10 @@ mod tests {
         values.clear();
         collect_attribute_tag_values(
             out,
-            "instrumentation.library",
-            &format!("{INSTRUMENTATION_ATTR_PREFIX}library"),
+            RequestedTag {
+                tag: "instrumentation.library",
+                index_tag: &format!("{INSTRUMENTATION_ATTR_PREFIX}library"),
+            },
             &mut values,
         )
         .unwrap();
@@ -4116,7 +4126,7 @@ use bool_matches::bool_matches;
 pub(crate) use bytes_to_hex::bytes_to_hex;
 use cold_attribute_tag_names::ColdAttributeTagNames;
 use collect_attribute_tag_names::collect_attribute_tag_names;
-use collect_attribute_tag_values::collect_attribute_tag_values;
+use collect_attribute_tag_values::{RequestedTag, collect_attribute_tag_values};
 use collect_intrinsic_value::collect_intrinsic_value;
 use collect_table::collect_table;
 use deduplicate_scan_batches::deduplicate_scan_batches;

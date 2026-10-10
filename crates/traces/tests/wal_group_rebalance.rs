@@ -43,11 +43,13 @@ async fn a_second_group_member_takes_partitions_and_the_watch_reports_it() {
     })
     .await;
 
+    let group = ConsumerGroup {
+        bootstrap: &proc.bootstrap,
+        topic,
+        group_id: "rebalance-reported",
+    };
     let metrics = WalConsumerMetrics::unregistered();
-    let mut first = BlockBuilderConsumer::new(
-        member(&proc.bootstrap, topic, "rebalance-reported", "first").await,
-        &metrics,
-    );
+    let mut first = BlockBuilderConsumer::new(group.member("first").await, &metrics);
 
     // The first member is alone, so it owns every partition. These are the
     // records a block builder would now hold in its accumulator.
@@ -60,7 +62,7 @@ async fn a_second_group_member_takes_partitions_and_the_watch_reports_it() {
 
     // A second member joins the same group. This fixture has no revoke listener
     // to flush the first member's buffered records.
-    let mut second = join_second(&mut first, &proc.bootstrap, topic, "rebalance-reported").await;
+    let mut second = join_second(&mut first, &group).await;
     let rebalance = poll_until_revoked(&mut first, &mut second, &metrics, topic).await;
 
     // One partition of the two moved, and the instruments say which.
@@ -87,18 +89,20 @@ async fn the_group_reads_the_first_members_polled_records_again() {
     })
     .await;
 
+    let group = ConsumerGroup {
+        bootstrap: &proc.bootstrap,
+        topic,
+        group_id: "rebalance-replay",
+    };
     let metrics = WalConsumerMetrics::unregistered();
-    let mut first = BlockBuilderConsumer::new(
-        member(&proc.bootstrap, topic, "rebalance-replay", "first").await,
-        &metrics,
-    );
+    let mut first = BlockBuilderConsumer::new(group.member("first").await, &metrics);
 
     // The first member polls everything and commits nothing, exactly as a block
     // builder does between two flushes.
     let held = drain(&mut first, per_partition() * 2).await;
     check!(held.len() == per_partition() * 2);
 
-    let mut second = join_second(&mut first, &proc.bootstrap, topic, "rebalance-replay").await;
+    let mut second = join_second(&mut first, &group).await;
     let mut rebalance = poll_until_revoked(&mut first, &mut second, &metrics, topic).await;
     assert!(let Some(&lost) = rebalance.revoked.first());
 
@@ -129,28 +133,38 @@ async fn the_group_reads_the_first_members_polled_records_again() {
     assert!(let Ok(()) = second.close().await);
 }
 
-async fn member(bootstrap: &str, topic: &str, group: &str, client: &str) -> Consumer {
-    Consumer::builder()
-        .bootstrap(bootstrap.to_owned())
-        .client_id(format!("krabka-traces-{group}-{client}"))
-        .group_id(group.to_owned())
-        .subscribe(vec![topic.to_owned()])
-        .assignors(vec![Assignor::CooperativeSticky])
-        .auto_offset_reset(AutoOffsetReset::Earliest)
-        .enable_auto_commit(false)
-        .build()
-        .await
-        .expect("consumer build")
+/// One consumer group on one topic of the test broker.
+struct ConsumerGroup<'a> {
+    bootstrap: &'a str,
+    topic: &'a str,
+    group_id: &'a str,
+}
+
+impl ConsumerGroup<'_> {
+    /// Joins the group as the member named `client`.
+    async fn member(&self, client: &str) -> Consumer {
+        let Self {
+            bootstrap,
+            topic,
+            group_id,
+        } = *self;
+        Consumer::builder()
+            .bootstrap(bootstrap.to_owned())
+            .client_id(format!("krabka-traces-{group_id}-{client}"))
+            .group_id(group_id.to_owned())
+            .subscribe(vec![topic.to_owned()])
+            .assignors(vec![Assignor::CooperativeSticky])
+            .auto_offset_reset(AutoOffsetReset::Earliest)
+            .enable_auto_commit(false)
+            .build()
+            .await
+            .expect("consumer build")
+    }
 }
 
 /// Keeps the first member polling while the second member joins the group.
-async fn join_second(
-    first: &mut BlockBuilderConsumer,
-    bootstrap: &str,
-    topic: &str,
-    group: &str,
-) -> Consumer {
-    let joining = member(bootstrap, topic, group, "second");
+async fn join_second(first: &mut BlockBuilderConsumer, group: &ConsumerGroup<'_>) -> Consumer {
+    let joining = group.member("second");
     tokio::pin!(joining);
     tokio::time::timeout(DEADLINE, async {
         loop {

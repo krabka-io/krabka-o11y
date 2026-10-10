@@ -1,9 +1,6 @@
 use std::future::IntoFuture as _;
 
-use super::{
-    Arc, CancellationToken, DistributorState, ServerSecurity, SocketAddr, bind_listener, router,
-    serve_router, spawn_server,
-};
+use super::{ReceiverEndpoint, SocketAddr, bind_listener, router, serve_router, spawn_server};
 
 /// Serve the distributor until cancelled, returning the bound address and the
 /// accept loop's handle.
@@ -25,11 +22,14 @@ use super::{
 /// # Errors
 /// Returns an error when the listener cannot be bound.
 pub async fn serve(
-    addr: SocketAddr,
-    state: Arc<DistributorState>,
-    security: &ServerSecurity,
-    shutdown: CancellationToken,
+    endpoint: ReceiverEndpoint<'_>,
 ) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+    let ReceiverEndpoint {
+        addr,
+        state,
+        security,
+        shutdown,
+    } = endpoint;
     let listener = bind_listener(addr, security).await?;
     let bound = listener.local_addr();
     let server = serve_router(listener, router(state), security)

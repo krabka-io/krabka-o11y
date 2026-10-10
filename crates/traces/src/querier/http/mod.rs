@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path},
     http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
@@ -450,8 +450,30 @@ mod tests {
         Arc::new(ArcSwap::from_pointee(index))
     }
 
+    /// The `env=prod` root span of `root-svc` that the query-filter tests
+    /// build their traces from.
+    fn prod_root_span() -> InputSpan {
+        SpanFixture {
+            trace: 1,
+            span: 1,
+            service: "root-svc",
+            start_ns: 1_000,
+            attrs: vec![("env".into(), AttrValue::Str("prod".into()))],
+            ..SpanFixture::default()
+        }
+        .build()
+    }
+
     fn span(trace: u8, span: u8, parent: Option<u8>, svc: &str) -> InputSpan {
-        span_at(trace, span, parent, svc, 1_000 + i64::from(span))
+        SpanFixture {
+            trace,
+            span,
+            parent,
+            service: svc,
+            start_ns: 1_000 + i64::from(span),
+            ..SpanFixture::default()
+        }
+        .build()
     }
 
     fn root_span_ref(name: &str) -> SpanRef {
@@ -494,22 +516,24 @@ mod tests {
             "svc-a",
             "root-a",
             vec![
-                span_at_with_attrs(
-                    1,
-                    1,
-                    None,
-                    "a",
-                    1_000,
-                    vec![("env".into(), AttrValue::Str("prod".into()))],
-                ),
-                span_at_with_attrs(
-                    1,
-                    2,
-                    Some(1),
-                    "b",
-                    2_000,
-                    vec![("target".into(), AttrValue::Str("kept".into()))],
-                ),
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000,
+                    attrs: vec![("env".into(), AttrValue::Str("prod".into()))],
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 1,
+                    span: 2,
+                    parent: Some(1),
+                    service: "b",
+                    start_ns: 2_000,
+                    attrs: vec![("target".into(), AttrValue::Str("kept".into()))],
+                }
+                .build(),
             ],
         );
     }
@@ -523,17 +547,20 @@ mod tests {
             "tenant-a",
             "svc-b",
             "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "c",
-                3_000,
-                vec![
-                    ("env".into(), AttrValue::Str("dev".into())),
-                    ("noise".into(), AttrValue::Str("dropped".into())),
-                ],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "c",
+                    start_ns: 3_000,
+                    attrs: vec![
+                        ("env".into(), AttrValue::Str("dev".into())),
+                        ("noise".into(), AttrValue::Str("dropped".into())),
+                    ],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         router(Arc::new(TraceqlEngine::new(
             Arc::new(store),
@@ -541,35 +568,59 @@ mod tests {
         )))
     }
 
-    fn span_at(trace: u8, span: u8, parent: Option<u8>, svc: &str, start_ns: i64) -> InputSpan {
-        span_at_with_attrs(trace, span, parent, svc, start_ns, Vec::new())
-    }
-
-    fn span_at_with_attrs(
+    /// A 200ns span named `span`, whose trace, span and parent ids repeat the
+    /// bytes `trace`, `span` and `parent`, with a `svc` attribute naming
+    /// `service` ahead of `attrs`.
+    struct SpanFixture<'a> {
         trace: u8,
         span: u8,
         parent: Option<u8>,
-        svc: &str,
+        service: &'a str,
         start_ns: i64,
         attrs: Vec<(String, AttrValue)>,
-    ) -> InputSpan {
-        let mut all_attrs = vec![("svc".into(), AttrValue::Str(svc.into()))];
-        all_attrs.extend(attrs);
-        InputSpan {
-            trace_id: [trace; 16],
-            span_id: [span; 8],
-            parent_span_id: parent.map(|p| [p; 8]),
-            name: "span".into(),
-            kind: 0,
-            start_unix_nano: start_ns,
-            duration: nanos(200),
-            status_code: 0,
-            status_message: String::new(),
-            instrumentation_name: String::new(),
-            instrumentation_version: String::new(),
-            attrs: all_attrs,
-            events: Vec::new(),
-            links: Vec::new(),
+    }
+
+    impl Default for SpanFixture<'_> {
+        fn default() -> Self {
+            Self {
+                trace: 1,
+                span: 1,
+                parent: None,
+                service: "a",
+                start_ns: 0,
+                attrs: Vec::new(),
+            }
+        }
+    }
+
+    impl SpanFixture<'_> {
+        fn build(self) -> InputSpan {
+            let Self {
+                trace,
+                span,
+                parent,
+                service,
+                start_ns,
+                attrs,
+            } = self;
+            let mut all_attrs = vec![("svc".into(), AttrValue::Str(service.into()))];
+            all_attrs.extend(attrs);
+            InputSpan {
+                trace_id: [trace; 16],
+                span_id: [span; 8],
+                parent_span_id: parent.map(|p| [p; 8]),
+                name: "span".into(),
+                kind: 0,
+                start_unix_nano: start_ns,
+                duration: nanos(200),
+                status_code: 0,
+                status_message: String::new(),
+                instrumentation_name: String::new(),
+                instrumentation_version: String::new(),
+                attrs: all_attrs,
+                events: Vec::new(),
+                links: Vec::new(),
+            }
         }
     }
 
@@ -938,20 +989,21 @@ mod tests {
         let spans = [1, 3]
             .into_iter()
             .map(|value| {
-                span_at_with_attrs(
-                    9,
-                    value,
-                    None,
-                    "api",
-                    1000 + i64::from(value),
-                    vec![(
+                SpanFixture {
+                    trace: 9,
+                    span: value,
+                    service: "api",
+                    start_ns: 1000 + i64::from(value),
+                    attrs: vec![(
                         "numbers".into(),
                         AttrValue::Array(vec![
                             AttrValue::Int(i64::from(value)),
                             AttrValue::Int(i64::from(value + 1)),
                         ]),
                     )],
-                )
+                    ..SpanFixture::default()
+                }
+                .build()
             })
             .collect();
         let mut store = InMemorySpanStore::new();
@@ -1047,8 +1099,22 @@ mod tests {
             "svc-a",
             "root-a",
             vec![
-                span_at(9, 1, None, "a", 0),
-                span_at(9, 2, None, "b", 1_000_000_000),
+                SpanFixture {
+                    trace: 9,
+                    span: 1,
+                    service: "a",
+                    start_ns: 0,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 2,
+                    service: "b",
+                    start_ns: 1_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
             ],
         );
         let engine = Arc::new(TraceqlEngine::new(
@@ -1139,9 +1205,32 @@ mod tests {
             "svc-a",
             "root-a",
             vec![
-                span_at(9, 1, None, "a", fixture_time - 60_000_000_000),
-                span_at(9, 2, Some(1), "a", fixture_time - 30_000_000_000),
-                span_at(9, 3, Some(1), "a", fixture_time - 7_200_000_000_000),
+                SpanFixture {
+                    trace: 9,
+                    span: 1,
+                    service: "a",
+                    start_ns: fixture_time - 60_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 2,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: fixture_time - 30_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 3,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: fixture_time - 7_200_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
             ],
         );
         let (status, body) = get_json_with_app(
@@ -1169,10 +1258,41 @@ mod tests {
             "svc",
             "root",
             vec![
-                span_at(9, 1, None, "a", 0),
-                span_at(9, 2, Some(1), "a", 1_000_000_000),
-                span_at(9, 3, Some(1), "a", 2_000_000_000),
-                span_at(9, 4, Some(1), "a", 3_000_000_000),
+                SpanFixture {
+                    trace: 9,
+                    span: 1,
+                    service: "a",
+                    start_ns: 0,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 2,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: 1_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 3,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: 2_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 9,
+                    span: 4,
+                    parent: Some(1),
+                    service: "a",
+                    start_ns: 3_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
             ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
@@ -1570,13 +1690,31 @@ overrides:
             "tenant-a",
             "svc-a",
             "inside",
-            vec![span_at(1, 1, None, "a", 1_500_000_000)],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_500_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-b",
             "outside",
-            vec![span_at(2, 1, None, "b", 2_000_000_000)],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "b",
+                    start_ns: 2_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
         let app = router(engine);
@@ -1638,15 +1776,39 @@ overrides:
             "tenant-a",
             "svc-a",
             "short",
-            vec![span_at(1, 1, None, "a", 1_000_000_000)],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-b",
             "long",
             vec![
-                span_at(2, 1, None, "b", 1_000_000_000),
-                span_at(2, 2, Some(1), "b", 4_000_000_000),
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "b",
+                    start_ns: 1_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 2,
+                    span: 2,
+                    parent: Some(1),
+                    service: "b",
+                    start_ns: 4_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
             ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
@@ -1669,9 +1831,23 @@ overrides:
 
     #[tokio::test]
     async fn search_honors_nanosecond_precision_min_duration_parameter() {
-        let mut short = span_at(1, 1, None, "a", 1_000_000_000);
+        let mut short = SpanFixture {
+            trace: 1,
+            span: 1,
+            service: "a",
+            start_ns: 1_000_000_000,
+            ..SpanFixture::default()
+        }
+        .build();
         short.duration = nanos(1_000_000);
-        let mut long = span_at(2, 1, None, "b", 1_000_000_000);
+        let mut long = SpanFixture {
+            trace: 2,
+            span: 1,
+            service: "b",
+            start_ns: 1_000_000_000,
+            ..SpanFixture::default()
+        }
+        .build();
         long.duration = nanos(1_000_001);
 
         let mut store = InMemorySpanStore::new();
@@ -1712,15 +1888,39 @@ overrides:
             "tenant-a",
             "svc-a",
             "short",
-            vec![span_at(1, 1, None, "a", 1_000_000_000)],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-b",
             "long",
             vec![
-                span_at(2, 1, None, "b", 2_000_000_000),
-                span_at(2, 2, Some(1), "b", 5_000_000_000),
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "b",
+                    start_ns: 2_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 2,
+                    span: 2,
+                    parent: Some(1),
+                    service: "b",
+                    start_ns: 5_000_000_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
             ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
@@ -1743,13 +1943,31 @@ overrides:
             "tenant-a",
             "svc-a",
             "first",
-            vec![span_at(1, 1, None, "a", 1_000)],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-b",
             "second",
-            vec![span_at(2, 1, None, "b", 2_000)],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "b",
+                    start_ns: 2_000,
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
         let app = router(engine);
@@ -2278,7 +2496,14 @@ overrides:
     #[tokio::test]
     async fn by_id_projects_instrumentation_scope() {
         let mut store = InMemorySpanStore::new();
-        let mut span = span_at(9, 1, None, "a", 1_000);
+        let mut span = SpanFixture {
+            trace: 9,
+            span: 1,
+            service: "a",
+            start_ns: 1_000,
+            ..SpanFixture::default()
+        }
+        .build();
         span.instrumentation_name = "tracer".into();
         span.instrumentation_version = "1.2.3".into();
         store.push_trace("tenant-a", "svc-a", "root-a", vec![span]);
@@ -2299,7 +2524,14 @@ overrides:
 
     #[tokio::test]
     async fn by_id_projects_span_kind_and_status() {
-        let mut span = span_at(9, 1, None, "a", 1_000);
+        let mut span = SpanFixture {
+            trace: 9,
+            span: 1,
+            service: "a",
+            start_ns: 1_000,
+            ..SpanFixture::default()
+        }
+        .build();
         span.kind = 2;
         span.status_code = 2;
         span.status_message = "boom".into();
@@ -2321,7 +2553,14 @@ overrides:
 
     #[tokio::test]
     async fn by_id_projects_events_and_links() {
-        let mut span = span_at(9, 1, None, "a", 1_000);
+        let mut span = SpanFixture {
+            trace: 9,
+            span: 1,
+            service: "a",
+            start_ns: 1_000,
+            ..SpanFixture::default()
+        }
+        .build();
         span.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -2524,14 +2763,7 @@ overrides:
     #[tokio::test]
     async fn search_tags_legacy_query_filter_returns_instrumentation_scope() {
         let mut store = InMemorySpanStore::new();
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.instrumentation_name = "tracer".into();
         root.instrumentation_version = "1.2.3".into();
         store.push_trace("tenant-a", "svc-a", "root-a", vec![root]);
@@ -2539,14 +2771,17 @@ overrides:
             "tenant-a",
             "svc-b",
             "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "dropped-svc",
-                3_000,
-                vec![("env".into(), AttrValue::Str("dev".into()))],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "dropped-svc",
+                    start_ns: 3_000,
+                    attrs: vec![("env".into(), AttrValue::Str("dev".into()))],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
         let app = router(engine);
@@ -2766,14 +3001,7 @@ overrides:
     #[tokio::test]
     async fn search_tags_v2_query_filter_returns_event_and_link_scopes() {
         let mut store = InMemorySpanStore::new();
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -2789,14 +3017,17 @@ overrides:
             "tenant-a",
             "svc-b",
             "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "c",
-                3_000,
-                vec![("env".into(), AttrValue::Str("dev".into()))],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "c",
+                    start_ns: 3_000,
+                    attrs: vec![("env".into(), AttrValue::Str("dev".into()))],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
         let app = router(engine);
@@ -2890,42 +3121,47 @@ overrides:
             "svc-a",
             "root-a",
             vec![
-                span_at_with_attrs(
-                    1,
-                    1,
-                    None,
-                    "a",
-                    1_000,
-                    vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000,
+                    attrs: vec![
                         ("env".into(), AttrValue::Str("prod".into())),
                         ("target".into(), AttrValue::Str("kept".into())),
                     ],
-                ),
-                span_at_with_attrs(
-                    1,
-                    2,
-                    Some(1),
-                    "b",
-                    2_000,
-                    vec![("target".into(), AttrValue::Str("also-kept".into()))],
-                ),
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 1,
+                    span: 2,
+                    parent: Some(1),
+                    service: "b",
+                    start_ns: 2_000,
+                    attrs: vec![("target".into(), AttrValue::Str("also-kept".into()))],
+                }
+                .build(),
             ],
         );
         store.push_trace(
             "tenant-a",
             "svc-b",
             "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "c",
-                3_000,
-                vec![
-                    ("env".into(), AttrValue::Str("dev".into())),
-                    ("target".into(), AttrValue::Str("dropped".into())),
-                ],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "c",
+                    start_ns: 3_000,
+                    attrs: vec![
+                        ("env".into(), AttrValue::Str("dev".into())),
+                        ("target".into(), AttrValue::Str("dropped".into())),
+                    ],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
         let app = router(engine);
@@ -3160,14 +3396,17 @@ overrides:
             "tenant-a",
             "svc-b",
             "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "b",
-                2_000,
-                vec![("env".into(), AttrValue::Str("dev".into()))],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "b",
+                    start_ns: 2_000,
+                    attrs: vec![("env".into(), AttrValue::Str("dev".into()))],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
         let app = router(engine);
@@ -3223,27 +3462,33 @@ overrides:
             "tenant-a",
             "svc-a",
             "root-a",
-            vec![span_at_with_attrs(
-                1,
-                1,
-                None,
-                "span-svc",
-                1_000,
-                vec![("env".into(), AttrValue::Str("prod".into()))],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "span-svc",
+                    start_ns: 1_000,
+                    attrs: vec![("env".into(), AttrValue::Str("prod".into()))],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-b",
             "root-b",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "dropped-svc",
-                2_000,
-                vec![("env".into(), AttrValue::Str("dev".into()))],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "dropped-svc",
+                    start_ns: 2_000,
+                    attrs: vec![("env".into(), AttrValue::Str("dev".into()))],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
         let app = router(engine);
@@ -3276,25 +3521,27 @@ overrides:
             "svc-a",
             "root-a",
             vec![
-                span_at_with_attrs(
-                    1,
-                    1,
-                    None,
-                    "a",
-                    1_000_000_000,
-                    vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000_000_000,
+                    attrs: vec![
                         ("env".into(), AttrValue::Str("prod".into())),
                         ("target".into(), AttrValue::Str("inside".into())),
                     ],
-                ),
-                span_at_with_attrs(
-                    1,
-                    2,
-                    Some(1),
-                    "b",
-                    5_000_000_000,
-                    vec![("target".into(), AttrValue::Str("outside".into()))],
-                ),
+                    ..SpanFixture::default()
+                }
+                .build(),
+                SpanFixture {
+                    trace: 1,
+                    span: 2,
+                    parent: Some(1),
+                    service: "b",
+                    start_ns: 5_000_000_000,
+                    attrs: vec![("target".into(), AttrValue::Str("outside".into()))],
+                }
+                .build(),
             ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
@@ -3341,27 +3588,29 @@ overrides:
     #[tokio::test]
     async fn search_tag_values_v2_query_filter_returns_intrinsic_values() {
         let mut store = InMemorySpanStore::new();
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.name = "root".into();
-        let mut child = span_at_with_attrs(1, 2, Some(1), "child-svc", 2_000, Vec::new());
+        let mut child = SpanFixture {
+            trace: 1,
+            span: 2,
+            parent: Some(1),
+            service: "child-svc",
+            start_ns: 2_000,
+            ..SpanFixture::default()
+        }
+        .build();
         child.name = "child".into();
         child.instrumentation_name = "tracer".into();
         store.push_trace("tenant-a", "svc-a", "root-a", vec![root, child]);
-        let mut dropped = span_at_with_attrs(
-            2,
-            1,
-            None,
-            "dropped-svc",
-            3_000,
-            vec![("env".into(), AttrValue::Str("dev".into()))],
-        );
+        let mut dropped = SpanFixture {
+            trace: 2,
+            span: 1,
+            service: "dropped-svc",
+            start_ns: 3_000,
+            attrs: vec![("env".into(), AttrValue::Str("dev".into()))],
+            ..SpanFixture::default()
+        }
+        .build();
         dropped.name = "dropped".into();
         store.push_trace("tenant-a", "svc-b", "root-b", vec![dropped]);
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
@@ -3499,14 +3748,7 @@ overrides:
     #[tokio::test]
     async fn search_tag_values_v2_query_filter_returns_event_and_link_values() {
         let mut store = InMemorySpanStore::new();
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -3562,14 +3804,7 @@ overrides:
 
     #[tokio::test]
     async fn search_tag_values_v2_query_filter_returns_event_and_link_attribute_values() {
-        let mut root = span_at_with_attrs(
-            1,
-            1,
-            None,
-            "root-svc",
-            1_000,
-            vec![("env".into(), AttrValue::Str("prod".into()))],
-        );
+        let mut root = prod_root_span();
         root.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -3668,17 +3903,20 @@ overrides:
                 "tenant-a",
                 "svc-a",
                 &format!("root-{trace}"),
-                vec![span_at_with_attrs(
-                    trace,
-                    1,
-                    None,
-                    "a",
-                    i64::from(trace),
-                    vec![
-                        ("env".into(), AttrValue::Str("prod".into())),
-                        ("target".into(), AttrValue::Str(target.into())),
-                    ],
-                )],
+                vec![
+                    SpanFixture {
+                        trace,
+                        span: 1,
+                        service: "a",
+                        start_ns: i64::from(trace),
+                        attrs: vec![
+                            ("env".into(), AttrValue::Str("prod".into())),
+                            ("target".into(), AttrValue::Str(target.into())),
+                        ],
+                        ..SpanFixture::default()
+                    }
+                    .build(),
+                ],
             );
         }
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
@@ -3716,33 +3954,39 @@ overrides:
             "tenant-a",
             "svc-a",
             "root-old",
-            vec![span_at_with_attrs(
-                1,
-                1,
-                None,
-                "a",
-                1_000,
-                vec![
-                    ("env".into(), AttrValue::Str("prod".into())),
-                    ("target".into(), AttrValue::Str("old".into())),
-                ],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 1,
+                    span: 1,
+                    service: "a",
+                    start_ns: 1_000,
+                    attrs: vec![
+                        ("env".into(), AttrValue::Str("prod".into())),
+                        ("target".into(), AttrValue::Str("old".into())),
+                    ],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         store.push_trace(
             "tenant-a",
             "svc-a",
             "root-new",
-            vec![span_at_with_attrs(
-                2,
-                1,
-                None,
-                "a",
-                2_000,
-                vec![
-                    ("env".into(), AttrValue::Str("prod".into())),
-                    ("target".into(), AttrValue::Str("new".into())),
-                ],
-            )],
+            vec![
+                SpanFixture {
+                    trace: 2,
+                    span: 1,
+                    service: "a",
+                    start_ns: 2_000,
+                    attrs: vec![
+                        ("env".into(), AttrValue::Str("prod".into())),
+                        ("target".into(), AttrValue::Str("new".into())),
+                    ],
+                    ..SpanFixture::default()
+                }
+                .build(),
+            ],
         );
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
         let app = router(engine);
@@ -3765,17 +4009,20 @@ overrides:
                 "tenant-a",
                 "svc-a",
                 &format!("root-{i:02}"),
-                vec![span_at_with_attrs(
-                    i + 1,
-                    1,
-                    None,
-                    "a",
-                    i64::from(i) * 1_000,
-                    vec![
-                        ("env".into(), AttrValue::Str("prod".into())),
-                        ("target".into(), AttrValue::Str(format!("value-{i:02}"))),
-                    ],
-                )],
+                vec![
+                    SpanFixture {
+                        trace: i + 1,
+                        span: 1,
+                        service: "a",
+                        start_ns: i64::from(i) * 1_000,
+                        attrs: vec![
+                            ("env".into(), AttrValue::Str("prod".into())),
+                            ("target".into(), AttrValue::Str(format!("value-{i:02}"))),
+                        ],
+                        ..SpanFixture::default()
+                    }
+                    .build(),
+                ],
             );
         }
         let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
@@ -3869,6 +4116,7 @@ mod parse_seconds_to_ns;
 mod parse_step_to_ns;
 mod parse_tag_scope;
 mod q_filter_limit;
+mod querier_request;
 mod query_instant;
 mod query_instant_inner;
 mod query_param;
@@ -4005,6 +4253,7 @@ pub(crate) use parse_seconds_to_ns::parse_seconds_to_ns;
 use parse_step_to_ns::parse_step_to_ns;
 use parse_tag_scope::parse_tag_scope;
 use q_filter_limit::q_filter_limit;
+use querier_request::QuerierRequest;
 use query_instant::query_instant;
 use query_instant_inner::query_instant_inner;
 use query_param::query_param;

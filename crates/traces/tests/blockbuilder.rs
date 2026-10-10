@@ -41,24 +41,21 @@ use self::{
     span_fixture::FixtureSpan,
 };
 
-fn rec(
-    tenant: &str,
-    trace_id: [u8; 16],
-    span_id: u8,
-    parent: Option<u8>,
-    start_ns: i64,
-) -> SpanRecord {
-    SpanRecord {
-        tenant: tenant.into(),
-        span: FixtureSpan {
-            trace_id,
-            span_id,
-            parent,
-            start_ns,
-        }
-        .build(),
-    }
-}
+/// The root span of trace `[1; 16]`, at 100ns.
+const ROOT_SPAN: FixtureSpan = FixtureSpan {
+    trace_id: [1; 16],
+    span_id: 1,
+    parent: None,
+    start_ns: 100,
+};
+
+/// The child of [`ROOT_SPAN`], at 200ns.
+const CHILD_SPAN: FixtureSpan = FixtureSpan {
+    trace_id: [1; 16],
+    span_id: 2,
+    parent: Some(1),
+    start_ns: 200,
+};
 
 fn format_headers() -> Vec<krabka_client_consumer::Header> {
     vec![krabka_client_consumer::Header {
@@ -156,9 +153,15 @@ fn object_key_escapes_the_tenant_into_one_segment_that_reads_back() {
 #[test]
 fn group_by_trace_orders_spans_per_tenant_trace() {
     let records = vec![
-        rec("tenant-a", [1; 16], 2, Some(1), 200),
-        rec("tenant-b", [1; 16], 9, None, 50),
-        rec("tenant-a", [1; 16], 1, None, 100),
+        CHILD_SPAN.record("tenant-a"),
+        FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 9,
+            parent: None,
+            start_ns: 50,
+        }
+        .record("tenant-b"),
+        ROOT_SPAN.record("tenant-a"),
     ];
 
     let grouped = group_by_trace(&records);
@@ -173,9 +176,19 @@ fn group_by_trace_orders_spans_per_tenant_trace() {
 #[test]
 fn decode_consumer_records_groups_by_partition_and_tracks_offsets() {
     let windows = decode_consumer_records(&[
-        consumer_record(1, 11, &rec("tenant-a", [1; 16], 1, None, 100)),
-        consumer_record(1, 12, &rec("tenant-a", [1; 16], 2, Some(1), 200)),
-        consumer_record(2, 7, &rec("tenant-b", [2; 16], 1, None, 50)),
+        consumer_record(1, 11, &ROOT_SPAN.record("tenant-a")),
+        consumer_record(1, 12, &CHILD_SPAN.record("tenant-a")),
+        consumer_record(
+            2,
+            7,
+            &FixtureSpan {
+                trace_id: [2; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 50,
+            }
+            .record("tenant-b"),
+        ),
         ConsumerRecord {
             topic: "__krabka_traces_wal".into(),
             partition: 1,
@@ -212,9 +225,15 @@ async fn build_blocks_writes_span_block_and_updates_trace_index() {
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
     let records = vec![
-        rec("tenant-a", [1; 16], 2, Some(1), 200),
-        rec("tenant-a", [1; 16], 1, None, 100),
-        rec("tenant-b", [2; 16], 1, None, 50),
+        CHILD_SPAN.record("tenant-a"),
+        ROOT_SPAN.record("tenant-a"),
+        FixtureSpan {
+            trace_id: [2; 16],
+            span_id: 1,
+            parent: None,
+            start_ns: 50,
+        }
+        .record("tenant-b"),
     ];
 
     let metas = build_blocks(&writer, &mut index, "tenant-a", 7, &records, (10, 20))
@@ -262,10 +281,7 @@ async fn replaying_same_offset_window_is_idempotent_in_trace_index() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let records = vec![
-        rec("tenant-a", [1; 16], 2, Some(1), 200),
-        rec("tenant-a", [1; 16], 1, None, 100),
-    ];
+    let records = vec![CHILD_SPAN.record("tenant-a"), ROOT_SPAN.record("tenant-a")];
 
     let first = build_blocks(&writer, &mut index, "tenant-a", 7, &records, (10, 20))
         .await
@@ -308,8 +324,8 @@ async fn replaying_saved_partition_window_after_restart_is_idempotent() {
         index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
     };
     let records = [
-        consumer_record(7, 10, &rec("tenant-a", [1; 16], 2, Some(1), 200)),
-        consumer_record(7, 11, &rec("tenant-a", [1; 16], 1, None, 100)),
+        consumer_record(7, 10, &CHILD_SPAN.record("tenant-a")),
+        consumer_record(7, 11, &ROOT_SPAN.record("tenant-a")),
     ];
     let windows = decode_consumer_records(&records).unwrap();
     let mut index = TraceIndex::new();
@@ -388,22 +404,20 @@ async fn multiple_polls_below_threshold_flush_one_block_per_partition() {
 
     // Three polls, each well under the flush threshold, all for the same trace
     // across two polls plus a second trace in the third poll.
-    let poll1 = decode_consumer_records(&[consumer_record(
-        7,
-        10,
-        &rec("tenant-a", [1; 16], 1, None, 100),
-    )])
-    .unwrap();
-    let poll2 = decode_consumer_records(&[consumer_record(
-        7,
-        11,
-        &rec("tenant-a", [1; 16], 2, Some(1), 200),
-    )])
-    .unwrap();
+    let poll1 =
+        decode_consumer_records(&[consumer_record(7, 10, &ROOT_SPAN.record("tenant-a"))]).unwrap();
+    let poll2 =
+        decode_consumer_records(&[consumer_record(7, 11, &CHILD_SPAN.record("tenant-a"))]).unwrap();
     let poll3 = decode_consumer_records(&[consumer_record(
         7,
         12,
-        &rec("tenant-a", [2; 16], 3, None, 300),
+        &FixtureSpan {
+            trace_id: [2; 16],
+            span_id: 3,
+            parent: None,
+            start_ns: 300,
+        }
+        .record("tenant-a"),
     )])
     .unwrap();
 
@@ -456,14 +470,36 @@ async fn accumulator_flushes_on_record_count_threshold() {
 
     let mut accumulator = FlushAccumulator::new();
     accumulator.merge(
-        decode_consumer_records(&[consumer_record(0, 1, &rec("t", [1; 16], 1, None, 1))]).unwrap(),
+        decode_consumer_records(&[consumer_record(
+            0,
+            1,
+            &FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 1,
+            }
+            .record("t"),
+        )])
+        .unwrap(),
         Instant::now(),
     );
     // One record buffered, below the threshold of 2.
     assert2::assert!(!accumulator.should_flush(&config, Instant::now()));
 
     accumulator.merge(
-        decode_consumer_records(&[consumer_record(0, 2, &rec("t", [1; 16], 2, None, 2))]).unwrap(),
+        decode_consumer_records(&[consumer_record(
+            0,
+            2,
+            &FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 2,
+                parent: None,
+                start_ns: 2,
+            }
+            .record("t"),
+        )])
+        .unwrap(),
         Instant::now(),
     );
     // Two records buffered -> threshold reached.
@@ -483,7 +519,18 @@ async fn accumulator_flushes_on_age_for_low_traffic_stream() {
     let mut accumulator = FlushAccumulator::new();
     let start = Instant::now();
     accumulator.merge(
-        decode_consumer_records(&[consumer_record(0, 1, &rec("t", [1; 16], 1, None, 1))]).unwrap(),
+        decode_consumer_records(&[consumer_record(
+            0,
+            1,
+            &FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 1,
+            }
+            .record("t"),
+        )])
+        .unwrap(),
         start,
     );
 
@@ -515,7 +562,13 @@ async fn shutdown_drain_flushes_remaining_buffer_without_losing_spans() {
         decode_consumer_records(&[consumer_record(
             3,
             5,
-            &rec("tenant-a", [4; 16], 1, None, 100),
+            &FixtureSpan {
+                trace_id: [4; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 100,
+            }
+            .record("tenant-a"),
         )])
         .unwrap(),
         Instant::now(),
@@ -524,7 +577,13 @@ async fn shutdown_drain_flushes_remaining_buffer_without_losing_spans() {
         decode_consumer_records(&[consumer_record(
             3,
             6,
-            &rec("tenant-a", [4; 16], 2, Some(1), 200),
+            &FixtureSpan {
+                trace_id: [4; 16],
+                span_id: 2,
+                parent: Some(1),
+                start_ns: 200,
+            }
+            .record("tenant-a"),
         )])
         .unwrap(),
         Instant::now(),
@@ -560,18 +619,37 @@ async fn merged_buffer_offset_range_is_stable_for_idempotent_keying() {
     // every buffered record, so the derived block key is stable across re-runs.
     let mut accumulator = FlushAccumulator::new();
     accumulator.merge(
-        decode_consumer_records(&[consumer_record(7, 12, &rec("t", [1; 16], 2, None, 200))])
-            .unwrap(),
+        decode_consumer_records(&[consumer_record(
+            7,
+            12,
+            &FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 2,
+                parent: None,
+                start_ns: 200,
+            }
+            .record("t"),
+        )])
+        .unwrap(),
         Instant::now(),
     );
     accumulator.merge(
-        decode_consumer_records(&[consumer_record(7, 10, &rec("t", [1; 16], 1, None, 100))])
-            .unwrap(),
+        decode_consumer_records(&[consumer_record(7, 10, &ROOT_SPAN.record("t"))]).unwrap(),
         Instant::now(),
     );
     accumulator.merge(
-        decode_consumer_records(&[consumer_record(7, 11, &rec("t", [1; 16], 3, None, 150))])
-            .unwrap(),
+        decode_consumer_records(&[consumer_record(
+            7,
+            11,
+            &FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 3,
+                parent: None,
+                start_ns: 150,
+            }
+            .record("t"),
+        )])
+        .unwrap(),
         Instant::now(),
     );
 
@@ -585,7 +663,7 @@ async fn build_blocks_with_prefix_scopes_block_keys() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let records = vec![rec("tenant-a", [1; 16], 1, None, 100)];
+    let records = vec![ROOT_SPAN.record("tenant-a")];
 
     let metas = build_blocks_with_prefix(
         &writer,
@@ -620,7 +698,7 @@ async fn build_blocks_promotes_configured_attribute_columns() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let records = vec![rec("tenant-a", [1; 16], 1, None, 100)];
+    let records = vec![ROOT_SPAN.record("tenant-a")];
 
     let metas = build_blocks_with_promoted_attrs(
         &writer,
@@ -664,10 +742,34 @@ async fn a_written_block_is_ordered_by_trace_id_then_start() {
     let mut index = TraceIndex::new();
     // Interleaved: neither the trace ids nor the starts arrive in order.
     let records = vec![
-        rec("tenant-a", [2; 16], 1, None, 300),
-        rec("tenant-a", [1; 16], 2, None, 100),
-        rec("tenant-a", [2; 16], 3, Some(1), 250),
-        rec("tenant-a", [1; 16], 4, Some(2), 150),
+        FixtureSpan {
+            trace_id: [2; 16],
+            span_id: 1,
+            parent: None,
+            start_ns: 300,
+        }
+        .record("tenant-a"),
+        FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 2,
+            parent: None,
+            start_ns: 100,
+        }
+        .record("tenant-a"),
+        FixtureSpan {
+            trace_id: [2; 16],
+            span_id: 3,
+            parent: Some(1),
+            start_ns: 250,
+        }
+        .record("tenant-a"),
+        FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 4,
+            parent: Some(2),
+            start_ns: 150,
+        }
+        .record("tenant-a"),
     ];
 
     let metas = build_blocks(&writer, &mut index, "tenant-a", 7, &records, (10, 20))
@@ -889,8 +991,8 @@ async fn run_two_span_poll(poll: TwoSpanPoll<'_>) -> (Result<(), TracesError>, A
     let shutdown = CancellationToken::new();
     let commit_calls = Arc::new(AtomicUsize::new(0));
     let batch = vec![
-        consumer_record(3, 10, &rec("tenant-a", [1; 16], 1, None, 100)),
-        consumer_record(3, 11, &rec("tenant-a", [1; 16], 2, Some(1), 200)),
+        consumer_record(3, 10, &ROOT_SPAN.record("tenant-a")),
+        consumer_record(3, 11, &CHILD_SPAN.record("tenant-a")),
     ];
     let consumer = ScriptedConsumer::new(
         vec![batch],
@@ -975,11 +1077,7 @@ async fn run_does_not_commit_when_the_flush_write_fails() {
     let shutdown = CancellationToken::new();
     let commit_calls = Arc::new(AtomicUsize::new(0));
 
-    let batch = vec![consumer_record(
-        3,
-        10,
-        &rec("tenant-a", [1; 16], 1, None, 100),
-    )];
+    let batch = vec![consumer_record(3, 10, &ROOT_SPAN.record("tenant-a"))];
     let consumer = ScriptedConsumer::new(
         vec![batch],
         shutdown.clone(),
@@ -1094,11 +1192,7 @@ async fn run_reports_a_permanent_object_store_failure_without_spending_the_budge
     let commit_calls = Arc::new(AtomicUsize::new(0));
 
     let consumer = ScriptedConsumer::new(
-        vec![vec![consumer_record(
-            3,
-            10,
-            &rec("tenant-a", [1; 16], 1, None, 100),
-        )]],
+        vec![vec![consumer_record(3, 10, &ROOT_SPAN.record("tenant-a"))]],
         shutdown.clone(),
         Arc::clone(&commit_calls),
         Arc::clone(&events),
@@ -1134,12 +1228,52 @@ async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
     let consumer = ScriptedConsumer::new(
         vec![
             vec![
-                consumer_record(3, 5, &rec("tenant-a", [4; 16], 1, None, 100)),
-                consumer_record(3, 6, &rec("tenant-a", [4; 16], 2, Some(1), 200)),
+                consumer_record(
+                    3,
+                    5,
+                    &FixtureSpan {
+                        trace_id: [4; 16],
+                        span_id: 1,
+                        parent: None,
+                        start_ns: 100,
+                    }
+                    .record("tenant-a"),
+                ),
+                consumer_record(
+                    3,
+                    6,
+                    &FixtureSpan {
+                        trace_id: [4; 16],
+                        span_id: 2,
+                        parent: Some(1),
+                        start_ns: 200,
+                    }
+                    .record("tenant-a"),
+                ),
             ],
             vec![
-                consumer_record(3, 7, &rec("tenant-a", [4; 16], 3, Some(2), 300)),
-                consumer_record(3, 8, &rec("tenant-a", [4; 16], 4, Some(3), 400)),
+                consumer_record(
+                    3,
+                    7,
+                    &FixtureSpan {
+                        trace_id: [4; 16],
+                        span_id: 3,
+                        parent: Some(2),
+                        start_ns: 300,
+                    }
+                    .record("tenant-a"),
+                ),
+                consumer_record(
+                    3,
+                    8,
+                    &FixtureSpan {
+                        trace_id: [4; 16],
+                        span_id: 4,
+                        parent: Some(3),
+                        start_ns: 400,
+                    }
+                    .record("tenant-a"),
+                ),
             ],
         ],
         shutdown.clone(),
@@ -1275,16 +1409,18 @@ async fn concurrent_block_builders_sharing_one_index_key_keep_both_blocks_querya
     let store: Arc<dyn ObjectStore> = Arc::clone(&barrier) as Arc<dyn ObjectStore>;
     let config = block_builder_config();
 
-    let windows_a = decode_consumer_records(&[consumer_record(
-        3,
-        10,
-        &rec("tenant-a", [1; 16], 1, None, 100),
-    )])
-    .unwrap();
+    let windows_a =
+        decode_consumer_records(&[consumer_record(3, 10, &ROOT_SPAN.record("tenant-a"))]).unwrap();
     let windows_b = decode_consumer_records(&[consumer_record(
         4,
         20,
-        &rec("tenant-a", [2; 16], 1, None, 200),
+        &FixtureSpan {
+            trace_id: [2; 16],
+            span_id: 1,
+            parent: None,
+            start_ns: 200,
+        }
+        .record("tenant-a"),
     )])
     .unwrap();
 
@@ -1348,7 +1484,13 @@ async fn flush_one_window(
     let windows = decode_consumer_records(&[consumer_record(
         partition,
         offset,
-        &rec("tenant-a", trace_id, 1, None, start_ns),
+        &FixtureSpan {
+            trace_id,
+            span_id: 1,
+            parent: None,
+            start_ns,
+        }
+        .record("tenant-a"),
     )])
     .unwrap();
     let writer = BlockWriter::new(Arc::clone(store));

@@ -1,29 +1,30 @@
 use super::{
-    AppState, HeaderMap, IntoResponse, Json, Principal, QueryEnforcer, Response, SpanStore,
-    StatusCode, TenantRequest, UnixNano, Uri, exemplar_selection, filter_metrics_exemplars,
-    limit_error_response, metrics_request, required_time_range, scan_options_param, step_param,
-    tempo_metric_bounds, trace_metrics_json,
+    IntoResponse, Json, QuerierRequest, QueryEnforcer, Response, SpanStore, StatusCode,
+    TenantRequest, UnixNano, exemplar_selection, filter_metrics_exemplars, limit_error_response,
+    metrics_request, required_time_range, scan_options_param, step_param, tempo_metric_bounds,
+    trace_metrics_json,
 };
 
-pub(crate) async fn query_range_inner<S>(
-    state: &AppState<S>,
-    principal: &Principal,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response
+pub(crate) async fn query_range_inner<S>(request: &QuerierRequest<S>) -> Response
 where
     S: SpanStore + 'static,
 {
+    let QuerierRequest {
+        state,
+        principal,
+        headers,
+        uri,
+    } = request;
     let (tenant, query) = match metrics_request(TenantRequest {
-        headers: &headers,
+        headers,
         principal,
         policy: &state.cfg.tenant_policy,
-        uri: &uri,
+        uri,
     }) {
         Ok(request) => request,
         Err(rejection) => return *rejection,
     };
-    let (start_ns, end_ns) = match required_time_range(&uri) {
+    let (start_ns, end_ns) = match required_time_range(uri) {
         Ok(range) => range,
         Err(rejection) => return *rejection,
     };
@@ -31,7 +32,7 @@ where
     if let Err(err) = QueryEnforcer::check_search_duration(&limits, start_ns, end_ns) {
         return limit_error_response(&err);
     }
-    let step_ns = match step_param(&uri, UnixNano(start_ns), UnixNano(end_ns)) {
+    let step_ns = match step_param(uri, UnixNano(start_ns), UnixNano(end_ns)) {
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
@@ -39,8 +40,8 @@ where
         Ok(bounds) => bounds,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let exemplar_selection = exemplar_selection(&uri);
-    let mut scan_options = match scan_options_param(&uri) {
+    let exemplar_selection = exemplar_selection(uri);
+    let mut scan_options = match scan_options_param(uri) {
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };

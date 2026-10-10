@@ -1,6 +1,6 @@
 // A server span of the `api` service, for the block-building suites.
 
-use krabka_traces::{AttrValue, KeyValue, Span, SpanKind, StatusCode};
+use krabka_traces::{AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode};
 
 /// A server span of the `api` service in `trace_id`, with id and name taken
 /// from `span_id` and an optional parent of the same trace.
@@ -38,6 +38,14 @@ impl FixtureSpan {
             }],
             instrumentation_scope: "test".into(),
             ..Span::default()
+        }
+    }
+
+    /// This span as a WAL record of `tenant`.
+    pub fn record(self, tenant: &str) -> SpanRecord {
+        SpanRecord {
+            tenant: tenant.into(),
+            span: self.build(),
         }
     }
 }

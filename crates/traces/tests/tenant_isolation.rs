@@ -43,7 +43,9 @@ use krabka_observability::{
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
     Limits, SpanRecord, TracesError,
-    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, WalSink},
+    distributor::{
+        self, DistributorState, JaegerGrpcService, OtlpGrpcService, ReceiverEndpoint, WalSink,
+    },
     frontend::{
         FrontendConfig, HttpQuerier, MembershipView, MockCatalog, MockQuerier, QuerierScheme,
         QueryFrontend, router_with_backend,
@@ -1274,12 +1276,12 @@ async fn a_secured_otlp_http_push_reaches_the_wal_only_for_a_granted_principal()
     let security = load_security(&pki.listener_flags()?)?.with_security_events(events.clone());
     let sink = CapturingSink::default();
     let stop = CancellationToken::new();
-    let (addr, _server) = distributor::serve(
-        "127.0.0.1:0".parse()?,
-        Arc::new(DistributorState::new(Arc::new(sink.clone()))),
-        &security,
-        stop.clone(),
-    )
+    let (addr, _server) = distributor::serve(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
+        state: Arc::new(DistributorState::new(Arc::new(sink.clone()))),
+        security: &security,
+        shutdown: stop.clone(),
+    })
     .await?;
     let client = pki.https_client()?;
     let url = format!("https://{addr}/v1/traces");
@@ -1392,16 +1394,20 @@ async fn secured_grpc_doors_authenticate_and_authorize_before_the_wal() -> TestR
     let sink = CapturingSink::default();
     let state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
     let stop = CancellationToken::new();
-    let (otlp_addr, _otlp) = distributor::serve_otlp_grpc(
-        "127.0.0.1:0".parse()?,
-        Arc::clone(&state),
-        &security,
-        stop.clone(),
-    )
+    let (otlp_addr, _otlp) = distributor::serve_otlp_grpc(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
+        state: Arc::clone(&state),
+        security: &security,
+        shutdown: stop.clone(),
+    })
     .await?;
-    let (jaeger_addr, _jaeger) =
-        distributor::serve_jaeger_grpc("127.0.0.1:0".parse()?, state, &security, stop.clone())
-            .await?;
+    let (jaeger_addr, _jaeger) = distributor::serve_jaeger_grpc(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
+        state,
+        security: &security,
+        shutdown: stop.clone(),
+    })
+    .await?;
     let mut otlp = TraceServiceClient::new(pki.grpc_endpoint(otlp_addr)?.connect().await?);
     let mut jaeger = CollectorServiceClient::new(pki.grpc_endpoint(jaeger_addr)?.connect().await?);
 
@@ -1511,19 +1517,19 @@ async fn the_jaeger_compact_receiver_starts_only_without_authentication() -> Tes
     let state = Arc::new(DistributorState::new(Arc::new(CapturingSink::default())));
     let stop = CancellationToken::new();
 
-    let with_authentication = distributor::serve_jaeger_compact_udp(
-        held.local_addr()?,
-        Arc::clone(&state),
-        &load_security(&pki.credentials_flags()?)?,
-        stop.clone(),
-    )
+    let with_authentication = distributor::serve_jaeger_compact_udp(ReceiverEndpoint {
+        addr: held.local_addr()?,
+        state: Arc::clone(&state),
+        security: &load_security(&pki.credentials_flags()?)?,
+        shutdown: stop.clone(),
+    })
     .await?;
-    let without_authentication = distributor::serve_jaeger_compact_udp(
-        "127.0.0.1:0".parse()?,
+    let without_authentication = distributor::serve_jaeger_compact_udp(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
         state,
-        &ServerSecurity::default(),
-        stop.clone(),
-    )
+        security: &ServerSecurity::default(),
+        shutdown: stop.clone(),
+    })
     .await?;
 
     check!(with_authentication.is_none());

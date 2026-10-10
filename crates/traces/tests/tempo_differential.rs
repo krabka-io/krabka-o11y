@@ -327,7 +327,13 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
         );
     }
 
-    compare_generated_trace_queries(&client, &tempo_query, &krabka.base_url, query_range).await?;
+    compare_generated_trace_queries(QueryTargets {
+        client: &client,
+        oracle: &tempo_query,
+        candidate: &krabka.base_url,
+        query_range,
+    })
+    .await?;
 
     let tempo_tags = get_json(
         &client,
@@ -364,12 +370,7 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
     Ok(())
 }
 
-async fn compare_generated_trace_queries(
-    client: &reqwest::Client,
-    tempo_query: &str,
-    krabka_query: &str,
-    query_range: &str,
-) -> TestResult {
+async fn compare_generated_trace_queries(targets: QueryTargets<'_>) -> TestResult {
     let generated_output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
         || std::env::temp_dir().join(format!("krabka-trace-generated-{}", std::process::id())),
         std::path::PathBuf::from,
@@ -420,16 +421,7 @@ async fn compare_generated_trace_queries(
             )),
         ],
         &generated_output,
-        |expression| {
-            compare_generated_trace_selector(
-                client,
-                tempo_query,
-                krabka_query,
-                query_range,
-                expression,
-                &expected_checkout,
-            )
-        },
+        |expression| compare_generated_trace_selector(targets, expression, &expected_checkout),
     )
     .await?;
 
@@ -458,16 +450,7 @@ async fn compare_generated_trace_queries(
             TypedConstructor::Paren,
         ],
         &generated_output,
-        |expression| {
-            compare_generated_trace_selector(
-                client,
-                tempo_query,
-                krabka_query,
-                query_range,
-                expression,
-                &expected_field_match,
-            )
-        },
+        |expression| compare_generated_trace_selector(targets, expression, &expected_field_match),
     )
     .await?;
 
@@ -483,13 +466,12 @@ async fn compare_generated_trace_queries(
         &generated_output,
         |expression| {
             compare_generated_trace_rejection(
-                client,
-                tempo_query,
-                krabka_query,
-                query_range,
+                targets,
                 expression,
-                &generated_output,
-                &rejection_responses,
+                RejectionEvidence {
+                    output: &generated_output,
+                    observations: &rejection_responses,
+                },
             )
         },
     )
@@ -533,49 +515,21 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     )
     .await?;
     assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
-    let pipeline_result = compare_live_pipeline_hints(
-        &client,
-        &tempo_query,
-        &krabka.base_url,
-        &query_range,
-        trace_start_secs,
-    )
-    .await;
-    let instant_result =
-        compare_live_instant_bounds(&client, &tempo_query, &krabka.base_url, trace_start_secs)
-            .await;
-    let numeric_result =
-        compare_live_numeric_metrics(&client, &tempo_query, &krabka.base_url, &query_range).await;
-    let exemplar_result = compare_live_singleton_exemplar(
-        &client,
-        &tempo_query,
-        &krabka.base_url,
-        &query_range,
-        trace_start_secs,
-    )
-    .await;
-    let arithmetic_result =
-        compare_live_field_arithmetic(&client, &tempo_query, &krabka.base_url, &query_range).await;
-    let supported_result =
-        compare_live_supported_scopes(&client, &tempo_query, &krabka.base_url, &query_range).await;
-    let output_result = compare_live_expression_outputs(
-        &client,
-        &tempo_query,
-        &krabka.base_url,
-        &query_range,
-        trace_start_secs,
-    )
-    .await;
-    let retrieval_result =
-        compare_live_retrieval_shapes(&client, &tempo_query, &krabka.base_url, &query_range).await;
-    let reservoir_result = compare_live_exemplar_reservoir(
-        &client,
-        &tempo_query,
-        &krabka.base_url,
-        &query_range,
-        trace_start_secs,
-    )
-    .await;
+    let targets = QueryTargets {
+        client: &client,
+        oracle: &tempo_query,
+        candidate: &krabka.base_url,
+        query_range: &query_range,
+    };
+    let pipeline_result = compare_live_pipeline_hints(targets, trace_start_secs).await;
+    let instant_result = compare_live_instant_bounds(targets, trace_start_secs).await;
+    let numeric_result = compare_live_numeric_metrics(targets).await;
+    let exemplar_result = compare_live_singleton_exemplar(targets, trace_start_secs).await;
+    let arithmetic_result = compare_live_field_arithmetic(targets).await;
+    let supported_result = compare_live_supported_scopes(targets).await;
+    let output_result = compare_live_expression_outputs(targets, trace_start_secs).await;
+    let retrieval_result = compare_live_retrieval_shapes(targets).await;
+    let reservoir_result = compare_live_exemplar_reservoir(targets, trace_start_secs).await;
     pipeline_result?;
     instant_result?;
     numeric_result?;
@@ -589,12 +543,37 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     Ok(())
 }
 
-async fn compare_live_instant_bounds(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    anchor: u64,
-) -> TestResult {
+/// The pinned Tempo (`oracle`) and Krabka (`candidate`) query APIs that a
+/// live comparison sends the same request to, the client it sends with, and
+/// the `start=...&end=...` window it asks over.
+#[derive(Clone, Copy)]
+struct QueryTargets<'a> {
+    client: &'a reqwest::Client,
+    oracle: &'a str,
+    candidate: &'a str,
+    query_range: &'a str,
+}
+
+/// Where a live comparison records each case's evidence and each failure.
+struct ComparisonLedger<'a> {
+    cases: &'a mut Vec<JsonValue>,
+    failures: &'a mut Vec<String>,
+}
+
+/// Where a generated rejection case archives the responses it observed: the
+/// output directory, and the ledger shared by every case of the run.
+struct RejectionEvidence<'a> {
+    output: &'a std::path::Path,
+    observations: &'a Mutex<Vec<JsonValue>>,
+}
+
+async fn compare_live_instant_bounds(targets: QueryTargets<'_>, anchor: u64) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        ..
+    } = targets;
     let end = anchor + 90;
     let rows = [
         ("default-since", format!("end={end}")),
@@ -699,13 +678,13 @@ async fn compare_live_instant_bounds(
     }
 }
 
-async fn compare_live_pipeline_hints(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    range: &str,
-    anchor: u64,
-) -> TestResult {
+async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range: range,
+    } = targets;
     let timestamp = |offset: i64| -> TestResult<i64> {
         Ok(i64::try_from(anchor)?
             .checked_add(offset)
@@ -803,12 +782,12 @@ async fn compare_live_pipeline_hints(
         cases.push(json!({"stableid":format!("tempo-live-pipeline-{id}"), "query":query,"request":{"range":range,"step":"30s"},"expected_outcome":"query-result","comparison_kind":"exact-whole-series","independent_expected":expected,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
     compare_live_sampled_pipelines(
-        client,
-        oracle,
-        candidate,
-        range,
+        targets,
         anchor,
-        (&mut cases, &mut failures),
+        ComparisonLedger {
+            cases: &mut cases,
+            failures: &mut failures,
+        },
     )
     .await?;
     for (id, expression) in [
@@ -925,13 +904,17 @@ fn check_sampled_pipeline_ledger(response: &JsonValue, allowed: &[JsonValue]) ->
 }
 
 async fn compare_live_sampled_pipelines(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    range: &str,
+    targets: QueryTargets<'_>,
     anchor: u64,
-    (cases, failures): (&mut Vec<JsonValue>, &mut Vec<String>),
+    ledger: ComparisonLedger<'_>,
 ) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range: range,
+    } = targets;
+    let ComparisonLedger { cases, failures } = ledger;
     for (id, expression, traces, average) in [
         (
             "fractional-span-sampling",
@@ -1027,12 +1010,13 @@ fn sampled_average_domain_rejects_value_scaling_and_missing_mandatory_bucket() {
     assert2::assert!(check_sampled_pipeline_ledger(&missing, &allowed).is_err());
 }
 
-async fn compare_live_retrieval_shapes(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
-) -> TestResult {
+async fn compare_live_retrieval_shapes(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     let upstream_result = get_trace_by_id_until_found(client, oracle, None, query_range).await;
     let actual_result = get_trace_by_id(client, candidate, Some(TENANT), query_range).await;
     let upstream = json_or_error(&upstream_result);
@@ -1259,12 +1243,13 @@ fn retrieval_expected_values() -> Vec<(&'static str, JsonValue)> {
     ]
 }
 
-async fn compare_live_numeric_metrics(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
-) -> TestResult {
+async fn compare_live_numeric_metrics(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
     for (stableid, operation) in [
@@ -1391,12 +1376,13 @@ async fn compare_checkout_span_searches(
     }
 }
 
-async fn compare_live_field_arithmetic(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
-) -> TestResult {
+async fn compare_live_field_arithmetic(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     // The existing checkout fixture has three positive durations, attached to
     // independently assigned IDs 2 (GET), 3 (SELECT), and 4 (charge). Name
     // predicates provide excluded witnesses for each arithmetic expression.
@@ -1435,13 +1421,13 @@ async fn compare_live_field_arithmetic(
     .await
 }
 
-async fn compare_live_expression_outputs(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
-    anchor: u64,
-) -> TestResult {
+async fn compare_live_expression_outputs(targets: QueryTargets<'_>, anchor: u64) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     let checkout = "{ resource.service.name = \"checkout\" }";
     let all_ids = ["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX];
     let set = |ids: &[&str], attributes: JsonValue| json!({"span_ids":ids,"matched":ids.len(),"attributes":attributes});
@@ -1536,12 +1522,12 @@ async fn compare_live_expression_outputs(
         cases.push(json!({"stableid":format!("tempo-live-output-{id}"),"query":query,"request":{"range":query_range,"limit":10,"spss":10},"independent_expected":{"span_sets":expected},"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
     compare_live_metric_label_outputs(
-        client,
-        oracle,
-        candidate,
-        query_range,
+        targets,
         anchor,
-        (&mut cases, &mut failures),
+        ComparisonLedger {
+            cases: &mut cases,
+            failures: &mut failures,
+        },
     )
     .await?;
     if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
@@ -1558,14 +1544,17 @@ async fn compare_live_expression_outputs(
 }
 
 async fn compare_live_metric_label_outputs(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     anchor: u64,
-    output: (&mut Vec<JsonValue>, &mut Vec<String>),
+    ledger: ComparisonLedger<'_>,
 ) -> TestResult {
-    let (cases, failures) = output;
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
+    let ComparisonLedger { cases, failures } = ledger;
     let checkout = "{ resource.service.name = \"checkout\" }";
     for (id, field) in [
         ("bare-name-label", "name"),
@@ -1581,14 +1570,7 @@ async fn compare_live_metric_label_outputs(
             checkout
         };
         if field == "span.numbers" {
-            record_array_metric_frontend_observation(
-                client,
-                oracle,
-                candidate,
-                query_range,
-                anchor,
-            )
-            .await?;
+            record_array_metric_frontend_observation(targets, anchor).await?;
         }
         let query = format!("{selector} | count_over_time() by({field}) with(exemplars=false)");
         let label_key = if field == "span:name" { "name" } else { field };
@@ -1669,12 +1651,15 @@ fn array_metric_frontend_expectation(anchor: u64) -> TestResult<JsonValue> {
 }
 
 async fn record_array_metric_frontend_observation(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     anchor: u64,
 ) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
     // Three source spans occupy two buckets: root 500ms, children 150ms/140ms.
@@ -1801,12 +1786,13 @@ fn spanset_output_ledger_rejects_wrong_groups_attributes_and_counts() {
     }
 }
 
-async fn compare_live_supported_scopes(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
-) -> TestResult {
+async fn compare_live_supported_scopes(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     compare_checkout_span_searches(
         client,
         CheckoutSpanSearches {
@@ -1883,12 +1869,15 @@ async fn compare_live_supported_scopes(
 }
 
 async fn compare_live_exemplar_reservoir(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    range: &str,
+    targets: QueryTargets<'_>,
     anchor_secs: u64,
 ) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range: range,
+    } = targets;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
     for (stableid, grouping) in [("ungrouped", ""), ("grouped", " by(span.lane)")] {
@@ -2105,12 +2094,15 @@ fn reservoir_contract_rejects_duplicate_trace_foreign_span_and_payload_corruptio
 }
 
 async fn compare_live_singleton_exemplar(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     trace_start_secs: u64,
 ) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     // Tempo uses reservoir sampling within a trace. This selector contains one
     // matching span, so identity is independent of RNG. The aligned 30s metric
     // fetch uses Tempo's pre-rounded 15s start column, whose right endpoint is
@@ -2258,7 +2250,13 @@ async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
         assert2::assert!(krabka_keys == tempo_keys);
         assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
     }
-    compare_live_typed_groups(&client, &tempo_query, &krabka.base_url, &query_range).await?;
+    compare_live_typed_groups(QueryTargets {
+        client: &client,
+        oracle: &tempo_query,
+        candidate: &krabka.base_url,
+        query_range: &query_range,
+    })
+    .await?;
     krabka.shutdown();
     Ok(())
 }
@@ -2809,13 +2807,16 @@ async fn get_trace_by_id(
 }
 
 async fn compare_generated_trace_selector(
-    client: &reqwest::Client,
-    oracle_base: &str,
-    krabka_base: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     expression: String,
     expected: &BTreeMap<String, Vec<String>>,
 ) -> TestResult<Option<String>> {
+    let QueryTargets {
+        client,
+        oracle: oracle_base,
+        candidate: krabka_base,
+        query_range,
+    } = targets;
     let query = format!("{{ {expression} }}");
     let encoded = url_encoded(&query);
     let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
@@ -2846,14 +2847,20 @@ async fn compare_generated_trace_selector(
 }
 
 async fn compare_generated_trace_rejection(
-    client: &reqwest::Client,
-    oracle_base: &str,
-    krabka_base: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     expression: String,
-    output: &std::path::Path,
-    observations: &Mutex<Vec<JsonValue>>,
+    evidence: RejectionEvidence<'_>,
 ) -> TestResult<Option<String>> {
+    let QueryTargets {
+        client,
+        oracle: oracle_base,
+        candidate: krabka_base,
+        query_range,
+    } = targets;
+    let RejectionEvidence {
+        output,
+        observations,
+    } = evidence;
     let query = format!("{{ {expression} }}");
     let encoded = url_encoded(&query);
     let mut responses = Vec::with_capacity(2);
@@ -3941,12 +3948,13 @@ fn typed_grouping_otlp_body_at(start_ns: u64) -> Vec<u8> {
     data.encode_to_vec()
 }
 
-async fn compare_live_typed_groups(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    range: &str,
-) -> TestResult {
+async fn compare_live_typed_groups(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range: range,
+    } = targets;
     let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
         || std::env::temp_dir().join("krabka-tempo-typed-groups"),
         std::path::PathBuf::from,

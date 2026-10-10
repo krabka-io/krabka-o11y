@@ -23,7 +23,14 @@ where
             Err(rejection) => return *rejection,
         };
     let qf = request.qf;
-    let (values, _metrics, warnings) = match qf.tag_values(&tenant, &tag, start_ns, end_ns).await {
+    let (values, _metrics, warnings) = match qf
+        .tag_values(
+            &tenant,
+            &tag,
+            krabka_blockstore::TimeRange { start_ns, end_ns },
+        )
+        .await
+    {
         Ok(out) => out,
         Err(err) => return backend_error_response(&err),
     };

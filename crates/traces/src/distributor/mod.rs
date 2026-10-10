@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, io::Read, net::SocketAddr, sync::Arc};
 use axum::{
     Router,
     body::Bytes,
-    extract::{Extension, State},
+    extract::Extension,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
@@ -884,7 +884,9 @@ mod otlp_grpc_service;
 mod otlp_push;
 mod otlp_success_response;
 mod produce_spans;
+mod push_request;
 mod push_spans;
+mod receiver_endpoint;
 mod record_ingest_response;
 mod request_principal;
 mod require_content_type;
@@ -917,7 +919,9 @@ pub use otlp_grpc_service::OtlpGrpcService;
 use otlp_push::otlp_push;
 use otlp_success_response::otlp_success_response;
 pub use produce_spans::produce_spans;
+use push_request::PushRequest;
 use push_spans::{SpanPush, push_spans};
+pub use receiver_endpoint::ReceiverEndpoint;
 use record_ingest_response::record_ingest_response;
 use request_principal::request_principal;
 use require_content_type::require_content_type;

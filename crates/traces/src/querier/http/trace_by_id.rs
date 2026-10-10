@@ -1,18 +1,21 @@
 use super::{
-    AppState, Extension, HeaderMap, Path, Principal, Response, SpanStore, State, TraceByIdRequest,
-    TraceEncoding, Uri, trace_by_id_inner, trace_by_id_response_protobuf, wants_protobuf,
+    Path, QuerierRequest, Response, SpanStore, TraceByIdRequest, TraceEncoding, trace_by_id_inner,
+    trace_by_id_response_protobuf, wants_protobuf,
 };
 
 pub(crate) async fn trace_by_id<S>(
-    State(state): State<AppState<S>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    request: QuerierRequest<S>,
     Path(trace_id): Path<String>,
-    uri: Uri,
 ) -> Response
 where
     S: SpanStore + 'static,
 {
+    let QuerierRequest {
+        state,
+        principal,
+        headers,
+        uri,
+    } = request;
     let start = std::time::Instant::now();
     let encoding = if wants_protobuf(&headers) {
         TraceEncoding::Protobuf(trace_by_id_response_protobuf)

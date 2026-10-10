@@ -75,8 +75,9 @@ impl Member {
     }
 
     /// One poll of the block builder loop: fence the revoked partitions,
-    /// buffer the new records, and optionally flush and commit the buffer.
-    async fn step(&mut self, flush: bool) {
+    /// buffer the new records, and, under [`Flush::Commit`], write and commit
+    /// the buffer.
+    async fn step(&mut self, flush: Flush) {
         let polled = self.consumer.poll(millis(100)).await.unwrap_or_default();
         let revoked = self.consumer.take_revoked_partitions();
         self.buffer
@@ -86,11 +87,26 @@ impl Member {
                 .iter()
                 .map(|record| (record.partition, record.offset)),
         );
-        if flush && !self.buffer.is_empty() {
+        if flush == Flush::Commit && !self.buffer.is_empty() {
             assert!(let Ok(()) = self.consumer.commit_sync().await);
             self.written.append(&mut self.buffer);
         }
     }
+}
+
+/// Whether one step of a member writes and commits its buffer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flush {
+    Commit,
+    Hold,
+}
+
+/// Whether the first member had written its buffer when the second member
+/// joined.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BufferAtJoin {
+    Flushed,
+    Buffered,
 }
 
 /// What the scale-out left behind.
@@ -103,9 +119,9 @@ struct Outcome {
 }
 
 /// Starts one member, lets it read the whole WAL, then scales the group to
-/// two members with no new writes. `flushed_before_join` says whether the
-/// first member had written its buffer before the second member joined.
-async fn scale_out(name: &str, flushed_before_join: bool) -> Outcome {
+/// two members with no new writes. `buffer_at_join` says whether the first
+/// member had written its buffer before the second member joined.
+async fn scale_out(name: &str, buffer_at_join: BufferAtJoin) -> Outcome {
     let proc = support::start().await;
     let topic = format!("__traces_scale_out_{name}");
     create_topic(&proc.client, &topic).await;
@@ -119,11 +135,11 @@ async fn scale_out(name: &str, flushed_before_join: bool) -> Outcome {
     let mut first = Member::join(&proc.bootstrap, &topic, name).await;
     let deadline = Instant::now() + DEADLINE;
     while first.buffer.len() < all_records() && Instant::now() < deadline {
-        first.step(false).await;
+        first.step(Flush::Hold).await;
     }
     check!(first.buffer.len() == all_records());
-    if flushed_before_join {
-        first.step(true).await;
+    if buffer_at_join == BufferAtJoin::Flushed {
+        first.step(Flush::Commit).await;
     }
 
     // The second member joins on its own task, as a second pod does. The first
@@ -134,7 +150,7 @@ async fn scale_out(name: &str, flushed_before_join: bool) -> Outcome {
     });
     let deadline = Instant::now() + DEADLINE;
     while !joining.is_finished() && Instant::now() < deadline {
-        first.step(false).await;
+        first.step(Flush::Hold).await;
     }
     assert!(let Ok(mut second) = joining.await);
 
@@ -143,8 +159,8 @@ async fn scale_out(name: &str, flushed_before_join: bool) -> Outcome {
     // last state at the deadline.
     let deadline = Instant::now() + DEADLINE;
     loop {
-        first.step(true).await;
-        second.step(true).await;
+        first.step(Flush::Commit).await;
+        second.step(Flush::Commit).await;
         let outcome = Outcome {
             first_ready: first.gate.is_ready(),
             second_ready: second.gate.is_ready(),
@@ -174,9 +190,12 @@ fn expected() -> Outcome {
 
 #[tokio::test]
 async fn both_members_are_caught_up_and_every_record_is_written_after_a_scale_out() {
-    let cases = [("flushed", true), ("buffered", false)];
-    for (name, flushed_before_join) in cases {
-        let outcome = Box::pin(scale_out(name, flushed_before_join)).await;
+    let cases = [
+        ("flushed", BufferAtJoin::Flushed),
+        ("buffered", BufferAtJoin::Buffered),
+    ];
+    for (name, buffer_at_join) in cases {
+        let outcome = Box::pin(scale_out(name, buffer_at_join)).await;
         check!(outcome == expected(), "case {name}");
     }
 }
