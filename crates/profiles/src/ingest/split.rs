@@ -16,38 +16,19 @@ mod tests {
     use krabka_pprof::PprofProfile;
 
     use super::*;
-    use crate::wire::test_fixtures::{api_raw_profile, one_sample_profile};
+    use crate::wire::test_fixtures::{alloc_profile_on, api_raw_profile, one_sample_profile};
 
     fn two_type_profile() -> PprofProfile {
-        let profile = krabka_pprof::proto::Profile {
-            sample_type: vec![
-                krabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
-                krabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
-            ],
-            sample: vec![krabka_pprof::proto::Sample {
-                location_id: vec![7],
-                value: vec![3, 4096],
-                label: Vec::new(),
-            }],
+        PprofProfile::from(krabka_pprof::proto::Profile {
             location: (1..=7)
                 .map(|id| krabka_pprof::proto::Location {
                     id,
                     ..Default::default()
                 })
                 .collect(),
-            string_table: vec![
-                String::new(),
-                "alloc_objects".to_string(),
-                "count".to_string(),
-                "alloc_space".to_string(),
-                "bytes".to_string(),
-                "space".to_string(),
-            ],
-            period_type: Some(krabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
             time_nanos: 123_000_000,
-            ..Default::default()
-        };
-        PprofProfile::from(profile)
+            ..alloc_profile_on(7)
+        })
     }
 
     #[test]

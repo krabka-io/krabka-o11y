@@ -922,6 +922,21 @@ mod tests {
         }
     }
 
+    /// An in-memory store holding a snapshot of an index seeded with thirty
+    /// days, one block a day, and that index.
+    async fn thirty_days_saved_to_memory() -> (Arc<dyn ObjectStore>, ProfileIndex) {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut index = ProfileIndex::new();
+        seed_days(&mut index, 30);
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        (store, index)
+    }
+
     async fn payload_object_keys(store: &Arc<dyn ObjectStore>) -> Vec<String> {
         use futures::StreamExt as _;
 
@@ -943,15 +958,7 @@ mod tests {
     /// rewrote.
     #[tokio::test]
     async fn a_flush_publishes_only_the_shards_its_own_blocks_fall_in() {
-        use object_store::memory::InMemory;
-
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let mut index = ProfileIndex::new();
-        seed_days(&mut index, 30);
-        index
-            .save_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
+        let (store, mut index) = thirty_days_saved_to_memory().await;
         let before = payload_object_keys(&store).await;
         check!(before.len() == 30, "one shard a day");
 
@@ -975,15 +982,7 @@ mod tests {
     /// load has for that range.
     #[tokio::test]
     async fn a_query_about_one_day_loads_one_days_shard() {
-        use object_store::memory::InMemory;
-
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let mut index = ProfileIndex::new();
-        seed_days(&mut index, 30);
-        index
-            .save_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
+        let (store, _index) = thirty_days_saved_to_memory().await;
 
         let day = 7;
         let scoped =

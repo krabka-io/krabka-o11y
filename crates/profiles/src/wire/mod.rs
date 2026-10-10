@@ -190,31 +190,40 @@ pub(crate) mod test_fixtures {
     }
 
     pub(crate) fn raw_profile_2types() -> crate::ingest::RawProfile {
-        api_raw_profile(
-            "memory",
-            PprofProfile::from(krabka_pprof::proto::Profile {
-                sample_type: vec![
-                    krabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
-                    krabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
-                ],
-                sample: vec![krabka_pprof::proto::Sample {
-                    location_id: vec![1],
-                    value: vec![3, 4096],
-                    label: Vec::new(),
-                }],
-                string_table: vec![
-                    String::new(),
-                    "alloc_objects".to_string(),
-                    "count".to_string(),
-                    "alloc_space".to_string(),
-                    "bytes".to_string(),
-                    "space".to_string(),
-                    "main".to_string(),
-                ],
-                period_type: Some(krabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
-                ..main_frame_profile(6)
-            }),
-        )
+        let main_frame = main_frame_profile(6);
+        let mut profile = alloc_profile_on(1);
+        profile.string_table.push("main".to_string());
+        profile.location = main_frame.location;
+        profile.function = main_frame.function;
+        api_raw_profile("memory", PprofProfile::from(profile))
+    }
+
+    /// A two-type allocation profile -- `alloc_objects`/`count` and
+    /// `alloc_space`/`bytes`, period `space`/`bytes` -- holding one sample of
+    /// 3 objects and 4096 bytes at `location_id`. String-table entries 1 to 5
+    /// name the types. Callers fill in its locations and functions.
+    pub(crate) fn alloc_profile_on(location_id: u64) -> krabka_pprof::proto::Profile {
+        krabka_pprof::proto::Profile {
+            sample_type: vec![
+                krabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
+                krabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
+            ],
+            sample: vec![krabka_pprof::proto::Sample {
+                location_id: vec![location_id],
+                value: vec![3, 4096],
+                label: Vec::new(),
+            }],
+            string_table: vec![
+                String::new(),
+                "alloc_objects".to_string(),
+                "count".to_string(),
+                "alloc_space".to_string(),
+                "bytes".to_string(),
+                "space".to_string(),
+            ],
+            period_type: Some(krabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
+            ..Default::default()
+        }
     }
 
     /// A profile whose one location, at address `0x40`, is line 10 of its

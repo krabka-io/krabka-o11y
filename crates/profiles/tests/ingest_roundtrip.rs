@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
 use self::{
-    render_roundtrip::{flame_names, flame_ticks, gzip_bytes},
+    render_roundtrip::{ExpectedFlame, check_rendered_flame, gzip_bytes},
     synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, SyntheticCpuProfile},
     wal_topic::WalTopicBroker,
 };
@@ -151,11 +151,12 @@ async fn a_pushed_profile_lands_in_a_queryable_block() {
     }
 
     let render = render_flamebearer(object_store, index).await;
-    check!(flame_names(&render) == vec![FUNC_HOT.to_string(), FUNC_WORK.to_string()]);
-    check!(flame_ticks(&render) == Some(LEAF_VALUE + SELF_VALUE));
-    check!(
-        render.pointer("/metadata/units").and_then(Value::as_str) == Some("nanoseconds"),
-        "render metadata must carry the profile type's unit, got {render}"
+    check_rendered_flame(
+        &render,
+        &ExpectedFlame {
+            names: &[FUNC_HOT, FUNC_WORK],
+            ticks: LEAF_VALUE + SELF_VALUE,
+        },
     );
 }
 

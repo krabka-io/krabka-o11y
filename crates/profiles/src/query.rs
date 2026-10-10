@@ -433,6 +433,73 @@ mod tests {
         .await
     }
 
+    /// The settings `tenant` has, as a Connect JSON `Get` to the querier at
+    /// `bound` answers them. Fails on any non-success status.
+    async fn get_settings(bound: SocketAddr, tenant: &str) -> serde_json::Value {
+        reqwest::Client::new()
+            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
+            .header("content-type", "application/json")
+            .header("connect-protocol-version", "1")
+            .header("x-scope-orgid", tenant)
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    /// Serves a querier over two leaf frames, `hot.path` worth 7 and
+    /// `cold.path` worth 10, on loopback.
+    async fn serve_hot_and_cold_paths() -> (SocketAddr, tokio::sync::oneshot::Sender<()>) {
+        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
+            LeafSample {
+                frame: "hot.path",
+                value: 7,
+            },
+            LeafSample {
+                frame: "cold.path",
+                value: 10,
+            },
+        ]))));
+        serve_on_loopback(state).await
+    }
+
+    /// `SelectMergeStacktraces` of service `api` over `0..100` in `format`,
+    /// answered by a querier whose one frame is `main.work`.
+    async fn main_work_merge_stacktraces(format: &str) -> serde_json::Value {
+        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        post_querier(
+            bound,
+            "SelectMergeStacktraces",
+            json!({
+                "profileTypeID": PT,
+                "labelSelector": r#"{service_name="api"}"#,
+                "start": 0,
+                "end": 100,
+                "format": format,
+            }),
+        )
+        .await
+    }
+
+    /// Asserts `response` carries no flame graph, and a Pyroscope tree whose
+    /// one node is `main.work` worth 7.
+    fn assert_main_work_tree_only(response: &serde_json::Value) {
+        assert!(response.get("flamegraph").is_none(), "{response}");
+        let tree = response
+            .get("tree")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|tree| base64::engine::general_purpose::STANDARD.decode(tree).ok())
+            .unwrap();
+
+        assert!(tree == b"\x00\x00\x01\x09main.work\x07\x00", "{response}");
+    }
+
     async fn post_querier(
         bound: SocketAddr,
         method: &str,
@@ -1073,20 +1140,7 @@ overrides:
         );
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
 
-        let persisted: serde_json::Value = client
-            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
-            .header("content-type", "application/json")
-            .header("connect-protocol-version", "1")
-            .header("x-scope-orgid", "tenant-a")
-            .body("{}")
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let persisted = get_settings(bound, "tenant-a").await;
         assert!(
             persisted
                 .pointer("/settings/0/name")
@@ -1094,20 +1148,7 @@ overrides:
                 == Some("flamegraph.collapsed"),
             "setting must survive restart: {persisted}"
         );
-        let isolated: serde_json::Value = client
-            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
-            .header("content-type", "application/json")
-            .header("connect-protocol-version", "1")
-            .header("x-scope-orgid", "tenant-b")
-            .body("{}")
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let isolated = get_settings(bound, "tenant-b").await;
         assert!(
             isolated.get("settings").is_none(),
             "tenant leak: {isolated}"
@@ -1127,20 +1168,7 @@ overrides:
             "Delete must succeed, got {}",
             resp.status()
         );
-        let deleted: serde_json::Value = client
-            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
-            .header("content-type", "application/json")
-            .header("connect-protocol-version", "1")
-            .header("x-scope-orgid", "tenant-a")
-            .body("{}")
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let deleted = get_settings(bound, "tenant-a").await;
         assert!(
             deleted.get("settings").is_none(),
             "delete failed: {deleted}"
@@ -1755,20 +1783,7 @@ overrides:
 
     #[tokio::test]
     async fn select_merge_stacktraces_dot_format_returns_dot_only() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
-        let response = post_querier(
-            bound,
-            "SelectMergeStacktraces",
-            json!({
-                "profileTypeID": PT,
-                "labelSelector": r#"{service_name="api"}"#,
-                "start": 0,
-                "end": 100,
-                "format": "PROFILE_FORMAT_DOT",
-            }),
-        )
-        .await;
+        let response = main_work_merge_stacktraces("PROFILE_FORMAT_DOT").await;
 
         check!(response.get("flamegraph").is_none(), "{response}");
         check!(
@@ -1789,22 +1804,8 @@ overrides:
 
     #[tokio::test]
     async fn select_merge_stacktraces_tree_format_returns_pyroscope_tree_bytes() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
-        let response = post_querier(
-            bound,
-            "SelectMergeStacktraces",
-            json!({
-                "profileTypeID": PT,
-                "labelSelector": r#"{service_name="api"}"#,
-                "start": 0,
-                "end": 100,
-                "format": "PROFILE_FORMAT_TREE",
-            }),
-        )
-        .await;
+        let response = main_work_merge_stacktraces("PROFILE_FORMAT_TREE").await;
 
-        assert!(response.get("flamegraph").is_none(), "{response}");
         assert!(
             response
                 .get("dot")
@@ -1812,13 +1813,7 @@ overrides:
                 .is_none_or(str::is_empty),
             "{response}"
         );
-        let tree = response
-            .get("tree")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|tree| base64::engine::general_purpose::STANDARD.decode(tree).ok())
-            .unwrap();
-
-        assert!(tree == b"\x00\x00\x01\x09main.work\x07\x00", "{response}");
+        assert_main_work_tree_only(&response);
     }
 
     #[tokio::test]
@@ -1984,14 +1979,7 @@ overrides:
         )
         .await;
 
-        assert!(response.get("flamegraph").is_none(), "{response}");
-        let tree = response
-            .get("tree")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|tree| base64::engine::general_purpose::STANDARD.decode(tree).ok())
-            .unwrap();
-
-        assert!(tree == b"\x00\x00\x01\x09main.work\x07\x00", "{response}");
+        assert_main_work_tree_only(&response);
     }
 
     #[tokio::test]
@@ -2156,17 +2144,7 @@ overrides:
 
     #[tokio::test]
     async fn select_merge_profile_stack_trace_selector_filters_call_sites() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            LeafSample {
-                frame: "hot.path",
-                value: 7,
-            },
-            LeafSample {
-                frame: "cold.path",
-                value: 10,
-            },
-        ]))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let (bound, _shutdown_tx) = serve_hot_and_cold_paths().await;
         let response = post_querier(
             bound,
             "SelectMergeProfile",
@@ -2280,17 +2258,7 @@ overrides:
 
     #[tokio::test]
     async fn select_merge_stacktraces_stack_trace_selector_filters_call_sites() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            LeafSample {
-                frame: "hot.path",
-                value: 7,
-            },
-            LeafSample {
-                frame: "cold.path",
-                value: 10,
-            },
-        ]))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let (bound, _shutdown_tx) = serve_hot_and_cold_paths().await;
         let response = post_querier(
             bound,
             "SelectMergeStacktraces",
@@ -2315,17 +2283,7 @@ overrides:
 
     #[tokio::test]
     async fn diff_honors_embedded_stack_trace_selectors() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            LeafSample {
-                frame: "hot.path",
-                value: 7,
-            },
-            LeafSample {
-                frame: "cold.path",
-                value: 10,
-            },
-        ]))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let (bound, _shutdown_tx) = serve_hot_and_cold_paths().await;
         let response = post_querier(
             bound,
             "Diff",
@@ -2460,17 +2418,7 @@ overrides:
 
     #[tokio::test]
     async fn select_series_stack_trace_selector_filters_call_sites() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            LeafSample {
-                frame: "hot.path",
-                value: 7,
-            },
-            LeafSample {
-                frame: "cold.path",
-                value: 10,
-            },
-        ]))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let (bound, _shutdown_tx) = serve_hot_and_cold_paths().await;
         let response = post_querier(bound, "SelectSeries", hot_path_select_series()).await;
 
         let points: Vec<pb::querier::v1::Point> =
@@ -3579,6 +3527,7 @@ mod analyze_query_handler;
 mod analyze_query_inner;
 mod apply_go_pgo;
 mod async_stacktrace_query;
+mod authorized_http_tenant;
 mod bucket_exemplars;
 mod connect_error;
 mod default_heatmap_time_buckets_max;
@@ -3689,6 +3638,7 @@ use analyze_query_inner::analyze_query_inner;
 use apply_go_pgo::apply_go_pgo;
 pub use async_stacktrace_query::AsyncQueryPolicy;
 use async_stacktrace_query::async_stacktrace_query;
+use authorized_http_tenant::authorized_http_tenant;
 use bucket_exemplars::{BucketExemplars, ExemplarRow, ExemplarSource, bucket_exemplars};
 use connect_error::connect_error;
 use default_heatmap_time_buckets_max::DEFAULT_HEATMAP_TIME_BUCKETS_MAX;

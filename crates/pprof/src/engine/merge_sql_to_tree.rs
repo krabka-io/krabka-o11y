@@ -143,17 +143,13 @@ mod tests {
                     1,
                 ])),
                 Arc::new(Int64Array::from(vec![3, -4, 0, 5, 7, 2, 6, 999, 999])),
-                Arc::new(BinaryArray::from(vec![
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"other"[..]),
-                    None,
-                ])),
+                // Seven rows of the wanted profile type, then one of another
+                // type and one with none.
+                Arc::new(
+                    std::iter::repeat_n(Some(&b"wanted"[..]), 7)
+                        .chain([Some(&b"other"[..]), None])
+                        .collect::<BinaryArray>(),
+                ),
                 Arc::new(UInt64Array::from_iter_values(0..9)),
             ],
         )

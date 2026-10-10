@@ -69,17 +69,10 @@ mod tests {
     use super::{flaky_put_store::flaky_put_store, *};
     use crate::{
         block_index::RequiredColumn,
+        log_line_schema::log_line_schema,
         reader::read_block,
         span_schema::{SCOL_SPAN_ID, SCOL_START_NANO, SCOL_TRACE_ID, span_block_decl},
     };
-
-    fn log_schema() -> Arc<Schema> {
-        Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]))
-    }
 
     struct LogColumns<'a> {
         fingerprints: Vec<u64>,
@@ -90,7 +83,7 @@ mod tests {
     impl LogColumns<'_> {
         fn batch(self) -> RecordBatch {
             RecordBatch::try_new(
-                log_schema(),
+                log_line_schema(),
                 vec![
                     Arc::new(UInt64Array::from(self.fingerprints)),
                     Arc::new(Int64Array::from(self.timestamps)),
@@ -190,7 +183,7 @@ mod tests {
     async fn write_block_persists_object_and_returns_meta() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store.clone());
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = sample_batch(&schema);
 
         let meta = writer
@@ -245,7 +238,7 @@ mod tests {
             Arc::clone(&store) as Arc<dyn ObjectStore>,
             crate::ObjectStoreRetryPolicy::immediate(4),
         );
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = sample_batch(&schema);
 
         let meta = writer
@@ -277,7 +270,7 @@ mod tests {
             Arc::clone(&store) as Arc<dyn ObjectStore>,
             crate::ObjectStoreRetryPolicy::immediate(4),
         );
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = sample_batch(&schema);
 
         let failure = writer
@@ -334,7 +327,7 @@ mod tests {
 
     #[test]
     fn summarize_still_fingerprints_series_blocks() {
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = sample_batch(&schema);
         let (_min, _max, _rows, mut fps) = summarize(&[batch], &SummaryColumns::series()).unwrap();
         fps.sort_unstable();
@@ -394,7 +387,7 @@ mod tests {
     async fn write_block_rejects_batch_schema_mismatch() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store);
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch_schema = Arc::new(Schema::new(vec![
             Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
             Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
@@ -495,7 +488,7 @@ mod tests {
     async fn write_block_compresses_every_column_and_records_the_declared_order() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store.clone());
-        let schema = log_schema();
+        let schema = log_line_schema();
 
         writer
             .write_block("t", "k.parquet", schema.clone(), &[sample_batch(&schema)])
@@ -873,7 +866,7 @@ mod tests {
 
         assert2::assert!(
             block
-                .write_batch(&sample_batch(&log_schema()))
+                .write_batch(&sample_batch(&log_line_schema()))
                 .await
                 .is_err()
         );

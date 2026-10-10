@@ -22,6 +22,8 @@ mod index_snapshot;
 mod labels;
 mod lifecycle;
 mod log_blockstore;
+#[cfg(test)]
+mod log_line_schema;
 mod lower_hex;
 mod matcher;
 mod merge;

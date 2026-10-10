@@ -39,7 +39,7 @@ mod tests {
     use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
 
     use super::*;
-    use crate::writer::BlockWriter;
+    use crate::{log_line_schema::log_line_schema, writer::BlockWriter};
 
     #[test]
     fn max_block_bytes_is_one_gib() {
@@ -65,7 +65,7 @@ mod tests {
     #[tokio::test]
     async fn write_then_read_round_trips_rows() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = line_schema();
+        let schema = log_line_schema();
         let batch = two_line_batch(["x", "y"]);
 
         BlockWriter::new(store.clone())
@@ -153,7 +153,7 @@ mod tests {
     #[tokio::test]
     async fn read_block_row_groups_returns_the_selected_group() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = line_schema();
+        let schema = log_line_schema();
         let group = |fp: u64, ts: i64, line: &str| {
             RecordBatch::try_new(
                 schema.clone(),
@@ -192,7 +192,7 @@ mod tests {
     #[tokio::test]
     async fn read_block_with_max_bytes_rejects_over_cap_block() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = line_schema();
+        let schema = log_line_schema();
         let batch = two_line_batch(["x", "y"]);
 
         BlockWriter::new(store.clone())
@@ -254,17 +254,9 @@ mod tests {
         assert2::assert!(project(&meta) == vec![(0, true), (1, true)]);
     }
 
-    fn line_schema() -> Arc<Schema> {
-        Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]))
-    }
-
     fn two_line_batch(lines: [&str; 2]) -> RecordBatch {
         RecordBatch::try_new(
-            line_schema(),
+            log_line_schema(),
             vec![
                 Arc::new(UInt64Array::from(vec![10_u64, 20])),
                 Arc::new(Int64Array::from(vec![100_i64, 200])),
@@ -298,7 +290,7 @@ mod tests {
     }
 
     async fn write_test_block(store: &Arc<dyn ObjectStore>, key: &str, lines: &[&str]) {
-        let schema = line_schema();
+        let schema = log_line_schema();
         let rows = i64::try_from(lines.len()).unwrap();
         let batch = RecordBatch::try_new(
             schema.clone(),

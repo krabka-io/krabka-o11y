@@ -94,8 +94,9 @@ mod tests {
         std::env::var_os("LLVM_PROFILE_FILE").is_some()
     }
 
-    #[test]
-    fn lazy_symbolizer_resolves_unsymbolized_location_once() {
+    /// A database holding one unsymbolized mapping of `/bin/app` (build
+    /// `build-a`) at `0x1000..0x2000`, file offset `0x30`, and that mapping's id.
+    fn db_with_unsymbolized_app_mapping() -> (SymbolDb, u32) {
         let mut db = SymbolDb::new();
         let filename = db.intern_string("/bin/app");
         let build_id = db.intern_string("build-a");
@@ -107,6 +108,12 @@ mod tests {
             build_id,
             symbolization: MappingSymbolization::default(),
         });
+        (db, mapping)
+    }
+
+    #[test]
+    fn lazy_symbolizer_resolves_unsymbolized_location_once() {
+        let (mut db, mapping) = db_with_unsymbolized_app_mapping();
         let loc = db.intern_location(LocationRec {
             address: 0x1010,
             mapping_id: mapping,
@@ -142,17 +149,7 @@ mod tests {
             }
         }
 
-        let mut db = SymbolDb::new();
-        let filename = db.intern_string("/bin/app");
-        let build_id = db.intern_string("build-a");
-        let mapping = db.intern_mapping(MappingRec {
-            memory_start: 0x1000,
-            memory_limit: 0x2000,
-            file_offset: 0x30,
-            filename,
-            build_id,
-            symbolization: MappingSymbolization::default(),
-        });
+        let (mut db, mapping) = db_with_unsymbolized_app_mapping();
         for address in [0x1010, 0x1020] {
             db.intern_location(LocationRec {
                 address,

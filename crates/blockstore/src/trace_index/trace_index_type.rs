@@ -255,12 +255,7 @@ impl TraceIndex {
         min_ts: i64,
         max_ts: i64,
     ) -> Vec<String> {
-        let Some(t) = self.tenants.get(tenant) else {
-            return Vec::new();
-        };
-        t.blocks
-            .iter()
-            .filter(|b| b.min_ts <= max_ts && b.max_ts >= min_ts)
+        self.blocks_overlapping(tenant, IndexShardRange::new(min_ts, max_ts))
             .filter(|b| b.bloom.maybe_contains(trace_id))
             .map(|b| b.object_key.clone())
             .collect()
@@ -275,12 +270,7 @@ impl TraceIndex {
         min_ts: i64,
         max_ts: i64,
     ) -> Vec<String> {
-        let Some(t) = self.tenants.get(tenant) else {
-            return Vec::new();
-        };
-        t.blocks
-            .iter()
-            .filter(|b| b.min_ts <= max_ts && b.max_ts >= min_ts)
+        self.blocks_overlapping(tenant, IndexShardRange::new(min_ts, max_ts))
             .filter(|b| {
                 if !b.tag_names.contains(tag) {
                     return false;
@@ -299,33 +289,35 @@ impl TraceIndex {
 
     #[must_use]
     pub fn tag_names(&self, tenant: &str, min_ts: i64, max_ts: i64) -> Vec<String> {
-        let Some(t) = self.tenants.get(tenant) else {
-            return Vec::new();
-        };
-        let mut out = BTreeSet::new();
-        for block in &t.blocks {
-            if block.min_ts <= max_ts && block.max_ts >= min_ts {
-                out.extend(block.tag_names.iter().cloned());
-            }
-        }
-        out.into_iter().collect()
+        self.blocks_overlapping(tenant, IndexShardRange::new(min_ts, max_ts))
+            .flat_map(|block| block.tag_names.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     #[must_use]
     pub fn tag_values(&self, tenant: &str, tag: &str, min_ts: i64, max_ts: i64) -> Vec<String> {
-        let Some(t) = self.tenants.get(tenant) else {
-            return Vec::new();
-        };
-        let mut out = BTreeSet::new();
-        for block in &t.blocks {
-            if block.min_ts <= max_ts
-                && block.max_ts >= min_ts
-                && let Some(values) = block.tag_values.get(tag)
-            {
-                out.extend(values.iter().cloned());
-            }
-        }
-        out.into_iter().collect()
+        self.blocks_overlapping(tenant, IndexShardRange::new(min_ts, max_ts))
+            .filter_map(|block| block.tag_values.get(tag))
+            .flat_map(|values| values.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// The tenant's blocks whose `[min_ts, max_ts]` meets `window`, in index
+    /// order. An unknown tenant has none.
+    fn blocks_overlapping(
+        &self,
+        tenant: &str,
+        window: IndexShardRange,
+    ) -> impl Iterator<Item = &TraceBlockStats> {
+        self.tenants
+            .get(tenant)
+            .into_iter()
+            .flat_map(|t| t.blocks.iter())
+            .filter(move |b| window.overlaps(b.min_ts, b.max_ts))
     }
 
     crate::index_snapshot::snapshot_persistence_methods!(SNAPSHOT_LABEL);

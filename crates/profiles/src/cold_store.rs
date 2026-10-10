@@ -33,7 +33,7 @@ mod tests {
 
     use assert2::{assert, check};
     use krabka_blockstore::{BlockIndex, Labels, MatchOp};
-    use krabka_pprof::{DebuginfodConfig, EngineOpts, FlameEngine, SymbolizeRequest};
+    use krabka_pprof::{DebuginfodConfig, EngineOpts, FlameEngine};
     use krabka_units::{mebibytes, millis, secs};
     use object_store::{ObjectStore, memory::InMemory};
 
@@ -106,7 +106,8 @@ mod tests {
     use crate::{
         blockbuilder::build_block,
         test_support::{
-            CpuRecord, build_test_block, cold_api_flamegraph, cpu_record, index_with_series,
+            CpuRecord, build_test_block, check_falls_back_to_address_frame, cold_api_flamegraph,
+            cpu_record, index_with_series, serve_on_loopback_with,
         },
         wal::{ProfileRecord, WalSample},
     };
@@ -231,10 +232,8 @@ mod tests {
 
     #[tokio::test]
     async fn query_analysis_with_omitted_bounds_returns_empty_for_hot_and_cold_data() {
-        use krabka_observability::server_security::ServerSecurity;
         use krabka_pprof::{InMemoryProfileStore, UnionProfileStore};
 
-        use crate::query::{QuerierState, serve};
         let objects: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let mut records = [
             record_at("t", "shared", vec![0], 5, 1_000_000_000),
@@ -303,20 +302,8 @@ mod tests {
         );
         let heads = Arc::new(UnionProfileStore::new(Arc::new(first), Arc::new(second)));
         let mixed = Arc::new(UnionProfileStore::new(heads, Arc::clone(&cold)));
-        let state = Arc::new(QuerierState::new(mixed).with_query_analysis_series_enabled(true));
-        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = stopped.await;
-            },
-        )
-        .await
-        .unwrap();
-        let client = reqwest::Client::new();
-        for (start, end) in [(0, 0), (0, 50), (3000, 0)] {
+        let (bound, stop) = serve_analysis_querier(mixed).await;
+        for (start_ms, end_ms) in [(0, 0), (0, 50), (3000, 0)] {
             for (tenant, query) in [
                 ("t", "{}"),
                 ("t", "{service_name=\"hot-only\"}"),
@@ -333,20 +320,16 @@ mod tests {
                 ("absent", "{}"),
                 ("t", "{invalid"),
             ] {
-                let response: serde_json::Value = client
-                    .post(format!(
-                        "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-                    ))
-                    .header("x-scope-orgid", tenant)
-                    .json(&serde_json::json!({"query":query,"start":start,"end":end}))
-                    .send()
-                    .await
-                    .unwrap()
-                    .error_for_status()
-                    .unwrap()
-                    .json()
-                    .await
-                    .unwrap();
+                let response = analyze_query(
+                    bound,
+                    &AnalyzeQuery {
+                        tenant,
+                        query,
+                        start_ms,
+                        end_ms,
+                    },
+                )
+                .await;
                 check!(response == serde_json::json!({}));
             }
         }
@@ -361,36 +344,68 @@ mod tests {
             Arc::new(InMemoryProfileStore::new()),
             cold,
         ));
-        let state = Arc::new(QuerierState::new(flushed).with_query_analysis_series_enabled(true));
-        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = stopped.await;
-            },
-        )
-        .await
-        .unwrap();
-        for (start, end) in [(0, 0), (0, 2000), (3000, 0)] {
-            let response: serde_json::Value = client
-                .post(format!(
-                    "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-                ))
-                .header("x-scope-orgid", "t")
-                .json(&serde_json::json!({"query":"{}","start":start,"end":end}))
-                .send()
-                .await
-                .unwrap()
-                .error_for_status()
-                .unwrap()
-                .json()
-                .await
-                .unwrap();
+        let (bound, stop) = serve_analysis_querier(flushed).await;
+        for (start_ms, end_ms) in [(0, 0), (0, 2000), (3000, 0)] {
+            let response = analyze_query(
+                bound,
+                &AnalyzeQuery {
+                    tenant: "t",
+                    query: "{}",
+                    start_ms,
+                    end_ms,
+                },
+            )
+            .await;
             check!(response == serde_json::json!({}));
         }
         let _ = stop.send(());
+    }
+
+    /// Serves `store` on loopback as a querier with query analysis enabled.
+    async fn serve_analysis_querier<S: krabka_pprof::ProfileStore + 'static>(
+        store: Arc<S>,
+    ) -> (std::net::SocketAddr, tokio::sync::oneshot::Sender<()>) {
+        use crate::query::{QuerierState, serve};
+
+        let state = Arc::new(QuerierState::new(store).with_query_analysis_series_enabled(true));
+        serve_on_loopback_with(async |addr, security, shutdown| {
+            serve(addr, state, security, shutdown).await
+        })
+        .await
+    }
+
+    /// One `AnalyzeQuery` call: the tenant it is made as, and its body.
+    struct AnalyzeQuery<'a> {
+        tenant: &'a str,
+        query: &'a str,
+        start_ms: i64,
+        end_ms: i64,
+    }
+
+    /// Posts `request` to the querier at `bound` and returns the JSON answer,
+    /// failing on any non-success status.
+    async fn analyze_query(
+        bound: std::net::SocketAddr,
+        request: &AnalyzeQuery<'_>,
+    ) -> serde_json::Value {
+        reqwest::Client::new()
+            .post(format!(
+                "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
+            ))
+            .header("x-scope-orgid", request.tenant)
+            .json(&serde_json::json!({
+                "query": request.query,
+                "start": request.start_ms,
+                "end": request.end_ms,
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -752,17 +767,7 @@ mod tests {
 
     #[test]
     fn cold_store_native_resolver_falls_back_to_address_frame() {
-        let resolver = local_native_resolver();
-        let out = resolver
-            .symbolize(&SymbolizeRequest {
-                build_id: String::new(),
-                filename: "/missing/native".to_string(),
-                address: 0x99,
-            })
-            .unwrap();
-
-        assert!(out[0].function == "/missing/native+0x99");
-        assert!(out[0].file == "/missing/native");
+        check_falls_back_to_address_frame(local_native_resolver().as_ref());
     }
 
     #[test]

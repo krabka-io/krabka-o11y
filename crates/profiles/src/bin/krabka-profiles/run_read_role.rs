@@ -1,10 +1,10 @@
-use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
+use krabka_observability::{RoleReadiness, SupervisedTasks};
 use krabka_units::fmt::Human as _;
 
 use super::{
     Arc, CancellationToken, Cli, FrontendConfig, ProcessSecurity, QuerierState, ServiceMetrics,
     build_object_store, build_profile_read_path, debuginfod_config,
-    load_profiles_limits_overrides_config, serve_querier,
+    load_profiles_limits_overrides_config, serve_querier, supervise_until_shutdown,
 };
 
 /// The two roles that answer queries from the same read path.
@@ -116,12 +116,5 @@ pub(crate) async fn run_read_role(
             );
         }
     }
-    let outcome = tokio::select! {
-        () = shutdown.cancelled() => Ok(()),
-        name = tasks.first_unexpected_exit() => {
-            Err(Box::<dyn std::error::Error>::from(CriticalTaskError(name)))
-        }
-    };
-    tasks.shutdown().await;
-    outcome
+    supervise_until_shutdown(tasks, &shutdown).await
 }

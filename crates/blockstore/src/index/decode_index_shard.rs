@@ -120,7 +120,12 @@ fn decode(bytes: &[u8]) -> Result<Index> {
     Ok(index)
 }
 
-fn dictionary_entry(dictionary: &[String], id: u64) -> Result<&str> {
+/// Resolves a names-dictionary id read from a shard to its string.
+///
+/// # Errors
+/// Returns [`BlockStoreError::InvalidBlock`] when `id` is past the end of the
+/// dictionary.
+pub(crate) fn dictionary_entry(dictionary: &[String], id: u64) -> Result<&str> {
     usize::try_from(id)
         .ok()
         .and_then(|id| dictionary.get(id))

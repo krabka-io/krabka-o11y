@@ -390,18 +390,13 @@ async fn tenant_log_index_shard_round_trips_only_matching_time_and_series() {
         read_tenant_log_index_shard_from_object_store(&store, &prefix, "tenant-a", shard_range)
             .await
             .unwrap();
-    let expected_blocks = blocks.match_blocks("tenant-a", TimeRange::new(150, 250).unwrap(), &[]);
-
-    assert2::assert!(
-        loaded_labels.label_values("tenant-a", "app")
-            == BTreeSet::from(["api".into(), "worker".into()])
-    );
+    check_tenant_a_window_read(&WindowRead {
+        loaded_labels: &loaded_labels,
+        loaded_blocks: &loaded_blocks,
+        written_blocks: &blocks,
+        admin,
+    });
     assert2::assert!(loaded_labels.label_values("tenant-b", "app") == BTreeSet::new());
-    assert2::assert!(
-        loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 1_000).unwrap(), &[])
-            == expected_blocks
-    );
-    assert2::assert!(loaded_labels.labels_for("tenant-a", admin) == None);
 }
 
 #[tokio::test]
@@ -434,17 +429,40 @@ async fn tenant_log_index_shard_catalog_selects_overlapping_shards_and_merges_in
     )
     .await
     .unwrap();
-    let expected_blocks = blocks.match_blocks("tenant-a", TimeRange::new(150, 250).unwrap(), &[]);
+    check_tenant_a_window_read(&WindowRead {
+        loaded_labels: &loaded_labels,
+        loaded_blocks: &loaded_blocks,
+        written_blocks: &blocks,
+        admin,
+    });
+}
 
+/// A tenant-a read of the `150..=250` window, next to the fixture it was
+/// written from.
+struct WindowRead<'a> {
+    loaded_labels: &'a LabelIndex,
+    loaded_blocks: &'a BlockIndex,
+    written_blocks: &'a BlockIndex,
+    admin: SeriesFingerprint,
+}
+
+/// Checks a tenant-a read of the `150..=250` window: the two apps that live in
+/// it, exactly the written blocks that meet it, and not the admin series that
+/// lies outside it.
+fn check_tenant_a_window_read(read: &WindowRead<'_>) {
+    let expected_blocks =
+        read.written_blocks
+            .match_blocks("tenant-a", TimeRange::new(150, 250).unwrap(), &[]);
     assert2::assert!(
-        loaded_labels.label_values("tenant-a", "app")
+        read.loaded_labels.label_values("tenant-a", "app")
             == BTreeSet::from(["api".into(), "worker".into()])
     );
     assert2::assert!(
-        loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 1_000).unwrap(), &[])
+        read.loaded_blocks
+            .match_blocks("tenant-a", TimeRange::new(0, 1_000).unwrap(), &[])
             == expected_blocks
     );
-    assert2::assert!(loaded_labels.labels_for("tenant-a", admin) == None);
+    assert2::assert!(read.loaded_labels.labels_for("tenant-a", read.admin) == None);
 }
 
 /// One shard, its manifest deleted, and a catalog that still names it. This is

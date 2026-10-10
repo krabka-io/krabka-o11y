@@ -14,8 +14,8 @@ use crate::{
     compaction::{BlockLevel, CompactionCandidate, level_above},
     error::{BlockStoreError, Result},
     index::{
-        ByteReader, IndexShardRange, ShardBlockBounds, push_dictionary_id, push_ivarint, push_len,
-        push_string, push_uvarint,
+        ByteReader, IndexShardRange, ShardBlockBounds, dictionary_entry, push_dictionary_id,
+        push_ivarint, push_len, push_string, push_uvarint,
     },
     index_snapshot::{
         PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, TenantShardMerge,
@@ -87,6 +87,23 @@ mod tests {
             .collect();
         keys.sort();
         keys
+    }
+
+    /// Saves `index`, whose compaction consumed `b1` after the snapshot
+    /// already replaced it, checks the save is rejected naming `b1`, and
+    /// returns what the store holds afterwards.
+    async fn save_rejected_over_replaced_b1(
+        index: &TraceIndex,
+        store: &std::sync::Arc<dyn object_store::ObjectStore>,
+    ) -> TraceIndex {
+        let result = index.save_latest_snapshot(store, "index/traces.json").await;
+        assert2::assert!(matches!(
+            result,
+            Err(BlockStoreError::InvalidBlock(message)) if message.contains("b1")
+        ));
+        TraceIndex::load_latest_snapshot(store, "index/traces.json")
+            .await
+            .unwrap()
     }
 
     fn seed() -> TraceIndex {
@@ -527,17 +544,7 @@ mod tests {
             &strings(&["b1"]),
             sized(stats("c1", 0, 100, &[1, 2], &[]), 2),
         );
-        let result = compactor
-            .save_latest_snapshot(&store, "index/traces.json")
-            .await;
-
-        assert2::assert!(matches!(
-            result,
-            Err(BlockStoreError::InvalidBlock(message)) if message.contains("b1")
-        ));
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_rejected_over_replaced_b1(&compactor, &store).await;
         check!(block_keys(&loaded) == vec!["b1".to_string(), "b2".to_string()]);
         check!(
             loaded
@@ -578,17 +585,7 @@ mod tests {
             &strings(&["b1", "b2"]),
             sized(stats("y", 0, 300, &[1, 2, 3], &[]), 3),
         );
-        let result = stale
-            .save_latest_snapshot(&store, "index/traces.json")
-            .await;
-
-        assert2::assert!(matches!(
-            result,
-            Err(BlockStoreError::InvalidBlock(message)) if message.contains("b1")
-        ));
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_rejected_over_replaced_b1(&stale, &store).await;
         check!(block_keys(&loaded) == vec!["b2".to_string(), "x".to_string()]);
     }
 

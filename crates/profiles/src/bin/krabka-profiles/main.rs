@@ -851,44 +851,33 @@ overrides:
 
         let overrides = load_profiles_limits_overrides_config(Some(&path)).unwrap();
 
+        // The file's defaults, and the process default for every cap the file
+        // leaves alone.
+        let file_defaults = krabka_profiles::limits::Limits {
+            max_async_query_concurrency: 5,
+            query_admission: krabka_query_frontend::AdmissionLimits::default(),
+            ingestion_rate: per_sec(10_000),
+            ingestion_burst_profiles: 10_000,
+            max_series: 0,
+            max_label_name: bytes(1024),
+            max_label_value: bytes(100),
+            max_label_names_per_series: 10,
+            max_flamegraph_nodes_default: 8192,
+            max_flamegraph_nodes_max: 0,
+            max_query_length: krabka_profiles::limits::DEFAULT_MAX_QUERY_LENGTH,
+            max_session_id_cardinality: 32,
+            compactor_blocks_retention_period: secs(0),
+        };
         assert!(
             *overrides.for_tenant(&"tenant-a".parse().unwrap())
                 == krabka_profiles::limits::Limits {
-                    max_async_query_concurrency: 5,
-                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
-                    ingestion_rate: per_sec(10_000),
-                    ingestion_burst_profiles: 10_000,
-                    max_series: 0,
-                    max_label_name: bytes(1024),
-                    max_label_value: bytes(100),
-                    max_label_names_per_series: 10,
-                    max_flamegraph_nodes_default: 8192,
                     max_flamegraph_nodes_max: 512,
                     max_query_length: secs(30),
-                    max_session_id_cardinality: 32,
-                    compactor_blocks_retention_period: secs(0),
+                    ..file_defaults.clone()
                 }
         );
-        // An unlisted tenant takes the file's defaults, and the process default
-        // for every cap the file leaves alone.
-        assert!(
-            *overrides.for_tenant(&"tenant-b".parse().unwrap())
-                == krabka_profiles::limits::Limits {
-                    max_async_query_concurrency: 5,
-                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
-                    ingestion_rate: per_sec(10_000),
-                    ingestion_burst_profiles: 10_000,
-                    max_series: 0,
-                    max_label_name: bytes(1024),
-                    max_label_value: bytes(100),
-                    max_label_names_per_series: 10,
-                    max_flamegraph_nodes_default: 8192,
-                    max_flamegraph_nodes_max: 0,
-                    max_query_length: krabka_profiles::limits::DEFAULT_MAX_QUERY_LENGTH,
-                    max_session_id_cardinality: 32,
-                    compactor_blocks_retention_period: secs(0),
-                }
-        );
+        // An unlisted tenant takes the file's defaults.
+        assert!(*overrides.for_tenant(&"tenant-b".parse().unwrap()) == file_defaults);
     }
 
     #[test]
@@ -1162,6 +1151,7 @@ mod run_read_role;
 mod run_symbolizer;
 mod spawn_profile_index_refresh;
 mod spawn_wal_tail;
+mod supervise_until_shutdown;
 mod symbolizer_stage;
 mod target;
 
@@ -1213,6 +1203,7 @@ use run_read_role::{ReadRole, ReadRoleInputs, run_read_role};
 use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;
+use supervise_until_shutdown::supervise_until_shutdown;
 use symbolizer_stage::symbolizer_stage;
 use target::Target;
 

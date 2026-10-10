@@ -66,16 +66,9 @@ mod tests {
     use super::*;
     use crate::{
         labels::Labels,
+        log_line_schema::log_line_schema,
         matcher::{LabelMatcher, MatchOp},
     };
-
-    fn log_schema() -> SchemaRef {
-        Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]))
-    }
 
     fn memory_block_store() -> BlockStore {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
@@ -90,29 +83,45 @@ mod tests {
 
     async fn seeded_store() -> (BlockStore, SchemaRef) {
         let mut bs = memory_block_store();
-        let schema = log_schema();
+        write_two_line_block(
+            &mut bs,
+            TwoLineBlock {
+                labels: &app_labels("api"),
+                object_key: "blocks/b1.parquet",
+                lines: ["hello", "world"],
+            },
+        )
+        .await;
+        (bs, log_line_schema())
+    }
 
-        let api = app_labels("api");
-        let fp = api.fingerprint();
+    /// One indexed block of a single series: two log lines at 100 and 200.
+    struct TwoLineBlock<'a> {
+        labels: &'a Labels,
+        object_key: &'a str,
+        lines: [&'a str; 2],
+    }
 
+    /// Writes `block` for tenant `t` and indexes its series and block.
+    async fn write_two_line_block(bs: &mut BlockStore, block: TwoLineBlock<'_>) {
+        let schema = log_line_schema();
+        let fp = block.labels.fingerprint();
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
                 Arc::new(UInt64Array::from(vec![fp, fp])),
                 Arc::new(Int64Array::from(vec![100_i64, 200])),
-                Arc::new(StringArray::from(vec!["hello", "world"])),
+                Arc::new(StringArray::from(block.lines.to_vec())),
             ],
         )
         .unwrap();
-
         let meta = bs
             .writer()
-            .write_block("t", "blocks/b1.parquet", schema.clone(), &[batch])
+            .write_block("t", block.object_key, schema, &[batch])
             .await
             .unwrap();
-        bs.index_mut().add_series("t", fp, &api);
+        bs.index_mut().add_series("t", fp, block.labels);
         bs.index_mut().add_block(&meta);
-        (bs, schema)
     }
 
     #[tokio::test]
@@ -175,7 +184,7 @@ mod tests {
     /// narrow by series, by window, or by both.
     async fn two_series_store() -> (BlockStore, SchemaRef, Labels, Labels) {
         let mut bs = memory_block_store();
-        let schema = log_schema();
+        let schema = log_line_schema();
 
         let api = app_labels("api");
         let web = app_labels("web");
@@ -582,34 +591,25 @@ mod tests {
     async fn two_block_store(object_store: Arc<dyn ObjectStore>) -> (BlockStore, Vec<String>) {
         let base = url::Url::parse("memory:///").unwrap();
         let mut bs = BlockStore::new(object_store, base);
-        let schema = log_schema();
 
         let mut api = Labels::new();
         api.insert("app", "api");
         let mut web = Labels::new();
         web.insert("app", "web");
 
-        for (labels, key, lines) in [
-            (&api, "blocks/b1.parquet", ["a1", "a2"]),
-            (&web, "blocks/b2.parquet", ["w1", "w2"]),
+        for block in [
+            TwoLineBlock {
+                labels: &api,
+                object_key: "blocks/b1.parquet",
+                lines: ["a1", "a2"],
+            },
+            TwoLineBlock {
+                labels: &web,
+                object_key: "blocks/b2.parquet",
+                lines: ["w1", "w2"],
+            },
         ] {
-            let fp = labels.fingerprint();
-            let batch = RecordBatch::try_new(
-                schema.clone(),
-                vec![
-                    Arc::new(UInt64Array::from(vec![fp, fp])),
-                    Arc::new(Int64Array::from(vec![100_i64, 200])),
-                    Arc::new(StringArray::from(lines.to_vec())),
-                ],
-            )
-            .unwrap();
-            let meta = bs
-                .writer()
-                .write_block("t", key, schema.clone(), &[batch])
-                .await
-                .unwrap();
-            bs.index_mut().add_series("t", fp, labels);
-            bs.index_mut().add_block(&meta);
+            write_two_line_block(&mut bs, block).await;
         }
 
         (
@@ -691,7 +691,7 @@ mod tests {
             }
 
             let scan = bs
-                .scan_block_keys_skipping_unreadable(&keys, log_schema())
+                .scan_block_keys_skipping_unreadable(&keys, log_line_schema())
                 .await
                 .unwrap();
 
@@ -732,7 +732,7 @@ mod tests {
                     matchers: &[LabelMatcher::new("app", MatchOp::Re, "api|web")],
                     min_ts: 0,
                     max_ts: 1_000,
-                    schema: log_schema(),
+                    schema: log_line_schema(),
                 },
             )
             .await
@@ -764,7 +764,7 @@ mod tests {
             .await
             .unwrap();
 
-        let got = bs.scan_block_keys(&keys, log_schema()).await;
+        let got = bs.scan_block_keys(&keys, log_line_schema()).await;
         let Err(error) = got else {
             panic!("a scan over a missing block must not answer as if it were empty");
         };
@@ -786,7 +786,7 @@ mod tests {
         );
 
         let got = unreachable
-            .scan_block_keys_skipping_unreadable(&keys, log_schema())
+            .scan_block_keys_skipping_unreadable(&keys, log_line_schema())
             .await;
         let Err(error) = got else {
             panic!("an unreachable store must not answer");
@@ -806,7 +806,7 @@ mod tests {
         let (bs, keys) = two_block_store(store).await;
 
         let first = bs
-            .scan_block_keys(&keys, log_schema())
+            .scan_block_keys(&keys, log_line_schema())
             .await
             .unwrap()
             .0
@@ -819,7 +819,7 @@ mod tests {
         let after_first = requests.snapshot();
 
         let second = bs
-            .scan_block_keys(&keys, log_schema())
+            .scan_block_keys(&keys, log_line_schema())
             .await
             .unwrap()
             .0
@@ -864,10 +864,10 @@ mod tests {
         let (bs, _keys) = two_block_store(Arc::clone(&store)).await;
         let keys = vec!["blocks/b1.parquet".to_string()];
 
-        let (ctx, table) = bs.scan_block_keys(&keys, log_schema()).await.unwrap();
+        let (ctx, table) = bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
         assert2::assert!(table_lines(&ctx, &table).await == ["a1", "a2"]);
 
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
@@ -882,7 +882,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (ctx, table) = bs.scan_block_keys(&keys, log_schema()).await.unwrap();
+        let (ctx, table) = bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
         assert2::assert!(table_lines(&ctx, &table).await == ["r1", "r2", "r3"]);
     }
 
@@ -905,7 +905,7 @@ mod tests {
     async fn clones_share_the_footer_cache() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let (bs, keys) = two_block_store(store).await;
-        bs.scan_block_keys(&keys, log_schema()).await.unwrap();
+        bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
 
         let clone = bs.clone();
         assert2::assert!(clone.metadata_cache().len() == bs.metadata_cache().len());

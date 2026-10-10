@@ -32,6 +32,25 @@ pub fn flame_ticks(value: &Value) -> Option<i64> {
         .and_then(Value::as_i64)
 }
 
+/// What a push-then-render suite expects back from the render.
+pub struct ExpectedFlame<'a> {
+    /// The frame names, sorted, without `total`.
+    pub names: &'a [&'a str],
+    /// The total ticks.
+    pub ticks: i64,
+}
+
+/// Checks a rendered flamebearer against `expected`, and that its metadata
+/// carries the CPU profile type's unit.
+pub fn check_rendered_flame(render: &Value, expected: &ExpectedFlame<'_>) {
+    assert2::check!(flame_names(render) == expected.names);
+    assert2::check!(flame_ticks(render) == Some(expected.ticks));
+    assert2::check!(
+        render.pointer("/metadata/units").and_then(Value::as_str) == Some("nanoseconds"),
+        "render metadata must carry the profile type's unit, got {render}"
+    );
+}
+
 pub fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(bytes).expect("gzip write");

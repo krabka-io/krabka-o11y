@@ -221,6 +221,26 @@ mod tests {
             .any(|entry| entry == value)
     }
 
+    /// The ids of the one-frame stacks `a` and `b`, both in partition 0.
+    struct StacksAB {
+        stack_a: u32,
+        stack_b: u32,
+    }
+
+    /// An empty store whose symbol database already holds the stacks `a` and
+    /// `b`.
+    fn store_with_stacks_a_and_b() -> (InMemoryProfileStore, StacksAB) {
+        let mut store = InMemoryProfileStore::new();
+        let db = store.symbols_mut();
+        let a = intern_location(db, "a");
+        let b = intern_location(db, "b");
+        let stacks = StacksAB {
+            stack_a: db.intern_stacktrace(0, &[a]),
+            stack_b: db.intern_stacktrace(0, &[b]),
+        };
+        (store, stacks)
+    }
+
     #[test]
     fn default_max_nodes_is_2048() {
         assert!(EngineOpts::default().default_max_nodes == 2048);
@@ -228,13 +248,7 @@ mod tests {
 
     #[tokio::test]
     async fn engine_diff_two_windows() {
-        let mut store = InMemoryProfileStore::new();
-        let (stack_a, stack_b) = {
-            let db = store.symbols_mut();
-            let a = intern_location(db, "a");
-            let b = intern_location(db, "b");
-            (db.intern_stacktrace(0, &[a]), db.intern_stacktrace(0, &[b]))
-        };
+        let (mut store, StacksAB { stack_a, stack_b }) = store_with_stacks_a_and_b();
         store.push_sample_with_total(
             ("tenant-a", PT),
             vec![("svc".to_string(), "x".to_string())],
@@ -406,13 +420,7 @@ mod tests {
     // Two samples of the same series: stack `a` (6 of 10) at 0 ms under span
     // 111, and stack `b` (4 of 10) at `second`.
     fn span_profile_engine(second: SecondSample) -> FlameEngine<InMemoryProfileStore> {
-        let mut store = InMemoryProfileStore::new();
-        let (stack_a, stack_b) = {
-            let db = store.symbols_mut();
-            let a = intern_location(db, "a");
-            let b = intern_location(db, "b");
-            (db.intern_stacktrace(0, &[a]), db.intern_stacktrace(0, &[b]))
-        };
+        let (mut store, StacksAB { stack_a, stack_b }) = store_with_stacks_a_and_b();
         store.push_sample_with_total_and_span(
             ("tenant-a", PT),
             vec![("svc".to_string(), "x".to_string())],

@@ -149,8 +149,7 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
     // https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/frontend/readpath/router.go#L115-L124
     let pyroscope =
         start_pyroscope_with_options(&["-architecture.storage=v1", "-write-path=ingester"]).await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
     let fixture_nanos = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?
         / 10_000_000_000
         * 10_000_000_000
@@ -280,8 +279,7 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
 async fn real_pyroscope_series_and_stats_match_krabka_after_identical_ingest() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
     let gzipped_pprof = fetch_goroutine_pprof(&client, &pyroscope_base).await?;
 
     let krabka = ingest_into_both(&client, &pyroscope_base, &gzipped_pprof).await?;
@@ -1126,18 +1124,41 @@ async fn post_push_json(client: &reqwest::Client, push: PushJson<'_>) -> TestRes
         body,
         what,
     } = push;
-    let mut request = client
+    let request = client
         .post(format!("{base}/push.v1.PusherService/Push"))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .json(body);
-    if let Some(tenant) = tenant {
+    send_expecting_ok(
+        request,
+        &ExpectedOk {
+            tenant,
+            what: &format!("push.v1 {what} to {base}"),
+        },
+    )
+    .await
+}
+
+/// Who a request that must be accepted is sent as, and how a rejection of it
+/// names the request.
+struct ExpectedOk<'a> {
+    tenant: Option<&'a str>,
+    what: &'a str,
+}
+
+/// Sends `request`, as `expected.tenant` when there is one, and fails unless
+/// the response is `200 OK`.
+async fn send_expecting_ok(
+    mut request: reqwest::RequestBuilder,
+    expected: &ExpectedOk<'_>,
+) -> TestResult {
+    if let Some(tenant) = expected.tenant {
         request = request.header("x-scope-orgid", tenant);
     }
     let response = request.send().await?;
     let status = response.status();
     if status != StatusCode::OK {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("push.v1 {what} to {base} returned {status}: {body}").into());
+        return Err(format!("{} returned {status}: {body}", expected.what).into());
     }
     Ok(())
 }
@@ -1975,6 +1996,16 @@ fn json_i64(value: &Value) -> Option<i64> {
     value
         .as_i64()
         .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+}
+
+/// The base URL of `pyroscope`'s HTTP port, once its `/ready` answers.
+async fn ready_pyroscope_base(
+    client: &reqwest::Client,
+    pyroscope: &testcontainers::ContainerAsync<GenericImage>,
+) -> TestResult<String> {
+    let base = mapped_base_url(pyroscope, PYROSCOPE_HTTP_PORT).await?;
+    wait_for_http_ok(client, &base, &["/ready"]).await?;
+    Ok(base)
 }
 
 async fn wait_for_http_ok(client: &reqwest::Client, base: &str, paths: &[&str]) -> TestResult {
@@ -3582,24 +3613,18 @@ async fn post_ingest(
         query.append_pair("aggregationType", "average");
     }
     let query = query.finish();
-    let mut request = client
+    let request = client
         .post(format!("{base}/ingest?{query}"))
         .header(reqwest::header::CONTENT_TYPE, case.content_type)
         .body(case.body.clone());
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "/ingest format={} to {base} returned {status}: {body}",
-            case.format
-        )
-        .into());
-    }
-    Ok(())
+    send_expecting_ok(
+        request,
+        &ExpectedOk {
+            tenant,
+            what: &format!("/ingest format={} to {base}", case.format),
+        },
+    )
+    .await
 }
 
 async fn assert_legacy_failure_statuses_match(
@@ -3703,8 +3728,7 @@ fn drain_sink_into_cold_store(sink: &CapturingSink) -> TestResult {
 async fn real_pyroscope_legacy_ingest_formats_match_krabka() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
     let goroutine_pprof = fetch_goroutine_pprof(&client, &pyroscope_base).await?;
 
     let sink = CapturingSink::default();
@@ -3810,8 +3834,7 @@ struct ProfileTypeCase {
 async fn real_pyroscope_profile_types_match_krabka() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
 
     let now_nanos = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?;
     let cases = vec![
@@ -3949,8 +3972,7 @@ async fn post_push_typed(
 async fn real_pyroscope_otlp_export_matches_krabka() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
 
     let sink = CapturingSink::default();
     let store = WalTailProfileStore::new();
@@ -4182,8 +4204,7 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
         "-self-profiling.disable-push=true",
     ])
     .await?;
-    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let pyroscope_base = ready_pyroscope_base(&client, &pyroscope).await?;
     let sink = CapturingSink::default();
     let store = WalTailProfileStore::new();
     let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
@@ -5727,16 +5748,14 @@ async fn post_otlp_export(
     if let Some(content_encoding) = content_encoding {
         request = request.header(reqwest::header::CONTENT_ENCODING, content_encoding);
     }
-    if let Some(tenant) = tenant {
-        request = request.header("x-scope-orgid", tenant);
-    }
-    let response = request.send().await?;
-    let status = response.status();
-    if status != StatusCode::OK {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("OTLP export to {base} returned {status}: {body}").into());
-    }
-    Ok(())
+    send_expecting_ok(
+        request,
+        &ExpectedOk {
+            tenant,
+            what: &format!("OTLP export to {base}"),
+        },
+    )
+    .await
 }
 
 /// The modern RPC fields require v2; a successful v1 capability probe is not

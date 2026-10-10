@@ -40,6 +40,21 @@ struct SeriesExemplarScan {
     scan_start: i64,
 }
 
+/// A merge query that passed its tenant's limits: the node cap it runs
+/// under, and the millisecond ranges it reads.
+struct AdmittedMerge {
+    max_nodes: i64,
+    ranges: MergeRanges,
+}
+
+/// The millisecond ranges an admitted merge query reads.
+enum MergeRanges {
+    /// The whole requested range, read in one pass.
+    Whole(QueryRange),
+    /// The requested range cut into adjacent, non-overlapping shards.
+    Shards(Vec<QueryRange>),
+}
+
 impl QuerierState<DefaultStore> {
     #[must_use]
     pub fn empty() -> Self {
@@ -225,6 +240,29 @@ impl<S: ProfileStore> QuerierState<S> {
         self.store.stats(tenant.as_str(), 0, i64::MAX).await
     }
 
+    /// Admits a merge query: checks `range` against `tenant`'s query-length
+    /// limit, caps `max_nodes`, and splits the range into shards when this
+    /// querier runs sharded.
+    fn admit_merge(
+        &self,
+        tenant: &TenantId,
+        range: QueryRange,
+        max_nodes: i64,
+    ) -> Result<AdmittedMerge, ProfileError> {
+        let (start_ms, end_ms) = range;
+        self.validate_query_range(tenant, start_ms, end_ms)?;
+        let ranges = match &self.execution {
+            QueryExecution::Direct => MergeRanges::Whole(range),
+            QueryExecution::Sharded(config) => {
+                MergeRanges::Shards(split_inclusive_range(start_ms, end_ms, config.shard_width)?)
+            }
+        };
+        Ok(AdmittedMerge {
+            max_nodes: self.effective_max_nodes(tenant, max_nodes),
+            ranges,
+        })
+    }
+
     pub(crate) fn effective_max_nodes(&self, tenant: &TenantId, requested: i64) -> i64 {
         self.overrides
             .for_tenant(tenant)
@@ -310,23 +348,21 @@ impl<S: ProfileStore> QuerierState<S> {
         sample_selector: SampleSelector<'_>,
     ) -> Result<FlameGraph, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let max_nodes = self.effective_max_nodes(tenant, max_nodes);
-        match &self.execution {
-            QueryExecution::Direct => {
+        let admitted = self.admit_merge(tenant, range, max_nodes)?;
+        let max_nodes = admitted.max_nodes;
+        match admitted.ranges {
+            MergeRanges::Whole(whole) => {
                 self.engine
                     .select_merge_stacktraces_with_selectors(
                         (tenant.as_str(), profile_type, label_selector),
-                        (start_ms, end_ms),
+                        whole,
                         max_nodes,
                         stack_trace_call_sites,
                         sample_selector,
                     )
                     .await
             }
-            QueryExecution::Sharded(config) => {
-                let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
+            MergeRanges::Shards(shards) => {
                 self.engine
                     .select_merge_stacktraces_with_selectors_sharded(
                         (tenant.as_str(), profile_type, label_selector),
@@ -349,23 +385,21 @@ impl<S: ProfileStore> QuerierState<S> {
         sample_selector: SampleSelector<'_>,
     ) -> Result<Vec<u8>, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let max_nodes = self.effective_max_nodes(tenant, max_nodes);
-        match &self.execution {
-            QueryExecution::Direct => {
+        let admitted = self.admit_merge(tenant, range, max_nodes)?;
+        let max_nodes = admitted.max_nodes;
+        match admitted.ranges {
+            MergeRanges::Whole(whole) => {
                 self.engine
                     .select_merge_stacktraces_tree_with_selectors(
                         (tenant.as_str(), profile_type, label_selector),
-                        (start_ms, end_ms),
+                        whole,
                         max_nodes,
                         stack_trace_call_sites,
                         sample_selector,
                     )
                     .await
             }
-            QueryExecution::Sharded(config) => {
-                let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
+            MergeRanges::Shards(shards) => {
                 self.engine
                     .select_merge_stacktraces_tree_with_selectors_sharded(
                         (tenant.as_str(), profile_type, label_selector),
@@ -439,44 +473,43 @@ impl<S: ProfileStore> QuerierState<S> {
         &self,
         query: SeriesExemplarQuery<'_>,
     ) -> Result<SpanExemplarsBySeries, ProfileError> {
-        let SeriesExemplarScan {
-            base_matchers,
-            scan_start,
-        } = self.series_exemplar_scan(query)?;
-        let SeriesExemplarQuery {
-            target: (tenant, profile_type, _),
-            group_by,
-            step,
-            range,
-            call_sites,
-        } = query;
-        let end_ms = range.1;
-        let groups = if group_by.is_empty() {
+        let plan = self.series_exemplar_scan(query)?;
+        let (tenant, profile_type, _) = query.target;
+        let end_ms = query.range.1;
+        let groups = if query.group_by.is_empty() {
             vec![Vec::new()]
         } else {
             self.store
                 .series(
                     tenant.as_str(),
-                    &base_matchers,
-                    group_by,
-                    scan_start,
+                    &plan.base_matchers,
+                    query.group_by,
+                    plan.scan_start,
                     end_ms,
                 )
                 .await?
         };
         let mut out = BTreeMap::new();
         for labels in groups {
-            let matchers = series_matchers(&base_matchers, &labels);
+            let matchers = series_matchers(&plan.base_matchers, &labels);
             let scan = self
                 .store
-                .select(tenant.as_str(), profile_type, &matchers, scan_start, end_ms)
+                .select(
+                    tenant.as_str(),
+                    profile_type,
+                    &matchers,
+                    plan.scan_start,
+                    end_ms,
+                )
                 .await?;
             let exemplars =
-                span_exemplars_from_scan(&scan, krabka_units::millis(1), &labels, call_sites)
+                span_exemplars_from_scan(&scan, krabka_units::millis(1), &labels, query.call_sites)
                     .await?;
             let mut buckets = BTreeMap::<i64, Vec<_>>::new();
             for (timestamp, mut exemplars) in exemplars {
-                if let Some(endpoint) = krabka_pprof::series_bucket_ms(timestamp, step, range) {
+                if let Some(endpoint) =
+                    krabka_pprof::series_bucket_ms(timestamp, query.step, query.range)
+                {
                     buckets.entry(endpoint).or_default().append(&mut exemplars);
                 }
             }
@@ -491,49 +524,54 @@ impl<S: ProfileStore> QuerierState<S> {
         &self,
         query: SeriesExemplarQuery<'_>,
     ) -> Result<SpanExemplarsBySeries, ProfileError> {
-        let SeriesExemplarScan {
-            base_matchers,
-            scan_start,
-        } = self.series_exemplar_scan(query)?;
-        let SeriesExemplarQuery {
-            target: (tenant, profile_type, _),
-            group_by,
-            step,
-            range,
-            call_sites,
-        } = query;
-        let end_ms = range.1;
+        let plan = self.series_exemplar_scan(query)?;
+        let (tenant, profile_type, _) = query.target;
+        let end_ms = query.range.1;
         let groups = self
             .store
-            .series(tenant.as_str(), &base_matchers, &[], scan_start, end_ms)
+            .series(
+                tenant.as_str(),
+                &plan.base_matchers,
+                &[],
+                plan.scan_start,
+                end_ms,
+            )
             .await?;
         let mut out: SpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
             let Some(profile_id) = profile_id_of(&labels) else {
                 continue;
             };
-            let series_labels = labels_grouped_by(&labels, group_by);
+            let series_labels = labels_grouped_by(&labels, query.group_by);
             let exemplar_labels = labels
                 .iter()
                 .filter(|(name, _)| name != PROFILE_ID_LABEL)
                 .cloned()
                 .collect::<Vec<_>>();
-            let matchers = series_matchers(&base_matchers, &labels);
+            let matchers = series_matchers(&plan.base_matchers, &labels);
             let scan = self
                 .store
-                .select(tenant.as_str(), profile_type, &matchers, scan_start, end_ms)
+                .select(
+                    tenant.as_str(),
+                    profile_type,
+                    &matchers,
+                    plan.scan_start,
+                    end_ms,
+                )
                 .await?;
             let exemplars = individual_exemplars_from_scan(
                 &scan,
                 krabka_units::millis(1),
                 &exemplar_labels,
                 &profile_id,
-                call_sites,
+                query.call_sites,
             )
             .await?;
             let points = out.entry(series_labels).or_default();
             for (timestamp, mut exemplars) in exemplars {
-                if let Some(endpoint) = krabka_pprof::series_bucket_ms(timestamp, step, range) {
+                if let Some(endpoint) =
+                    krabka_pprof::series_bucket_ms(timestamp, query.step, query.range)
+                {
                     points.entry(endpoint).or_default().append(&mut exemplars);
                 }
             }
@@ -695,22 +733,20 @@ impl<S: ProfileStore> QuerierState<S> {
         max_nodes: i64,
     ) -> Result<FlameGraph, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let max_nodes = self.effective_max_nodes(tenant, max_nodes);
-        match &self.execution {
-            QueryExecution::Direct => {
+        let admitted = self.admit_merge(tenant, range, max_nodes)?;
+        let max_nodes = admitted.max_nodes;
+        match admitted.ranges {
+            MergeRanges::Whole(whole) => {
                 self.engine
                     .select_merge_span_profile(
                         (tenant.as_str(), profile_type, label_selector),
                         span_ids,
-                        (start_ms, end_ms),
+                        whole,
                         max_nodes,
                     )
                     .await
             }
-            QueryExecution::Sharded(config) => {
-                let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
+            MergeRanges::Shards(shards) => {
                 self.engine
                     .select_merge_span_profile_sharded(SpanProfileShards {
                         selection: ProfileSelection {
@@ -735,22 +771,20 @@ impl<S: ProfileStore> QuerierState<S> {
         max_nodes: i64,
     ) -> Result<Vec<u8>, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let max_nodes = self.effective_max_nodes(tenant, max_nodes);
-        match &self.execution {
-            QueryExecution::Direct => {
+        let admitted = self.admit_merge(tenant, range, max_nodes)?;
+        let max_nodes = admitted.max_nodes;
+        match admitted.ranges {
+            MergeRanges::Whole(whole) => {
                 self.engine
                     .select_merge_span_profile_tree(
                         (tenant.as_str(), profile_type, label_selector),
                         span_ids,
-                        (start_ms, end_ms),
+                        whole,
                         max_nodes,
                     )
                     .await
             }
-            QueryExecution::Sharded(config) => {
-                let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
+            MergeRanges::Shards(shards) => {
                 self.engine
                     .select_merge_span_profile_tree_sharded(SpanProfileShards {
                         selection: ProfileSelection {

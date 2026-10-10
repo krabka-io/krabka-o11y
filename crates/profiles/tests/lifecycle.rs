@@ -303,9 +303,18 @@ async fn a_merge_deletes_its_inputs_and_their_symbol_databases() {
     check!(block_objects_exist(&store, &merged).await == (true, true));
     check!(block_keys(&index) == vec![merged]);
 
+    check_merged_block_answers_alpha_and_bravo(store, index).await;
+}
+
+/// Checks that the cold store over `store` and `index` answers tenant `t`'s
+/// `api` flame graph as the merge of the two one-sample inputs: two ticks,
+/// over the frames `alpha` and `bravo`.
+async fn check_merged_block_answers_alpha_and_bravo(
+    store: Arc<dyn ObjectStore>,
+    index: ProfileIndex,
+) {
     let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-    let engine = FlameEngine::new(cold, EngineOpts::default());
-    let graph = engine
+    let graph = FlameEngine::new(cold, EngineOpts::default())
         .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
         .await
         .expect("the merged block answers");
@@ -599,15 +608,7 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     let store = lifecycle.restart();
     let index = reload(&store).await;
     check!(block_keys(&index) == vec![merged.clone()]);
-    let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-    let graph = FlameEngine::new(cold, EngineOpts::default())
-        .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
-        .await
-        .expect("the merged block answers");
-    check!(graph.total == 2);
-    for name in ["alpha", "bravo"] {
-        check!(graph.names.iter().any(|frame| frame == name), "{name}");
-    }
+    check_merged_block_answers_alpha_and_bravo(store, index).await;
 
     lifecycle
         .finish(&[

@@ -29,14 +29,14 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use assert2::{assert, check};
+use assert2::assert;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use clap::Parser as _;
 use serde_json::{Value, json};
 
 use super::{
     Cli,
-    render_roundtrip::{flame_names, flame_ticks, gzip_bytes},
+    render_roundtrip::{ExpectedFlame, check_rendered_flame, flame_names, gzip_bytes},
     run,
     sigterm_child_runtime::{SigtermChildRuntime, free_loopback_addr},
     synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, SyntheticCpuProfile},
@@ -150,11 +150,12 @@ fn a_push_at_the_ingest_door_is_answered_at_the_query_door() {
         )
         .await;
 
-        check!(flame_names(&render) == vec![FUNC_HOT.to_string(), FUNC_WORK.to_string()]);
-        check!(flame_ticks(&render) == Some(LEAF_VALUE + SELF_VALUE));
-        check!(
-            render.pointer("/metadata/units").and_then(Value::as_str) == Some("nanoseconds"),
-            "render metadata must carry the profile type's unit, got {render}"
+        check_rendered_flame(
+            &render,
+            &ExpectedFlame {
+                names: &[FUNC_HOT, FUNC_WORK],
+                ticks: LEAF_VALUE + SELF_VALUE,
+            },
         );
     });
 }

@@ -90,6 +90,28 @@ mod tests {
         out
     }
 
+    /// Five tree nodes: an unnamed root over "a" (10, with the child "a1"
+    /// worth 5), "b" (7), and "c", a named node worth nothing on its own. "c"
+    /// must not become a sample: only a positive self value earns one.
+    fn five_node_tree() -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend(tree_node("", 0, 3));
+        body.extend(tree_node("a", 10, 1));
+        body.extend(tree_node("a1", 5, 0));
+        body.extend(tree_node("b", 7, 0));
+        body.extend(tree_node("c", 0, 0));
+        body
+    }
+
+    /// Each sample of `profile` as its leaf-first frame names and its values.
+    fn stacks_and_values(profile: &PprofProfile) -> Vec<(Vec<&str>, &[i64])> {
+        profile
+            .samples()
+            .iter()
+            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
+            .collect()
+    }
+
     /// `tree_to_pprof` walks a pre-order node stream, carrying each node's
     /// path down to its children and charging self values to the path that
     /// reaches them.
@@ -100,25 +122,14 @@ mod tests {
     /// whose value sits only in a descendant are represented.
     #[test]
     fn tree_nodes_decode_into_the_stacks_that_reach_them() {
-        let mut body = Vec::new();
-        body.extend(tree_node("", 0, 3));
-        body.extend(tree_node("a", 10, 1));
-        body.extend(tree_node("a1", 5, 0));
-        body.extend(tree_node("b", 7, 0));
-        // A named node worth nothing on its own. It must not become a sample:
-        // only a positive self value earns one.
-        body.extend(tree_node("c", 0, 0));
+        let body = five_node_tree();
 
         let profile =
             super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
 
         check!(profile.sample_types() == vec![("samples".to_string(), "bytes".to_string())]);
 
-        let decoded: Vec<(Vec<&str>, &[i64])> = profile
-            .samples()
-            .iter()
-            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
-            .collect();
+        let decoded = stacks_and_values(&profile);
         check!(
             decoded
                 == vec![
@@ -149,12 +160,7 @@ mod tests {
     /// allowed and one more is not.
     #[test]
     fn the_tree_node_budget_admits_exactly_its_limit() {
-        let mut body = Vec::new();
-        body.extend(tree_node("", 0, 3));
-        body.extend(tree_node("a", 10, 1));
-        body.extend(tree_node("a1", 5, 0));
-        body.extend(tree_node("b", 7, 0));
-        body.extend(tree_node("c", 0, 0));
+        let body = five_node_tree();
 
         let limits = |max_nodes| LegacyDecodeLimits {
             max_nodes,
@@ -231,11 +237,7 @@ mod tests {
         let profile =
             super::trie_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
 
-        let decoded: Vec<(Vec<&str>, &[i64])> = profile
-            .samples()
-            .iter()
-            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
-            .collect();
+        let decoded = stacks_and_values(&profile);
         check!(
             decoded
                 == vec![

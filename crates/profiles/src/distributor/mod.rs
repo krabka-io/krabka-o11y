@@ -466,6 +466,17 @@ mod tests {
     #[derive(Default)]
     struct RecordingSink(Mutex<Vec<ProfileRecord>>);
 
+    /// The records `sink` holds, after checking there is exactly one and that
+    /// it is tenant `tenant-a`'s.
+    fn the_one_tenant_a_record(
+        sink: &RecordingSink,
+    ) -> std::sync::MutexGuard<'_, Vec<ProfileRecord>> {
+        let recs = sink.0.lock().unwrap();
+        assert!(recs.len() == 1);
+        check!(recs[0].tenant == "tenant-a");
+        recs
+    }
+
     #[async_trait::async_trait]
     impl WalSink for RecordingSink {
         async fn append(&self, rec: ProfileRecord) -> Result<(), ProfilesError> {
@@ -1177,9 +1188,7 @@ overrides:
             .unwrap();
 
         assert!(response.status() == StatusCode::OK, "{response:?}");
-        let recs = sink.0.lock().unwrap();
-        assert!(recs.len() == 1);
-        check!(recs[0].tenant == "tenant-a");
+        let recs = the_one_tenant_a_record(&sink);
         check!(recs[0].labels.iter().any(|(name, value)| {
             name == "__profile_type__" && value == "samples:samples:count:samples:count"
         }));
@@ -1230,9 +1239,7 @@ overrides:
             .unwrap();
 
         assert!(response.status() == StatusCode::OK, "{response:?}");
-        let recs = sink.0.lock().unwrap();
-        assert!(recs.len() == 1);
-        check!(recs[0].tenant == "tenant-a");
+        let recs = the_one_tenant_a_record(&sink);
         for (name, value) in [
             // A folded upload is Pyroscope's default CPU profile, whatever the
             // `?units=` says, and its counts are stored as the time they stand

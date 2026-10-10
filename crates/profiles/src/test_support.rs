@@ -7,7 +7,7 @@ use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 use krabka_blockstore::{BlockIndex as _, BlockMeta, Labels, ObjectStoreMetrics, ProfileIndex};
 use krabka_observability::server_security::ServerSecurity;
-use krabka_pprof::{EngineOpts, FlameEngine, FlameGraph};
+use krabka_pprof::{EngineOpts, FlameEngine, FlameGraph, NativeResolver, SymbolizeRequest};
 use object_store::ObjectStore;
 
 pub use self::cpu_record::{CPU_PROFILE_TYPE, CpuRecord, cpu_record};
@@ -128,4 +128,19 @@ pub async fn serve_on_loopback_with(
     .await
     .unwrap();
     (bound, shutdown_tx)
+}
+
+/// Checks that `resolver`, asked about an address in a file that does not
+/// exist, answers with a frame named after the file and the address.
+pub fn check_falls_back_to_address_frame(resolver: &dyn NativeResolver) {
+    let out = resolver
+        .symbolize(&SymbolizeRequest {
+            build_id: String::new(),
+            filename: "/missing/native".to_string(),
+            address: 0x99,
+        })
+        .unwrap();
+
+    assert2::assert!(out[0].function == "/missing/native+0x99");
+    assert2::assert!(out[0].file == "/missing/native");
 }
