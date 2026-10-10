@@ -1,7 +1,7 @@
-use super::TagScope;
+use krabka_traceql::TagScope;
 
-pub(crate) fn parse_tag_scope(scope: &str) -> Option<TagScope> {
-    match scope {
+pub(crate) fn tag_scope_from_name(value: &str) -> Option<TagScope> {
+    match value {
         "resource" => Some(TagScope::Resource),
         "span" => Some(TagScope::Span),
         "intrinsic" => Some(TagScope::Intrinsic),

@@ -1,7 +1,7 @@
 use super::{
     BT_BINARY, BT_BOOL, BT_BYTE, BT_DOUBLE, BT_I16, BT_I32, BT_I64, BT_LIST, BT_MAP, BT_SET,
     BT_STOP, BT_STRUCT, CollectionHeader, MapHeader, WireError, check_collection_header,
-    check_map_header, take_bytes, utf8_string,
+    check_map_header, descend_skip_depth, next_byte, take_bytes, utf8_string, wire_length,
 };
 
 pub(crate) struct BinaryInput<'a> {
@@ -10,14 +10,6 @@ pub(crate) struct BinaryInput<'a> {
 }
 
 impl<'a> BinaryInput<'a> {
-    /// The deepest struct or collection nesting that `skip` descends through.
-    ///
-    /// Each level costs bytes on the wire and one stack frame, so an
-    /// unbounded skip turns a request body into a stack overflow. Apache
-    /// Thrift's own protocols stop at the same depth, and a Jaeger batch
-    /// nests four deep.
-    const MAX_SKIP_DEPTH: u32 = 64;
-
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, pos: 0 }
     }
@@ -49,8 +41,7 @@ impl<'a> BinaryInput<'a> {
 
     pub(crate) fn read_list_header(&mut self) -> Result<(u8, usize), WireError> {
         let element_type = self.read_u8()?;
-        let len = usize::try_from(self.read_i32()?)
-            .map_err(|_| WireError::Decode("list length out of range".into()))?;
+        let len = wire_length(self.read_i32()?, "list length out of range")?;
         self.check_collection_header(element_type, len)?;
         Ok((element_type, len))
     }
@@ -75,8 +66,7 @@ impl<'a> BinaryInput<'a> {
     pub(crate) fn read_map_header(&mut self) -> Result<(u8, u8, usize), WireError> {
         let key_type = self.read_u8()?;
         let value_type = self.read_u8()?;
-        let len = usize::try_from(self.read_i32()?)
-            .map_err(|_| WireError::Decode("map length out of range".into()))?;
+        let len = wire_length(self.read_i32()?, "map length out of range")?;
         check_map_header(
             MapHeader {
                 key_type,
@@ -93,8 +83,7 @@ impl<'a> BinaryInput<'a> {
     }
 
     pub(crate) fn read_binary(&mut self) -> Result<Vec<u8>, WireError> {
-        let len = usize::try_from(self.read_i32()?)
-            .map_err(|_| WireError::Decode("binary length out of range".into()))?;
+        let len = wire_length(self.read_i32()?, "binary length out of range")?;
         take_bytes(self.bytes, &mut self.pos, len)
     }
 
@@ -127,11 +116,7 @@ impl<'a> BinaryInput<'a> {
     }
 
     pub(crate) fn read_u8(&mut self) -> Result<u8, WireError> {
-        let Some(byte) = self.bytes.get(self.pos).copied() else {
-            return Err(WireError::Decode("unexpected end of thrift payload".into()));
-        };
-        self.pos += 1;
-        Ok(byte)
+        next_byte(self.bytes, &mut self.pos)
     }
 
     pub(crate) fn read_exact(&mut self, out: &mut [u8]) -> Result<(), WireError> {
@@ -163,14 +148,14 @@ impl<'a> BinaryInput<'a> {
             BT_DOUBLE => self.read_double().map(|_| ()),
             BT_BINARY => self.read_binary().map(|_| ()),
             BT_STRUCT => {
-                let depth = Self::descend(depth)?;
+                let depth = descend_skip_depth(depth)?;
                 while let Some((inner_type, _)) = self.read_field()? {
                     self.skip_value(inner_type, depth)?;
                 }
                 Ok(())
             }
             BT_LIST | BT_SET => {
-                let depth = Self::descend(depth)?;
+                let depth = descend_skip_depth(depth)?;
                 let (element_type, len) = self.read_list_header()?;
                 for _ in 0..len {
                     self.skip_value(element_type, depth)?;
@@ -178,7 +163,7 @@ impl<'a> BinaryInput<'a> {
                 Ok(())
             }
             BT_MAP => {
-                let depth = Self::descend(depth)?;
+                let depth = descend_skip_depth(depth)?;
                 let (key_type, value_type, len) = self.read_map_header()?;
                 for _ in 0..len {
                     self.skip_value(key_type, depth)?;
@@ -188,18 +173,6 @@ impl<'a> BinaryInput<'a> {
             }
             other => Err(WireError::Decode(format!("unknown thrift type {other}"))),
         }
-    }
-
-    /// Step one level deeper, refusing nesting past [`Self::MAX_SKIP_DEPTH`].
-    fn descend(depth: u32) -> Result<u32, WireError> {
-        let depth = depth.saturating_add(1);
-        if depth > Self::MAX_SKIP_DEPTH {
-            return Err(WireError::Decode(format!(
-                "thrift nesting deeper than {}",
-                Self::MAX_SKIP_DEPTH
-            )));
-        }
-        Ok(depth)
     }
 }
 
@@ -272,7 +245,7 @@ mod tests {
         /// A list header: one element, itself a list.
         const NESTED: [u8; 5] = [BT_LIST, 0, 0, 0, 1];
 
-        let depth = usize::try_from(BinaryInput::MAX_SKIP_DEPTH).expect("fits");
+        let depth = usize::try_from(MAX_SKIP_DEPTH).expect("fits");
 
         let bomb = NESTED.repeat(depth * 4);
         let mut input = BinaryInput::new(&bomb);
@@ -356,6 +329,6 @@ mod tests {
     use super::*;
     use crate::{
         span::{AttrValue, KeyValue},
-        wire::jaeger::decode_jaeger_binary_thrift,
+        wire::jaeger::{decode_jaeger_binary_thrift, thrift_cursor::MAX_SKIP_DEPTH},
     };
 }

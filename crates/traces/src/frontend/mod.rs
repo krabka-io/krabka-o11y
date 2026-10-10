@@ -109,10 +109,10 @@ mod orch_tests {
         }
     }
 
-    #[tokio::test]
-    async fn search_plans_jobs_fans_and_merges() {
-        // Two small cold blocks + a hot window => 1 Live + 2 block jobs = 3.
-        let catalog = MockCatalog::new(vec![
+    // Blocks `b1` over [0, 100) and `b2` over [100, 200), one 500-byte row
+    // group each.
+    fn two_small_cold_blocks() -> MockCatalog {
+        MockCatalog::new(vec![
             BlockMetaInfo::with_row_groups(
                 "b1",
                 TimeRange {
@@ -129,7 +129,13 @@ mod orch_tests {
                 },
                 &[500],
             ),
-        ]);
+        ])
+    }
+
+    #[tokio::test]
+    async fn search_plans_jobs_fans_and_merges() {
+        // Two small cold blocks + a hot window => 1 Live + 2 block jobs = 3.
+        let catalog = two_small_cold_blocks();
         let backend = MockQuerier::new();
         backend.stub_search(one_trace("01", 50));
         backend.stub_search(one_trace("02", 150));
@@ -299,24 +305,7 @@ mod orch_tests {
     /// fraction as a whole.
     #[tokio::test]
     async fn an_unready_querier_costs_no_blocks_and_is_named_in_the_warnings() {
-        let catalog = MockCatalog::new(vec![
-            BlockMetaInfo::with_row_groups(
-                "b1",
-                TimeRange {
-                    start_ns: 0,
-                    end_ns: 100,
-                },
-                &[500],
-            ),
-            BlockMetaInfo::with_row_groups(
-                "b2",
-                TimeRange {
-                    start_ns: 100,
-                    end_ns: 200,
-                },
-                &[500],
-            ),
-        ]);
+        let catalog = two_small_cold_blocks();
         let backend = MockQuerier::new();
         let cfg = FrontendConfig {
             hot_frontier_ns: 0,

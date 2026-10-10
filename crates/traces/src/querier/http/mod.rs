@@ -668,6 +668,18 @@ mod tests {
         }
     }
 
+    // The `a` span 1 of trace 9, starting at 1 µs.
+    fn trace_nine_span() -> InputSpan {
+        SpanFixture {
+            trace: 9,
+            span: 1,
+            service: "a",
+            start_ns: 1_000,
+            ..SpanFixture::default()
+        }
+        .build()
+    }
+
     fn app() -> axum::Router {
         app_with_opts(EngineOpts {
             max_exemplars: 1,
@@ -824,6 +836,19 @@ mod tests {
     async fn get_text_with_app(app: axum::Router, uri: &str) -> (StatusCode, String) {
         let (status, bytes) = get_bytes_with_app(app, uri).await;
         (status, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    // `GET /api/v2/traces/{id}` of trace 9, as JSON.
+    async fn get_trace_nine_v2(app: axum::Router) -> (StatusCode, Value) {
+        get_json_with_app(app, "/api/v2/traces/09090909090909090909090909090909").await
+    }
+
+    // Serves `span` as the only span of its trace, and returns that span as
+    // `GET /api/v2/traces/{id}` of trace 9 renders it.
+    async fn served_v2_span(span: InputSpan) -> Value {
+        let (status, body) = get_trace_nine_v2(app_with_trace(vec![span])).await;
+        check!(status == StatusCode::OK);
+        body["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0].clone()
     }
 
     async fn get_json_with_app(app: axum::Router, uri: &str) -> (StatusCode, Value) {
@@ -2329,6 +2354,18 @@ overrides:
         assert2::assert!(attrs[1].key == "service.name");
     }
 
+    // A protobuf trace-by-id answer whose first scope holds trace 9's two spans.
+    fn check_protobuf_trace_nine(
+        status: StatusCode,
+        content_type: Option<&str>,
+        data: &TracesData,
+    ) {
+        check!(status == StatusCode::OK);
+        check!(content_type == Some("application/protobuf"));
+        assert2::assert!(data.resource_spans[0].scope_spans[0].spans.len() == 2);
+        check!(data.resource_spans[0].scope_spans[0].spans[0].trace_id == vec![9; 16]);
+    }
+
     #[tokio::test]
     async fn by_id_honors_protobuf_accept_header() {
         let (status, content_type, bytes) = get_accepting(
@@ -2339,11 +2376,8 @@ overrides:
         // v2 returns a Tempo TraceByIDResponse wrapping the OTLP trace.
         let data = TraceByIdResponse::decode(bytes).unwrap().trace.unwrap();
 
-        check!(status == StatusCode::OK);
-        check!(content_type.as_deref() == Some("application/protobuf"));
         assert2::assert!(data.resource_spans.len() == 1);
-        assert2::assert!(data.resource_spans[0].scope_spans[0].spans.len() == 2);
-        check!(data.resource_spans[0].scope_spans[0].spans[0].trace_id == vec![9; 16]);
+        check_protobuf_trace_nine(status, content_type.as_deref(), &data);
     }
 
     #[tokio::test]
@@ -2379,10 +2413,7 @@ overrides:
         .await;
         let data = TracesData::decode(bytes).unwrap();
 
-        check!(status == StatusCode::OK);
-        check!(content_type.as_deref() == Some("application/protobuf"));
-        assert2::assert!(data.resource_spans[0].scope_spans[0].spans.len() == 2);
-        check!(data.resource_spans[0].scope_spans[0].spans[0].trace_id == vec![9; 16]);
+        check_protobuf_trace_nine(status, content_type.as_deref(), &data);
     }
 
     #[tokio::test]
@@ -2434,20 +2465,12 @@ overrides:
     #[tokio::test]
     async fn by_id_projects_instrumentation_scope() {
         let mut store = InMemorySpanStore::new();
-        let mut span = SpanFixture {
-            trace: 9,
-            span: 1,
-            service: "a",
-            start_ns: 1_000,
-            ..SpanFixture::default()
-        }
-        .build();
+        let mut span = trace_nine_span();
         span.instrumentation_name = "tracer".into();
         span.instrumentation_version = "1.2.3".into();
         store.push_trace("tenant-a", "svc-a", "root-a", vec![span]);
         let app = router_over(store);
-        let (status, body) =
-            get_json_with_app(app, "/api/v2/traces/09090909090909090909090909090909").await;
+        let (status, body) = get_trace_nine_v2(app).await;
 
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(
@@ -2461,23 +2484,12 @@ overrides:
 
     #[tokio::test]
     async fn by_id_projects_span_kind_and_status() {
-        let mut span = SpanFixture {
-            trace: 9,
-            span: 1,
-            service: "a",
-            start_ns: 1_000,
-            ..SpanFixture::default()
-        }
-        .build();
+        let mut span = trace_nine_span();
         span.kind = 2;
         span.status_code = 2;
         span.status_message = "boom".into();
-        let app = app_with_trace(vec![span]);
-        let (status, body) =
-            get_json_with_app(app, "/api/v2/traces/09090909090909090909090909090909").await;
-        let span = &body["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        let span = served_v2_span(span).await;
 
-        check!(status == StatusCode::OK);
         check!(span["kind"] == "SPAN_KIND_SERVER");
         check!(
             span["status"]
@@ -2490,14 +2502,7 @@ overrides:
 
     #[tokio::test]
     async fn by_id_projects_events_and_links() {
-        let mut span = SpanFixture {
-            trace: 9,
-            span: 1,
-            service: "a",
-            start_ns: 1_000,
-            ..SpanFixture::default()
-        }
-        .build();
+        let mut span = trace_nine_span();
         span.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -2508,12 +2513,8 @@ overrides:
             span_id: [8; 8],
             attributes: vec![("link.kind".into(), AttrValue::Str("retry".into()))],
         }];
-        let app = app_with_trace(vec![span]);
-        let (status, body) =
-            get_json_with_app(app, "/api/v2/traces/09090909090909090909090909090909").await;
-        let span = &body["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        let span = served_v2_span(span).await;
 
-        check!(status == StatusCode::OK);
         check!(
             span["events"]
                 == json!([{
@@ -2643,8 +2644,7 @@ overrides:
             },
             RoleReadiness::new(),
         );
-        let (status, body) =
-            get_json_with_app(app, "/api/v2/traces/09090909090909090909090909090909").await;
+        let (status, body) = get_trace_nine_v2(app).await;
 
         check!(status == StatusCode::OK);
         check!(body["status"] == "PARTIAL");
@@ -3441,6 +3441,19 @@ overrides:
         );
     }
 
+    // A tag-values v2 body that holds the one string value `value`.
+    fn single_string_tag_value(value: &str) -> Value {
+        json!({
+            "tagValues": [{
+                "type": "string",
+                "value": value
+            }],
+            "metrics": {
+                "inspectedBytes": "0"
+            }
+        })
+    }
+
     async fn filtered_tag_values(app: &Router, tag: &str) -> (StatusCode, Value) {
         let uri = format!("/api/v2/search/tag/{tag}/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D");
         let response = app
@@ -3635,43 +3648,15 @@ overrides:
         store.push_trace("tenant-a", "svc-a", "root-a", vec![root]);
         let app = router_over(store);
 
-        let (status, body) = get_json_with_app(
-            app.clone(),
-            "/api/v2/search/tag/event:name/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-        )
-        .await;
+        for (tag, value) in [
+            ("event:name", "exception"),
+            ("link:traceID", "09090909090909090909090909090909"),
+        ] {
+            let (status, body) = filtered_tag_values(&app, tag).await;
 
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "exception"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
-
-        let (status, body) = get_json_with_app(
-            app,
-            "/api/v2/search/tag/link:traceID/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-        )
-        .await;
-
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "09090909090909090909090909090909"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
+            assert2::assert!(status == StatusCode::OK, "{tag}");
+            assert2::assert!(body == single_string_tag_value(value), "{tag}");
+        }
     }
 
     #[tokio::test]
@@ -3689,81 +3674,17 @@ overrides:
         }];
         let app = app_with_trace(vec![root]);
 
-        let (status, body) = get_json_with_app(
-            app.clone(),
-            "/api/v2/search/tag/cache.key/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-        )
-        .await;
+        for (tag, value) in [
+            ("cache.key", "users"),
+            ("event.cache.key", "users"),
+            ("link.kind", "retry"),
+            ("link.link.kind", "retry"),
+        ] {
+            let (status, body) = filtered_tag_values(&app, tag).await;
 
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "users"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
-
-        let (status, body) = get_json_with_app(
-            app.clone(),
-            "/api/v2/search/tag/event.cache.key/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-        )
-        .await;
-
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "users"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
-
-        let (status, body) = get_json_with_app(
-            app.clone(),
-            "/api/v2/search/tag/link.kind/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-        )
-        .await;
-
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "retry"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
-
-        let (status, body) = get_json_with_app(
-            app,
-            "/api/v2/search/tag/link.link.kind/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
-        )
-        .await;
-
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "tagValues": [{
-                    "type": "string",
-                    "value": "retry"
-                }],
-                "metrics": {
-                    "inspectedBytes": "0"
-                }
-            })
-        );
+            assert2::assert!(status == StatusCode::OK, "{tag}");
+            assert2::assert!(body == single_string_tag_value(value), "{tag}");
+        }
     }
 
     #[tokio::test]
@@ -3981,7 +3902,6 @@ mod parse_logfmt_tags;
 mod parse_logfmt_value;
 mod parse_seconds_to_ns;
 mod parse_step_to_ns;
-mod parse_tag_scope;
 mod q_filter_limit;
 mod querier_request;
 mod query_instant;
@@ -4116,7 +4036,6 @@ pub(crate) use parse_logfmt_tags::parse_logfmt_tags;
 pub(crate) use parse_logfmt_value::parse_logfmt_value;
 pub(crate) use parse_seconds_to_ns::parse_seconds_to_ns;
 use parse_step_to_ns::parse_step_to_ns;
-use parse_tag_scope::parse_tag_scope;
 use q_filter_limit::q_filter_limit;
 use querier_request::QuerierRequest;
 use query_instant::query_instant;
@@ -4150,7 +4069,7 @@ use search_tag_values_json::search_tag_values_json;
 use search_tag_values_v2::search_tag_values_v2;
 use search_tag_values_v2_json::search_tag_values_v2_json;
 use search_tags::search_tags;
-use search_tags_inner::{TagsRequest, search_tags_inner};
+use search_tags_inner::search_tags_inner;
 use search_tags_json::search_tags_json;
 use search_tags_v2::search_tags_v2;
 use search_tags_v2_json::search_tags_v2_json;
@@ -4184,6 +4103,8 @@ use traces_matching_filter::{TagFilter, traces_matching_filter};
 use typed_traceql_value::typed_traceql_value;
 pub(crate) use wants_json::wants_json;
 use wants_protobuf::wants_protobuf;
+
+use super::tag_scope_from_name;
 
 mod tempo_metric_bounds;
 use tempo_metric_bounds::tempo_metric_bounds;

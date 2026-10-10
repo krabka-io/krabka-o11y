@@ -696,6 +696,7 @@ mod status_dim;
 use dim_entry::DimEntry;
 use dim_key::{DimKey, dim_key, prometheus_label_name, span_allowed, span_multiplier};
 pub use dimension_labels::dimension_labels;
+use dimension_labels::red_dimension_pairs;
 use duration_as_f64::duration_as_f64;
 use latency_histogram::LatencyHistogram;
 use ns_per_sec::NS_PER_SEC;

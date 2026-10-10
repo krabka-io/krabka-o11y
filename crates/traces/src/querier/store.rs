@@ -786,6 +786,21 @@ mod tests {
         }
     }
 
+    // The index stats of an ingested block at `object_key` over `[0, 10]`,
+    // with no tags.
+    fn untagged_block_stats(object_key: &str) -> TraceBlockStats {
+        TraceBlockStats {
+            object_key: object_key.into(),
+            min_ts: 0,
+            max_ts: 10,
+            bloom: ShardedTraceBloom::with_tempo_defaults(1),
+            tag_names: BTreeSet::new(),
+            tag_values: BTreeMap::new(),
+            row_count: 0,
+            level: BlockLevel::INGESTED,
+        }
+    }
+
     fn shared(index: TraceIndex) -> SharedTraceIndex {
         Arc::new(ArcSwap::from_pointee(index))
     }
@@ -2116,19 +2131,7 @@ mod tests {
 
         let index = || {
             let mut index = TraceIndex::new();
-            index.add_trace_block(
-                "tenant",
-                TraceBlockStats {
-                    object_key: "blocks/row-groups.parquet".into(),
-                    min_ts: 0,
-                    max_ts: 10,
-                    bloom: ShardedTraceBloom::with_tempo_defaults(1),
-                    tag_names: BTreeSet::new(),
-                    tag_values: BTreeMap::new(),
-                    row_count: 0,
-                    level: BlockLevel::INGESTED,
-                },
-            );
+            index.add_trace_block("tenant", untagged_block_stats("blocks/row-groups.parquet"));
             index
         };
         let capped_blocks = Arc::new(BlockStore::new_with_block_read_max(
@@ -2210,16 +2213,7 @@ mod tests {
         let mut index = TraceIndex::new();
         index.add_trace_block(
             "tenant",
-            TraceBlockStats {
-                object_key: "blocks/promoted-row-groups.parquet".into(),
-                min_ts: 0,
-                max_ts: 10,
-                bloom: ShardedTraceBloom::with_tempo_defaults(1),
-                tag_names: BTreeSet::new(),
-                tag_values: BTreeMap::new(),
-                row_count: 0,
-                level: BlockLevel::INGESTED,
-            },
+            untagged_block_stats("blocks/promoted-row-groups.parquet"),
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
         let options = ScanOptions {
@@ -2298,16 +2292,7 @@ mod tests {
         let mut index = TraceIndex::new();
         index.add_trace_block(
             "tenant-a",
-            TraceBlockStats {
-                object_key: "blocks/tenant-a-row-groups.parquet".into(),
-                min_ts: 0,
-                max_ts: 10,
-                bloom: ShardedTraceBloom::with_tempo_defaults(1),
-                tag_names: BTreeSet::new(),
-                tag_values: BTreeMap::new(),
-                row_count: 0,
-                level: BlockLevel::INGESTED,
-            },
+            untagged_block_stats("blocks/tenant-a-row-groups.parquet"),
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
 

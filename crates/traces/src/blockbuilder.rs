@@ -274,7 +274,7 @@ pub use default_flush_max_records::DEFAULT_FLUSH_MAX_RECORDS;
 pub use flush_accumulator::FlushAccumulator;
 use flush_and_commit::flush_and_commit;
 pub use flush_partition_windows::flush_partition_windows;
-pub use group_by_trace::group_by_trace;
+pub use group_by_trace::{group_by_trace, group_by_trace_in_record_order};
 pub use object_key::object_key;
 pub use partition_window::PartitionWindow;
 pub use prefixed_object_key::prefixed_object_key;

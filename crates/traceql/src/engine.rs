@@ -24,7 +24,10 @@ use crate::{
     error::{Result, TraceqlError},
     ids::{DurationNanos, UnixNano},
     parser::parse,
-    planner::{PlannerContext, nested_projection_matcher::nested_projection_matcher, plan_query},
+    planner::{
+        PlannerContext, RankDirection, RankLimit,
+        nested_projection_matcher::nested_projection_matcher, plan_query, rank_stage_limit,
+    },
     result::{
         AttrValue, ScopedTag, SearchResponse, SpanRef, SpanSet, TagScope, TraceMetricExemplar,
         TraceMetricLabelType, TraceMetricSeries, TraceMetricsResponse, TraceResult, TraceSpans,
@@ -778,6 +781,13 @@ mod tests {
         check!(r.traces[0].span_sets[0].spans[0].span_id == [span_id; 8]);
     }
 
+    // Exactly one trace, trace 9, whose span set matched two spans.
+    fn check_trace_nine_matched_twice(r: &SearchResponse) {
+        check!(r.traces.len() == 1);
+        check!(r.traces[0].trace_id == [9; 16]);
+        check!(r.traces[0].span_sets[0].matched == 2);
+    }
+
     // One trace: root span 1 carries a `cache.miss` event, child span 2 none.
     fn cache_miss_engine() -> TraceqlEngine<InMemorySpanStore> {
         let mut event_span = sp(9, 1, None, "a");
@@ -809,6 +819,16 @@ mod tests {
             TWO_BUCKETS,
         )
         .await
+    }
+
+    // The one-minute `by(event:name)` series that counts one span in the first bucket.
+    fn event_name_series(event_name: &str) -> TraceMetricSeries {
+        TraceMetricSeries {
+            label_types: BTreeMap::default(),
+            labels: vec![("event:name".into(), event_name.into())],
+            points: vec![(0, 1.0), (60_000, 0.0)],
+            exemplars: vec![],
+        }
     }
 
     // In the first minute: two `api` spans, one `db`, three `worker`.
@@ -1154,9 +1174,7 @@ mod tests {
     async fn search_inter_brace_and_matches_different_spans() {
         let e = engine();
         let r = search_all(&e, "{ .svc = \"a\" } && { .svc = \"b\" }").await;
-        check!(r.traces.len() == 1);
-        check!(r.traces[0].trace_id == [9; 16]);
-        check!(r.traces[0].span_sets[0].matched == 2);
+        check_trace_nine_matched_twice(&r);
     }
 
     #[tokio::test]
@@ -1176,9 +1194,7 @@ mod tests {
 
         let r = search_all(&e, "{ event:name = \"cache.miss\" } && { .svc = \"b\" }").await;
 
-        check!(r.traces.len() == 1);
-        check!(r.traces[0].trace_id == [9; 16]);
-        check!(r.traces[0].span_sets[0].matched == 2);
+        check_trace_nine_matched_twice(&r);
         let spans = &r.traces[0].span_sets[0].spans;
         check!(spans.iter().any(|span| span.span_id == [1; 8]));
         check!(spans.iter().any(|span| span.span_id == [2; 8]));
@@ -1288,9 +1304,7 @@ mod tests {
         let e = engine();
         let r = search_all(&e, "{ trace:id = \"09090909090909090909090909090909\" }").await;
 
-        check!(r.traces.len() == 1);
-        check!(r.traces[0].trace_id == [9; 16]);
-        check!(r.traces[0].span_sets[0].matched == 2);
+        check_trace_nine_matched_twice(&r);
     }
 
     #[tokio::test]
@@ -1849,18 +1863,8 @@ mod tests {
         let got = count_by_event_name(s).await;
         assert!(
             got == vec![
-                TraceMetricSeries {
-                    label_types: BTreeMap::default(),
-                    labels: vec![("event:name".into(), "cache.hit".into())],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-                TraceMetricSeries {
-                    label_types: BTreeMap::default(),
-                    labels: vec![("event:name".into(), "cache.miss".into())],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
+                event_name_series("cache.hit"),
+                event_name_series("cache.miss"),
             ]
         );
     }
@@ -1883,14 +1887,7 @@ mod tests {
         let mut s = InMemorySpanStore::new();
         s.push_trace("t", "checkout", "root", vec![span]);
         let got = count_by_event_name(s).await;
-        assert!(
-            got == vec![TraceMetricSeries {
-                label_types: BTreeMap::default(),
-                labels: vec![("event:name".into(), "cache.miss".into())],
-                points: vec![(0, 1.0), (60_000, 0.0)],
-                exemplars: vec![],
-            },]
-        );
+        assert!(got == vec![event_name_series("cache.miss")]);
     }
 
     #[tokio::test]
@@ -2384,6 +2381,19 @@ mod tests {
         );
     }
 
+    // The one-minute `by(span.svc)` histogram series of `api` that counts one span in `bucket`.
+    fn api_bucket_series(bucket: &str) -> TraceMetricSeries {
+        TraceMetricSeries {
+            label_types: BTreeMap::default(),
+            labels: vec![
+                ("__bucket".into(), bucket.into()),
+                ("span.svc".into(), "api".into()),
+            ],
+            points: vec![(0, 1.0), (60_000, 0.0)],
+            exemplars: vec![],
+        }
+    }
+
     #[tokio::test]
     async fn histogram_over_time_emits_non_cumulative_logarithmic_counts() {
         let e = one_trace_engine(vec![
@@ -2416,33 +2426,9 @@ mod tests {
         assert!(
             series
                 == vec![
-                    TraceMetricSeries {
-                        label_types: BTreeMap::default(),
-                        labels: vec![
-                            ("__bucket".into(), "0.001048576".into()),
-                            ("span.svc".into(), "api".into())
-                        ],
-                        points: vec![(0, 1.0), (60_000, 0.0)],
-                        exemplars: vec![]
-                    },
-                    TraceMetricSeries {
-                        label_types: BTreeMap::default(),
-                        labels: vec![
-                            ("__bucket".into(), "17.179869184".into()),
-                            ("span.svc".into(), "api".into())
-                        ],
-                        points: vec![(0, 1.0), (60_000, 0.0)],
-                        exemplars: vec![]
-                    },
-                    TraceMetricSeries {
-                        label_types: BTreeMap::default(),
-                        labels: vec![
-                            ("__bucket".into(), "2.147483648".into()),
-                            ("span.svc".into(), "api".into())
-                        ],
-                        points: vec![(0, 1.0), (60_000, 0.0)],
-                        exemplars: vec![]
-                    },
+                    api_bucket_series("0.001048576"),
+                    api_bucket_series("17.179869184"),
+                    api_bucket_series("2.147483648"),
                 ]
         );
     }
@@ -5316,12 +5302,12 @@ mod i64_attr_values;
 mod i64_value;
 mod is_inert_metric_stage;
 mod kind_enum_name;
-mod kind_enum_value;
 mod meta_type_key;
 mod metric_bucket;
 mod metric_exemplar;
 mod metric_exemplars;
 mod metric_field_column;
+mod metric_field_number;
 mod metric_filter;
 mod metric_filter_passes;
 mod metric_function;
@@ -5341,16 +5327,15 @@ mod optional_fixed_8;
 mod optional_list_column;
 mod push_scoped_attr;
 mod quantile_label;
-mod rank_direction;
 mod rank_limit;
 mod resource_attr_prefix;
 mod row_attr_values;
 mod row_attrs;
 mod sample_exemplar_rows;
 mod search_options;
+mod span_start_column;
 mod spanset_matches_row;
 mod status_enum_name;
-mod status_enum_value;
 mod string_array_value;
 mod string_attr_values;
 mod string_cmp;
@@ -5428,12 +5413,12 @@ use i64_attr_values::i64_attr_values;
 use i64_value::i64_value;
 use is_inert_metric_stage::is_inert_metric_stage;
 pub(crate) use kind_enum_name::kind_enum_name;
-use kind_enum_value::kind_enum_value;
 use meta_type_key::META_TYPE_KEY;
 use metric_bucket::MetricBucket;
 use metric_exemplar::metric_exemplar;
 use metric_exemplars::metric_exemplars;
 use metric_field_column::metric_field_column;
+use metric_field_number::{MetricFieldNumber, metric_field_number};
 use metric_filter::{MetricFilter, metric_filter};
 use metric_filter_passes::metric_filter_passes;
 use metric_function::MetricFunction;
@@ -5453,16 +5438,15 @@ use optional_fixed_8::optional_fixed_8;
 use optional_list_column::optional_list_column;
 use push_scoped_attr::push_scoped_attr;
 use quantile_label::quantile_label;
-use rank_direction::RankDirection;
-use rank_limit::{RankLimit, rank_limit};
+use rank_limit::rank_limit;
 use resource_attr_prefix::RESOURCE_ATTR_PREFIX;
 use row_attr_values::row_attr_values;
 use row_attrs::row_attrs;
 use sample_exemplar_rows::sample_exemplar_rows;
 pub use search_options::SearchOptions;
+use span_start_column::span_start_column;
 use spanset_matches_row::spanset_matches_row;
 pub(crate) use status_enum_name::status_enum_name;
-use status_enum_value::status_enum_value;
 use string_array_value::string_array_value;
 use string_attr_values::string_attr_values;
 use string_cmp::string_cmp;
@@ -5474,6 +5458,8 @@ use unsupported_metric_pipeline::unsupported_metric_pipeline;
 use usize_from_integer_f64::usize_from_integer_f64;
 use validate_compare_field_expr::validate_compare_field_expr;
 use validate_compare_selection::validate_compare_selection;
+
+use crate::span_enum_codes::{kind_enum_value, status_enum_value};
 
 mod field_comparison;
 pub(crate) use field_comparison::field_comparison_column_values;

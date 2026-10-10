@@ -6,18 +6,24 @@ pub(crate) struct RankLimit {
     pub(crate) k: usize,
 }
 
-pub(crate) fn rank_limit(pipeline: &Pipeline) -> Result<RankLimit> {
+/// The direction and size of a `topk` or `bottomk` stage, or `None` for any
+/// other pipeline stage.
+pub(crate) fn rank_stage_limit(pipeline: &Pipeline) -> Option<RankLimit> {
     match pipeline {
-        Pipeline::TopK(k) => Ok(RankLimit {
+        Pipeline::TopK(k) => Some(RankLimit {
             direction: RankDirection::Top,
             k: *k,
         }),
-        Pipeline::BottomK(k) => Ok(RankLimit {
+        Pipeline::BottomK(k) => Some(RankLimit {
             direction: RankDirection::Bottom,
             k: *k,
         }),
-        other => Err(TraceqlError::Unsupported(format!(
-            "expected topk/bottomk, got {other:?}"
-        ))),
+        _ => None,
     }
+}
+
+pub(crate) fn rank_limit(pipeline: &Pipeline) -> Result<RankLimit> {
+    rank_stage_limit(pipeline).ok_or_else(|| {
+        TraceqlError::Unsupported(format!("expected topk/bottomk, got {pipeline:?}"))
+    })
 }

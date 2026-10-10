@@ -6,7 +6,7 @@ use super::Span;
 mod tests {
 
     use super::*;
-    use crate::span::{AttrValue, KeyValue, SpanKind, StatusCode};
+    use crate::span::{SpanKind, test_span::string_attr};
 
     fn span(id: u8, parent: Option<u8>) -> Span {
         Span {
@@ -15,19 +15,9 @@ mod tests {
             parent_span_id: parent.map(|p| [p; 8]),
             name: format!("s{id}"),
             kind: SpanKind::Internal,
-            start_ns: 0,
             duration_ns: 1,
-            status: StatusCode::Unset,
-            status_message: String::new(),
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: String::new(),
-            instrumentation_version: String::new(),
+            resource_attrs: vec![string_attr("service.name", "api")],
+            ..Span::default()
         }
     }
 

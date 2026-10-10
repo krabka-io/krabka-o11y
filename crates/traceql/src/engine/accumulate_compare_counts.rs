@@ -1,8 +1,8 @@
 use super::{
-    AsArray, BTreeMap, COL_SPAN_ID, COL_START, COL_TRACE_ID, CompareCounts, CompareGroup,
-    CompareRegexCache, CompareSpec, CompareTotals, HashMap, HashSet, MetricsRange, RecordBatch,
-    Result, TraceqlError, UnixNano, collect_selection_regexes, compare_group_for_row, compare_row,
-    fixed_8, fixed_16,
+    BTreeMap, COL_SPAN_ID, COL_TRACE_ID, CompareCounts, CompareGroup, CompareRegexCache,
+    CompareSpec, CompareTotals, HashMap, HashSet, MetricsRange, RecordBatch, Result, TraceqlError,
+    UnixNano, collect_selection_regexes, compare_group_for_row, compare_row, fixed_8, fixed_16,
+    span_start_column,
 };
 
 /// Scans the batches and accumulates per-bucket span counts.
@@ -33,10 +33,7 @@ pub(crate) fn accumulate_compare_counts(
     collect_selection_regexes(&compare.selection, &mut regexes);
 
     for batch in batches {
-        let starts = batch
-            .column_by_name(COL_START)
-            .ok_or_else(|| TraceqlError::Exec(format!("missing column {COL_START}")))?
-            .as_primitive::<arrow::datatypes::Int64Type>();
+        let starts = span_start_column(batch)?;
         for row in 0..batch.num_rows() {
             let ts = UnixNano(starts.value(row));
             if ts < range.scan_start || ts > range.scan_end {

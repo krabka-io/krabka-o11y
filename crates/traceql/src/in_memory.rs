@@ -2052,7 +2052,6 @@ mod intrinsic_matches;
 mod intrinsic_tags;
 mod is_event_matcher;
 mod is_link_matcher;
-mod kind_enum_value;
 mod link_tags;
 mod matcher_matches;
 mod matching_events_for_scan;
@@ -2066,7 +2065,6 @@ mod scoped_attribute_tag;
 mod span_attr_matches;
 mod span_matches;
 mod span_ref;
-mod status_enum_value;
 mod stored_trace;
 
 use attr_builder::AttrBuilder;
@@ -2082,7 +2080,6 @@ use intrinsic_matches::intrinsic_matches;
 use intrinsic_tags::INTRINSIC_TAGS;
 use is_event_matcher::is_event_matcher;
 use is_link_matcher::is_link_matcher;
-use kind_enum_value::kind_enum_value;
 use link_tags::LINK_TAGS;
 use matcher_matches::matcher_matches;
 use matching_events_for_scan::matching_events_for_scan;
@@ -2096,9 +2093,11 @@ use scoped_attribute_tag::scoped_attribute_tag;
 use span_attr_matches::span_attr_matches;
 use span_matches::span_matches;
 use span_ref::span_ref;
-use status_enum_value::status_enum_value;
 use stored_trace::StoredTrace;
 
-use crate::engine::bytes_to_hex;
+use crate::{
+    engine::bytes_to_hex,
+    span_enum_codes::{kind_enum_value, status_enum_value},
+};
 
 mod raw_attribute_columns;

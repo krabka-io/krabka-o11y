@@ -809,6 +809,16 @@ fn metric_points_total_sums_tempo_samples() {
 }
 
 /// Percent-encode a `TraceQL` query so it survives the Grafana proxy query string.
+/// Every span of a trace-by-id JSON body, across its resource and scope spans.
+fn trace_json_spans(trace_by_id: &JsonValue) -> impl Iterator<Item = &JsonValue> {
+    trace_by_id["trace"]["resourceSpans"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|rs| rs["scopeSpans"].as_array().into_iter().flatten())
+        .flat_map(|ss| ss["spans"].as_array().into_iter().flatten())
+}
+
 fn enc(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
@@ -933,22 +943,11 @@ async fn grafana_e2e_full_surface() -> TestResult {
         trace_a["trace"]["resourceSpans"].as_array().map(Vec::len) == Some(1),
         "expected one resourceSpan (root service): {trace_a}"
     );
-    let trace_a_spans = trace_a["trace"]["resourceSpans"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|rs| rs["scopeSpans"].as_array().into_iter().flatten())
-        .flat_map(|ss| ss["spans"].as_array().into_iter().flatten())
-        .count();
+    let trace_a_spans = trace_json_spans(&trace_a).count();
     assert2::assert!(trace_a_spans == 4);
     let root_b64 = b64(&ROOT_SPAN_ID);
-    let has_root = trace_a["trace"]["resourceSpans"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|rs| rs["scopeSpans"].as_array().into_iter().flatten())
-        .flat_map(|ss| ss["spans"].as_array().into_iter().flatten())
-        .any(|span| span["spanId"].as_str() == Some(root_b64.as_str()));
+    let has_root =
+        trace_json_spans(&trace_a).any(|span| span["spanId"].as_str() == Some(root_b64.as_str()));
     assert2::assert!(has_root);
 
     // E5 — trace-by-id, Trace B: PARTIAL, truncated to MAX_TRACE_SPANS.
@@ -959,13 +958,7 @@ async fn grafana_e2e_full_surface() -> TestResult {
     .await?;
     assert2::assert!(trace_b["status"].as_str() == Some("PARTIAL"));
     assert2::assert!(trace_b["message"].as_str() == Some("trace truncated after 4 spans"));
-    let returned_spans: usize = trace_b["trace"]["resourceSpans"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|rs| rs["scopeSpans"].as_array().into_iter().flatten())
-        .flat_map(|ss| ss["spans"].as_array().into_iter().flatten())
-        .count();
+    let returned_spans: usize = trace_json_spans(&trace_b).count();
     assert2::assert!(returned_spans == MAX_TRACE_SPANS);
 
     // E4b — trace-by-id PROTOBUF, the format Grafana's Tempo *backend* uses for

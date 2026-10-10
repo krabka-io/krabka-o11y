@@ -1,10 +1,4 @@
-use super::{Pipeline, RankDirection, Result, TraceqlError};
-
-#[derive(Clone, Copy)]
-pub(crate) struct RankLimit {
-    pub(crate) direction: RankDirection,
-    pub(crate) k: usize,
-}
+use super::{Pipeline, RankLimit, Result, TraceqlError, rank_stage_limit};
 
 pub(crate) fn rank_limit(pipeline: &Pipeline) -> Result<RankLimit> {
     if matches!(pipeline, Pipeline::TopK(0) | Pipeline::BottomK(0)) {
@@ -12,17 +6,9 @@ pub(crate) fn rank_limit(pipeline: &Pipeline) -> Result<RankLimit> {
             "metrics rank limit must be positive".into(),
         ));
     }
-    match pipeline {
-        Pipeline::TopK(k) => Ok(RankLimit {
-            direction: RankDirection::Top,
-            k: *k,
-        }),
-        Pipeline::BottomK(k) => Ok(RankLimit {
-            direction: RankDirection::Bottom,
-            k: *k,
-        }),
-        other => Err(TraceqlError::Unsupported(format!(
-            "traceql metrics: expected topk/bottomk, got {other:?}"
-        ))),
-    }
+    rank_stage_limit(pipeline).ok_or_else(|| {
+        TraceqlError::Unsupported(format!(
+            "traceql metrics: expected topk/bottomk, got {pipeline:?}"
+        ))
+    })
 }

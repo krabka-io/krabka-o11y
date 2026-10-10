@@ -212,10 +212,16 @@ fn decode_consumer_records_groups_by_partition_and_tracks_offsets() {
     );
 }
 
-#[tokio::test]
-async fn build_blocks_writes_span_block_and_updates_trace_index() {
+/// An empty in-memory object store, and a block writer over it.
+fn in_memory_block_writer() -> (Arc<dyn ObjectStore>, BlockWriter) {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
+    (store, writer)
+}
+
+#[tokio::test]
+async fn build_blocks_writes_span_block_and_updates_trace_index() {
+    let (store, writer) = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let records = vec![
         CHILD_SPAN.record("tenant-a"),
@@ -271,8 +277,7 @@ async fn build_blocks_writes_span_block_and_updates_trace_index() {
 
 #[tokio::test]
 async fn replaying_same_offset_window_is_idempotent_in_trace_index() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
+    let (store, writer) = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let records = vec![CHILD_SPAN.record("tenant-a"), ROOT_SPAN.record("tenant-a")];
 
@@ -304,8 +309,7 @@ async fn replaying_same_offset_window_is_idempotent_in_trace_index() {
 
 #[tokio::test]
 async fn replaying_saved_partition_window_after_restart_is_idempotent() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
+    let (store, writer) = in_memory_block_writer();
     let config = krabka_traces::blockbuilder::BlockBuilderConfig {
         object_key_prefix: String::new(),
         index_key: "index/traces.json".into(),
@@ -359,8 +363,7 @@ async fn configured_index_snapshot_retention_is_applied() {
 
     use futures::StreamExt as _;
 
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
+    let (store, writer) = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let mut config = block_builder_config();
     config.index_snapshot_retain = krabka_blockstore::IndexSnapshotRetain::new(2).unwrap();
@@ -388,8 +391,7 @@ async fn multiple_polls_below_threshold_flush_one_block_per_partition() {
     use krabka_traces::blockbuilder::FlushAccumulator;
     use tokio::time::Instant;
 
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
+    let (store, writer) = in_memory_block_writer();
     let config = minute_flush_block_builder_config();
 
     // Three polls, each well under the flush threshold, all for the same trace
@@ -534,8 +536,7 @@ async fn shutdown_drain_flushes_remaining_buffer_without_losing_spans() {
     use krabka_traces::blockbuilder::FlushAccumulator;
     use tokio::time::Instant;
 
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
+    let (store, writer) = in_memory_block_writer();
     let config = minute_flush_block_builder_config();
 
     // Two polls buffered, never reaching the flush threshold (mirrors a pending
@@ -643,8 +644,7 @@ async fn merged_buffer_offset_range_is_stable_for_idempotent_keying() {
 
 #[tokio::test]
 async fn build_blocks_with_prefix_scopes_block_keys() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
+    let (store, writer) = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let records = vec![ROOT_SPAN.record("tenant-a")];
 
@@ -678,8 +678,7 @@ async fn build_blocks_with_prefix_scopes_block_keys() {
 
 #[tokio::test]
 async fn build_blocks_promotes_configured_attribute_columns() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
+    let (store, writer) = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let records = vec![ROOT_SPAN.record("tenant-a")];
 
@@ -720,8 +719,7 @@ async fn build_blocks_promotes_configured_attribute_columns() {
 /// key type.
 #[tokio::test]
 async fn a_written_block_is_ordered_by_trace_id_then_start() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
+    let (store, writer) = in_memory_block_writer();
     let mut index = TraceIndex::new();
     // Interleaved: neither the trace ids nor the starts arrive in order.
     let records = vec![
@@ -963,14 +961,45 @@ async fn run_two_span_poll(poll: TwoSpanPoll<'_>) -> (Result<(), TracesError>, A
         object_store,
         events,
     } = poll;
+    run_scripted(ScriptedRun {
+        writer,
+        index,
+        object_store,
+        events,
+        batches: vec![vec![
+            consumer_record(3, 10, &ROOT_SPAN.record("tenant-a")),
+            consumer_record(3, 11, &CHILD_SPAN.record("tenant-a")),
+        ]],
+    })
+    .await
+}
+
+/// What `run_scripted` runs the block builder with.
+struct ScriptedRun<'a> {
+    writer: BlockWriter,
+    index: Arc<Mutex<TraceIndex>>,
+    object_store: Arc<dyn ObjectStore>,
+    /// Where the consumer records its commits.
+    events: &'a EventLog,
+    /// The polls the consumer answers, in order, before it shuts the run down.
+    batches: Vec<Vec<ConsumerRecord>>,
+}
+
+// Run the block builder over the scripted polls until the consumer runs out
+// and shuts it down. Returns the run's result and the count of its offset
+// commits.
+async fn run_scripted(script: ScriptedRun<'_>) -> (Result<(), TracesError>, Arc<AtomicUsize>) {
+    let ScriptedRun {
+        writer,
+        index,
+        object_store,
+        events,
+        batches,
+    } = script;
     let shutdown = CancellationToken::new();
     let commit_calls = Arc::new(AtomicUsize::new(0));
-    let batch = vec![
-        consumer_record(3, 10, &ROOT_SPAN.record("tenant-a")),
-        consumer_record(3, 11, &CHILD_SPAN.record("tenant-a")),
-    ];
     let consumer = ScriptedConsumer {
-        batches: vec![batch].into(),
+        batches: batches.into(),
         shutdown: shutdown.clone(),
         commit_calls: Arc::clone(&commit_calls),
         events: Arc::clone(events),
@@ -986,6 +1015,23 @@ async fn run_two_span_poll(poll: TwoSpanPoll<'_>) -> (Result<(), TracesError>, A
     )
     .await;
     (result, commit_calls)
+}
+
+// Run the block builder, with an empty index, over one poll of the `tenant-a`
+// root span. Returns the run's result and the count of its offset commits.
+async fn run_one_root_span_poll(
+    writer: BlockWriter,
+    object_store: Arc<dyn ObjectStore>,
+    events: &EventLog,
+) -> (Result<(), TracesError>, Arc<AtomicUsize>) {
+    run_scripted(ScriptedRun {
+        writer,
+        index: Arc::new(Mutex::new(TraceIndex::new())),
+        object_store,
+        events,
+        batches: vec![vec![consumer_record(3, 10, &ROOT_SPAN.record("tenant-a"))]],
+    })
+    .await
 }
 
 #[tokio::test]
@@ -1048,28 +1094,8 @@ async fn run_does_not_commit_when_the_flush_write_fails() {
     let store = Arc::new(RecordingObjectStore::failing(Arc::clone(&events)));
     let object_store: Arc<dyn ObjectStore> = store.clone();
     let writer = BlockWriter::new(object_store.clone());
-    let index = Arc::new(Mutex::new(TraceIndex::new()));
-    let shutdown = CancellationToken::new();
-    let commit_calls = Arc::new(AtomicUsize::new(0));
 
-    let batch = vec![consumer_record(3, 10, &ROOT_SPAN.record("tenant-a"))];
-    let consumer = ScriptedConsumer {
-        batches: vec![batch].into(),
-        shutdown: shutdown.clone(),
-        commit_calls: Arc::clone(&commit_calls),
-        events: Arc::clone(&events),
-    };
-
-    let result = run(
-        consumer,
-        writer,
-        Arc::clone(&index),
-        object_store,
-        block_builder_config(),
-        ServiceMetrics::new(),
-        shutdown,
-    )
-    .await;
+    let (result, commit_calls) = run_one_root_span_poll(writer, object_store, &events).await;
 
     // The drain flush failed, so `run` propagates the error...
     assert2::assert!(result.is_err());
@@ -1162,27 +1188,8 @@ async fn run_reports_a_permanent_object_store_failure_without_spending_the_budge
     let object_store: Arc<dyn ObjectStore> = store.clone();
     let writer =
         BlockWriter::with_retry_policy(object_store.clone(), ObjectStoreRetryPolicy::immediate(4));
-    let index = Arc::new(Mutex::new(TraceIndex::new()));
-    let shutdown = CancellationToken::new();
-    let commit_calls = Arc::new(AtomicUsize::new(0));
 
-    let consumer = ScriptedConsumer {
-        batches: vec![vec![consumer_record(3, 10, &ROOT_SPAN.record("tenant-a"))]].into(),
-        shutdown: shutdown.clone(),
-        commit_calls: Arc::clone(&commit_calls),
-        events: Arc::clone(&events),
-    };
-
-    let result = run(
-        consumer,
-        writer,
-        Arc::clone(&index),
-        object_store,
-        block_builder_config(),
-        ServiceMetrics::new(),
-        shutdown,
-    )
-    .await;
+    let (result, commit_calls) = run_one_root_span_poll(writer, object_store, &events).await;
 
     assert2::assert!(result.is_err());
     check!(store.put_attempts() == 1);

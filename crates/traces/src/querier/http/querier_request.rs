@@ -40,11 +40,16 @@ impl<S: SpanStore> QuerierRequest<S> {
     /// The tenant and the `TraceQL` metrics query this request names, or the
     /// response that rejects it.
     pub(crate) fn metrics_request(&self) -> Result<(TenantId, String), Box<Response>> {
-        metrics_request(TenantRequest {
+        metrics_request(self.tenant_request())
+    }
+
+    /// What this request carries that names its tenant.
+    pub(crate) fn tenant_request(&self) -> TenantRequest<'_> {
+        TenantRequest {
             headers: &self.headers,
             principal: &self.principal,
             policy: &self.state.cfg.tenant_policy,
             uri: &self.uri,
-        })
+        }
     }
 }

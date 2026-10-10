@@ -1,25 +1,15 @@
 // An in-memory span store built from WAL span records, the way the querier
 // reads them, for suites that query what a distributor accepted.
 
-use std::collections::BTreeMap;
-
 use krabka_traceql::{
     AttrValue as TraceqlAttrValue, EventRef, InMemorySpanStore, InputSpan, LinkRef,
 };
-use krabka_traces::{AttrValue, Span, SpanRecord};
+use krabka_traces::{AttrValue, Span, SpanRecord, group_by_trace_in_record_order};
 use krabka_units::{Time, convert::TimeExt as _};
 
 pub fn span_store_from_records(records: &[SpanRecord]) -> InMemorySpanStore {
-    let mut grouped: BTreeMap<(String, [u8; 16]), Vec<Span>> = BTreeMap::new();
-    for record in records {
-        grouped
-            .entry((record.tenant.clone(), record.span.trace_id))
-            .or_default()
-            .push(record.span.clone());
-    }
-
     let mut store = InMemorySpanStore::new();
-    for ((tenant, _), spans) in grouped {
+    for ((tenant, _), spans) in group_by_trace_in_record_order(records) {
         let root = spans
             .iter()
             .find(|span| span.parent_span_id.is_none())

@@ -746,7 +746,6 @@ mod ns_floor_seconds;
 mod remote_live_source;
 mod result;
 mod scoped_tags_from_json;
-mod tag_scope_from_name;
 mod time_from_nanos_u64;
 mod trace_spans_from_otlp;
 mod typed_values_from_json;
@@ -765,9 +764,9 @@ use ns_floor_seconds::ns_floor_seconds;
 pub use remote_live_source::RemoteLiveSource;
 pub use result::Result;
 use scoped_tags_from_json::scoped_tags_from_json;
-use tag_scope_from_name::tag_scope_from_name;
 use time_from_nanos_u64::time_from_nanos_u64;
 use trace_spans_from_otlp::trace_spans_from_otlp;
 use typed_values_from_json::typed_values_from_json;
 
+use super::tag_scope_from_name;
 use crate::querier::http::tag_scope_name;

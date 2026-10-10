@@ -13,24 +13,10 @@ pub(crate) async fn timed_tag_values<S>(
 where
     S: SpanStore + 'static,
 {
-    let QuerierRequest {
-        state,
-        principal,
-        headers,
-        uri,
-    } = request;
     let start = std::time::Instant::now();
-    let resp = search_tag_values_inner(
-        &state,
-        TagValuesRequest {
-            principal: &principal,
-            headers,
-            tag,
-            uri,
-            render,
-        },
-    )
-    .await;
-    state.record_query("tag_values", resp.status(), start);
+    let resp = search_tag_values_inner(&request, TagValuesRequest { tag, render }).await;
+    request
+        .state
+        .record_query("tag_values", resp.status(), start);
     resp
 }

@@ -3,7 +3,6 @@
 use krabka_traces::metricsgen::{
     SpanKind as MetricsSpanKind, SpanRecord as MetricsSpanRecord, StatusCode as MetricsStatusCode,
 };
-use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 /// One `tenant-a` span of trace `0x11..`, named `op`, starting at 0.
 pub struct MetricsSpan {
@@ -24,14 +23,10 @@ impl MetricsSpan {
             parent_span_id: self.parent,
             name: "op".into(),
             kind: self.kind,
-            start_ns: 0,
             duration_ns: self.duration_ns,
             status: self.status,
-            status_message: String::new(),
             service_name: self.service.into(),
-            attributes: vec![],
-            resource_attributes: vec![],
-            size: ByteSize::from_bytes(0),
+            ..MetricsSpanRecord::default()
         }
     }
 }

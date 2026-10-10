@@ -150,6 +150,12 @@ mod tests {
             out.extend_from_slice(payload);
         }
 
+        /// Reads one span reference from the start of `bytes`.
+        fn read_ref(bytes: &[u8]) -> super::JaegerRef {
+            let mut input = super::BinaryInput { bytes, pos: 0 };
+            super::read_binary_ref(&mut input).expect("reads")
+        }
+
         let mut bytes = Vec::new();
         field(&mut bytes, 8, 1, &7_i32.to_be_bytes());
         field(&mut bytes, 10, 2, &11_i64.to_be_bytes());
@@ -157,11 +163,7 @@ mod tests {
         field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
         bytes.push(0);
 
-        let mut input = super::BinaryInput {
-            bytes: &bytes,
-            pos: 0,
-        };
-        let reference = super::read_binary_ref(&mut input).expect("reads");
+        let reference = read_ref(&bytes);
         check!(reference.ref_type == 7);
         check!(reference.trace_id_low == 11, "field two is the low half");
         check!(
@@ -178,11 +180,7 @@ mod tests {
         field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
         field(&mut bytes, 10, 2, &11_i64.to_be_bytes());
         bytes.push(0);
-        let mut input = super::BinaryInput {
-            bytes: &bytes,
-            pos: 0,
-        };
-        let reference = super::read_binary_ref(&mut input).expect("reads");
+        let reference = read_ref(&bytes);
         check!(reference.span_id == 33);
         check!(reference.trace_id_low == 11);
         check!(
@@ -195,22 +193,14 @@ mod tests {
         field(&mut bytes, 10, 9, &99_i64.to_be_bytes());
         field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
         bytes.push(0);
-        let mut input = super::BinaryInput {
-            bytes: &bytes,
-            pos: 0,
-        };
-        let reference = super::read_binary_ref(&mut input).expect("reads");
+        let reference = read_ref(&bytes);
         check!(
             reference.span_id == 33,
             "the field after the unknown one still lands"
         );
 
         // An empty struct is all defaults rather than an error.
-        let mut input = super::BinaryInput {
-            bytes: &[0],
-            pos: 0,
-        };
-        let reference = super::read_binary_ref(&mut input).expect("reads");
+        let reference = read_ref(&[0]);
         check!(reference.ref_type == 0);
         check!(reference.span_id == 0);
     }
@@ -937,6 +927,7 @@ mod t_set;
 mod t_stop;
 mod t_struct;
 mod take_bytes;
+mod thrift_cursor;
 mod trace_id;
 mod utf8_string;
 
@@ -997,5 +988,6 @@ use t_set::T_SET;
 use t_stop::T_STOP;
 use t_struct::T_STRUCT;
 use take_bytes::take_bytes;
+use thrift_cursor::{descend_skip_depth, next_byte, wire_length};
 use trace_id::trace_id;
 use utf8_string::utf8_string;

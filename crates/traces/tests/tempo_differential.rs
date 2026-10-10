@@ -746,12 +746,10 @@ async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> 
         ),
     ] {
         let query = format!("{selector} | {pipeline} with({hints})");
-        let encoded = url_encoded(&query);
-        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
         let OracleAndCandidate {
             upstream: upstream_result,
             actual: actual_result,
-        } = get_json_from_both(targets, &suffix).await;
+        } = query_range_from_both(targets, &query).await;
         let upstream = json_or_error(&upstream_result);
         let actual = json_or_error(&actual_result);
         let result = upstream_result.and_then(|upstream| {
@@ -918,12 +916,10 @@ async fn compare_live_sampled_pipelines(
         } else {
             sampled_pipeline_expectations(anchor, traces)?
         };
-        let encoded = url_encoded(expression);
-        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
         let OracleAndCandidate {
             upstream: upstream_result,
             actual: actual_result,
-        } = get_json_from_both(targets, &suffix).await;
+        } = query_range_from_both(targets, expression).await;
         let upstream = json_or_error(&upstream_result);
         let actual = json_or_error(&actual_result);
         let result = upstream_result.and_then(|upstream| {
@@ -2857,6 +2853,15 @@ fn traceql_rejection_comparator_rejects_success_and_unrelated_failures() {
 struct OracleAndCandidate {
     upstream: TestResult<JsonValue>,
     actual: TestResult<JsonValue>,
+}
+
+/// GETs the 30-second-step `query_range` of `query`, over the targets' query
+/// window, from both the oracle and the candidate.
+async fn query_range_from_both(targets: QueryTargets<'_>, query: &str) -> OracleAndCandidate {
+    let encoded = url_encoded(query);
+    let range = targets.query_range;
+    let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
+    get_json_from_both(targets, &suffix).await
 }
 
 /// GETs `suffix` from the oracle without a tenant, and from the candidate as

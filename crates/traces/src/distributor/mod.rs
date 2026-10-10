@@ -589,14 +589,34 @@ mod tests {
             .unwrap()
     }
 
+    // Push one two-span request, with no tenant header, under `limits`.
+    async fn post_two_spans_with_limits(
+        limits: crate::limits::Limits,
+    ) -> (Response, Arc<RecordingSink>) {
+        let (state, sink) = test_state_with_limits(limits);
+        let resp = post_otlp(router(state), None, otlp_body_with_spans(2)).await;
+        (resp, sink)
+    }
+
+    // The response body is Tempo's error JSON, and its message mentions `needle`.
+    async fn check_error_body_mentions(resp: Response, needle: &str) {
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        check!(json["status"] == "error");
+        check!(
+            json["error"]
+                .as_str()
+                .is_some_and(|message| message.contains(needle))
+        );
+    }
+
     #[tokio::test]
     async fn over_span_limit_is_400() {
         let limits = crate::limits::Limits {
             max_spans_per_request: 1,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_limits(limits);
-        let resp = post_otlp(router(state), None, otlp_body_with_spans(2)).await;
+        let (resp, sink) = post_two_spans_with_limits(limits).await;
         assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
         assert2::assert!(sink.count() == 0);
     }
@@ -610,8 +630,7 @@ mod tests {
             max_spans_per_request: 2,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_limits(limits);
-        let resp = post_otlp(router(state), None, otlp_body_with_spans(2)).await;
+        let (resp, sink) = post_two_spans_with_limits(limits).await;
 
         check!(resp.status() == StatusCode::OK);
         check!(sink.count() == 2);
@@ -623,19 +642,11 @@ mod tests {
             max_spans_per_trace: 1,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_limits(limits);
 
-        let resp = post_otlp(router(state), None, otlp_body_with_spans(2)).await;
+        let (resp, sink) = post_two_spans_with_limits(limits).await;
 
         assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
-        let body = resp.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        check!(json["status"] == "error");
-        check!(
-            json["error"]
-                .as_str()
-                .is_some_and(|message| message.contains("max spans per trace"))
-        );
+        check_error_body_mentions(resp, "max spans per trace").await;
         check!(sink.count() == 0);
     }
 
@@ -687,14 +698,7 @@ overrides:
 
         assert2::assert!(first.status() == StatusCode::OK);
         assert2::assert!(second.status() == StatusCode::TOO_MANY_REQUESTS);
-        let body = second.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        check!(json["status"] == "error");
-        check!(
-            json["error"]
-                .as_str()
-                .is_some_and(|message| message.contains("ingestion rate"))
-        );
+        check_error_body_mentions(second, "ingestion rate").await;
         check!(other_tenant.status() == StatusCode::OK);
         assert2::assert!(sink.count() == 2);
         assert2::assert!(sink.tenant(0) == "tenant-a".to_string());

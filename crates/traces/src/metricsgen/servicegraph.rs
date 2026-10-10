@@ -323,7 +323,7 @@ mod tests {
         );
     }
     use assert2::check;
-    use krabka_units::{ByteSize, convert::ByteSizeExt as _, secs};
+    use krabka_units::secs;
 
     use super::*;
     use crate::metricsgen::{
@@ -365,14 +365,10 @@ mod tests {
                 parent_span_id: self.parent_span_id,
                 name: "op".into(),
                 kind: self.kind,
-                start_ns: 0,
                 duration_ns: self.duration_ns,
                 status: self.status,
-                status_message: String::new(),
                 service_name: self.service.into(),
-                attributes: vec![],
-                resource_attributes: vec![],
-                size: ByteSize::from_bytes(0),
+                ..SpanRecord::default()
             }
         }
     }
@@ -630,8 +626,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn unpaired_half_edge_expires_after_ttl() {
+    // A store with a ten-second edge TTL that holds one `frontend` client span
+    // whose server half never arrives.
+    fn store_with_unpaired_frontend_client() -> EdgeStore {
         let cfg = MetricsGenConfig {
             edge_ttl: secs(10),
             ..MetricsGenConfig::default()
@@ -644,6 +641,12 @@ mod tests {
         }
         .record();
         check!(store.record_span(&client, 0) == RecordOutcome::Recorded);
+        store
+    }
+
+    #[test]
+    fn unpaired_half_edge_expires_after_ttl() {
+        let mut store = store_with_unpaired_frontend_client();
 
         check!(store.expire(5_000_000_000) == 0);
         check!(store.expire(10_000_000_000) == 1);
@@ -656,18 +659,7 @@ mod tests {
 
     #[test]
     fn unpaired_client_span_keeps_service_graph_labels() {
-        let cfg = MetricsGenConfig {
-            edge_ttl: secs(10),
-            ..MetricsGenConfig::default()
-        };
-        let mut store = EdgeStore::new(&cfg);
-        let client = EdgeSpan {
-            service: "frontend",
-            span_id: [0xA; 8],
-            ..EdgeSpan::default()
-        }
-        .record();
-        assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
+        let mut store = store_with_unpaired_frontend_client();
         assert2::assert!(store.expire(10_000_000_000) == 1);
 
         let out = store.drain(1_000);

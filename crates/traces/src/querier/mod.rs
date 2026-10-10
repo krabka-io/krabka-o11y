@@ -3,8 +3,11 @@
 pub mod http;
 pub mod live;
 pub mod store;
+mod tag_scope_from_name;
 #[cfg(test)]
 pub(crate) mod test_rows;
+
+use tag_scope_from_name::tag_scope_from_name;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuerierConfig {

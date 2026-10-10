@@ -127,13 +127,7 @@ mod tests {
 
     #[test]
     fn span_nested_set_parent_intrinsic_resolves() {
-        let q = parse("{ span:nestedSetParent > 0 }").unwrap();
-        let SpansetExpr::Selector(fe) = &q.root else {
-            panic!()
-        };
-        let FieldExpr::Comparison { lhs, .. } = fe.as_ref() else {
-            panic!()
-        };
+        let lhs = selector_lhs("{ span:nestedSetParent > 0 }");
         assert!(lhs.scope == Scope::Intrinsic(Intrinsic::NestedSetParent));
     }
 
@@ -157,13 +151,7 @@ mod tests {
             ("{ rootServiceName != \"\" }", Intrinsic::TraceRootService),
             ("{ traceDuration > 1s }", Intrinsic::TraceDuration),
         ] {
-            let q = parse(query).unwrap();
-            let SpansetExpr::Selector(fe) = &q.root else {
-                panic!("{query}: selector")
-            };
-            let FieldExpr::Comparison { lhs, .. } = fe.as_ref() else {
-                panic!("{query}: comparison")
-            };
+            let lhs = selector_lhs(query);
             assert!(
                 lhs.scope == Scope::Intrinsic(want),
                 "{query}: got {:?}",
@@ -192,13 +180,7 @@ mod tests {
         // Only the exact reserved set is promoted; a near-miss like `durations`
         // (not `duration`) is still a bare attribute.
         for key in ["durations", "kindof", "foo"] {
-            let q = parse(&format!("{{ {key} = 1 }}")).unwrap();
-            let SpansetExpr::Selector(fe) = &q.root else {
-                panic!("{key}")
-            };
-            let FieldExpr::Comparison { lhs, .. } = fe.as_ref() else {
-                panic!("{key}")
-            };
+            let lhs = selector_lhs(&format!("{{ {key} = 1 }}"));
             assert!(lhs.scope == Scope::Both, "{key}: {:?}", lhs.scope);
             assert!(lhs.key == key);
         }
@@ -207,13 +189,7 @@ mod tests {
     #[test]
     fn leading_dot_keeps_intrinsic_name_as_attribute() {
         // `.duration` / `.name` are explicit attribute lookups, never the intrinsic.
-        let q = parse("{ .duration = 5 }").unwrap();
-        let SpansetExpr::Selector(fe) = &q.root else {
-            panic!()
-        };
-        let FieldExpr::Comparison { lhs, .. } = fe.as_ref() else {
-            panic!()
-        };
+        let lhs = selector_lhs("{ .duration = 5 }");
         assert!(lhs.scope == Scope::Both);
         assert!(lhs.key == "duration");
     }
@@ -614,6 +590,17 @@ mod tests {
         }
     }
 
+    fn selector_lhs(query: &str) -> Field {
+        let q = parse(query).unwrap();
+        let SpansetExpr::Selector(fe) = &q.root else {
+            panic!("selector for {query}")
+        };
+        let FieldExpr::Comparison { lhs, .. } = fe.as_ref() else {
+            panic!("comparison for {query}")
+        };
+        lhs.clone()
+    }
+
     fn selector_rhs(query: &str) -> Value {
         let q = parse(query).unwrap();
         let SpansetExpr::Selector(fe) = &q.root else {
@@ -930,13 +917,7 @@ mod tests {
             ("{ instrumentation.foo = 1 }", Scope::Instrumentation),
             ("{ parent.foo = 1 }", Scope::Parent),
         ] {
-            let q = parse(query).unwrap();
-            let SpansetExpr::Selector(fe) = &q.root else {
-                panic!("selector for {query}")
-            };
-            let FieldExpr::Comparison { lhs, .. } = fe.as_ref() else {
-                panic!("comparison for {query}")
-            };
+            let lhs = selector_lhs(query);
             assert!(lhs.scope == scope, "scope mismatch for {query}");
         }
     }
@@ -976,13 +957,7 @@ mod tests {
 
     #[test]
     fn bare_ident_is_both_scope() {
-        let q = parse("{ foo = 1 }").unwrap();
-        let SpansetExpr::Selector(fe) = &q.root else {
-            panic!("selector")
-        };
-        let FieldExpr::Comparison { lhs, .. } = fe.as_ref() else {
-            panic!("comparison")
-        };
+        let lhs = selector_lhs("{ foo = 1 }");
         assert!(lhs.scope == Scope::Both);
         assert!(lhs.key == "foo");
     }
@@ -1093,13 +1068,7 @@ mod tests {
             ("{ span:nestedSetRight > 0 }", Intrinsic::NestedSetRight),
             ("{ span:parentId = \"x\" }", Intrinsic::ParentId),
         ] {
-            let q = parse(query).unwrap();
-            let SpansetExpr::Selector(fe) = &q.root else {
-                panic!("selector for {query}")
-            };
-            let FieldExpr::Comparison { lhs, .. } = fe.as_ref() else {
-                panic!("comparison for {query}")
-            };
+            let lhs = selector_lhs(query);
             assert!(
                 lhs.scope == Scope::Intrinsic(intrinsic),
                 "intrinsic mismatch for {query}"

@@ -24,7 +24,7 @@ use axum::{
     Router,
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
-    routing::get,
+    routing::{MethodRouter, get},
 };
 use http_body_util::BodyExt as _;
 use krabka_observability::RoleReadiness;
@@ -59,6 +59,14 @@ async fn get_as_tenant_a(router: Router, uri: &str) -> axum::response::Response 
         )
         .await
         .unwrap()
+}
+
+// GETs `uri` as `tenant-a`, requires a success status, and returns the JSON
+// body.
+async fn successful_json_as_tenant_a(router: Router, uri: &str) -> Value {
+    let response = get_as_tenant_a(router, uri).await;
+    assert2::assert!(response.status().is_success());
+    json_body(response).await
 }
 
 async fn json_body(response: axum::response::Response) -> Value {
@@ -149,6 +157,13 @@ fn span(span_id: &str) -> Value {
     })
 }
 
+// A frontend over the one-block catalog, whose upstream querier answers
+// `/api/search` with `upstream_search`.
+async fn search_frontend(upstream_search: MethodRouter, cfg: FrontendConfig) -> Router {
+    let upstream = spawn(Router::new().route("/api/search", upstream_search)).await;
+    build_router(&upstream, cfg, single_block_catalog())
+}
+
 async fn spawn(app: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -183,14 +198,11 @@ async fn by_id_forwards_tenant_and_window_to_querier() {
     let upstream = spawn(app).await;
     let router = build_router(&upstream, FrontendConfig::default(), single_block_catalog());
 
-    let response = get_as_tenant_a(
+    let json = successful_json_as_tenant_a(
         router,
         "/api/v2/traces/0123456789abcdef0123456789abcdef?start=1&end=2",
     )
     .await;
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
     // The v2 envelope wraps the querier's trace body.
     assert2::assert!(json["status"] == "COMPLETE");
     let echoed = json["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0].clone();
@@ -233,20 +245,13 @@ async fn record_by_id(State(()): State<()>, headers: HeaderMap, uri: Uri) -> axu
 
 #[tokio::test]
 async fn merges_duplicate_trace_results_across_shards() {
-    let app = Router::new()
-        .route("/api/search", get(sharded_search_response))
-        .with_state(());
-    let upstream = spawn(app).await;
-    let router = build_router(&upstream, two_shard_cfg(), single_block_catalog());
+    let router = search_frontend(get(sharded_search_response), two_shard_cfg()).await;
 
-    let response = get_as_tenant_a(
+    let json = successful_json_as_tenant_a(
         router,
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=1&end=3",
     )
     .await;
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
 
     // Same traceID from both shards reunions into one trace; the two distinct
     // spans (one per shard) merge into one spanSet with matched accumulated.
@@ -275,20 +280,13 @@ async fn merges_duplicate_trace_results_across_shards() {
 #[tokio::test]
 async fn deduplicates_spans_across_shards() {
     // Both shards return the same single span; the merge collapses to one.
-    let app = Router::new()
-        .route("/api/search", get(overlapping_search_response))
-        .with_state(());
-    let upstream = spawn(app).await;
-    let router = build_router(&upstream, two_shard_cfg(), single_block_catalog());
+    let router = search_frontend(get(overlapping_search_response), two_shard_cfg()).await;
 
-    let response = get_as_tenant_a(
+    let json = successful_json_as_tenant_a(
         router,
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=1&end=3",
     )
     .await;
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
     let span_sets = json["traces"][0]["spanSets"].as_array().unwrap();
     let spans = span_sets[0]["spans"].as_array().unwrap();
 
@@ -311,20 +309,13 @@ async fn deduplicates_spans_across_shards() {
 async fn caps_merged_traces_to_limit_newest_first() {
     // Each shard returns three distinct traces; unmerged that is six traces with
     // interleaved start times. `limit` applies AFTER merge, newest-first.
-    let app = Router::new()
-        .route("/api/search", get(many_trace_search_response))
-        .with_state(());
-    let upstream = spawn(app).await;
-    let router = build_router(&upstream, two_shard_cfg(), single_block_catalog());
+    let router = search_frontend(get(many_trace_search_response), two_shard_cfg()).await;
 
-    let response = get_as_tenant_a(
+    let json = successful_json_as_tenant_a(
         router,
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=1&end=3&limit=2",
     )
     .await;
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
     let traces = json["traces"].as_array().unwrap();
     check!(
         traces
@@ -339,24 +330,17 @@ async fn caps_merged_traces_to_limit_newest_first() {
 async fn defaults_merged_trace_limit_to_twenty() {
     // Single block, no live tier (frontier in the future): one shard returning 25
     // distinct traces, more than Tempo's default 20.
-    let app = Router::new()
-        .route("/api/search", get(overflow_trace_search_response))
-        .with_state(());
-    let upstream = spawn(app).await;
     let cfg = FrontendConfig {
         hot_frontier_ns: i64::MAX,
         ..FrontendConfig::default()
     };
-    let router = build_router(&upstream, cfg, single_block_catalog());
+    let router = search_frontend(get(overflow_trace_search_response), cfg).await;
 
-    let response = get_as_tenant_a(
+    let json = successful_json_as_tenant_a(
         router,
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=1&end=3",
     )
     .await;
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
     assert2::assert!(json["traces"].as_array().unwrap().len() == 20);
 }
 
@@ -377,20 +361,13 @@ async fn caps_span_sets_per_trace_to_spss() {
     // Each shard returns the same trace with two distinct spans. The merge
     // reunions all four spans into the first spanSet; spss then caps the spans
     // kept in that spanSet (preserving `matched`).
-    let app = Router::new()
-        .route("/api/search", get(span_pair_search_response))
-        .with_state(());
-    let upstream = spawn(app).await;
-    let router = build_router(&upstream, ordered_two_shard_cfg(), single_block_catalog());
+    let router = search_frontend(get(span_pair_search_response), ordered_two_shard_cfg()).await;
 
-    let response = get_as_tenant_a(
+    let json = successful_json_as_tenant_a(
         router,
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=1&end=3&spss=2",
     )
     .await;
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
     let span_sets = json["traces"][0]["spanSets"].as_array().unwrap();
     let spans = span_sets[0]["spans"].as_array().unwrap();
     // spss=2 ⇒ first two spans kept (live shard's pair), matched is the true sum.
@@ -411,20 +388,13 @@ async fn caps_span_sets_per_trace_to_spss() {
 #[tokio::test]
 async fn defaults_span_sets_per_trace_to_three() {
     // No `spss` ⇒ Tempo's default of 3: of the four reunioned spans, three kept.
-    let app = Router::new()
-        .route("/api/search", get(span_pair_search_response))
-        .with_state(());
-    let upstream = spawn(app).await;
-    let router = build_router(&upstream, ordered_two_shard_cfg(), single_block_catalog());
+    let router = search_frontend(get(span_pair_search_response), ordered_two_shard_cfg()).await;
 
-    let response = get_as_tenant_a(
+    let json = successful_json_as_tenant_a(
         router,
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=1&end=3",
     )
     .await;
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
     let spans = json["traces"][0]["spanSets"][0]["spans"]
         .as_array()
         .unwrap();
@@ -501,14 +471,11 @@ async fn forwards_backend_row_group_job_to_querier() {
     let catalog = TraceIndexCatalog::new(BTreeMap::from([("tenant-a".to_string(), vec![block])]));
     let router = build_router(&upstream, cfg, catalog);
 
-    let response = get_as_tenant_a(
+    let json = successful_json_as_tenant_a(
         router,
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=0&end=10",
     )
     .await;
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
     let received_query = json["traces"][0]["rootTraceName"].as_str().unwrap();
     // The 100-byte block at a 100-byte budget stays one whole-block job:
     // [rg0, rg1) => rowGroupStart=0, rowGroupEnd=2.
@@ -582,7 +549,7 @@ async fn uses_tenant_specific_backend_row_group_jobs() {
 
 #[tokio::test]
 async fn metrics_query_range_is_a_single_unsharded_job() {
-    let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let seen: SeenQueries = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()
         .route("/api/metrics/query_range", get(record_metrics))
         .with_state(seen.clone());
@@ -594,21 +561,11 @@ async fn metrics_query_range_is_a_single_unsharded_job() {
     // the full hot+cold union.
     let router = build_router(&upstream, two_shard_cfg(), single_block_catalog());
 
-    let response = router
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(
-                    "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=1&end=3&step=1",
-                )
-                .header("x-scope-orgid", "tenant-a")
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
+    let json = successful_json_as_tenant_a(
+        router,
+        "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=1&end=3&step=1",
+    )
+    .await;
     // Returned verbatim — no cross-shard summing.
     assert2::assert!(
         json["series"][0]["samples"]
@@ -631,48 +588,28 @@ async fn metrics_query_limits_exemplars() {
     let upstream = spawn(app).await;
     let router = build_router(&upstream, two_shard_cfg(), single_block_catalog());
 
-    let response = router
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(
-                    "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=1&end=3&step=1&exemplars=1",
-                )
-                .header("x-scope-orgid", "tenant-a")
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
+    let json = successful_json_as_tenant_a(
+        router,
+        "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=1&end=3&step=1&exemplars=1",
+    )
+    .await;
     assert2::assert!(json["series"][0]["exemplars"].as_array().unwrap().len() == 1);
 }
 
 #[tokio::test]
 async fn metrics_instant_query_is_a_single_unsharded_job() {
-    let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let seen: SeenQueries = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()
         .route("/api/metrics/query", get(record_instant_metrics))
         .with_state(seen.clone());
     let upstream = spawn(app).await;
     let router = build_router(&upstream, two_shard_cfg(), single_block_catalog());
 
-    let response = router
-        .oneshot(
-            axum::http::Request::builder()
-                .uri(
-                    "/api/metrics/query?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=1&end=3",
-                )
-                .header("x-scope-orgid", "tenant-a")
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status().is_success());
-    let json = json_body(response).await;
+    let json = successful_json_as_tenant_a(
+        router,
+        "/api/metrics/query?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=1&end=3",
+    )
+    .await;
     assert2::assert!(
         json == json!({"series": [{
         "labels": [{"key": "svc", "value": {"stringValue": "api"}}], "value": 2.0
@@ -1083,6 +1020,9 @@ async fn sharded_metrics_response(State(()): State<()>, uri: Uri) -> axum::Json<
     }))
 }
 
+/// The query strings an upstream querier has received, in arrival order.
+type SeenQueries = Arc<Mutex<Vec<String>>>;
+
 /// Remembers the query string of one request in `seen`.
 fn record_query(seen: &Mutex<Vec<String>>, uri: &Uri) {
     seen.lock()
@@ -1090,10 +1030,7 @@ fn record_query(seen: &Mutex<Vec<String>>, uri: &Uri) {
         .push(uri.query().unwrap_or_default().to_string());
 }
 
-async fn record_metrics(
-    State(seen): State<Arc<Mutex<Vec<String>>>>,
-    uri: Uri,
-) -> axum::Json<Value> {
+async fn record_metrics(State(seen): State<SeenQueries>, uri: Uri) -> axum::Json<Value> {
     record_query(&seen, &uri);
     axum::Json(json!({
         "series": [{
@@ -1108,10 +1045,7 @@ async fn record_metrics(
     }))
 }
 
-async fn record_instant_metrics(
-    State(seen): State<Arc<Mutex<Vec<String>>>>,
-    uri: Uri,
-) -> axum::Json<Value> {
+async fn record_instant_metrics(State(seen): State<SeenQueries>, uri: Uri) -> axum::Json<Value> {
     record_query(&seen, &uri);
     axum::Json(json!({"series": [{
         "labels": [{"key": "svc", "value": {"stringValue": "api"}}], "value": 2.0

@@ -17,6 +17,7 @@ mod parser;
 mod planner;
 mod result;
 mod span_columns;
+mod span_enum_codes;
 mod span_matching;
 mod store;
 pub mod testkit;

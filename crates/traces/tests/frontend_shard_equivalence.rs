@@ -28,18 +28,13 @@ fn trace_with_spans(tid: &str, start: u64, span_ids: &[&str]) -> TraceJson {
             attributes: vec![],
         })
         .collect();
-    let matched = u32::try_from(spans.len()).unwrap();
     TraceJson {
         trace_id: tid.to_string(),
         root_service_name: "svc".to_string(),
         root_trace_name: "GET /".to_string(),
         start_time_unix_nano: start.to_string(),
         duration: millis(1),
-        span_sets: vec![SpanSetJson {
-            spans,
-            matched,
-            attributes: Vec::new(),
-        }],
+        span_sets: vec![SpanSetJson::of_matched_spans(spans)],
     }
 }
 

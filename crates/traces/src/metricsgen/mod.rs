@@ -24,7 +24,7 @@ pub mod contract {
     };
 
     /// The flattened WAL projection read by metrics-generator processors.
-    #[derive(Clone, Debug, PartialEq)]
+    #[derive(Clone, Debug, Default, PartialEq)]
     pub struct SpanRecord {
         pub tenant: String,
         pub trace_id: [u8; 16],
