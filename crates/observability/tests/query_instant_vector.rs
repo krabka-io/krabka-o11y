@@ -8,9 +8,36 @@ use axum::{
     http::{Request, StatusCode},
 };
 use krabka_observability::loki_router;
-use serde_json::json;
-use support::{LokiSuccess, Tenant, expected_loki_stats, fixture, json_body, text_body};
+use serde_json::{Value, json};
+use support::{
+    LokiSuccess, Tenant, assert_json_ok, expected_loki_stats, fixture, json_body, text_body,
+};
 use tower::ServiceExt as _;
+
+// The answer `tenant-a` gets from the fixture for `uri`: a success of
+// `result_type` that carries `data_result`.
+struct TenantAnswer<'a> {
+    uri: &'a str,
+    result_type: &'static str,
+    data_result: Value,
+}
+
+impl TenantAnswer<'_> {
+    async fn assert_served(self) {
+        let app = loki_router(fixture());
+        let response = Tenant("tenant-a").get(&app, self.uri).await;
+        assert_json_ok(
+            response,
+            &LokiSuccess {
+                result_type: self.result_type,
+                data_result: self.data_result,
+                stats: expected_loki_stats(),
+            }
+            .json(),
+        )
+        .await;
+    }
+}
 
 #[tokio::test]
 async fn query_endpoint_matches_lokis_one_digit_time_forwarding() {
@@ -31,113 +58,61 @@ async fn query_endpoint_matches_lokis_one_digit_time_forwarding() {
 
 #[tokio::test]
 async fn query_endpoint_accepts_grafana_loki_health_vector_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query?query=vector%281%29%2Bvector%281%29&time=4000000000000000000",
-        )
-        .await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "2"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%281%29%2Bvector%281%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "2"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_function_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query?query=vector%281.5%29&time=4000000000000000000",
-        )
-        .await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "1.5"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%281.5%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "1.5"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_scalar_arithmetic_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query?query=1%2B1&time=4000000000000000000",
-        )
-        .await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "scalar",
-                data_result: json!([4_000_000_000_i64, "2"]),
-                stats: expected_loki_stats(),
-            }
-            .json()
-    );
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=1%2B1&time=4000000000000000000",
+        result_type: "scalar",
+        data_result: json!([4_000_000_000_i64, "2"]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_scientific_vector_function_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query?query=vector%282.5e-1%29&time=4000000000000000000",
-        )
-        .await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "0.25"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%282.5e-1%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "0.25"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
@@ -189,408 +164,265 @@ async fn query_endpoint_rejects_unspaced_vector_set_operators_like_loki() {
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_arithmetic_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=vector%285%29-vector%282%29%2Avector%281.5%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "2"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%285%29-vector%282%29%2Avector%281.5%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "2"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_power_and_modulo_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=vector%282%29%5Evector%283%29%2Bvector%285%29%25vector%282%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "9"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%282%29%5Evector%283%29%2Bvector%285%29%25vector%282%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "9"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_parenthesized_vector_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=%28vector%281%29%2Bvector%282%29%29%2Avector%283%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "9"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=%28vector%281%29%2Bvector%282%29%29%2Avector%283%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "9"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_literal_arithmetic_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query?query=vector%284%29%2B2&time=4000000000000000000",
-        )
-        .await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "6"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%284%29%2B2&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "6"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_and_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query?query=vector%282%29%20and%20vector%281%29&time=4000000000000000000",
-        )
-        .await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "2"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%282%29%20and%20vector%281%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "2"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_or_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query?query=vector%282%29%20or%20vector%281%29&time=4000000000000000000",
-        )
-        .await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "2"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%282%29%20or%20vector%281%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "2"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_unless_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=vector%282%29%20unless%20vector%281%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([]),
-                stats: expected_loki_stats(),
-            }
-            .json()
-    );
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%282%29%20unless%20vector%281%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_arithmetic_on_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=vector%286%29%20%2F%20on%28%29%20vector%283%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "2"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%286%29%20%2F%20on%28%29%20vector%283%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "2"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_bool_comparison_ignoring_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=vector%281%29%20%3E%20bool%20ignoring%28app%29%20vector%282%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "0"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%281%29%20%3E%20bool%20ignoring%28app%29%20vector%282%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "0"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_group_left_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=vector%286%29%20%2F%20on%28app%29%20group_left%28status%29%20vector%283%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "2"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%286%29%20%2F%20on%28app%29%20group_left%28status%29%20vector%283%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "2"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_group_right_modifier() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=vector%282%29%20%3E%20bool%20ignoring%28app%29%20group_right%28zone%29%20vector%281%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "1"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%282%29%20%3E%20bool%20ignoring%28app%29%20group_right%28zone%29%20vector%281%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "1"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_label_replace_vector_function() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {
-                            "service": "api-"
-                        },
-                        "value": [4_000_000_000i64, "1"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {
+                    "service": "api-"
+                },
+                "value": [4_000_000_000i64, "1"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_sort_label_replace_vector_function() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=sort%28label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {
-                            "service": "api-"
-                        },
-                        "value": [4_000_000_000i64, "1"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=sort%28label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {
+                    "service": "api-"
+                },
+                "value": [4_000_000_000i64, "1"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_sort_desc_label_replace_vector_function() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=sort_desc%28label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {
-                            "service": "api-"
-                        },
-                        "value": [4_000_000_000i64, "1"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=sort_desc%28label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {
+                    "service": "api-"
+                },
+                "value": [4_000_000_000i64, "1"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_label_replace_vector_arithmetic_operand() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%20%2B%20on%28%29%20vector%282%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "3"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%20%2B%20on%28%29%20vector%282%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "3"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_orders_label_replace_vector_set_or_like_loki() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%20or%20vector%282%29&time=4000000000000000000").await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([
-                    {
-                        "metric": {},
-                        "value": [4_000_000_000i64, "2"]
-                    },
-                    {
-                        "metric": {
-                            "service": "api-"
-                        },
-                        "value": [4_000_000_000i64, "1"]
-                    }
-                ]),
-                stats: expected_loki_stats(),
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=label_replace%28vector%281%29%2C%20%22service%22%2C%20%22api-%241%22%2C%20%22missing%22%2C%20%22%28.%2A%29%22%29%20or%20vector%282%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([
+            {
+                "metric": {},
+                "value": [4_000_000_000i64, "2"]
+            },
+            {
+                "metric": {
+                    "service": "api-"
+                },
+                "value": [4_000_000_000i64, "1"]
             }
-            .json()
-    );
+        ]),
+    }
+    .assert_served()
+    .await;
 }
 
 #[tokio::test]
@@ -641,24 +473,11 @@ async fn query_endpoint_rejects_unsupported_scalar_vector_function_like_loki() {
 
 #[tokio::test]
 async fn query_endpoint_accepts_vector_filter_comparison_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query?query=vector%281%29%3Evector%282%29&time=4000000000000000000",
-        )
-        .await;
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == LokiSuccess {
-                result_type: "vector",
-                data_result: json!([]),
-                stats: expected_loki_stats(),
-            }
-            .json()
-    );
+    TenantAnswer {
+        uri: "/loki/api/v1/query?query=vector%281%29%3Evector%282%29&time=4000000000000000000",
+        result_type: "vector",
+        data_result: json!([]),
+    }
+    .assert_served()
+    .await;
 }

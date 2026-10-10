@@ -54,6 +54,32 @@ fn check_parquet_schema<'a>(
         .unwrap()
 }
 
+// The answer `tenant-a` gets from the fixture for `uri`: a success of
+// `result_type` that carries `data_result` and `stats`.
+struct FixtureAnswer<'a> {
+    uri: &'a str,
+    result_type: &'static str,
+    data_result: Value,
+    stats: Value,
+}
+
+impl FixtureAnswer<'_> {
+    async fn assert_served(self) {
+        let app = loki_router(fixture());
+        let response = Tenant("tenant-a").get(&app, self.uri).await;
+        assert_json_ok(
+            response,
+            &LokiSuccess {
+                result_type: self.result_type,
+                data_result: self.data_result,
+                stats: self.stats,
+            }
+            .json(),
+        )
+        .await;
+    }
+}
+
 #[tokio::test]
 async fn deprecated_api_prom_query_range_endpoint_returns_loki_streams_json() {
     let state = fixture();
@@ -106,61 +132,47 @@ async fn deprecated_api_prom_query_range_endpoint_accepts_form_encoded_post_body
 
 #[tokio::test]
 async fn query_range_endpoint_applies_metric_binary_arithmetic() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_03, "2"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_03, "2"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_applies_bool_metric_binary_comparison() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%3C%20bool%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%3C%20bool%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_03, "0"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_03, "0"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
@@ -215,121 +227,93 @@ async fn query_range_endpoint_rejects_approx_topk_metric_query() {
 
 #[tokio::test]
 async fn query_range_endpoint_applies_bool_metric_query_scalar_comparison() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%3E%20bool%200&start=0.000000000&end=0.000000030",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%3E%20bool%200&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_03, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_03, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_applies_bool_scalar_metric_query_comparison() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=0%20%3E%20bool%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=0%20%3E%20bool%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_03, "0"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_03, "0"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_applies_metric_query_scalar_arithmetic() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202&start=0.000000000&end=0.000000030",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_03, "2"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_03, "2"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_applies_scalar_metric_query_arithmetic() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=2%20%2A%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=2%20%2A%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_03, "2"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_03, "2"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
@@ -680,20 +664,13 @@ async fn query_range_endpoint_returns_loki_error_for_negative_interval() {
 
 #[tokio::test]
 async fn query_range_endpoint_applies_since_when_start_is_absent() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&end=0.000000030&since=5ns&direction=forward").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "streams",
-            data_result: json!([]),
-            stats: expected_loki_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&end=0.000000030&since=5ns&direction=forward",
+        result_type: "streams",
+        data_result: json!([]),
+        stats: expected_loki_stats(),
+    }
+    .assert_served()
     .await;
 }
 
@@ -735,145 +712,105 @@ async fn query_range_endpoint_returns_loki_error_for_invalid_since() {
 
 #[tokio::test]
 async fn query_range_endpoint_defaults_to_recent_range() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22",
-        )
-        .await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "streams",
-            data_result: json!([]),
-            stats: expected_loki_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22",
+        result_type: "streams",
+        data_result: json!([]),
+        stats: expected_loki_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_returns_count_over_time_matrix_json() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_03, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_03, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_absent_over_time_uses_selector_labels_only() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=absent_over_time%28%7Bapp%3D%22missing%22%2Cenv%3D%22prod%22%7D%5B1ns%5D%29&start=0.000000001&end=0.000000002&step=1ns").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "missing",
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_001, "1"],
-                        [0.000_000_002, "1"]
-                    ]
-                }
-            ]),
-            stats: expected_loki_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=absent_over_time%28%7Bapp%3D%22missing%22%2Cenv%3D%22prod%22%7D%5B1ns%5D%29&start=0.000000001&end=0.000000002&step=1ns",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "missing",
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_001, "1"],
+                    [0.000_000_002, "1"]
+                ]
+            }
+        ]),
+        stats: expected_loki_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_applies_negative_count_over_time_offset() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B1ns%5D%20offset%20-9ns%29&start=0.000000010&end=0.000000010&step=1ns",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B1ns%5D%20offset%20-9ns%29&start=0.000000010&end=0.000000010&step=1ns").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_01, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_01, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_range_selector_before_pipeline() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%20%7C%3D%20%22error%22%29&start=0.000000000&end=0.000000030",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%20%7C%3D%20%22error%22%29&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_03, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_03, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
@@ -896,174 +833,127 @@ async fn query_range_endpoint_rejects_signed_vector_function_literals_like_loki(
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_scalar_expression_as_matrix() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a")
-        .get(
-            &app,
-            "/loki/api/v1/query_range?query=1%2B2&start=0.000000000&end=0.000000020&step=10ns",
-        )
-        .await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {},
-                    "values": [
-                        [0, "3"],
-                        [0.000_000_01, "3"],
-                        [0.000_000_02, "3"]
-                    ]
-                }
-            ]),
-            stats: expected_loki_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=1%2B2&start=0.000000000&end=0.000000020&step=10ns",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {},
+                "values": [
+                    [0, "3"],
+                    [0.000_000_01, "3"],
+                    [0.000_000_02, "3"]
+                ]
+            }
+        ]),
+        stats: expected_loki_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_vector_arithmetic_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=vector%286%29%2Fvector%284%29&start=0.000000000&end=0.000000020&step=10ns").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {},
-                    "values": [
-                        [0, "1.5"],
-                        [0.000_000_01, "1.5"],
-                        [0.000_000_02, "1.5"]
-                    ]
-                }
-            ]),
-            stats: expected_loki_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=vector%286%29%2Fvector%284%29&start=0.000000000&end=0.000000020&step=10ns",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {},
+                "values": [
+                    [0, "1.5"],
+                    [0.000_000_01, "1.5"],
+                    [0.000_000_02, "1.5"]
+                ]
+            }
+        ]),
+        stats: expected_loki_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_vector_modulo_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=vector%285%29%25vector%282%29&start=0.000000000&end=0.000000020&step=10ns").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {},
-                    "values": [
-                        [0, "1"],
-                        [0.000_000_01, "1"],
-                        [0.000_000_02, "1"]
-                    ]
-                }
-            ]),
-            stats: expected_loki_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=vector%285%29%25vector%282%29&start=0.000000000&end=0.000000020&step=10ns",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {},
+                "values": [
+                    [0, "1"],
+                    [0.000_000_01, "1"],
+                    [0.000_000_02, "1"]
+                ]
+            }
+        ]),
+        stats: expected_loki_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_parenthesized_vector_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=vector%288%29%2F%28vector%281%29%2Bvector%283%29%29&start=0.000000000&end=0.000000020&step=10ns").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {},
-                    "values": [
-                        [0, "2"],
-                        [0.000_000_01, "2"],
-                        [0.000_000_02, "2"]
-                    ]
-                }
-            ]),
-            stats: expected_loki_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=vector%288%29%2F%28vector%281%29%2Bvector%283%29%29&start=0.000000000&end=0.000000020&step=10ns",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {},
+                "values": [
+                    [0, "2"],
+                    [0.000_000_01, "2"],
+                    [0.000_000_02, "2"]
+                ]
+            }
+        ]),
+        stats: expected_loki_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_literal_vector_arithmetic_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=2%2Avector%283%29&start=0.000000000&end=0.000000020&step=10ns").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {},
-                    "values": [
-                        [0, "6"],
-                        [0.000_000_01, "6"],
-                        [0.000_000_02, "6"]
-                    ]
-                }
-            ]),
-            stats: expected_loki_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=2%2Avector%283%29&start=0.000000000&end=0.000000020&step=10ns",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {},
+                "values": [
+                    [0, "6"],
+                    [0.000_000_01, "6"],
+                    [0.000_000_02, "6"]
+                ]
+            }
+        ]),
+        stats: expected_loki_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_vector_bool_comparison_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=vector%281%29%3Ebool%20vector%282%29&start=0.000000000&end=0.000000020&step=10ns").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {},
-                    "values": [
-                        [0, "0"],
-                        [0.000_000_01, "0"],
-                        [0.000_000_02, "0"]
-                    ]
-                }
-            ]),
-            stats: expected_loki_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=vector%281%29%3Ebool%20vector%282%29&start=0.000000000&end=0.000000020&step=10ns",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {},
+                "values": [
+                    [0, "0"],
+                    [0.000_000_01, "0"],
+                    [0.000_000_02, "0"]
+                ]
+            }
+        ]),
+        stats: expected_loki_stats(),
+    }
+    .assert_served()
     .await;
 }
 
@@ -1171,214 +1061,165 @@ async fn query_range_endpoint_includes_loki_stats_object() {
 
 #[tokio::test]
 async fn query_range_endpoint_treats_integer_step_as_seconds() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=10000000020&step=10",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=10000000020&step=10").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [10, "1"],
-                        [20, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [10, "1"],
+                    [20, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_float_seconds_step_for_count_over_time_matrix_json() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=0.000000030&step=0.000000010",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=0.000000030&step=0.000000010").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_02, "1"],
-                        [0.000_000_03, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_02, "1"],
+                    [0.000_000_03, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_duration_step_for_count_over_time_matrix_json() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=10000000020&step=10s",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=10000000020&step=10s").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [10, "1"],
-                        [20, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [10, "1"],
+                    [20, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_compound_duration_step_for_grafana() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=90000000020&step=1m30s",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=90000000020&step=1m30s").await;
+                    "env": "prod"
+                },
+                "values": [
 
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(0).expected_stats(),
-        }
-        .json(),
-    )
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(0).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_millisecond_duration_step_for_grafana() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=1.000000020&step=1000ms",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&start=0.000000020&end=1.000000020&step=1000ms").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [1, "1"],
-                        [2, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [1, "1"],
+                    [2, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_compound_duration_range_selector() {
-    let state = fixture();
-    let app = loki_router(state);
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B1m30s%5D%29&start=0.000000020&end=0.000000030&step=10ns",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "app": "api",
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B1m30s%5D%29&start=0.000000020&end=0.000000030&step=10ns").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_02, "1"],
-                        [0.000_000_03, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
-        }
-        .json(),
-    )
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_02, "1"],
+                    [0.000_000_03, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(2).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_trailing_vector_grouping() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=sum%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%29%20by%20%28env%29&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "matrix",
-            data_result: json!([
-                {
-                    "metric": {
-                        "env": "prod"
-                    },
-                    "values": [
-                        [0.000_000_03, "1"]
-                    ]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+    FixtureAnswer {
+        uri: "/loki/api/v1/query_range?query=sum%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%29%20by%20%28env%29&start=0.000000000&end=0.000000030",
+        result_type: "matrix",
+        data_result: json!([
+            {
+                "metric": {
+                    "env": "prod"
+                },
+                "values": [
+                    [0.000_000_03, "1"]
+                ]
+            }
+        ]),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .assert_served()
     .await;
 }
 

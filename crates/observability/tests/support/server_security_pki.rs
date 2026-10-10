@@ -3,12 +3,30 @@
 //!
 //! Both reach this file with `#[path]`, so it names only external crates.
 
-use std::sync::Mutex;
+use std::{fmt::Write as _, sync::Mutex};
 
+use krabka_blockstore::TenantId;
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
 };
+use sha2::{Digest, Sha256};
+
+/// The lowercase hex SHA-256 digest of `token`, as a token digest flag takes
+/// it.
+pub fn sha256_hex(token: &str) -> String {
+    Sha256::digest(token.as_bytes())
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+            hex
+        })
+}
+
+/// The tenant `id`, which the test asserts is valid.
+pub fn tenant(id: &str) -> TenantId {
+    TenantId::new(id).expect("a valid tenant id")
+}
 
 /// A certificate and its private key, as PEM.
 pub struct Pem {

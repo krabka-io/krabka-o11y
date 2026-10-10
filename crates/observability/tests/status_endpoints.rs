@@ -7,7 +7,7 @@
 mod support;
 
 use assert2::{assert, check};
-use axum::{body::to_bytes, http::StatusCode};
+use axum::{Router, body::to_bytes, http::StatusCode};
 use krabka_observability::{
     InMemoryWalSink, Role, ServiceConfig, ServiceDependencies, build_service_router,
     distributor_router, loki_router,
@@ -17,12 +17,8 @@ use support::{
     Method, fixture, json_body, minimal_service_config, send_bare, test_service_config, text_body,
 };
 
-#[tokio::test]
-async fn status_ready_endpoint_returns_ok_for_loki_router() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = send_bare(&app, Method::GET, "/ready").await;
+async fn assert_ready(app: &Router) {
+    let response = send_bare(app, Method::GET, "/ready").await;
 
     assert!(response.status() == StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -30,15 +26,13 @@ async fn status_ready_endpoint_returns_ok_for_loki_router() {
 }
 
 #[tokio::test]
+async fn status_ready_endpoint_returns_ok_for_loki_router() {
+    assert_ready(&loki_router(fixture())).await;
+}
+
+#[tokio::test]
 async fn status_ready_endpoint_returns_ok_for_distributor_router() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink);
-
-    let response = send_bare(&app, Method::GET, "/ready").await;
-
-    assert!(response.status() == StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    assert!(body.as_ref() == b"ready\n");
+    assert_ready(&distributor_router(InMemoryWalSink::default())).await;
 }
 
 #[tokio::test]

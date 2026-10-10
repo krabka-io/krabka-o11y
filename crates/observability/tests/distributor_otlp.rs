@@ -13,7 +13,7 @@ use krabka_observability::{
 };
 use opentelemetry_proto::tonic::{
     collector::logs::v1::logs_service_server::LogsService, common::v1::any_value,
-    resource::v1::Resource,
+    logs::v1::LogRecord, resource::v1::Resource,
 };
 use prost::Message as _;
 use serde_json::json;
@@ -75,6 +75,35 @@ async fn post_json(
     .await
 }
 
+// Posts the JSON export `payload`, and returns the one WAL record it wrote.
+async fn posted_json_log_record(payload: &serde_json::Value) -> WalLogRecord {
+    let sink = InMemoryWalSink::default();
+    let app = distributor_router(sink.clone());
+
+    let response = post_json(&app, "/v1/logs", payload).await;
+
+    assert!(response.status() == StatusCode::NO_CONTENT);
+    let mut records = sink.records();
+    assert!(records.len() == 1);
+    records.remove(0)
+}
+
+// Posts the protobuf export with its one log record edited by `edit_log`,
+// and returns the one WAL record it wrote.
+async fn posted_proto_log_record(edit_log: impl FnOnce(&mut LogRecord)) -> WalLogRecord {
+    let sink = InMemoryWalSink::default();
+    let app = distributor_router(sink.clone());
+    let mut request = proto_logs_request();
+    edit_log(&mut request.resource_logs[0].scope_logs[0].log_records[0]);
+
+    let response = post_protobuf(&app, "/v1/logs", request.encode_to_vec()).await;
+
+    assert!(response.status() == StatusCode::NO_CONTENT);
+    let mut records = sink.records();
+    assert!(records.len() == 1);
+    records.remove(0)
+}
+
 async fn post_protobuf(
     app: &axum::Router,
     uri: &str,
@@ -95,7 +124,7 @@ async fn otlp_logs_endpoint_writes_tenant_scoped_wal_records() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = send(&app, tenant_a_post("/v1/logs").header("content-type", "application/json").body(Body::from(json!({
+    let response = post_json(&app, "/v1/logs", &json!({
                         "resourceLogs": [
                             {
                                 "resource": {
@@ -125,8 +154,7 @@ async fn otlp_logs_endpoint_writes_tenant_scoped_wal_records() {
                                 ]
                             }
                         ]
-                    })
-                    .to_string())).unwrap()).await;
+                    })).await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
@@ -204,7 +232,7 @@ async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metad
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = send(&app, tenant_a_post("/v1/logs").header("content-type", "application/json").body(Body::from(json!({
+    let response = post_json(&app, "/v1/logs", &json!({
                         "resourceLogs": [
                             {
                                 "resource": {
@@ -234,8 +262,7 @@ async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metad
                                 ]
                             }
                         ]
-                    })
-                    .to_string())).unwrap()).await;
+                    })).await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
@@ -263,12 +290,10 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_resource_attributes_wit
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = send(
+    let response = post_json(
         &app,
-        tenant_a_post("/v1/logs")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                json!({
+        "/v1/logs",
+        &json!({
                     "resourceLogs": [
                         {
                             "resource": {
@@ -289,10 +314,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_resource_attributes_wit
                             ]
                         }
                     ]
-                })
-                .to_string(),
-            ))
-            .unwrap(),
+        }),
     )
     .await;
 
@@ -329,82 +351,59 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_log_attributes_without_
 
 #[tokio::test]
 async fn otlp_logs_endpoint_discovers_service_name_label_from_resource_attributes() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = send(&app, tenant_a_post("/v1/logs").header("content-type", "application/json").body(Body::from(json!({
-                        "resourceLogs": [
+    let record = posted_json_log_record(&json!({
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "app", "value": {"stringValue": "checkout"}},
+                        {"key": "deployment.environment", "value": {"stringValue": "prod"}}
+                    ]
+                },
+                "scopeLogs": [
+                    {
+                        "logRecords": [
                             {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "app", "value": {"stringValue": "checkout"}},
-                                        {"key": "deployment.environment", "value": {"stringValue": "prod"}}
-                                    ]
-                                },
-                                "scopeLogs": [
-                                    {
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "19",
-                                                "body": {"stringValue": "api error"}
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "timeUnixNano": "19",
+                                "body": {"stringValue": "api error"}
                             }
                         ]
-                    })
-                    .to_string())).unwrap()).await;
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
-    assert!(records.len() == 1);
+                    }
+                ]
+            }
+        ]
+    }))
+    .await;
     assert!(
-        records[0].labels
+        record.labels
             == labels([
                 ("deployment_environment", "prod"),
                 ("service_name", "unknown_service"),
             ])
     );
-    check!(records[0].structured_metadata.get("app") == Some(&"checkout".to_string()));
+    check!(record.structured_metadata.get("app") == Some(&"checkout".to_string()));
 }
 
 #[tokio::test]
 async fn otlp_logs_endpoint_uses_unknown_service_when_no_service_name_candidate_exists() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = send(
-        &app,
-        tenant_a_post("/v1/logs")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                json!({
-                    "resourceLogs": [
-                        {
-                            "scopeLogs": [
-                                {
-                                    "logRecords": [
-                                        {
-                                            "timeUnixNano": "19",
-                                            "body": {"stringValue": "api error"}
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                    ]
-                })
-                .to_string(),
-            ))
-            .unwrap(),
-    )
+    let record = posted_json_log_record(&json!({
+        "resourceLogs": [
+            {
+                "scopeLogs": [
+                    {
+                        "logRecords": [
+                            {
+                                "timeUnixNano": "19",
+                                "body": {"stringValue": "api error"}
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }))
     .await;
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
-    assert!(records.len() == 1);
-    assert!(records[0].labels == labels([("service_name", "unknown_service")]));
+    assert!(record.labels == labels([("service_name", "unknown_service")]));
 }
 
 #[tokio::test]
@@ -473,24 +472,17 @@ async fn otlp_logs_endpoint_accepts_protobuf_payloads() {
 
 #[tokio::test]
 async fn otlp_logs_endpoint_maps_proto_trace_and_span_ids_to_structured_metadata() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let mut request = proto_logs_request();
-    let log = &mut request.resource_logs[0].scope_logs[0].log_records[0];
-    log.attributes = vec![proto_key_value("status", any_value::Value::IntValue(500))];
-    log.trace_id = vec![
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-        0x10,
-    ];
-    log.span_id = vec![0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18];
-
-    let response = post_protobuf(&app, "/v1/logs", request.encode_to_vec()).await;
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
-    assert!(records.len() == 1);
+    let record = posted_proto_log_record(|log| {
+        log.attributes = vec![proto_key_value("status", any_value::Value::IntValue(500))];
+        log.trace_id = vec![
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10,
+        ];
+        log.span_id = vec![0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18];
+    })
+    .await;
     assert!(
-        records[0].structured_metadata
+        record.structured_metadata
             == checkout_record(labels([
                 ("scope_name", "api"),
                 ("scope_version", "1.2.3"),
@@ -504,24 +496,17 @@ async fn otlp_logs_endpoint_maps_proto_trace_and_span_ids_to_structured_metadata
 
 #[tokio::test]
 async fn otlp_logs_endpoint_maps_proto_severity_fields_to_structured_metadata() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let mut request = proto_logs_request();
-    let log = &mut request.resource_logs[0].scope_logs[0].log_records[0];
-    log.severity_number = 17;
-    log.severity_text = "ERROR".to_string();
-    log.attributes = vec![proto_key_value(
-        "trace_id",
-        any_value::Value::StringValue("abc".into()),
-    )];
-
-    let response = post_protobuf(&app, "/v1/logs", request.encode_to_vec()).await;
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
-    assert!(records.len() == 1);
+    let record = posted_proto_log_record(|log| {
+        log.severity_number = 17;
+        log.severity_text = "ERROR".to_string();
+        log.attributes = vec![proto_key_value(
+            "trace_id",
+            any_value::Value::StringValue("abc".into()),
+        )];
+    })
+    .await;
     assert!(
-        records[0].structured_metadata
+        record.structured_metadata
             == checkout_record(labels([
                 ("scope_name", "api"),
                 ("scope_version", "1.2.3"),

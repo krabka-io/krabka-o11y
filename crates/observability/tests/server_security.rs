@@ -8,8 +8,6 @@
 
 use std::{
     collections::BTreeSet,
-    fmt::Write as _,
-    future::IntoFuture as _,
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -31,7 +29,7 @@ use krabka_observability::{
     server_security::{
         AuthFailureReason, AuthMethod, ClientIdentity, GrpcAuthenticationLayer, PeerAddr,
         Principal, SecurityEventSink, SecurityEvents, ServerListener, ServerSecurity,
-        ServerSecurityArgs, TenantGrant, grpc_incoming, serve_router,
+        ServerSecurityArgs, TenantGrant, grpc_incoming,
     },
 };
 use opentelemetry_proto::tonic::collector::logs::v1::{
@@ -40,14 +38,16 @@ use opentelemetry_proto::tonic::collector::logs::v1::{
     logs_service_server::{LogsService, LogsServiceServer},
 };
 use rcgen::{CertifiedIssuer, ExtendedKeyUsagePurpose, KeyPair};
-use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::{io::AsyncReadExt as _, net::TcpListener};
 
+#[path = "support/secure_router.rs"]
+mod secure_router;
 #[path = "support/server_security_pki.rs"]
 mod server_security_pki;
 
-use server_security_pki::{Leaf, Pem, RecordedEvents, authority};
+use secure_router::{SecureRouter, serve_secure_router};
+use server_security_pki::{Leaf, Pem, RecordedEvents, authority, sha256_hex, tenant};
 
 const GRAFANA_TOKEN: &str = "grafana-7c1f0e9a4b2d8e6f3a5c7b9d1e0f2a4c";
 const OPS_TOKEN: &str = "ops-2b4d6f8a0c1e3a5b7c9d0e2f4a6b8c0d";
@@ -65,19 +65,6 @@ fn load(flags: &[String]) -> ServerSecurity {
         .security
         .load()
         .expect("the flags load")
-}
-
-fn sha256_hex(token: &str) -> String {
-    Sha256::digest(token.as_bytes())
-        .iter()
-        .fold(String::new(), |mut hex, byte| {
-            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-            hex
-        })
-}
-
-fn tenant(id: &str) -> TenantId {
-    TenantId::new(id).expect("a valid tenant id")
 }
 
 /// A CA, a server certificate signed by it, and a directory of PEM files.
@@ -190,15 +177,7 @@ async fn serve(security: &ServerSecurity) -> Server {
         .route("/ready", get(record).post(record))
         .route("/metrics", get(record))
         .with_state(seen.clone());
-    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
-    let listener = ServerListener::bind(tcp, security).expect("the listener binds");
-    let addr = listener.local_addr();
-    let stop = CancellationToken::new();
-    tokio::spawn(
-        serve_router(listener, router, security)
-            .with_graceful_shutdown(stop.clone().cancelled_owned())
-            .into_future(),
-    );
+    let SecureRouter { addr, stop } = serve_secure_router(router, security).await;
     Server { addr, seen, stop }
 }
 
@@ -486,16 +465,42 @@ async fn dropping_a_tls_listener_stops_its_accept_task_and_closes_the_socket() {
     assert!(closed);
 }
 
+// The `/whoami` server with the credentials file loaded, asking for client
+// certificates as `client_auth` says, and recording its security events.
+struct WhoamiServer {
+    events: Arc<RecordedEvents>,
+    sink: SecurityEventSink,
+    server: Server,
+    url: String,
+}
+
+impl WhoamiServer {
+    async fn start(pki: &Pki, client_auth: &str) -> Self {
+        let events = Arc::new(RecordedEvents::default());
+        let mut flags = pki.server_flags(client_auth, "10s");
+        flags.extend(credentials_flags(pki));
+        let security = load(&flags).with_security_events(events.clone());
+        let sink = SecurityEventSink::new(events.clone());
+        let server = serve(&security).await;
+        let url = format!("https://{}/whoami", server.addr);
+        Self {
+            events,
+            sink,
+            server,
+            url,
+        }
+    }
+}
+
 #[tokio::test]
 async fn each_credential_kind_reaches_the_handler_as_its_principal() {
     let pki = Pki::new();
-    let events = Arc::new(RecordedEvents::default());
-    let mut flags = pki.server_flags("RequestClientCert", "10s");
-    flags.extend(credentials_flags(&pki));
-    let security = load(&flags).with_security_events(events.clone());
-    let sink = SecurityEventSink::new(events.clone());
-    let server = serve(&security).await;
-    let url = format!("https://{}/whoami", server.addr);
+    let WhoamiServer {
+        events,
+        sink,
+        server,
+        url,
+    } = WhoamiServer::start(&pki, "RequestClientCert").await;
     let ops_certificate = pki.client("ops", &[]);
 
     let bearer = pki
@@ -787,13 +792,9 @@ async fn the_grpc_layer_reads_the_verified_client_certificate_over_tls() {
 #[tokio::test]
 async fn the_internal_client_is_served_with_its_identity_and_refused_without_it() {
     let pki = Pki::new();
-    let events = Arc::new(RecordedEvents::default());
-    let mut flags = pki.server_flags("RequireAndVerifyClientCert", "10s");
-    flags.extend(credentials_flags(&pki));
-    let security = load(&flags).with_security_events(events.clone());
-    let sink = SecurityEventSink::new(events.clone());
-    let server = serve(&security).await;
-    let url = format!("https://{}/whoami", server.addr);
+    let WhoamiServer {
+        sink, server, url, ..
+    } = WhoamiServer::start(&pki, "RequireAndVerifyClientCert").await;
 
     let ops_certificate = pki.client("ops", &[]);
     let certificate = pki.write("internal.pem", &ops_certificate.certificate);

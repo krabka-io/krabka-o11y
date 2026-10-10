@@ -7,9 +7,11 @@
 //! The audit tests read the records from a `krabka_audit::MemorySink` behind a
 //! mock clock, and compare them with the records of the expected events.
 
+#[path = "support/secure_router.rs"]
+mod secure_router;
 mod support;
 
-use std::{fmt::Write as _, future::IntoFuture as _, net::SocketAddr, path::Path, sync::Arc};
+use std::{fmt::Write as _, net::SocketAddr, path::Path, sync::Arc};
 
 use assert2::check;
 use async_trait::async_trait;
@@ -34,9 +36,7 @@ use krabka_observability::{
         unknown_source_endpoint,
     },
     build_service_router, serve_service_listener,
-    server_security::{
-        Principal, ServerListener, ServerSecurity, install_crypto_provider, serve_router,
-    },
+    server_security::{Principal, ServerSecurity, install_crypto_provider},
 };
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
 use qubit_clock::{ManualMonotonicClock, ManualWallClock, MonotonicClock as _};
@@ -44,6 +44,7 @@ use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
 };
+use secure_router::{SecureRouter, serve_secure_router};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use support::{
@@ -178,15 +179,7 @@ struct ServedForTest {
 }
 
 async fn serve_for_test(router: Router, security: &ServerSecurity) -> ServedForTest {
-    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
-    let listener = ServerListener::bind(tcp, security).expect("the listener binds");
-    let addr = listener.local_addr();
-    let stop = CancellationToken::new();
-    tokio::spawn(
-        serve_router(listener, router, security)
-            .with_graceful_shutdown(stop.clone().cancelled_owned())
-            .into_future(),
-    );
+    let SecureRouter { addr, stop } = serve_secure_router(router, security).await;
     ServedForTest {
         addr,
         _stop: stop.drop_guard(),

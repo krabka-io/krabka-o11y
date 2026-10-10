@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeSet,
-    fmt::Write as _,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -15,13 +14,12 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use clap::Parser;
 use krabka_blockstore::TenantId;
 use rcgen::{CertificateParams, DnType, KeyPair};
-use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 #[path = "../../tests/support/server_security_pki.rs"]
 mod server_security_pki;
 
-use server_security_pki::{Leaf, Pem, RecordedEvents, authority};
+use server_security_pki::{Leaf, Pem, RecordedEvents, authority, sha256_hex, tenant};
 
 use super::{
     AdminDenied, AuthFailureReason, AuthMethod, ClientIdentity, PeerAddr, Principal,
@@ -67,19 +65,6 @@ impl SecurityEvents for RecordedEvents {
     fn admin_denied(&self, principal: &str, _method: AuthMethod) {
         self.push(format!("admin denied {principal}"));
     }
-}
-
-fn sha256_hex(token: &str) -> String {
-    Sha256::digest(token.as_bytes())
-        .iter()
-        .fold(String::new(), |mut hex, byte| {
-            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-            hex
-        })
-}
-
-fn tenant(id: &str) -> TenantId {
-    TenantId::new(id).expect("a valid tenant id")
 }
 
 struct Pki {

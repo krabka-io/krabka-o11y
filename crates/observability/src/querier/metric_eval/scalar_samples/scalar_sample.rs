@@ -27,24 +27,23 @@ impl ScalarSample {
         }
     }
 
+    /// The numerator rescaled by `other_denominator`, so that two samples
+    /// share the denominator `self.denominator * other_denominator`.
+    fn scaled_numerator(self, other_denominator: u128) -> Option<i128> {
+        self.numerator
+            .checked_mul(i128::try_from(other_denominator).ok()?)
+    }
+
     pub(crate) fn add(self, other: Self) -> Option<Self> {
-        let left = self
-            .numerator
-            .checked_mul(i128::try_from(other.denominator).ok()?);
-        let right = other
-            .numerator
-            .checked_mul(i128::try_from(self.denominator).ok()?);
+        let left = self.scaled_numerator(other.denominator);
+        let right = other.scaled_numerator(self.denominator);
         let denominator = self.denominator.checked_mul(other.denominator)?;
         Some(Self::new(left?.checked_add(right?)?, denominator))
     }
 
     pub(crate) fn subtract(self, other: Self) -> Option<Self> {
-        let left = self
-            .numerator
-            .checked_mul(i128::try_from(other.denominator).ok()?);
-        let right = other
-            .numerator
-            .checked_mul(i128::try_from(self.denominator).ok()?);
+        let left = self.scaled_numerator(other.denominator);
+        let right = other.scaled_numerator(self.denominator);
         let denominator = self.denominator.checked_mul(other.denominator)?;
         Some(Self::new(left?.checked_sub(right?)?, denominator))
     }
@@ -57,12 +56,8 @@ impl ScalarSample {
     }
 
     pub(crate) fn compare(self, operator: ScalarComparisonOp, other: Self) -> Option<bool> {
-        let left = self
-            .numerator
-            .checked_mul(i128::try_from(other.denominator).ok()?)?;
-        let right = other
-            .numerator
-            .checked_mul(i128::try_from(self.denominator).ok()?)?;
+        let left = self.scaled_numerator(other.denominator)?;
+        let right = other.scaled_numerator(self.denominator)?;
         Some(match operator {
             ScalarComparisonOp::Equal => left == right,
             ScalarComparisonOp::NotEqual => left != right,

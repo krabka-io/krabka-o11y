@@ -17,7 +17,7 @@ mod parquet_files;
 mod sigterm_child;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     process::Command,
     sync::Arc,
     time::{Duration, Instant},
@@ -116,7 +116,7 @@ fn run_compactor_child(root: std::path::PathBuf) {
         };
         let dependencies =
             ServiceDependencies::default().with_wal_consumer(CommitLoggingConsumer {
-                batches: vec![vec![kafka_wal_record(
+                batches: VecDeque::from([vec![kafka_wal_record(
                     &WalLogRecord {
                         tenant: "tenant-a".to_string(),
                         labels: labels([("app", "api"), ("env", "prod")]),
@@ -129,7 +129,7 @@ fn run_compactor_child(root: std::path::PathBuf) {
                         partition: PartitionIndex(6),
                         offset: Offset(42),
                     },
-                )]],
+                )]]),
                 commit_log: root.join("committed"),
             });
 
@@ -144,18 +144,14 @@ fn run_compactor_child(root: std::path::PathBuf) {
 /// A WAL consumer that appends every committed offset to a file, so the commit
 /// survives the process it happened in.
 struct CommitLoggingConsumer {
-    batches: Vec<Vec<KafkaWalRecord>>,
+    batches: VecDeque<Vec<KafkaWalRecord>>,
     commit_log: std::path::PathBuf,
 }
 
 #[async_trait]
 impl LogWalConsumer for CommitLoggingConsumer {
     async fn poll(&mut self, _timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
-        if self.batches.is_empty() {
-            Ok(Vec::new())
-        } else {
-            Ok(self.batches.remove(0))
-        }
+        Ok(self.batches.pop_front().unwrap_or_default())
     }
 
     async fn commit_compacted(&mut self, position: WalPosition) -> Result<(), WalConsumerError> {

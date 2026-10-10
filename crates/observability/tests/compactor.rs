@@ -1186,10 +1186,7 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
     store.get_paths.lock().unwrap().clear();
 
     let config = compactor_config("observability/logs");
-    let dependencies = polls(
-        PartitionIndex(5),
-        &[&[polled(Offset(42), log_entry(10, "api ok"))], &[]],
-    );
+    let dependencies = one_api_ok_poll(PartitionIndex(5));
 
     let descriptors = run_compactor_until_idle(&config, dependencies, Some(&store))
         .await
@@ -1442,10 +1439,7 @@ async fn compactor_runtime_loads_existing_manifest_after_restart() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let first_run = polls(
-        PartitionIndex(6),
-        &[&[polled(Offset(42), log_entry(10, "api ok"))], &[]],
-    );
+    let first_run = one_api_ok_poll(PartitionIndex(6));
 
     let mut descriptors = run_compactor_until_idle(&config, first_run, Some(&store))
         .await
@@ -1492,10 +1486,7 @@ async fn compactor_runtime_reprocesses_uncommitted_wal_without_duplicate_manifes
         .await
         .unwrap();
 
-    let second_run = polls(
-        PartitionIndex(6),
-        &[&[polled(Offset(42), log_entry(10, "api ok"))], &[]],
-    );
+    let second_run = one_api_ok_poll(PartitionIndex(6));
     let descriptors = run_compactor_until_idle(&config, second_run, Some(&store))
         .await
         .unwrap();
@@ -1531,10 +1522,7 @@ async fn compactor_service_target_keeps_running_after_idle() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     let config = compactor_config("observability/logs");
-    let dependencies = polls(
-        PartitionIndex(6),
-        &[&[polled(Offset(42), log_entry(10, "api ok"))], &[]],
-    );
+    let dependencies = one_api_ok_poll(PartitionIndex(6));
     let server_store = Arc::clone(&store);
     let server = tokio::spawn(async move {
         serve_service(config, dependencies, Some(server_store.as_ref())).await
@@ -1596,10 +1584,7 @@ async fn compactor_service_listener_serves_http_while_polling_wal() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     let config = compactor_config("observability/logs");
-    let dependencies = polls(
-        PartitionIndex(6),
-        &[&[polled(Offset(42), log_entry(10, "api ok"))], &[]],
-    );
+    let dependencies = one_api_ok_poll(PartitionIndex(6));
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server_store = Arc::clone(&store);
@@ -1752,9 +1737,7 @@ async fn compactor_service_stops_serving_when_its_wal_consumer_loop_panics() {
     let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     let config = compactor_config("observability/logs");
     let trigger = Arc::new(tokio::sync::Notify::new());
-    let dependencies = ServiceDependencies::default().with_wal_consumer(PanickingWalConsumer {
-        trigger: Arc::clone(&trigger),
-    });
+    let dependencies = panicking_wal_dependencies(&trigger);
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server_store = Arc::clone(&store);
@@ -1799,9 +1782,7 @@ async fn querier_service_stops_serving_when_its_spawned_wal_consumer_loop_panics
         ..ServiceConfig::default()
     };
     let trigger = Arc::new(tokio::sync::Notify::new());
-    let dependencies = ServiceDependencies::default().with_wal_consumer(PanickingWalConsumer {
-        trigger: Arc::clone(&trigger),
-    });
+    let dependencies = panicking_wal_dependencies(&trigger);
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server =
@@ -1949,6 +1930,14 @@ impl LogWalConsumer for PanickingWalConsumer {
 
 /// Every `.parquet` object under `prefix`, that is every log block the store
 /// physically holds, whether or not an index names it.
+fn block_keys(index: &BlockIndex) -> Vec<BlockKey> {
+    index
+        .blocks()
+        .iter()
+        .map(|block| block.key.clone())
+        .collect()
+}
+
 async fn list_log_block_paths(store: &dyn ObjectStore, prefix: &ObjectPath) -> Vec<String> {
     use futures_util::StreamExt as _;
 
@@ -2173,14 +2162,7 @@ async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes
         read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
             .await
             .unwrap();
-    check!(
-        manifest_blocks
-            .blocks()
-            .iter()
-            .map(|block| block.key.clone())
-            .collect::<Vec<_>>()
-            == vec![kept.clone()]
-    );
+    check!(block_keys(&manifest_blocks) == vec![kept.clone()]);
     // Empty manifests fence concurrent appends without deleting their mutable key.
     let expired_shard = read_tenant_log_index_shard_from_object_store(
         &store,
@@ -2194,14 +2176,7 @@ async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes
     let (_, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
-    check!(
-        shard_blocks
-            .blocks()
-            .iter()
-            .map(|block| block.key.clone())
-            .collect::<Vec<_>>()
-            == vec![kept.clone()]
-    );
+    check!(block_keys(&shard_blocks) == vec![kept.clone()]);
     check!(
         list_log_block_paths(&store, &prefix).await
             == vec![log_block_object_path(&prefix, &kept).to_string()]
@@ -2252,14 +2227,7 @@ async fn the_retention_sweep_keeps_an_empty_shard_manifest_in_the_catalog() {
     let (_, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
-    check!(
-        shard_blocks
-            .blocks()
-            .iter()
-            .map(|block| block.key.clone())
-            .collect::<Vec<_>>()
-            == vec![kept.clone()]
-    );
+    check!(block_keys(&shard_blocks) == vec![kept.clone()]);
 }
 
 /// A query that read the shard catalog before the sweep rewrote it still
@@ -2475,14 +2443,7 @@ async fn a_block_a_delete_request_empties_has_its_object_deleted() {
         read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
             .await
             .unwrap();
-    check!(
-        manifest_blocks
-            .blocks()
-            .iter()
-            .map(|block| block.key.clone())
-            .collect::<Vec<_>>()
-            == vec![kept.clone()]
-    );
+    check!(block_keys(&manifest_blocks) == vec![kept.clone()]);
     check!(
         list_log_block_paths(&store, &prefix).await
             == vec![log_block_object_path(&prefix, &kept).to_string()]
@@ -2587,6 +2548,20 @@ async fn compact_ok_then_error_batches(store: &dyn ObjectStore) -> Vec<BlockDesc
 
 /// Dependencies whose WAL consumer returns one poll per entry of `batches`,
 /// each a list of records on `partition`.
+fn panicking_wal_dependencies(trigger: &Arc<tokio::sync::Notify>) -> ServiceDependencies {
+    ServiceDependencies::default().with_wal_consumer(PanickingWalConsumer {
+        trigger: Arc::clone(trigger),
+    })
+}
+
+// One poll of the line `api ok` at offset 42, then an empty poll.
+fn one_api_ok_poll(partition: PartitionIndex) -> ServiceDependencies {
+    polls(
+        partition,
+        &[&[polled(Offset(42), log_entry(10, "api ok"))], &[]],
+    )
+}
+
 fn polls(partition: PartitionIndex, batches: &[&[Polled<'_>]]) -> ServiceDependencies {
     ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(
         batches
@@ -2660,10 +2635,7 @@ async fn compact_ok_then_error_runs(
 /// checks that it wrote one block after `store` refused exactly one put.
 async fn compact_one_record_through_one_failed_put(store: &RecordingObjectStore) {
     let config = compactor_config("observability/logs");
-    let dependencies = polls(
-        PartitionIndex(6),
-        &[&[polled(Offset(42), log_entry(10, "api ok"))], &[]],
-    );
+    let dependencies = one_api_ok_poll(PartitionIndex(6));
 
     let descriptors = tokio::time::timeout(
         Duration::from_secs(1),

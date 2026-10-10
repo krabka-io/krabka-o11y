@@ -13,8 +13,7 @@ use crate::{
         OPERATION_RULE_NAMESPACE_DELETE, RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE,
         RESOURCE_TENANT, resource,
     },
-    current_unix_time_ns, json, json_response, resolve_single_tenant, tenant_header_value,
-    text_response,
+    authorized_tenant, current_unix_time_ns, json, json_response, text_response,
 };
 
 mod authorized_ruler_tenant;

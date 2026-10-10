@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use super::{
     Arc, BTreeMap, ColdBlockScan, LabelIndex, MetricQuery, MetricWindow, QueryError, QueryHotTail,
     StreamPlan, TimeRange, Value, append_matching_hot_metric_record, apply_absent_over_time,
-    collect_object_store_metric_log_batches, eval_times, format_metric_samples,
+    checked_eval_times, collect_object_store_metric_log_batches, format_metric_samples,
     loki_matrix_response_with_warnings, merge_metric_samples, metric_samples_from_batches,
 };
 use crate::WalLogRecord;
@@ -19,11 +19,7 @@ pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_f
     hot_tail: QueryHotTail<'_, R>,
 ) -> Result<Value, QueryError> {
     let (eval_range, step_ns) = evaluation;
-    if step_ns <= 0 {
-        return Err(QueryError::InvalidStep(step_ns));
-    }
-
-    let eval_times = eval_times(eval_range, step_ns);
+    let eval_times = checked_eval_times(eval_range, step_ns)?;
     let mut samples = BTreeMap::new();
     let mut warnings = Vec::new();
 

@@ -4,7 +4,7 @@ use crate::{
     ObjectPath, ObjectStore, QueryError, QueryHotTail, RecordBatch, SessionContext, StreamPlan,
     TimeRange, Value, WalLogRecord, append_matching_hot_log_record,
     append_matching_hot_metric_record, append_matching_log_row, apply_absent_over_time,
-    default_block_fetch_concurrency, eval_times,
+    checked_eval_times, default_block_fetch_concurrency,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
     for_each_query_row, format_metric_samples, json, loki_matrix_response, loki_stream_results,

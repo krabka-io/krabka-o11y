@@ -57,20 +57,28 @@ fn native_api_record(
     )
 }
 
-#[test]
-fn kafka_wal_record_encodes_tenant_series_key_headers_and_json_payload() {
-    let labels = labels([("app", "api"), ("env", "prod")]);
-    let record = WalLogRecord {
+// `tenant-a`'s `api error` line at 1.9 ms, with a `trace_id` and no position.
+fn api_error_record() -> WalLogRecord {
+    WalLogRecord {
         tenant: "tenant-a".to_string(),
-        labels: labels.clone(),
+        labels: labels([("app", "api"), ("env", "prod")]),
         timestamp_ns: 1_900_000,
         line: "api error".to_string(),
         structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+        position: None,
+    }
+}
+
+#[test]
+fn kafka_wal_record_encodes_tenant_series_key_headers_and_json_payload() {
+    let record = WalLogRecord {
         position: Some(WalPosition {
             partition: PartitionIndex(3),
             offset: Offset(42),
         }),
+        ..api_error_record()
     };
+    let labels = record.labels.clone();
 
     let producer_record = build_kafka_wal_record("__krabka_observability_logs_wal", &record)
         .expect("producer record");
@@ -113,15 +121,7 @@ fn kafka_wal_record_encodes_tenant_series_key_headers_and_json_payload() {
 
 #[test]
 fn kafka_wal_record_decodes_payload_with_consumed_position() {
-    let labels = labels([("app", "api"), ("env", "prod")]);
-    let record = WalLogRecord {
-        tenant: "tenant-a".to_string(),
-        labels: labels.clone(),
-        timestamp_ns: 1_900_000,
-        line: "api error".to_string(),
-        structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
-        position: None,
-    };
+    let record = api_error_record();
 
     let producer_record = build_kafka_wal_record("__krabka_observability_logs_wal", &record)
         .expect("producer record");

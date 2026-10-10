@@ -429,8 +429,8 @@ pub(crate) use self::{
     querier::{
         aggregate::{
             metric_values::{
-                MetricSampleState, VectorAggregationState, append_matching_log_row, eval_times,
-                format_metric_value, rate_metric_value,
+                MetricSampleState, VectorAggregationState, append_matching_log_row,
+                checked_eval_times, eval_times, format_metric_value, rate_metric_value,
             },
             record_matching::{
                 QueryRow, append_matching_hot_log_record, append_matching_hot_metric_record,

@@ -1,4 +1,4 @@
-use super::TimeRange;
+use super::{QueryError, TimeRange};
 
 pub(crate) fn eval_times(range: TimeRange, step_ns: i64) -> Vec<i64> {
     let mut times = Vec::new();
@@ -27,6 +27,15 @@ pub(crate) fn eval_times(range: TimeRange, step_ns: i64) -> Vec<i64> {
         time = next;
     }
     times
+}
+
+/// The evaluation grid of a range query, after rejecting a step that is not
+/// positive.
+pub(crate) fn checked_eval_times(range: TimeRange, step_ns: i64) -> Result<Vec<i64>, QueryError> {
+    if step_ns <= 0 {
+        return Err(QueryError::InvalidStep(step_ns));
+    }
+    Ok(eval_times(range, step_ns))
 }
 
 #[cfg(test)]

@@ -108,26 +108,8 @@ async fn different_wal_blocks_with_equal_time_ranges_survive_frontier_pruning() 
         .with_cold_object_store_source(store.clone(), prefix.clone())
         .with_dynamic_tenant_object_store_shards(store, prefix)
         .with_hot_tail_shared_frontier(hot_tail, frontier);
-    let mut response = execute_http_stream_query(
-        &state,
-        HttpStreamQuery {
-            query: r#"{app=~"api|worker"}"#,
-            tenant: "tenant-a",
-            time_range: TimeRange::new(0, 30).unwrap(),
-            options: LokiStreamOptions {
-                direction: LokiDirection::Forward,
-                limit: Some(10),
-                interval: None,
-            },
-            end_exclusive: Some(30),
-            encoding: LokiStreamEncoding::Folded,
-        },
-    )
-    .await
-    .unwrap();
-    response["data"].as_object_mut().unwrap().remove("stats");
     assert!(
-        response
+        stream_response(&state, r#"{app=~"api|worker"}"#).await
             == json!({
                 "status": "success", "data": {"resultType": "streams", "result": [
                     {"stream": {"app": "api"}, "values": [["19", "api-19"], ["20", "api-20"]]},
@@ -254,11 +236,11 @@ async fn metadata_without_time_bounds_keeps_hot_labels_outside_the_cold_window()
     }
 }
 
-async fn stream_response(state: &QuerierState) -> serde_json::Value {
+async fn stream_response(state: &QuerierState, query: &str) -> serde_json::Value {
     let mut response = execute_http_stream_query(
         state,
         HttpStreamQuery {
-            query: r#"{app="api"}"#,
+            query,
             tenant: "tenant-a",
             time_range: TimeRange::new(0, 30).unwrap(),
             options: LokiStreamOptions {
@@ -275,6 +257,8 @@ async fn stream_response(state: &QuerierState) -> serde_json::Value {
     response["data"].as_object_mut().unwrap().remove("stats");
     response
 }
+
+const API_STREAM_QUERY: &str = r#"{app="api"}"#;
 
 /// When the query that first loads the tenant index finishes, relative to the
 /// compaction handoff that advances the frontier.
@@ -347,11 +331,11 @@ async fn assert_rows_survive_handoff(first_load: FirstIndexLoad) {
     });
     let pending = if blocked_load {
         let state = state.clone();
-        let query = tokio::spawn(async move { stream_response(&state).await });
+        let query = tokio::spawn(async move { stream_response(&state, API_STREAM_QUERY).await });
         entered.notified().await;
         Some(query)
     } else {
-        assert!(stream_response(&state).await == expected);
+        assert!(stream_response(&state, API_STREAM_QUERY).await == expected);
         None
     };
 
@@ -382,11 +366,11 @@ async fn assert_rows_survive_handoff(first_load: FirstIndexLoad) {
             == 1
     );
     assert!(hot_tail.records().is_empty());
-    assert!(stream_response(&state).await == expected);
+    assert!(stream_response(&state, API_STREAM_QUERY).await == expected);
     if let Some(pending) = pending {
         release.add_permits(1);
         assert!(pending.await.unwrap() == expected);
-        assert!(stream_response(&state).await == expected);
+        assert!(stream_response(&state, API_STREAM_QUERY).await == expected);
     }
 }
 
@@ -425,17 +409,36 @@ struct BarrieredShard {
     store: Arc<RecordingObjectStore>,
 }
 
+// Whether the [`BarrieredShard`] read parks before or after it reads the
+// object.
+#[derive(Clone, Copy)]
+enum GetBarrierTiming {
+    AfterRead,
+    BeforeRead,
+}
+
 impl Default for BarrieredShard {
     fn default() -> Self {
+        Self::new(GetBarrierTiming::AfterRead)
+    }
+}
+
+impl BarrieredShard {
+    fn new(timing: GetBarrierTiming) -> Self {
         let prefix = ObjectPath::from("logs");
         let range = TimeRange::new(19, 20).unwrap();
         let entered = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Semaphore::new(0));
-        let store = Arc::new(RecordingObjectStore::new().with_get_barrier(
-            shard_snapshot_path(&prefix, range, 0).to_string(),
-            entered.clone(),
-            release.clone(),
-        ));
+        let location = shard_snapshot_path(&prefix, range, 0).to_string();
+        let store = RecordingObjectStore::new();
+        let store = Arc::new(match timing {
+            GetBarrierTiming::AfterRead => {
+                store.with_get_barrier(location, entered.clone(), release.clone())
+            }
+            GetBarrierTiming::BeforeRead => {
+                store.with_get_barrier_before_read(location, entered.clone(), release.clone())
+            }
+        });
         Self {
             prefix,
             range,
@@ -873,26 +876,15 @@ async fn a_paused_shard_writer_retries_a_reclaimed_generation_instead_of_losing_
 
 #[tokio::test]
 async fn a_shard_reader_reselects_the_latest_generation_when_its_selected_object_is_pruned() {
-    let prefix = ObjectPath::from("logs");
-    let range = TimeRange::new(19, 20).unwrap();
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let release = Arc::new(tokio::sync::Semaphore::new(0));
-    let store = Arc::new(RecordingObjectStore::new().with_get_barrier_before_read(
-        shard_snapshot_path(&prefix, range, 0).to_string(),
-        entered.clone(),
-        release.clone(),
-    ));
-    let (labels, blocks) = shard_indexes("old", 0);
-    write_tenant_log_index_shard_to_object_store(
-        store.as_ref(),
-        &prefix,
-        "tenant-a",
+    let BarrieredShard {
+        prefix,
         range,
-        &labels,
-        &blocks,
-    )
-    .await
-    .unwrap();
+        entered,
+        release,
+        store,
+    } = BarrieredShard::new(GetBarrierTiming::BeforeRead);
+    let (labels, blocks) = shard_indexes("old", 0);
+    seed_shard(store.as_ref(), &labels, &blocks).await;
     let pending = {
         let store = store.clone();
         let prefix = prefix.clone();

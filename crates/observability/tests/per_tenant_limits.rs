@@ -18,7 +18,7 @@ use krabka_observability::{
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
 use serde_json::json;
 use support::{
-    assert_loki_error, current_unix_epoch_nanos, json_body, multi_tenant_fixture,
+    Tenant, assert_loki_error, current_unix_epoch_nanos, json_body, multi_tenant_fixture,
     proto_logs_request_at_ns, text_body,
 };
 use tokio::net::TcpListener;
@@ -63,30 +63,11 @@ async fn a_per_tenant_override_changes_what_the_querier_serves() {
     let uri =
         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
 
-    let refused = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let refused = Tenant("tenant-a").get(&app, uri).await;
     assert!(refused.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(refused).await, "bad_data", "bytes");
 
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
     let body = json_body(served).await;
     check!(body["status"] == "success");
@@ -160,31 +141,12 @@ async fn the_defaults_block_caps_a_tenant_with_no_entry_of_its_own() {
         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
 
     // `tenant-a` has no entry, so the defaults block applies to it.
-    let refused = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let refused = Tenant("tenant-a").get(&app, uri).await;
     assert!(refused.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(refused).await, "bad_data", "bytes");
 
     // `tenant-b` names a limit of its own, which wins over the block.
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
 }
 
@@ -227,30 +189,11 @@ async fn the_overrides_config_flag_reaches_the_service_router() {
         .unwrap();
     let uri = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D";
 
-    let refused = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let refused = Tenant("tenant-a").get(&app, uri).await;
     assert!(refused.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(refused).await, "bad_data", "query length");
 
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
 }
 
@@ -437,17 +380,7 @@ async fn a_lookback_cap_moves_the_query_start_rather_than_refusing_the_query() {
     let uri =
         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
 
-    let clamped = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let clamped = Tenant("tenant-a").get(&app, uri).await;
     assert!(clamped.status() == StatusCode::OK, "the query is answered");
     let body = json_body(clamped).await;
     check!(
@@ -455,16 +388,7 @@ async fn a_lookback_cap_moves_the_query_start_rather_than_refusing_the_query() {
         "the epoch-dated block is outside the lookback: {body}"
     );
 
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
     let body = json_body(served).await;
     check!(
@@ -485,17 +409,7 @@ async fn an_entries_limit_caps_the_limit_parameter_per_tenant() {
     let app = loki_router(state.with_limits_overrides(overrides));
     let uri = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030&limit=6";
 
-    let refused = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let refused = Tenant("tenant-a").get(&app, uri).await;
     assert!(refused.status() == StatusCode::BAD_REQUEST);
     let message = text_body(refused).await;
     check!(
@@ -503,15 +417,6 @@ async fn an_entries_limit_caps_the_limit_parameter_per_tenant() {
         "{message}"
     );
 
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
 }

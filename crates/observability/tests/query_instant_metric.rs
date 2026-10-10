@@ -647,199 +647,107 @@ async fn query_endpoint_filters_scalar_metric_query_comparison() {
     .await;
 }
 
+// The one `{app="api", env="prod"}` sample at 19 ns, relabelled with
+// `service="api-api"`, that a `label_replace` query over the fixture answers
+// with `value`.
+struct ApiServiceSample<'a> {
+    uri: &'a str,
+    value: &'a str,
+}
+
+impl ApiServiceSample<'_> {
+    async fn assert_served(self) {
+        let app = loki_router(fixture());
+        let response = Tenant("tenant-a").get(&app, self.uri).await;
+        assert_json_ok(
+            response,
+            &LokiSuccess {
+                result_type: "vector",
+                data_result: json!([
+                    {
+                        "metric": {
+                            "app": "api",
+                            "env": "prod",
+                            "service": "api-api"
+                        },
+                        "value": [19, self.value]
+                    }
+                ]),
+                stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+            }
+            .json(),
+        )
+        .await;
+    }
+}
+
 #[tokio::test]
 async fn query_endpoint_accepts_label_replace_metric_query() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "vector",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod",
-                        "service": "api-api"
-                    },
-                    "value": [19, "1"]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "1",
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_parenthesized_label_replace_metric_query() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=%28label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%29&time=0.000000019").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "vector",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod",
-                        "service": "api-api"
-                    },
-                    "value": [19, "1"]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=%28label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%29&time=0.000000019",
+        value: "1",
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_label_replace_metric_binary_expression() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "vector",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod",
-                        "service": "api-api"
-                    },
-                    "value": [19, "2"]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "2",
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "vector",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod",
-                        "service": "api-api"
-                    },
-                    "value": [19, "1"]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "1",
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_scalar_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "vector",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod",
-                        "service": "api-api"
-                    },
-                    "value": [19, "1"]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "1",
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_comparison_with_label_replace_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3E%20bool%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "vector",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod",
-                        "service": "api-api"
-                    },
-                    "value": [19, "0"]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3E%20bool%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "0",
+    }
+    .assert_served()
     .await;
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_metric_binary_set_with_label_replace_operands() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "vector",
-            data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod",
-                        "service": "api-api"
-                    },
-                    "value": [19, "2"]
-                }
-            ]),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
-    )
+    ApiServiceSample {
+        uri: "/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019",
+        value: "2",
+    }
+    .assert_served()
     .await;
 }
 
