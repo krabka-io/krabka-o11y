@@ -64,7 +64,7 @@ use eval_one_to_many_vector_binary::eval_one_to_many_vector_binary;
 use eval_one_to_one_vector_binary::eval_one_to_one_vector_binary;
 use eval_vector_set_binary::eval_vector_set_binary;
 use eval_vector_vector_binary::eval_vector_vector_binary;
-use fill_missing_right::{RightFill, fill_missing_right};
+use fill_missing_right::fill_missing_right;
 use index_by_match_key::index_by_match_key;
 pub(super) use instant_value::InstantValue;
 use missing_side::MissingSide;

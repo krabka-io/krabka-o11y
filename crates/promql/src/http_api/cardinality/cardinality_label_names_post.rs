@@ -1,25 +1,12 @@
 use super::{
-    Arc, Bytes, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
-    RequestAuth, Response, State, cardinality_label_names_inner, parse_cardinality_form,
+    Arc, CardinalityParams, MetricStore, ParsedForm, PrometheusApiState, RequestCaller, Response,
+    State, cardinality_label_names_inner,
 };
 
 pub(crate) async fn cardinality_label_names_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    body: Bytes,
+    caller: RequestCaller,
+    ParsedForm(params): ParsedForm<CardinalityParams>,
 ) -> Response {
-    let params = match parse_cardinality_form(&body) {
-        Ok(params) => params,
-        Err(error) => return error.into_response(),
-    };
-    cardinality_label_names_inner(
-        &state,
-        RequestAuth {
-            headers: &headers,
-            principal: &principal,
-        },
-        params,
-    )
-    .await
+    cardinality_label_names_inner(&state, caller.auth(), params).await
 }

@@ -16,6 +16,16 @@ fn merged_with_empty_cold(head: WalHead) -> MergedMetricStore<MetricBlockStore, 
     MergedMetricStore::new(MetricBlockStore::new(blocks), head)
 }
 
+/// Adds to the `t` label cache, under `fp`, an entry whose labels are
+/// already dropped.
+fn cache_dead_label_entry(store: &mut InMemoryMetricStore, fp: SeriesFingerprint, labels: &Labels) {
+    let dead = Arc::new(labels.clone());
+    Arc::make_mut(store.series_labels.get_mut("t").unwrap())
+        .get_mut(&fp)
+        .unwrap()
+        .push(Arc::downgrade(&dead));
+}
+
 #[test]
 fn shared_series_summary_keeps_row_keys_and_histogram_owners() {
     let first = Arc::new(lbls(&[("__name__", "up"), ("job", "first")]));
@@ -253,12 +263,7 @@ fn live_label_hits_share_the_cache_with_snapshots_but_dead_entries_are_cleaned()
     assert!(!snapshot.hists.contains_key("t"));
     assert!(!snapshot.exemplars.contains_key("t"));
 
-    let dead = Arc::new(labels.clone());
-    Arc::make_mut(store.series_labels.get_mut("t").unwrap())
-        .get_mut(&fp)
-        .unwrap()
-        .push(Arc::downgrade(&dead));
-    drop(dead);
+    cache_dead_label_entry(&mut store, fp, &labels);
     let dirty_snapshot = store.clone();
     store.push_float("t", labels.clone(), 500, 4.0);
     assert!(!Arc::ptr_eq(
@@ -429,12 +434,7 @@ fn wal_label_hits_keep_collisions_and_clean_dead_entries_without_changing_snapsh
     };
     store.apply_wal_record(&record);
     let snapshot = store.clone();
-    let dead = Arc::new(labels.clone());
-    Arc::make_mut(store.series_labels.get_mut("t").unwrap())
-        .get_mut(&fp)
-        .unwrap()
-        .push(Arc::downgrade(&dead));
-    drop(dead);
+    cache_dead_label_entry(&mut store, fp, &labels);
     let dirty_snapshot = store.clone();
     record.payload = SamplePayload::Float {
         timestamp_ms: 20,

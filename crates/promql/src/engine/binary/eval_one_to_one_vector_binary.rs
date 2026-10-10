@@ -1,7 +1,7 @@
 use super::{
-    BTreeSet, InstantSample, MissingSide, PromqlError, Result, RightFill, VectorMatching,
-    VectorOperands, apply_binary_fill_value, apply_binary_sample_value, binary_match_key,
-    binary_returns_bool, fill_missing_right, index_by_match_key, one_to_one_binary_result_labels,
+    BTreeSet, InstantSample, MissingSide, PromqlError, Result, VectorMatching, VectorOperands,
+    apply_binary_fill_value, apply_binary_sample_value, binary_match_key, binary_returns_bool,
+    fill_missing_right, index_by_match_key, one_to_one_binary_result_labels,
 };
 
 pub(crate) fn eval_one_to_one_vector_binary(
@@ -19,22 +19,9 @@ pub(crate) fn eval_one_to_one_vector_binary(
     for left_sample in left {
         let key = binary_match_key(&left_sample.labels, modifier);
         let Some(right_sample) = right_by_key.get(&key) else {
-            let Some(RightFill {
-                filled_value: value,
-                preserves_name,
-                drop_name,
-            }) = fill_missing_right(&left_sample, op, modifier)?
-            else {
-                continue;
-            };
-            let labels =
-                one_to_one_binary_result_labels(&left_sample.labels, modifier, preserves_name);
-            out.push(InstantSample {
-                labels,
-                ts_ms: left_sample.ts_ms,
-                value,
-                drop_name,
-            });
+            out.extend(fill_missing_right(&left_sample, matching, |fill| {
+                one_to_one_binary_result_labels(&left_sample.labels, modifier, fill.preserves_name)
+            })?);
             continue;
         };
         if !matched_keys.insert(key.clone()) {

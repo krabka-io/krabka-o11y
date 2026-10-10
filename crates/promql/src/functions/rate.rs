@@ -61,13 +61,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        functions::udf_test_support::{WindowStep, nullable_floats, window_columns},
+        functions::udf_test_support::{WindowStep, approx_eq, nullable_floats, window_columns},
         range_array::RangeArray,
     };
-
-    fn approx_eq(left: f64, right: f64) -> bool {
-        (left - right).abs() < 1e-9
-    }
 
     /// Packs one window per eval step into a `RangeArray` dictionary column.
     fn window_range<T: ArrowPrimitiveType>(windows: &[&[T::Native]]) -> ArrayRef {
@@ -168,12 +164,32 @@ mod tests {
             .collect()
     }
 
+    /// The columns of one rate row: an eval at 60s over the samples 1 at 0s and
+    /// 2 at 60s.
+    struct OneRowRateInputs {
+        eval: ArrayRef,
+        timestamps: ArrayRef,
+        values: ArrayRef,
+    }
+
+    impl Default for OneRowRateInputs {
+        fn default() -> Self {
+            Self {
+                eval: Arc::new(Int64Array::from(vec![60_000_i64])),
+                timestamps: timestamp_range(&[&[0, 60_000]]),
+                values: value_range(&[&[1.0, 2.0]]),
+            }
+        }
+    }
+
     #[test]
     fn rate_udf_rejects_each_row_count_mismatch_independently() {
         let udf = RateUdf::new(RateFamily::Rate);
-        let eval: ArrayRef = Arc::new(Int64Array::from(vec![60_000_i64]));
-        let timestamps = timestamp_range(&[&[0, 60_000]]);
-        let values = value_range(&[&[1.0, 2.0]]);
+        let OneRowRateInputs {
+            eval,
+            timestamps,
+            values,
+        } = OneRowRateInputs::default();
         let range_ms = ColumnarValue::Scalar(ScalarValue::Int64(Some(60_000)));
 
         for (_case, args) in [
@@ -215,9 +231,11 @@ mod tests {
     #[test]
     fn rate_udf_rejects_empty_or_null_range_ms_array() {
         let udf = RateUdf::new(RateFamily::Rate);
-        let eval: ArrayRef = Arc::new(Int64Array::from(vec![60_000_i64]));
-        let timestamps = timestamp_range(&[&[0, 60_000]]);
-        let values = value_range(&[&[1.0, 2.0]]);
+        let OneRowRateInputs {
+            eval,
+            timestamps,
+            values,
+        } = OneRowRateInputs::default();
 
         assert2::assert!(
             udf.invoke_with_args(invoke_args(

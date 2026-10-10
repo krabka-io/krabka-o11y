@@ -10,7 +10,7 @@ use krabka_metrics::{
 };
 
 use super::{
-    InMemoryMetricStore, RowChunks,
+    FloatRow, HistRow, InMemoryMetricStore, RowChunks, SeriesSampleRef,
     matcher::{all_match, prepare_matchers, row_matches},
 };
 use crate::{
@@ -32,18 +32,28 @@ impl InMemoryMetricStore {
         &'a self,
         tenant: &str,
     ) -> impl Iterator<Item = SeriesRef<'a>> + use<'a> {
-        let floats = self.floats.get(tenant).into_iter().flat_map(|rows| {
-            rows.iter().map(|row| SeriesRef {
-                fp: row.fp,
-                labels: row.labels.as_ref(),
-            })
-        });
-        let hists = self.hists.get(tenant).into_iter().flat_map(|rows| {
-            rows.iter().map(|row| SeriesRef {
-                fp: row.fp,
-                labels: row.labels.as_ref(),
-            })
-        });
+        self.tenant_sample_refs(tenant).map(|row| SeriesRef {
+            fp: row.fp,
+            labels: row.labels.as_ref(),
+        })
+    }
+
+    /// Each float and histogram row of `tenant`, floats first, in ingest
+    /// order.
+    fn tenant_sample_refs<'a>(
+        &'a self,
+        tenant: &str,
+    ) -> impl Iterator<Item = SeriesSampleRef<'a>> + use<'a> {
+        let floats = self
+            .floats
+            .get(tenant)
+            .into_iter()
+            .flat_map(|rows| rows.iter().map(FloatRow::sample_ref));
+        let hists = self
+            .hists
+            .get(tenant)
+            .into_iter()
+            .flat_map(|rows| rows.iter().map(HistRow::sample_ref));
         floats.chain(hists)
     }
 }

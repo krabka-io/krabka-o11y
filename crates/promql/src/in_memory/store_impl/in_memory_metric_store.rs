@@ -242,25 +242,13 @@ impl MetricStore for InMemoryMetricStore {
         let mut min_time = i64::MAX;
         let mut max_time = i64::MIN;
 
-        if let Some(rows) = self.floats.get(tenant) {
-            for row in rows.iter() {
-                sample_count += 1;
-                min_time = min_time.min(row.ts_ms);
-                max_time = max_time.max(row.ts_ms);
-                series
-                    .entry(row.fp)
-                    .or_insert_with(|| row.labels.as_ref().clone());
-            }
-        }
-        if let Some(rows) = self.hists.get(tenant) {
-            for row in rows.iter() {
-                sample_count += 1;
-                min_time = min_time.min(row.ts_ms);
-                max_time = max_time.max(row.ts_ms);
-                series
-                    .entry(row.fp)
-                    .or_insert_with(|| row.labels.as_ref().clone());
-            }
+        for row in self.tenant_sample_refs(tenant) {
+            sample_count += 1;
+            min_time = min_time.min(row.ts_ms);
+            max_time = max_time.max(row.ts_ms);
+            series
+                .entry(row.fp)
+                .or_insert_with(|| row.labels.as_ref().clone());
         }
         if series.is_empty() {
             min_time = 0;

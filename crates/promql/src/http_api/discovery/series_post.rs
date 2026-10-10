@@ -1,25 +1,12 @@
 use super::{
-    Arc, Bytes, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
-    RequestAuth, Response, State, parse_discovery_form, series_inner,
+    Arc, DiscoveryParams, MetricStore, ParsedForm, PrometheusApiState, RequestCaller, Response,
+    State, series_inner,
 };
 
 pub(crate) async fn series_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    body: Bytes,
+    caller: RequestCaller,
+    ParsedForm(params): ParsedForm<DiscoveryParams>,
 ) -> Response {
-    let params = match parse_discovery_form(&body) {
-        Ok(params) => params,
-        Err(error) => return error.into_response(),
-    };
-    series_inner(
-        &state,
-        RequestAuth {
-            headers: &headers,
-            principal: &principal,
-        },
-        params,
-    )
-    .await
+    series_inner(&state, caller.auth(), params).await
 }

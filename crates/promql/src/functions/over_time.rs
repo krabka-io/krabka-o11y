@@ -57,13 +57,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        functions::udf_test_support::{WindowStep, nullable_floats, window_columns},
+        functions::udf_test_support::{WindowStep, approx_eq, nullable_floats, window_columns},
         range_array::RangeArray,
     };
-
-    fn approx_eq(left: f64, right: f64) -> bool {
-        (left - right).abs() < 1e-9
-    }
 
     /// Runs an `OverTimeUdf` directly over a multi-step window set.
     ///

@@ -5,24 +5,10 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_avg_from_sum_and_co
     let cache = QueryFrontendCache::default();
     let executor = AvgPartialRecordingExecutor::default();
 
-    let result = execute_range_query_frontend(
-        &executor,
-        &cache,
-        &FrontendRangeRequest {
-            tenant: tenant_id("tenant-a"),
-            query: "avg(up)".into(),
-            start_ms: 0,
-            end_ms: 0,
-            step: millis(60_000),
-            admission_limits: krabka_query_frontend::AdmissionLimits::default(),
-            opts: QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        },
-    )
-    .await
-    .unwrap();
+    let result =
+        execute_range_query_frontend(&executor, &cache, &two_shard_instant_request("avg(up)"))
+            .await
+            .unwrap();
 
     let calls = executor
         .calls

@@ -37,15 +37,10 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::Float64Array;
     use assert2::check;
 
     use super::*;
-    use crate::planner::{RangeWindowGrid, job_values};
-
-    fn approx_eq(left: f64, right: f64) -> bool {
-        (left - right).abs() < 1e-9
-    }
+    use crate::planner::{RangeWindowGrid, approx_eq, first_batch_values, job_values};
 
     /// Runs `fold` at `eval_time_ms` over the window `(0, eval_time_ms]`.
     async fn run(
@@ -165,20 +160,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let batches = plan
-            .ctx
-            .execute_logical_plan(plan.plan)
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-        let value = batches[0]
-            .column_by_name(OVER_TIME_VALUE_COLUMN)
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
+        let value = first_batch_values(&plan.ctx, plan.plan, OVER_TIME_VALUE_COLUMN).await;
         assert2::assert!(value.len() == 1);
         assert2::assert!(value.is_null(0));
     }

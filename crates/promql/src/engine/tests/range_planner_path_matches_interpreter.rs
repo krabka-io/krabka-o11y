@@ -2,9 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn range_planner_path_matches_interpreter() {
-    use promql_parser::parser::Expr;
-
-    use crate::{DurationExprContext, parse_promql_with_duration_context};
+    use crate::DurationExprContext;
 
     let mut store = InMemoryMetricStore::new();
     let stale_bits = stale_nan();
@@ -180,14 +178,10 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
         "1 + 2",
     ];
     for query in planner_routed {
-        let expr =
-            parse_promql_with_duration_context(query, DurationExprContext::range(start, end, step))
-                .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-        let mut probe = &expr;
-        while let Expr::Paren(paren) = probe {
-            probe = &paren.expr;
-        }
-        assert2::assert!(super::super::range_expr_routes_through_planner(probe));
+        assert2::assert!(range_query_routes_through_planner(
+            query,
+            DurationExprContext::range(start, end, step)
+        ));
         // The public range path now routes these through the planner (the
         // only evaluation engine); it must evaluate without falling back.
         let planner = engine
@@ -201,16 +195,10 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
     // raw matrix selector / subquery (a range-vector shape owned by the
     // dedicated matrix/subquery range path, not the per-step instant
     // planner). Assert the gate excludes it.
-    for query in ["http_requests_total[2m]"] {
-        let expr =
-            parse_promql_with_duration_context(query, DurationExprContext::range(start, end, step))
-                .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-        let mut probe = &expr;
-        while let Expr::Paren(paren) = probe {
-            probe = &paren.expr;
-        }
-        assert2::assert!(!super::super::range_expr_routes_through_planner(probe));
-    }
+    assert2::assert!(!range_query_routes_through_planner(
+        "http_requests_total[2m]",
+        DurationExprContext::range(start, end, step)
+    ));
 
     // The headline fix, proven directly on the SPARSE aggregate-over-rate.
     // `sum by(group)(rate(spotty_total[2m]))` over the full `[0, 300000]`

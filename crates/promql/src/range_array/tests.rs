@@ -27,6 +27,8 @@ mod survives_datafusion_projection_as_a_column;
 mod timestamp_slice_reads_typed_int_cells;
 mod typed_accessor_matches_get_over_a_pre_sliced_backing_array;
 mod value_slice_reads_typed_float_cells;
+mod window_floats;
 mod windows_slice_the_backing_array;
 
 use native_histogram_rows::{native_histogram_rows, native_histogram_struct_array};
+use window_floats::window_floats;

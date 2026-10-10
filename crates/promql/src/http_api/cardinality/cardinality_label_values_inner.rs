@@ -8,14 +8,14 @@ pub(crate) async fn cardinality_label_values_inner<S: MetricStore>(
     auth: RequestAuth<'_>,
     params: CardinalityParams,
 ) -> Response {
-    let (_, series) = match authorized_cardinality_series(state, auth, &params).await {
-        Ok(selected) => selected,
-        Err(rejection) => return rejection.into_response(),
-    };
-    Json(cardinality_label_values_response(
-        &series,
-        &params.label_names,
-        params.limit,
-    ))
-    .into_response()
+    authorized_cardinality_series(state, auth, &params)
+        .await
+        .map(|(_, series)| {
+            Json(cardinality_label_values_response(
+                &series,
+                &params.label_names,
+                params.limit,
+            ))
+        })
+        .into_response()
 }

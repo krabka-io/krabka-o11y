@@ -263,15 +263,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 return Ok(Some(samples));
             }
 
-            let Some(planned) = self.plan_instant_expr(tenant, inner, time_ms).await? else {
-                return Ok(None);
-            };
-            let QueryResult::InstantVector(samples) =
-                self.assemble_planned_instant(planned, time_ms).await?
-            else {
-                return Ok(None);
-            };
-            Ok(Some(samples))
+            self.planned_instant_vector(tenant, inner, time_ms).await
         }
         .boxed()
     }

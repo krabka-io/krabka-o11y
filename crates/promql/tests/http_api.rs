@@ -154,6 +154,116 @@ fn up_api_a_and_web_b() -> TenantFloats {
         )
 }
 
+/// `up{job="api"}` = 1 and `up{job="web"}` = 2, both at 10s.
+fn up_api_1_and_web_2() -> TenantFloats {
+    TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 2.0)
+}
+
+/// `up{job="api"}` and `up{job="web"}`, both 1 at 10s.
+fn up_api_and_web_jobs() -> TenantFloats {
+    TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+}
+
+/// `up{job="api",instance="a"}` and `up{job="web"}`, both 1 at 10s.
+fn up_api_a_and_web() -> TenantFloats {
+    TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+}
+
+/// `up{job="api",instance="a"}`, 1 at `ts_ms`.
+fn up_api_a_at(ts_ms: i64) -> TenantFloats {
+    TenantFloats::new().sample(
+        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+        ts_ms,
+        1.0,
+    )
+}
+
+/// An app over `floats`, plus a `tenant-b` series `up{job="hidden"}` that no
+/// `tenant-a` request may see.
+fn app_with_hidden_tenant_b(floats: TenantFloats) -> axum::Router {
+    let mut store = floats.store();
+    store.push_float(
+        "tenant-b",
+        labels(&[("__name__", "up"), ("job", "hidden"), ("instance", "z")]),
+        10_000,
+        1.0,
+    );
+    prometheus_router(api_state(store))
+}
+
+/// Checks a successful `/labels` response naming the labels of `up`.
+async fn assert_up_label_names(response: axum::response::Response) {
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert2::assert!(body["status"] == "success");
+    assert2::assert!(body["data"] == serde_json::json!(["__name__", "instance", "job"]));
+}
+
+/// Checks a successful `/label/job/values` response listing `api` and `web`.
+async fn assert_api_and_web_job_values(response: axum::response::Response) {
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert2::assert!(body["status"] == "success");
+    assert2::assert!(body["data"] == serde_json::json!(["api", "web"]));
+}
+
+/// Checks a successful response whose `data` is an empty list.
+async fn assert_empty_list_data(response: axum::response::Response) {
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert2::assert!(body["status"].as_str() == Some("success"));
+    assert2::assert!(body["data"].clone() == serde_json::json!([]));
+}
+
+/// Checks a successful ruler config response holding an empty YAML mapping;
+/// `yaml_context` names the document when it does not parse.
+async fn assert_empty_rules_yaml(response: axum::response::Response, yaml_context: &str) {
+    assert2::assert!(response.status() == StatusCode::OK);
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&response_text(response).await).expect(yaml_context);
+    assert2::assert!(yaml == serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+}
+
+/// Reads `/prometheus/api/v1/alerts` after storing `rules_yaml` in `team-a`
+/// over [`up_api_a_at`] 0s, and returns the successful response body.
+async fn team_a_alerts_body(rules_yaml: &'static str) -> Value {
+    let app = up_api_a_at(0).app();
+    configure_team_a_rules(&app, rules_yaml).await;
+    let response = get(&app, "/prometheus/api/v1/alerts").await;
+    json_with_status(response, StatusCode::OK).await
+}
+
+/// Checks a `/cardinality/label_names` response cut to one label by `limit=1`,
+/// which is `job`, and returns its body.
+async fn job_alone_under_limit(response: axum::response::Response) -> Value {
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert2::assert!(
+        body["cardinality"]
+            .as_array()
+            .expect("cardinality array")
+            .len()
+            == 1
+    );
+    assert2::assert!(body["cardinality"][0]["label_name"].as_str() == Some("job"));
+    body
+}
+
+/// POSTs `query` to `tenant-a`'s `/api/v1/query` as a form evaluated at 10s.
+async fn post_query_at_10(app: &axum::Router, query: &str) -> axum::response::Response {
+    let form = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("query", query)
+        .append_pair("time", "10")
+        .finish();
+    post_form(app, "/api/v1/query", form).await
+}
+
 /// Checks a Mimir `/cardinality/active_series` response that lists only the
 /// `job="api"` series of [`up_api_a_and_web_b`].
 async fn assert_only_active_up_api_a(response: axum::response::Response) {
@@ -753,10 +863,7 @@ async fn query_endpoint_accepts_post_form_body() {
 
 #[tokio::test]
 async fn query_endpoint_honors_limit_parameter_for_vectors() {
-    let app = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 2.0)
-        .app();
+    let app = up_api_1_and_web_2().app();
 
     let response = get(&app, "/api/v1/query?query=up&time=10&limit=1").await;
 
@@ -767,10 +874,7 @@ async fn query_endpoint_honors_limit_parameter_for_vectors() {
 
 #[tokio::test]
 async fn query_endpoint_treats_zero_limit_as_disabled() {
-    let app = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 2.0)
-        .app();
+    let app = up_api_1_and_web_2().app();
 
     let response = get(&app, "/api/v1/query?query=up&time=10&limit=0").await;
 
@@ -1226,17 +1330,7 @@ async fn series_endpoint_returns_matching_label_sets() {
 
 #[tokio::test]
 async fn series_endpoint_accepts_or_label_matchers() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-            10_000,
-            1.0,
-        )
+    let app = up_api_a_and_web_b()
         .sample(
             labels(&[("__name__", "up"), ("job", "db"), ("instance", "c")]),
             10_000,
@@ -1322,9 +1416,7 @@ async fn labels_endpoint_returns_label_names_for_matchers() {
 
     let response = get(&app, "/api/v1/labels?match%5B%5D=up&start=10&end=10").await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"] == serde_json::json!(["__name__", "instance", "job"]));
+    assert_up_label_names(response).await;
 }
 
 #[tokio::test]
@@ -1333,9 +1425,7 @@ async fn labels_endpoint_accepts_post_form_body() {
 
     let response = post_form(&app, "/api/v1/labels", "match%5B%5D=up&start=10&end=10").await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"] == serde_json::json!(["__name__", "instance", "job"]));
+    assert_up_label_names(response).await;
 }
 
 #[tokio::test]
@@ -1361,16 +1451,7 @@ async fn labels_endpoint_honors_limit_parameter() {
 
 #[tokio::test]
 async fn label_values_endpoint_is_available_under_mimir_prefix() {
-    let mut store = InMemoryMetricStore::new();
-    for job in ["api", "web"] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "up"), ("job", job)]),
-            10_000,
-            1.0,
-        );
-    }
-    let app = prometheus_router(api_state(store));
+    let app = up_api_and_web_jobs().app();
 
     let response = get(
         &app,
@@ -1378,29 +1459,18 @@ async fn label_values_endpoint_is_available_under_mimir_prefix() {
     )
     .await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"] == serde_json::json!(["api", "web"]));
+    assert_api_and_web_job_values(response).await;
 }
 
 #[tokio::test]
 async fn label_values_endpoint_accepts_post_form_body() {
-    let mut store = InMemoryMetricStore::new();
-    for job in ["api", "web"] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "up"), ("job", job)]),
+    let app = up_api_and_web_jobs()
+        .sample(
+            labels(&[("__name__", "errors_total"), ("job", "ignored")]),
             10_000,
             1.0,
-        );
-    }
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "errors_total"), ("job", "ignored")]),
-        10_000,
-        1.0,
-    );
-    let app = prometheus_router(api_state(store));
+        )
+        .app();
 
     let response = post_form(
         &app,
@@ -1409,23 +1479,12 @@ async fn label_values_endpoint_accepts_post_form_body() {
     )
     .await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"] == serde_json::json!(["api", "web"]));
+    assert_api_and_web_job_values(response).await;
 }
 
 #[tokio::test]
 async fn label_values_endpoint_honors_limit_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    for job in ["api", "web"] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "up"), ("job", job)]),
-            10_000,
-            1.0,
-        );
-    }
-    let app = prometheus_router(api_state(store));
+    let app = up_api_and_web_jobs().app();
 
     let response = get(
         &app,
@@ -1827,19 +1886,7 @@ async fn alerts_endpoint_omits_inactive_configured_alerting_rules() {
 
 #[tokio::test]
 async fn alerts_endpoint_evaluates_alerting_rules() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            0,
-            1.0,
-        )
-        .app();
-
-    configure_team_a_rules(&app, INSTANCE_DOWN_PAGE_YAML).await;
-
-    let response = get(&app, "/prometheus/api/v1/alerts").await;
-
-    let body = json_with_status(response, StatusCode::OK).await;
+    let body = team_a_alerts_body(INSTANCE_DOWN_PAGE_YAML).await;
     let alerts = body["data"]["alerts"].as_array().unwrap();
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(alerts.len() == 1);
@@ -1851,19 +1898,7 @@ async fn alerts_endpoint_evaluates_alerting_rules() {
 
 #[tokio::test]
 async fn alerts_endpoint_marks_for_duration_alerts_pending() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            0,
-            1.0,
-        )
-        .app();
-
-    configure_team_a_rules(&app, INSTANCE_DOWN_FOR_5M_GROUP).await;
-
-    let response = get(&app, "/prometheus/api/v1/alerts").await;
-
-    let body = json_with_status(response, StatusCode::OK).await;
+    let body = team_a_alerts_body(INSTANCE_DOWN_FOR_5M_GROUP).await;
     assert2::assert!(body["status"] == "success");
     let alerts = body["data"]["alerts"].as_array().unwrap();
     assert2::assert!(alerts.len() == 1);
@@ -1989,9 +2024,7 @@ async fn scrape_pools_endpoint_returns_empty_pool_list() {
     )
     .await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"].clone() == serde_json::json!([]));
+    assert_empty_list_data(response).await;
 }
 
 #[tokio::test]
@@ -2004,9 +2037,7 @@ async fn target_metadata_endpoint_returns_empty_metadata_list() {
     )
     .await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"].clone() == serde_json::json!([]));
+    assert_empty_list_data(response).await;
 }
 
 #[tokio::test]
@@ -2115,10 +2146,7 @@ async fn ruler_config_rules_crud_round_trips_yaml_groups() {
             .unwrap(),
     )
     .await;
-    assert2::assert!(response.status() == StatusCode::OK);
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(&response_text(response).await).expect("tenant yaml");
-    assert2::assert!(yaml == serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    assert_empty_rules_yaml(response, "tenant yaml").await;
 
     let response = send(
         &app,
@@ -2133,10 +2161,7 @@ async fn ruler_config_rules_crud_round_trips_yaml_groups() {
     assert2::assert!(response.status() == StatusCode::ACCEPTED);
 
     let response = get(&app, "/prometheus/config/v1/rules/team-a").await;
-    assert2::assert!(response.status() == StatusCode::OK);
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(&response_text(response).await).expect("namespace yaml");
-    assert2::assert!(yaml == serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    assert_empty_rules_yaml(response, "namespace yaml").await;
 }
 
 #[tokio::test]
@@ -2171,10 +2196,7 @@ rules:
     assert2::assert!(response_text(response).await.contains("PromQL"));
 
     let response = get(&app, "/prometheus/config/v1/rules").await;
-    assert2::assert!(response.status() == StatusCode::OK);
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(&response_text(response).await).expect("tenant yaml");
-    assert2::assert!(yaml == serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    assert_empty_rules_yaml(response, "tenant yaml").await;
 }
 
 #[tokio::test]
@@ -2668,27 +2690,12 @@ async fn cardinality_label_names_endpoint_returns_label_name_counts() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_honors_limit_parameter() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
-        .app();
+    let app = up_api_a_and_web().app();
 
     let response = get(&app, "/api/v1/cardinality/label_names?limit=1").await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
     // job has two distinct values, so it sorts first under the limit.
-    assert2::assert!(
-        body["cardinality"]
-            .as_array()
-            .expect("cardinality array")
-            .len()
-            == 1
-    );
-    assert2::assert!(body["cardinality"][0]["label_name"].as_str() == Some("job"));
+    let body = job_alone_under_limit(response).await;
     assert2::assert!(body["cardinality"][0]["label_values_count"].as_i64() == Some(2));
 }
 
@@ -2717,26 +2724,11 @@ async fn cardinality_label_names_endpoint_filters_selector_parameter() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_accepts_post_form_body() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
-        .app();
+    let app = up_api_a_and_web().app();
 
     let response = post_form(&app, "/api/v1/cardinality/label_names", "limit=1").await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(
-        body["cardinality"]
-            .as_array()
-            .expect("cardinality array")
-            .len()
-            == 1
-    );
-    assert2::assert!(body["cardinality"][0]["label_name"].as_str() == Some("job"));
+    job_alone_under_limit(response).await;
 }
 
 #[tokio::test]
@@ -2783,20 +2775,11 @@ async fn cardinality_label_names_endpoint_rejects_invalid_count_method_parameter
 
 #[tokio::test]
 async fn cardinality_active_series_endpoint_returns_series_labels_under_mimir_prefix() {
-    let mut store = up_api_a_at_10_and_20()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-            10_000,
-            1.0,
-        )
-        .store();
-    store.push_float(
-        "tenant-b",
-        labels(&[("__name__", "up"), ("job", "hidden"), ("instance", "z")]),
+    let app = app_with_hidden_tenant_b(up_api_a_at_10_and_20().sample(
+        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
         10_000,
         1.0,
-    );
-    let app = prometheus_router(api_state(store));
+    ));
 
     let response = get(&app, "/prometheus/api/v1/cardinality/active_series").await;
 
@@ -2853,25 +2836,19 @@ async fn cardinality_active_series_endpoint_accepts_post_form_body() {
 
 #[tokio::test]
 async fn cardinality_label_values_endpoint_returns_label_value_counts() {
-    let mut store = up_api_a_at_10_and_20()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("instance", "c")]),
-            10_000,
-            1.0,
-        )
-        .store();
-    store.push_float(
-        "tenant-b",
-        labels(&[("__name__", "up"), ("job", "hidden"), ("instance", "z")]),
-        10_000,
-        1.0,
+    let app = app_with_hidden_tenant_b(
+        up_api_a_at_10_and_20()
+            .sample(
+                labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
+                10_000,
+                1.0,
+            )
+            .sample(
+                labels(&[("__name__", "up"), ("job", "web"), ("instance", "c")]),
+                10_000,
+                1.0,
+            ),
     );
-    let app = prometheus_router(api_state(store));
 
     let response = get(&app, "/api/v1/cardinality/label_values").await;
 
@@ -3458,21 +3435,7 @@ async fn byte_label_identity_is_preserved_until_the_http_json_boundary() {
             serde_json::json!({"resultType":"vector","result":[{"metric":{"__name__":"byte_input","raw":"�","captured":"�","joined":"���"},"value":[10,"2"]}]}),
         ),
     ] {
-        let body = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("query", query)
-            .append_pair("time", "10")
-            .finish();
-        let response = send(
-            &app,
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/query")
-                .header("x-scope-orgid", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await;
+        let response = post_query_at_10(&app, query).await;
         assert2::assert!(response.status() == StatusCode::OK, "{query}");
         let body = response_json(response).await;
         assert2::assert!(body["data"] == expected, "{query}");
@@ -3499,21 +3462,7 @@ async fn byte_label_identity_is_preserved_until_the_http_json_boundary() {
         assert2::assert!(response.status() == StatusCode::OK);
         assert2::assert!(response_json(response).await["data"] == expected);
     }
-    let body = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("query", r#"byte_input{raw=~"\xff"}"#)
-        .append_pair("time", "10")
-        .finish();
-    let response = send(
-        &app,
-        Request::builder()
-            .method("POST")
-            .uri("/api/v1/query")
-            .header("x-scope-orgid", "tenant-a")
-            .header("content-type", "application/x-www-form-urlencoded")
-            .body(Body::from(body))
-            .unwrap(),
-    )
-    .await;
+    let response = post_query_at_10(&app, r#"byte_input{raw=~"\xff"}"#).await;
     let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"] == "error" && body["errorType"] == "bad_data");
 }

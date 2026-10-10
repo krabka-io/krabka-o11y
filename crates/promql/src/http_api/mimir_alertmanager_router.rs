@@ -20,7 +20,10 @@ use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use xxhash_rust::xxh64::xxh64;
 
-use super::{MetricStore, PrometheusApiState, RequestCaller, authorized_tenant_from_headers};
+use super::{
+    AuthorizedTenant, MetricStore, PrometheusApiState, RequestCaller,
+    authorized_tenant_from_headers,
+};
 
 static NEXT_SILENCE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -180,15 +183,7 @@ async fn receivers<S: MetricStore>(
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
-    let names = state
-        .alertmanager_configs
-        .read()
-        .ok()
-        .and_then(|configs| configs.get(&tenant).cloned())
-        .and_then(|body| serde_yaml::from_str::<AlertmanagerConfig>(&body).ok())
-        .and_then(|wrapper| {
-            serde_yaml::from_str::<serde_yaml::Value>(&wrapper.alertmanager_config).ok()
-        })
+    let names = alertmanager_config_yaml(&state, &tenant)
         .and_then(|config| {
             config
                 .get("receivers")
@@ -363,13 +358,9 @@ async fn set_silence<S: MetricStore>(
 
 async fn silence<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    caller: RequestCaller,
     Path(id): Path<String>,
+    AuthorizedTenant(tenant): AuthorizedTenant,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
     match state
         .alertmanager_silences
         .read()
@@ -387,13 +378,9 @@ async fn silence<S: MetricStore>(
 
 async fn delete_silence<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    caller: RequestCaller,
     Path(id): Path<String>,
+    AuthorizedTenant(tenant): AuthorizedTenant,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
     let deleted = match state.alertmanager_silences.write() {
         Ok(mut silences) => silences
             .get_mut(&tenant)
@@ -450,10 +437,11 @@ fn validate_alertmanager_config(
     Ok(())
 }
 
-fn default_receiver<S: MetricStore>(
+/// The tenant's stored `alertmanager_config` document, parsed as YAML.
+fn alertmanager_config_yaml<S: MetricStore>(
     state: &PrometheusApiState<S>,
     tenant: &krabka_blockstore::TenantId,
-) -> Option<String> {
+) -> Option<serde_yaml::Value> {
     state
         .alertmanager_configs
         .read()
@@ -463,13 +451,19 @@ fn default_receiver<S: MetricStore>(
         .and_then(|wrapper| {
             serde_yaml::from_str::<serde_yaml::Value>(&wrapper.alertmanager_config).ok()
         })
-        .and_then(|config| {
-            config
-                .get("route")?
-                .get("receiver")?
-                .as_str()
-                .map(str::to_owned)
-        })
+}
+
+fn default_receiver<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    tenant: &krabka_blockstore::TenantId,
+) -> Option<String> {
+    alertmanager_config_yaml(state, tenant).and_then(|config| {
+        config
+            .get("route")?
+            .get("receiver")?
+            .as_str()
+            .map(str::to_owned)
+    })
 }
 
 fn enrich_alert(alert: &mut Value, receiver: Option<&str>) {

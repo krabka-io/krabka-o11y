@@ -127,7 +127,7 @@ pub use prometheus_router::{mimir_ruler_prometheus_router, prometheus_router};
 use query_frontend_state::QueryFrontendState;
 use record_query_response::record_query_response;
 use request_auth::{Rejection, RequestAuth};
-use request_caller::{ParsedQuery, RequestCaller};
+use request_caller::{AuthorizedTenant, ParsedForm, ParsedQuery, RequestCaller};
 use ruler_alert_state_store::RulerAlertStateStore;
 use ruler_rule_store::RulerRuleStore;
 use rules_params::RulesParams;

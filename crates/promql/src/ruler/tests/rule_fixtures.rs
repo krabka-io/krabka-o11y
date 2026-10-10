@@ -3,6 +3,24 @@ use super::*;
 /// A tenant's rule groups, keyed by namespace and then group name.
 pub(crate) type RuleSet = BTreeMap<String, BTreeMap<String, serde_yaml::Value>>;
 
+/// A 30s group that records `job:up:current` from `up` and alerts
+/// `InstanceUp` once `up > 0` has held for 5m.
+pub(crate) fn mixed_rule_group() -> serde_yaml::Value {
+    serde_yaml::from_str(
+        r"
+name: mixed
+interval: 30s
+rules:
+  - record: job:up:current
+    expr: up
+  - alert: InstanceUp
+    expr: up > 0
+    for: 5m
+",
+    )
+    .expect("rule group yaml")
+}
+
 /// An engine over `tenant-a`'s `up{job="api"}`, which is 1 at each of
 /// `sample_times_ms`.
 pub(crate) fn up_api_engine(sample_times_ms: &[i64]) -> PromqlEngine<InMemoryMetricStore> {

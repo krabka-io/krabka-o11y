@@ -35,15 +35,10 @@ use crate::{PromqlLabels as Labels, error::Result, extension::planner::prom_sess
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::Float64Array;
     use assert2::check;
 
     use super::*;
-    use crate::planner::{RangeWindowGrid, job_values};
-
-    fn approx_eq(left: f64, right: f64) -> bool {
-        (left - right).abs() < 1e-9
-    }
+    use crate::planner::{RangeWindowGrid, approx_eq, first_batch_values, job_values};
 
     /// `rate(counter[5m])` over the engine's canonical counter window returns
     /// 5/300 through the full operator chain. The window runs 0..240s in steps
@@ -88,20 +83,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let batches = plan
-            .ctx
-            .execute_logical_plan(plan.plan)
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-        let value = batches[0]
-            .column_by_name(RATE_VALUE_COLUMN)
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
+        let value = first_batch_values(&plan.ctx, plan.plan, RATE_VALUE_COLUMN).await;
         assert2::assert!(approx_eq(value.value(0), 2.0));
     }
 
@@ -120,20 +102,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let batches = plan
-            .ctx
-            .execute_logical_plan(plan.plan)
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-        let value = batches[0]
-            .column_by_name(RATE_VALUE_COLUMN)
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
+        let value = first_batch_values(&plan.ctx, plan.plan, RATE_VALUE_COLUMN).await;
         assert2::assert!(value.is_null(0));
     }
 }

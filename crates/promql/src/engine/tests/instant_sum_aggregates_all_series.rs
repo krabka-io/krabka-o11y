@@ -2,21 +2,10 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_sum_aggregates_all_series() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web")]),
-        10_000,
-        2.0,
-    );
-
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let engine = FloatStore::default()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 1.0)
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 2.0)
+        .engine();
     let samples = instant_vector(&engine, "sum(up)", 10_000).await;
     check!(samples.len() == 1);
     check!(samples[0].labels.is_empty());

@@ -27,13 +27,11 @@ impl RangeQueryExecutor for WarningExecutor {
         annotations.warn("PromQL warning: block metrics/float/0001.parquet is missing");
         annotations.info("PromQL info: metric might not be a counter");
         Ok(AnnotatedQueryResult {
-            result: QueryResult::RangeMatrix(vec![RangeSeries {
-                drop_name: false,
-                start_timestamps_ms: std::collections::BTreeMap::new(),
-                labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
-                samples: vec![(query.start_ms, SampleValue::Float(1.0))],
-            }]),
             annotations,
+            ..up_api_matrix(&[FloatPoint {
+                ts_ms: query.start_ms,
+                value: 1.0,
+            }])
         })
     }
 }

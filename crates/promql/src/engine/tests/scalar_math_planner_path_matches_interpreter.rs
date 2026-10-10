@@ -61,13 +61,10 @@ pub(crate) async fn scalar_math_planner_path_matches_interpreter() {
     ];
 
     for (query, time_ms) in queries {
-        let (via_operators, via_interpreter) =
-            planned_and_interpreted(&engine, query, time_ms).await;
-
-        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
-
-        let interpreter = normalize(via_interpreter);
-        let operators = normalize(via_operators);
+        let SortedParity {
+            via_operators: operators,
+            via_interpreter: interpreter,
+        } = sorted_planned_and_interpreted(&engine, query, time_ms).await;
         assert2::assert!(nan_equal_samples(&interpreter, &operators));
     }
 

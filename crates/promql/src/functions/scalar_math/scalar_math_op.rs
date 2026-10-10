@@ -95,8 +95,9 @@ impl ScalarMathOp {
     /// `round`, `[min]` or `[max]` for `clamp_min` and `clamp_max`, and
     /// `[min, max]` for `clamp`. `value` is the per-row instant-vector value.
     ///
-    /// This is a direct port of the interpreter's `UnaryFloatFn::apply`,
-    /// `clamp_float`, and `round_to_nearest`, and it evaluates bit-for-bit.
+    /// The interpreter's `UnaryFloatFn::apply` evaluates through this method,
+    /// and `clamp_float` and `round_to_nearest` are the interpreter's own, so
+    /// both paths evaluate bit-for-bit.
     pub(crate) fn apply(self, value: f64, params: &[f64]) -> f64 {
         match self {
             Self::Abs => value.abs(),

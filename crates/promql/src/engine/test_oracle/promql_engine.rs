@@ -624,31 +624,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         let OracleCall { call, time_ms } = at;
         let arg = single_arg(call)?;
 
-        match self.eval_instant_expr(tenant, arg, time_ms).await? {
-            QueryResult::Scalar { value, .. } => Ok(QueryResult::Scalar {
-                ts_ms: time_ms,
-                value: kind.apply(value),
-            }),
-            QueryResult::InstantVector(samples) => Ok(QueryResult::InstantVector(
-                samples
-                    .into_iter()
-                    .filter_map(|sample| {
-                        let SampleValue::Float(value) = sample.value else {
-                            return None;
-                        };
-                        Some(InstantSample {
-                            labels: labels_without_metric_name(&sample.labels),
-                            ts_ms: sample.ts_ms,
-                            value: SampleValue::Float(kind.apply(value)),
-                            drop_name: true,
-                        })
-                    })
-                    .collect(),
-            )),
-            QueryResult::RangeMatrix(_) | QueryResult::Str { .. } => Err(PromqlError::Plan(
-                format!("{} expects a scalar or instant vector", call.func.name),
-            )),
-        }
+        let operand = self.eval_instant_expr(tenant, arg, time_ms).await?;
+        map_float_operand(operand, time_ms, |value| kind.apply(value)).ok_or_else(|| {
+            PromqlError::Plan(format!(
+                "{} expects a scalar or instant vector",
+                call.func.name
+            ))
+        })
     }
     #[cfg(test)]
     pub(crate) async fn eval_round_call(
@@ -671,34 +653,13 @@ impl<S: MetricStore> PromqlEngine<S> {
             1.0
         };
 
-        match self
+        let operand = self
             .eval_instant_expr(tenant, &call.args.args[0], time_ms)
-            .await?
-        {
-            QueryResult::Scalar { value, .. } => Ok(QueryResult::Scalar {
-                ts_ms: time_ms,
-                value: round_to_nearest(value, to_nearest),
-            }),
-            QueryResult::InstantVector(samples) => Ok(QueryResult::InstantVector(
-                samples
-                    .into_iter()
-                    .filter_map(|sample| {
-                        let SampleValue::Float(value) = sample.value else {
-                            return None;
-                        };
-                        Some(InstantSample {
-                            labels: labels_without_metric_name(&sample.labels),
-                            ts_ms: sample.ts_ms,
-                            value: SampleValue::Float(round_to_nearest(value, to_nearest)),
-                            drop_name: true,
-                        })
-                    })
-                    .collect(),
-            )),
-            QueryResult::RangeMatrix(_) | QueryResult::Str { .. } => Err(PromqlError::Plan(
-                "round expects a scalar or instant vector".to_string(),
-            )),
-        }
+            .await?;
+        map_float_operand(operand, time_ms, |value| {
+            round_to_nearest(value, to_nearest)
+        })
+        .ok_or_else(|| PromqlError::Plan("round expects a scalar or instant vector".to_string()))
     }
     #[cfg(test)]
     pub(crate) async fn eval_sort_call(
@@ -797,20 +758,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         };
 
         Ok(QueryResult::InstantVector(
-            samples
-                .into_iter()
-                .filter_map(|sample| {
-                    let SampleValue::Float(value) = sample.value else {
-                        return None;
-                    };
-                    Some(InstantSample {
-                        labels: labels_without_metric_name(&sample.labels),
-                        ts_ms: time_ms,
-                        value: SampleValue::Float(kind.apply(value)),
-                        drop_name: true,
-                    })
-                })
-                .collect(),
+            kind.apply_to_samples(samples, time_ms),
         ))
     }
 
@@ -922,13 +870,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        if call.args.args.len() < 3 {
-            return Err(PromqlError::Plan(format!(
-                "{} expects at least three arguments, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        }
+        expect_at_least_three_args(call)?;
 
         let vector_arg = &call.args.args[0];
         let label_name = string_literal_arg(call, 1, "label name")?;
@@ -1025,13 +967,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        if call.args.args.len() < 3 {
-            return Err(PromqlError::Plan(format!(
-                "{} expects at least three arguments, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        }
+        expect_at_least_three_args(call)?;
 
         let dst_label = string_literal_arg(call, 1, "destination label")?;
         let separator = string_literal_arg(call, 2, "separator")?;
@@ -1226,13 +1162,7 @@ impl<S: MetricStore> PromqlEngine<S> {
 
     #[cfg(test)]
     pub(crate) fn eval_time_call(call: &Call, time_ms: i64) -> Result<QueryResult> {
-        if !call.args.args.is_empty() {
-            return Err(PromqlError::Plan(format!(
-                "{} expects no arguments, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        }
+        expect_no_args(call)?;
         Ok(QueryResult::Scalar {
             ts_ms: time_ms,
             value: timestamp_seconds(time_ms),
@@ -1241,13 +1171,7 @@ impl<S: MetricStore> PromqlEngine<S> {
 
     #[cfg(test)]
     pub(crate) fn eval_pi_call(call: &Call, time_ms: i64) -> Result<QueryResult> {
-        if !call.args.args.is_empty() {
-            return Err(PromqlError::Plan(format!(
-                "{} expects no arguments, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        }
+        expect_no_args(call)?;
         Ok(QueryResult::Scalar {
             ts_ms: time_ms,
             value: std::f64::consts::PI,
@@ -1454,4 +1378,61 @@ fn single_arg(call: &Call) -> Result<&Expr> {
         )));
     };
     Ok(arg)
+}
+
+/// The arity error unless `call` has no arguments.
+fn expect_no_args(call: &Call) -> Result<()> {
+    if call.args.args.is_empty() {
+        return Ok(());
+    }
+    Err(PromqlError::Plan(format!(
+        "{} expects no arguments, got {}",
+        call.func.name,
+        call.args.args.len()
+    )))
+}
+
+/// The arity error unless `call` has at least three arguments.
+fn expect_at_least_three_args(call: &Call) -> Result<()> {
+    if call.args.args.len() >= 3 {
+        return Ok(());
+    }
+    Err(PromqlError::Plan(format!(
+        "{} expects at least three arguments, got {}",
+        call.func.name,
+        call.args.args.len()
+    )))
+}
+
+/// Applies `float_fn` to a scalar `operand`, stamped at `time_ms`, or to each
+/// float sample of an instant-vector `operand`, which loses its metric name
+/// and any histogram sample. `None` for any other operand.
+fn map_float_operand(
+    operand: QueryResult,
+    time_ms: i64,
+    float_fn: impl Fn(f64) -> f64,
+) -> Option<QueryResult> {
+    match operand {
+        QueryResult::Scalar { value, .. } => Some(QueryResult::Scalar {
+            ts_ms: time_ms,
+            value: float_fn(value),
+        }),
+        QueryResult::InstantVector(samples) => Some(QueryResult::InstantVector(
+            samples
+                .into_iter()
+                .filter_map(|sample| {
+                    let SampleValue::Float(value) = sample.value else {
+                        return None;
+                    };
+                    Some(InstantSample {
+                        labels: labels_without_metric_name(&sample.labels),
+                        ts_ms: sample.ts_ms,
+                        value: SampleValue::Float(float_fn(value)),
+                        drop_name: true,
+                    })
+                })
+                .collect(),
+        )),
+        QueryResult::RangeMatrix(_) | QueryResult::Str { .. } => None,
+    }
 }

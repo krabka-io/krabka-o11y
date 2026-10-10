@@ -48,6 +48,6 @@ use recording_ruler_state_sink::RecordingRulerStateSink;
 use recording_sink::RecordingSink;
 use rule_fixtures::{
     GroupLastEval, IntervalGroup, UpRuleSinks, UpSample, assert_up_rules_fired_at_six_minutes,
-    group_state, instance_up_alert, interval_rule_set, job_up_current_record, namespaced_rule_set,
-    staggered_group_state, up_api_engine, up_samples_engine,
+    group_state, instance_up_alert, interval_rule_set, job_up_current_record, mixed_rule_group,
+    namespaced_rule_set, staggered_group_state, up_api_engine, up_samples_engine,
 };

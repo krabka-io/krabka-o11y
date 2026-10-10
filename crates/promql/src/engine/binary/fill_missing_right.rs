@@ -1,25 +1,24 @@
 use super::{
-    BinModifier, BinaryOp, InstantSample, MissingSide, Result, SampleValue,
-    apply_binary_fill_value, binary_returns_bool,
+    InstantSample, Labels, MissingSide, Result, VectorMatching, apply_binary_fill_value,
+    binary_returns_bool,
 };
 
-/// A left-side sample's result against the `fill_right` value that stands in
-/// for its missing right-side match.
+/// How the `fill_right` value treats the metric name of the left-side sample
+/// it stands in against.
 pub(crate) struct RightFill {
-    pub(crate) filled_value: SampleValue,
     /// Whether the operation keeps the left labels, metric name included.
     pub(crate) preserves_name: bool,
-    pub(crate) drop_name: bool,
 }
 
 /// Applies the `fill_right` modifier value to a left-side sample that found no
-/// right-side match. `None` means no fill applies, or the filled comparison
-/// filtered the sample out.
+/// right-side match, labelling the result with `result_labels`. `None` means
+/// no fill applies, or the filled comparison filtered the sample out.
 pub(crate) fn fill_missing_right(
     left_sample: &InstantSample,
-    op: BinaryOp,
-    modifier: Option<&BinModifier>,
-) -> Result<Option<RightFill>> {
+    matching: VectorMatching<'_>,
+    result_labels: impl FnOnce(&RightFill) -> Labels,
+) -> Result<Option<InstantSample>> {
+    let VectorMatching { op, modifier } = matching;
     let Some(rhs_fill) = modifier.and_then(|modifier| modifier.fill_values.rhs) else {
         return Ok(None);
     };
@@ -34,9 +33,10 @@ pub(crate) fn fill_missing_right(
     } else {
         true
     };
-    Ok(Some(RightFill {
-        filled_value: filled,
-        preserves_name,
+    Ok(Some(InstantSample {
+        labels: result_labels(&RightFill { preserves_name }),
+        ts_ms: left_sample.ts_ms,
+        value: filled,
         drop_name,
     }))
 }

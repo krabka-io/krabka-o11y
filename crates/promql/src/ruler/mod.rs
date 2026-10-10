@@ -27,7 +27,6 @@ pub use alerting::{
 use config::parse_duration;
 pub use evaluation::{
     evaluate_and_persist_ruler_rule_group, evaluate_and_persist_ruler_rule_set,
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
     evaluate_and_persist_ruler_rule_set_with_report, evaluate_ruler_rule_group,
     evaluate_ruler_rule_set,

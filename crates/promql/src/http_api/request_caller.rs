@@ -1,14 +1,16 @@
 use axum::{
     Extension,
-    extract::FromRequestParts,
+    body::Bytes,
+    extract::{FromRequest, FromRequestParts, Request},
     http::{HeaderMap, request::Parts},
     response::{IntoResponse, Response},
 };
+use krabka_blockstore::TenantId;
 use krabka_observability::server_security::Principal;
 
 use super::{
-    ApiError, CardinalityParams, DiscoveryParams, RequestAuth, parse_cardinality_params,
-    parse_discovery_params,
+    ApiError, CardinalityParams, DiscoveryParams, RequestAuth, authorized_tenant_from_headers,
+    parse_cardinality_params, parse_discovery_params,
 };
 
 /// The authenticated principal and the headers of one API request.
@@ -41,6 +43,23 @@ impl<S: Send + Sync> FromRequestParts<S> for RequestCaller {
             principal,
             headers: parts.headers.clone(),
         })
+    }
+}
+
+/// The tenant the caller of one API request is authorized for.
+///
+/// It extracts as [`RequestCaller`] does, and rejects a caller that
+/// `authorized_tenant_from_headers` refuses with that error's response.
+pub(crate) struct AuthorizedTenant(pub(crate) TenantId);
+
+impl<S: Send + Sync> FromRequestParts<S> for AuthorizedTenant {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let caller = RequestCaller::from_request_parts(parts, state).await?;
+        authorized_tenant_from_headers(&caller.headers, &caller.principal)
+            .map(Self)
+            .map_err(IntoResponse::into_response)
     }
 }
 
@@ -78,5 +97,22 @@ impl<S: Send + Sync, Params: RawQueryParams> FromRequestParts<S> for ParsedQuery
                 .map(Self)
                 .map_err(IntoResponse::into_response),
         )
+    }
+}
+
+/// Form-body parameters parsed by [`RawQueryParams`]; a body that cannot be
+/// read or parsed is the rejection response.
+pub(crate) struct ParsedForm<Params>(pub(crate) Params);
+
+impl<S: Send + Sync, Params: RawQueryParams> FromRequest<S> for ParsedForm<Params> {
+    type Rejection = Response;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let body = Bytes::from_request(request, state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        Params::parse_raw_query(std::str::from_utf8(&body).ok())
+            .map(Self)
+            .map_err(IntoResponse::into_response)
     }
 }

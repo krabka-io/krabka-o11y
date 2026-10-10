@@ -5,24 +5,10 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_stdvar_from_moment_
     let cache = QueryFrontendCache::default();
     let executor = MomentPartialRecordingExecutor::default();
 
-    let result = execute_range_query_frontend(
-        &executor,
-        &cache,
-        &FrontendRangeRequest {
-            tenant: tenant_id("tenant-a"),
-            query: "stdvar(up)".into(),
-            start_ms: 0,
-            end_ms: 0,
-            step: millis(60_000),
-            admission_limits: krabka_query_frontend::AdmissionLimits::default(),
-            opts: QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        },
-    )
-    .await
-    .unwrap();
+    let result =
+        execute_range_query_frontend(&executor, &cache, &two_shard_instant_request("stdvar(up)"))
+            .await
+            .unwrap();
 
     let calls = executor
         .calls

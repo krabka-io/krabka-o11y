@@ -14,6 +14,7 @@ use crate::{MetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue};
 
 #[cfg(test)]
 mod alert_template_queries;
+mod alerting_rules;
 mod evaluate_alerting_rule_with_state_and_sink;
 mod evaluate_and_dispatch_alerting_rule;
 mod evaluate_and_dispatch_alerting_rule_group;
@@ -24,6 +25,7 @@ mod expand_alert_label_map;
 mod labels_to_map;
 mod template_query_value;
 
+use alerting_rules::alerting_rules;
 pub(crate) use evaluate_alerting_rule_with_state_and_sink::evaluate_alerting_rule_with_state_and_sink;
 pub use evaluate_and_dispatch_alerting_rule::evaluate_and_dispatch_alerting_rule;
 pub use evaluate_and_dispatch_alerting_rule_group::evaluate_and_dispatch_alerting_rule_group;

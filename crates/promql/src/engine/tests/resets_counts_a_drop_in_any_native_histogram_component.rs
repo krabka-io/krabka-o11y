@@ -47,15 +47,7 @@ pub(crate) async fn resets_counts_a_drop_in_any_native_histogram_component() {
         );
         store.push_histogram("tenant-a", labels(&[("__name__", "h")]), 60_000, second);
 
-        let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), "resets(h[5m])", 60_000)
-            .await
-            .unwrap();
-
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected a vector for {case}");
-        };
+        let samples = instant_vector(&default_engine(store), "resets(h[5m])", 60_000).await;
         assert2::assert!(samples.len() == 1, "{case}");
         assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{case}");
     }

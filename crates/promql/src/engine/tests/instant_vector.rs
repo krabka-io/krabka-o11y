@@ -47,6 +47,24 @@ pub(crate) async fn assert_lone_value_at<S: crate::MetricStore>(
     engine: &PromqlEngine<S>,
     lone: LoneValueQuery<'_>,
 ) {
+    lone_sample_at(engine, lone).await;
+}
+
+/// Checks `lone.query` at `lone.time_ms` for `tenant-a`: exactly one sample,
+/// without any labels, approximately `lone.want`.
+pub(crate) async fn assert_lone_unlabeled_value_at<S: crate::MetricStore>(
+    engine: &PromqlEngine<S>,
+    lone: LoneValueQuery<'_>,
+) {
+    let query = lone.query;
+    let sample = lone_sample_at(engine, lone).await;
+    assert2::assert!(sample.labels.is_empty(), "{query}");
+}
+
+async fn lone_sample_at<S: crate::MetricStore>(
+    engine: &PromqlEngine<S>,
+    lone: LoneValueQuery<'_>,
+) -> crate::InstantSample {
     let LoneValueQuery {
         query,
         time_ms,
@@ -56,9 +74,11 @@ pub(crate) async fn assert_lone_value_at<S: crate::MetricStore>(
         .query_instant(&tenant_id("tenant-a"), query, time_ms)
         .await
         .unwrap_or_else(|error| panic!("{query}: {error}"));
-    let QueryResult::InstantVector(samples) = query_result else {
+    let QueryResult::InstantVector(mut samples) = query_result else {
         panic!("expected a vector for {query}");
     };
     assert2::assert!(samples.len() == 1, "{query}");
-    assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+    let sample = samples.remove(0);
+    assert2::assert!(approx_eq(float_value(&sample.value), want), "{query}");
+    sample
 }

@@ -2,19 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn alerting_rule_group_dispatch_runs_alerts_and_skips_recording_rules() {
-    let group: serde_yaml::Value = serde_yaml::from_str(
-        r"
-name: mixed
-interval: 30s
-rules:
-  - record: job:up:current
-    expr: up
-  - alert: InstanceUp
-    expr: up > 0
-    for: 5m
-",
-    )
-    .expect("rule group yaml");
+    let group = mixed_rule_group();
     let engine = up_api_engine(&[60_000, 360_000]);
     let sink = RecordingAlertmanagerSink::default();
     let mut state = super::super::RulerAlertState::default();

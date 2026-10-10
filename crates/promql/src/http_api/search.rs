@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::BTreeMap, sync::Arc, time::SystemTime};
 use axum::{
     body::Bytes,
     extract::{RawQuery, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use num_traits::ToPrimitive;
@@ -11,8 +11,8 @@ use serde_json::{Map, Value, json};
 use url::form_urlencoded;
 
 use super::{
-    ApiError, Extension, Principal, PrometheusApiState, authorized_tenant_from_headers,
-    selector_matchers, timestamp_ms,
+    ApiError, PrometheusApiState, RequestCaller, authorized_tenant_from_headers, selector_matchers,
+    timestamp_ms,
 };
 use crate::{MetricStore, PromqlMatcher as LabelMatcher};
 
@@ -70,130 +70,123 @@ struct SearchResult {
 
 pub(super) async fn search_metric_names<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    search(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        SearchKind::MetricNames,
-    )
-    .await
+    let request = SearchRequest {
+        caller,
+        raw_query: query.as_deref(),
+        kind: SearchKind::MetricNames,
+    };
+    search(state, request).await
 }
 
 pub(super) async fn search_metric_names_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
     body: Bytes,
 ) -> Response {
-    search_post(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        &body,
-        SearchKind::MetricNames,
-    )
-    .await
+    let request = SearchRequest {
+        caller,
+        raw_query: query.as_deref(),
+        kind: SearchKind::MetricNames,
+    };
+    search_post(state, request, &body).await
 }
 
 pub(super) async fn search_label_names<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    search(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        SearchKind::LabelNames,
-    )
-    .await
+    let request = SearchRequest {
+        caller,
+        raw_query: query.as_deref(),
+        kind: SearchKind::LabelNames,
+    };
+    search(state, request).await
 }
 
 pub(super) async fn search_label_names_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
     body: Bytes,
 ) -> Response {
-    search_post(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        &body,
-        SearchKind::LabelNames,
-    )
-    .await
+    let request = SearchRequest {
+        caller,
+        raw_query: query.as_deref(),
+        kind: SearchKind::LabelNames,
+    };
+    search_post(state, request, &body).await
 }
 
 pub(super) async fn search_label_values<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    search(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        SearchKind::LabelValues,
-    )
-    .await
+    let request = SearchRequest {
+        caller,
+        raw_query: query.as_deref(),
+        kind: SearchKind::LabelValues,
+    };
+    search(state, request).await
 }
 
 pub(super) async fn search_label_values_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
     body: Bytes,
 ) -> Response {
-    search_post(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        &body,
-        SearchKind::LabelValues,
-    )
-    .await
+    let request = SearchRequest {
+        caller,
+        raw_query: query.as_deref(),
+        kind: SearchKind::LabelValues,
+    };
+    search_post(state, request, &body).await
 }
 
+/// One search request: who asks, the raw query string, and what it searches.
+struct SearchRequest<'a> {
+    caller: RequestCaller,
+    raw_query: Option<&'a str>,
+    kind: SearchKind,
+}
+
+/// Searches with the form `body` appended to the request's query string.
 async fn search_post<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,
-    principal: Principal,
-    headers: HeaderMap,
-    query: Option<&str>,
+    request: SearchRequest<'_>,
     body: &[u8],
-    kind: SearchKind,
 ) -> Response {
-    let mut encoded = query.unwrap_or_default().to_owned();
+    let mut encoded = request.raw_query.unwrap_or_default().to_owned();
     if !encoded.is_empty() && !body.is_empty() {
         encoded.push('&');
     }
     encoded.push_str(&String::from_utf8_lossy(body));
-    search(state, principal, headers, Some(&encoded), kind).await
+    search(
+        state,
+        SearchRequest {
+            raw_query: Some(&encoded),
+            ..request
+        },
+    )
+    .await
 }
 
 async fn search<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,
-    principal: Principal,
-    headers: HeaderMap,
-    query: Option<&str>,
-    kind: SearchKind,
+    request: SearchRequest<'_>,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
+    let SearchRequest {
+        caller,
+        raw_query: query,
+        kind,
+    } = request;
+    let tenant = match authorized_tenant_from_headers(&caller.headers, &caller.principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };

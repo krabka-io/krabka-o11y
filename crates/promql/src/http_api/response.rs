@@ -69,7 +69,7 @@ use range_matrix_json::range_matrix_json;
 use result_json::result_json;
 pub(super) use sample_string::sample_string;
 pub(super) use success_data_response::success_data_response;
-pub(super) use success_response::success_response;
+pub(super) use success_response::{annotated_success_response, success_response};
 pub(super) use success_response_with_stats::{
     QueryPhaseDurations, QueryResponseStats, success_response_with_stats,
 };

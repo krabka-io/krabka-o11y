@@ -27,35 +27,41 @@ pub(crate) enum UnaryFloatFn {
 }
 
 #[cfg(test)]
-use crate::functions::scalar_math::prometheus_sgn;
+use crate::functions::scalar_math::ScalarMathOp;
 
 #[cfg(test)]
 impl UnaryFloatFn {
     pub(crate) fn apply(self, value: f64) -> f64 {
+        self.scalar_math_op().apply(value, &[])
+    }
+
+    /// The operator-path op that evaluates the same function. None of these
+    /// ops takes a leading scalar parameter.
+    fn scalar_math_op(self) -> ScalarMathOp {
         match self {
-            Self::Ceil => value.ceil(),
-            Self::Floor => value.floor(),
-            Self::Abs => value.abs(),
-            Self::Sqrt => value.sqrt(),
-            Self::Exp => value.exp(),
-            Self::Ln => value.ln(),
-            Self::Log2 => value.log2(),
-            Self::Log10 => value.log10(),
-            Self::Sin => value.sin(),
-            Self::Sinh => value.sinh(),
-            Self::Cos => value.cos(),
-            Self::Cosh => value.cosh(),
-            Self::Tan => value.tan(),
-            Self::Tanh => value.tanh(),
-            Self::Asin => value.asin(),
-            Self::Asinh => value.asinh(),
-            Self::Acos => value.acos(),
-            Self::Acosh => value.acosh(),
-            Self::Atan => value.atan(),
-            Self::Atanh => value.atanh(),
-            Self::Deg => value.to_degrees(),
-            Self::Rad => value.to_radians(),
-            Self::Sgn => prometheus_sgn(value),
+            Self::Ceil => ScalarMathOp::Ceil,
+            Self::Floor => ScalarMathOp::Floor,
+            Self::Sgn => ScalarMathOp::Sgn,
+            Self::Abs => ScalarMathOp::Abs,
+            Self::Sqrt => ScalarMathOp::Sqrt,
+            Self::Exp => ScalarMathOp::Exp,
+            Self::Ln => ScalarMathOp::Ln,
+            Self::Log2 => ScalarMathOp::Log2,
+            Self::Log10 => ScalarMathOp::Log10,
+            Self::Sin => ScalarMathOp::Sin,
+            Self::Sinh => ScalarMathOp::Sinh,
+            Self::Cos => ScalarMathOp::Cos,
+            Self::Cosh => ScalarMathOp::Cosh,
+            Self::Tan => ScalarMathOp::Tan,
+            Self::Tanh => ScalarMathOp::Tanh,
+            Self::Asin => ScalarMathOp::Asin,
+            Self::Asinh => ScalarMathOp::Asinh,
+            Self::Acos => ScalarMathOp::Acos,
+            Self::Acosh => ScalarMathOp::Acosh,
+            Self::Atan => ScalarMathOp::Atan,
+            Self::Atanh => ScalarMathOp::Atanh,
+            Self::Deg => ScalarMathOp::Deg,
+            Self::Rad => ScalarMathOp::Rad,
         }
     }
 }

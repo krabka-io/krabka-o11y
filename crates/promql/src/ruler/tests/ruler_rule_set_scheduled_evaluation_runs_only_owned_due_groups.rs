@@ -44,16 +44,18 @@ rules:
     let state_sink = RecordingRulerStateSink::default();
     let mut alert_state = super::super::RulerAlertState::default();
 
-    let evaluation = super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval(
-        &engine,
-        (&wal_sink, &alert_sink, &state_sink),
-        &mut alert_state,
-        &tenant_id("tenant-a"),
-        &rules,
-        (&mut group_state, shard, 180_000),
-    )
-    .await
-    .expect("scheduled rule-set evaluation");
+    let evaluation =
+        super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
+            &engine,
+            (&wal_sink, &alert_sink, &state_sink),
+            &mut alert_state,
+            &tenant_id("tenant-a"),
+            &rules,
+            (&mut group_state, shard, 180_000),
+        )
+        .await
+        .expect("scheduled rule-set evaluation")
+        .evaluation;
 
     assert2::assert!(evaluation.recording_records == expected_groups.len());
     assert2::assert!(
@@ -98,7 +100,7 @@ rules:
     let first_wal = RecordingSink::default();
     let first_state_sink = RecordingRulerStateSink::default();
     let mut first_group_state = super::super::RulerGroupState::default();
-    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval(
+    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
         &engine,
         (
             &first_wal,
@@ -116,7 +118,7 @@ rules:
     let mut replacement_group_state = super::super::RulerGroupState::default();
     replacement_group_state.apply_records(first_state_sink.group_records());
     let replacement_wal = RecordingSink::default();
-    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval(
+    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
         &engine,
         (
             &replacement_wal,

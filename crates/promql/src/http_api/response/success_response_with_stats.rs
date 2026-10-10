@@ -3,9 +3,7 @@ use std::time::Duration;
 use krabka_units::prelude::*;
 use serde::Serialize;
 
-use super::{
-    Annotations, IntoResponse, Json, Map, QueryResult, Response, Value, json, result_json,
-};
+use super::{Annotations, QueryResult, Response, annotated_success_response, result_json};
 use crate::engine::QuerySampleStats;
 
 #[derive(Debug, Serialize)]
@@ -98,14 +96,5 @@ pub(crate) fn success_response_with_stats(
             "stats".to_string(),
             serde_json::to_value(stats).expect("query stats serialize"),
         );
-    let mut envelope = Map::new();
-    envelope.insert("status".to_string(), json!("success"));
-    envelope.insert("data".to_string(), data);
-    if !annotations.warnings.is_empty() {
-        envelope.insert("warnings".to_string(), json!(annotations.warnings));
-    }
-    if !annotations.infos.is_empty() {
-        envelope.insert("infos".to_string(), json!(annotations.http_infos()));
-    }
-    Json(Value::Object(envelope)).into_response()
+    annotated_success_response(data, annotations)
 }

@@ -84,7 +84,6 @@ pub use ruler::{
     evaluate_and_dispatch_alerting_rule_with_state, evaluate_and_persist_alerting_rule_group,
     evaluate_and_persist_alerting_rule_with_state, evaluate_and_persist_ruler_rule_group,
     evaluate_and_persist_ruler_rule_set,
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
     evaluate_and_persist_ruler_rule_set_with_report, evaluate_recording_rule,
     evaluate_ruler_rule_group, evaluate_ruler_rule_set, filter_ruler_rule_set_due_for_eval,

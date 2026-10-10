@@ -21,6 +21,7 @@ mod a_range_query_over_or_matchers_counts_a_doubly_matched_series_once;
 mod abusive_subquery_resolution_errors_before_looping;
 mod aggregate_genuine_nan_group_parity;
 mod anchored_increase_does_not_treat_a_flat_counter_step_as_a_reset;
+mod api_series_engines;
 mod approx_eq;
 mod assert_aggregate_nan_staleness;
 mod assert_filled_many_side;
@@ -48,6 +49,7 @@ mod empty_valued_label_planner_path_matches_interpreter;
 mod experimental_call_planner_path_matches_interpreter;
 mod experimental_param_aggregate_planner_path_matches_interpreter;
 mod extended_range_fold_planner_matches_interpreter;
+mod float_store;
 mod float_value;
 mod group_left_does_not_copy_a_metadata_label_from_the_one_side;
 mod histogram_aggregation_planner_path_matches_interpreter;
@@ -198,6 +200,7 @@ mod range_matrices_match;
 mod range_planner_gate_routes_expected_shapes;
 mod range_planner_path_matches_interpreter;
 mod range_query_accepts_parenthesized_expression;
+mod range_query_routes_through_planner;
 mod range_query_scans_store_once_per_matcher_set_not_per_step;
 mod range_rate_uses_each_step_as_window_end;
 mod range_scalar_expr_planner_path_matches_interpreter;
@@ -253,21 +256,26 @@ mod vector_vector_group_right_carries_labels_from_one_side;
 mod vector_vector_group_right_fill_left_preserves_unmatched_many_side;
 mod zoned_queue_depth_engine;
 
+use api_series_engines::{api_latency_engine, late_jump_engine, requests_counter_engine};
 use approx_eq::approx_eq;
 use assert_aggregate_nan_staleness::assert_aggregate_nan_staleness;
 use assert_filled_many_side::assert_filled_many_side;
 use assert_minmax_nan_ignoring::assert_minmax_nan_ignoring;
 use assert_one_unnamed_float::{ExpectedLabel, assert_one_unnamed_float};
-use assert_single_float_sample::assert_single_float_sample;
+use assert_single_float_sample::{assert_single_float_sample, lone_unnamed_sample};
 use assert_single_on_x_float_sample::{OnXHistogramStats, assert_on_x_histogram_stats};
 use assert_sparse_aggregate_excludes_no_value::assert_sparse_aggregate_excludes_no_value;
 use case_values::{
     CaseQuery, CaseValue, assert_case_values, assert_signed_temperature_cases, push_cases,
 };
 use classic_bucket_store::classic_bucket_store;
+use float_store::{FloatStore, default_engine, lookback_engine};
 use float_value::float_value;
 use instant_samples_match::instant_samples_match;
-use instant_vector::{LoneValueQuery, assert_lone_value, assert_lone_value_at, instant_vector};
+use instant_vector::{
+    LoneValueQuery, assert_lone_unlabeled_value_at, assert_lone_value, assert_lone_value_at,
+    instant_vector,
+};
 use labels::labels;
 use lone_matrix_series::{ExpectedPoint, check_series_points, lone_matrix_series};
 use memory_bytes_engine::{
@@ -287,6 +295,7 @@ use planned_and_interpreted::{
 use query_results_match::query_results_match;
 use queue_depth_engine::queue_depth_engine;
 use range_matrices_match::range_matrices_match;
+use range_query_routes_through_planner::range_query_routes_through_planner;
 use region_info_engine::{InstanceRequests, region_info_engine};
 #[cfg(feature = "experimental-functions")]
 use sample_instances::{sample_instances, selected_memory_instances};

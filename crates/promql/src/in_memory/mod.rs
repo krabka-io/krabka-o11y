@@ -34,6 +34,7 @@ mod partition_watermark;
 mod prune_stats;
 mod row_chunk_len;
 mod row_chunks;
+mod series_sample_ref;
 
 pub use default_retention::DEFAULT_RETENTION;
 use exemplar_row::ExemplarRow;
@@ -44,5 +45,6 @@ pub use partition_watermark::PartitionWatermark;
 pub use prune_stats::PruneStats;
 use row_chunk_len::ROW_CHUNK_LEN;
 use row_chunks::RowChunks;
+use series_sample_ref::SeriesSampleRef;
 
 use self::float_head_summary::FloatHeadSummary;

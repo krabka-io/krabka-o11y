@@ -203,20 +203,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         let Some(samples) = self.label_ops_inner_vector(tenant, arg, time_ms).await? else {
             return Ok(None);
         };
-        let out = samples
-            .into_iter()
-            .filter_map(|sample| {
-                let SampleValue::Float(value) = sample.value else {
-                    return None;
-                };
-                Some(InstantSample {
-                    labels: labels_without_metric_name(&sample.labels),
-                    ts_ms: time_ms,
-                    value: SampleValue::Float(kind.apply(value)),
-                    drop_name: true,
-                })
-            })
-            .collect();
+        let out = kind.apply_to_samples(samples, time_ms);
         Ok(Some(PlannedInstant::Precomputed(out)))
     }
 

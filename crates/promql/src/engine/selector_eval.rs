@@ -26,6 +26,11 @@ use crate::{
 };
 
 impl<S: MetricStore> PromqlEngine<S> {
+    /// The start of the lookback window that ends at `eval_time_ms`.
+    fn lookback_start_ms(&self, eval_time_ms: i64) -> i64 {
+        eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64())
+    }
+
     pub(super) async fn eval_instant_selector(
         &self,
         tenant: &str,
@@ -43,13 +48,8 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
     ) -> Result<QueryResult> {
-        let eval_time_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.at.as_ref(),
-            selector.offset.as_ref(),
-            current_at_modifier_bounds(),
-        )?;
-        let start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
+        let eval_time_ms = selector_eval_time_ms(selector, time_ms)?;
+        let start_ms = self.lookback_start_ms(eval_time_ms);
         let default_matchers = label_matcher_sets(selector);
         let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
         if let Some(series) = self
@@ -143,13 +143,8 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
     ) -> Result<QueryResult> {
-        let eval_time_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.at.as_ref(),
-            selector.offset.as_ref(),
-            current_at_modifier_bounds(),
-        )?;
-        let scan_start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
+        let eval_time_ms = selector_eval_time_ms(selector, time_ms)?;
+        let scan_start_ms = self.lookback_start_ms(eval_time_ms);
         let scan_end_ms = eval_time_ms.saturating_add(self.opts.lookback_delta.millis_i64());
         let default_matchers = label_matcher_sets(selector);
         let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
@@ -592,4 +587,15 @@ impl<S: MetricStore> PromqlEngine<S> {
             histogram_rows,
         })
     }
+}
+
+/// The instant `selector` evaluates at, after its `@` and `offset` modifiers
+/// move the query's `time_ms`.
+fn selector_eval_time_ms(selector: &VectorSelector, time_ms: i64) -> Result<i64> {
+    apply_selector_time_modifier(
+        time_ms,
+        selector.at.as_ref(),
+        selector.offset.as_ref(),
+        current_at_modifier_bounds(),
+    )
 }

@@ -159,6 +159,8 @@ mod duration_unit_seconds;
 mod extended_modifier_at;
 mod extended_selector_expr;
 mod extended_selector_modifier;
+#[cfg(test)]
+mod first_batch_values;
 mod format_promql_expr;
 pub(crate) mod histogram_trim_operators;
 mod info_label_selector;
@@ -168,6 +170,7 @@ mod is_zero;
 #[cfg(test)]
 mod job_values;
 mod labeled_series;
+mod leaf_extension_expr;
 mod matching_delimiter;
 mod ms_to_seconds;
 mod normalize_duration_expressions;
@@ -186,6 +189,8 @@ mod skip_ws;
 mod starts_offset_keyword;
 mod step_grid;
 mod strip_extended_selector_modifiers;
+#[cfg(test)]
+mod test_approx_eq;
 mod timed_value;
 mod top_level_colon;
 mod wrap_extended_selectors;
@@ -198,6 +203,8 @@ use duration_unit_seconds::duration_unit_seconds;
 use extended_modifier_at::extended_modifier_at;
 pub use extended_selector_expr::ExtendedSelectorExpr;
 pub use extended_selector_modifier::ExtendedSelectorModifier;
+#[cfg(test)]
+use first_batch_values::first_batch_values;
 pub use format_promql_expr::{format_promql_expr, serialize_promql_expr};
 use is_ident_char::is_ident_char;
 use is_ident_start::is_ident_start;
@@ -222,6 +229,8 @@ use skip_ws::skip_ws;
 use starts_offset_keyword::starts_offset_keyword;
 pub use step_grid::StepGrid;
 use strip_extended_selector_modifiers::strip_extended_selector_modifiers;
+#[cfg(test)]
+use test_approx_eq::approx_eq;
 pub use timed_value::TimedValue;
 use top_level_colon::top_level_colon;
 use wrap_extended_selectors::wrap_extended_selectors;

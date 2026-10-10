@@ -1,4 +1,5 @@
-use super::{OffsetDateTime, ToPrimitive, days_in_month};
+use super::{OffsetDateTime, ToPrimitive, days_in_month, labels_without_metric_name};
+use crate::result::{InstantSample, SampleValue};
 
 #[derive(Clone, Copy)]
 pub(crate) enum CalendarFn {
@@ -35,5 +36,29 @@ impl CalendarFn {
             Self::Hour => f64::from(timestamp.hour()),
             Self::Minute => f64::from(timestamp.minute()),
         }
+    }
+
+    /// Applies the function to each float sample's value, read as Unix
+    /// seconds. Histogram samples are dropped, and each result loses its
+    /// metric name and carries `time_ms`.
+    pub(crate) fn apply_to_samples(
+        self,
+        samples: Vec<InstantSample>,
+        time_ms: i64,
+    ) -> Vec<InstantSample> {
+        samples
+            .into_iter()
+            .filter_map(|sample| {
+                let SampleValue::Float(value) = sample.value else {
+                    return None;
+                };
+                Some(InstantSample {
+                    labels: labels_without_metric_name(&sample.labels),
+                    ts_ms: time_ms,
+                    value: SampleValue::Float(self.apply(value)),
+                    drop_name: true,
+                })
+            })
+            .collect()
     }
 }
