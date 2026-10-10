@@ -1115,3 +1115,65 @@ responses with unrelated fingerprints inside the coarse range, plus scoped
 Clippy checks with `-D warnings`. Cached Cargo dependencies are reused through
 recorded direct compiler commands with matched production compilation flags;
 these local builds are separate from the PR's Cargo and Bazel CI gates.
+
+## Reusing LogQL regex compilation
+
+The next CPU investigation runs on this VM against the bounded-predicate
+candidate above. At 20,000 streams, regex automaton construction dominates the
+broad selector profile. Reported `regex_automata` functions account for 57.50%
+of self CPU at a 0.5% reporting threshold. The pinned Loki implementation
+constructs reusable regexp filters and also simplifies suitable expressions
+into literal filters. This round keeps constructor-validated selector and line
+regexes for reuse. It preserves selector anchoring, line matching, negation and
+public-field edits; equality compares source fields independently of cached
+compiled state. Literal simplification and field/template regex paths remain
+separate investigations.
+
+The same persisted fixture now includes positive and negative regex line
+filters, giving nine shapes at four sizes. All 216 measurements complete as
+three alternating pairs per shape and size, pinned to CPU 4 without concurrent
+compilation or profiling. Each process verifies its complete JSON response
+before timing. At one million rows:
+
+| Query | Baseline median | Candidate median | Median paired ratio |
+| --- | ---: | ---: | ---: |
+| Broad regex selector | 76.324 s | 8.627 s | 0.1097 |
+| Regex selector with literal line filter | 38.906 s | 6.600 s | 0.1713 |
+| Nonempty-value selector with positive regex line filter | 29.500 s | 6.477 s | 0.2202 |
+| Nonempty-value selector with negative regex line filter | 30.777 s | 6.418 s | 0.2087 |
+| Nonempty-value selector control | 8.632 s | 8.218 s | 0.9483 |
+
+At 200,000 rows, the broad regex selector falls from 14.030 to 1.575 seconds.
+Controls retain a 5.6% slowdown for the 5,000-stream rare selection, 11.8% for
+the 20,000-stream single selection and 6.1% for the largest line/time selection,
+by median paired ratio. Their individual run ranges overlap; all pairs remain
+recorded. The eight additional benchmark IDs stay unseeded, bringing the
+inventory extension to 128. The 85 historical numeric budgets are unchanged.
+
+Both 199 Hz CPU captures lose no samples and include fixture creation, one
+verification query and three timed broad queries. No candidate
+`regex_automata` symbol reaches the report's 0.5% threshold. The baseline
+capture uses the preceding round's ELF with the unchanged broad-query fixture;
+the timing matrix rebuilds both drivers with the additional line cases.
+Percentages include fixture costs and do not quantify query-only CPU speedup.
+
+Heap captures at 5,000 streams include fixture creation, one verification
+query and one timed query. Whole-process allocation calls fall from 31,662,593
+to 5,062,337 for the broad selector and from 16,074,505 to 3,424,507 for the
+positive regex line filter. Peak heap stays approximately 97 MB and 60 MB,
+respectively. Line-filter RSS including heaptrack overhead rises slightly,
+from 181.84 to 182.33 MB. These are whole-process allocation counts and
+instrumented peaks, rather than per-query counts or reduced peak-memory claims.
+
+Validation passes 435 scoped LogQL and querier tests, including public-field
+mutation, clone equality, selector anchoring, empty/missing labels, Unicode,
+newlines and positive/negative line matching. Scoped Clippy checks pass with
+`-D warnings`; the Criterion target lists all 36 log query IDs. Recorded direct
+compiler commands reuse the cached Cargo graph, separately from normal PR CI.
+
+The [qualification record](../qualification/log-regex-reuse-2026-10-10.json)
+preserves all pairs, CPU and allocation captures, source/ELF identities,
+verified library archives and build recovery failures. Native API observations
+above predate regex reuse; this round does not attribute native gains or
+performance parity to engine measurements. Ingest wait attribution, cloned
+query state and larger native comparisons remain unfinished.

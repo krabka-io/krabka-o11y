@@ -1,0 +1,1128 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "source_commit": "753584997514e539bd74571b3302bcb1a766cb94",
+  "execution": "Current VM only; no GCP VM launches",
+  "sources_sha256": {
+    "crates/logql/src/stream/label_matcher.rs": "3664996be54b7409b1708f502d3dfbe9c2d8141920b179ea3b97fee32bc4ab16",
+    "crates/logql/src/filters/line_filter.rs": "00028fb3f8bc8a4f221498ed78433020b5032b9b9ab9c7f77edea368a90c6c7e",
+    "crates/logql/tests/regex_reuse.rs": "37593df1a676a297c1399549aa139e726046be21cfad7499596b9c6ef2c7b22c",
+    "benches/src/log_queries.rs": "a656fd91eb576974c7207bfb5faf59f9722fa1bf66244b8f6470c9e165f6bdd3",
+    "benches/benches/log_stream_query.rs": "e6f8c9d5ed7678dffb4b929d2976b5a407d849b2eae9438860f502043e96d799",
+    "benches/examples/log_stream_query_profile.rs": "1a6d7dd2ec820a8b3a4891620a04cbc3a335edf13e8d106324979bd60a68c34e"
+  },
+  "baseline": "Production log engine from the preceding bounded-predicate round; matched new fixture drivers use the same compiler flags and cached dependencies.",
+  "implementation": "Cache constructor-validated selector and line regexes; guard source values to preserve public-field edits and keep equality independent of compiled state.",
+  "fixture": {
+    "streams": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "rows_per_stream": 10,
+    "seed": "0x10C5_B10C",
+    "metadata_bytes": 64,
+    "new_cases": [
+      "all_line_regex",
+      "all_line_not_regex"
+    ],
+    "verification": "Full JSON compared against an independent input ledger before each process timing"
+  },
+  "measurement_plan": {
+    "paired_runs": 3,
+    "alternating_order": true,
+    "affinity": [
+      4
+    ],
+    "shapes": 9,
+    "expected_measurements": 216,
+    "small_rare_single_iterations": 20,
+    "other_small_iterations": 3,
+    "large_iterations": 1,
+    "timing_excludes": "Fixture creation, stream selection planning and complete verification query",
+    "timing_includes": "SQL planning, Parquet scans, pipeline evaluation and JSON response"
+  },
+  "baseline_cpu": {
+    "binary_sha256": "7ac1d57f9ce88bfc8c820e84c60b10113ac1f98b442e7a497fee077e1ffae48e",
+    "case": "all",
+    "streams": 20000,
+    "timed_queries": 3,
+    "verification_queries": 1,
+    "includes_fixture": true,
+    "frequency_hz": 199,
+    "event": "cpu-clock:u",
+    "lost_samples": 0,
+    "regex_automata_self_percent_above_report_threshold": 57.5,
+    "report": "baseline-20000-all-perf-flat.txt"
+  },
+  "upstream": {
+    "commit": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+    "source_files_sha256": {
+      "loki-label-filter.go": "045546aaffa0de69fb45e55846e7d967972996d0f2f166a0d330af13e8d14efc",
+      "loki-filter.go": "421ec2b94b10a0fa9da7403fe7039ead588e013aab1ef5b8497588caba6133e9"
+    },
+    "finding": "Loki constructs compiled regexp filters once and simplifies suitable expressions into literal filters. This round reuses compilation in Krabka without importing those additional simplifications."
+  },
+  "evidence_directory": "qualification/evidence/log-regex-reuse-2026-10-10",
+  "validation": {
+    "passed_tests": 435,
+    "suites": {
+      "logql_unit": 106,
+      "regex_reuse": 4,
+      "parser": 229,
+      "planner": 4,
+      "querier": 70,
+      "querier_object_store": 22
+    },
+    "clippy": "all,pedantic with -D warnings: LogQL, observability, fixture library, profiling example, Criterion target and new behavior tests",
+    "criterion_ids": 36,
+    "existing_numeric_budgets_changed": false,
+    "additional_unseeded_ids": 8,
+    "local_build_scope": "Recorded direct rustc/clippy commands reuse the exact cached Cargo dependency graph; these scoped builds are separate from Cargo and Bazel PR CI.",
+    "tool_checks": [
+      "bazel run //tools/format",
+      "git diff --check",
+      "tools/mutants-record.py --check",
+      "tools/bench-ratchet.py --self-test (31 passed)",
+      "tools/check-fuzz-patch.sh (46 pins match)",
+      "cargo metadata --locked --offline for benches"
+    ],
+    "preceding_commit_ci": {
+      "commit": "753584997514e539bd74571b3302bcb1a766cb94",
+      "result": "All checks passed or skipped before this round was pushed; those checks cover the preceding bounded-predicate change."
+    }
+  },
+  "scope": "Completed regex reuse optimization round; overall performance parity remains unqualified.",
+  "host": {
+    "hostname": "bce6f61f7cac",
+    "cpu_quota": 4,
+    "affinity_available": "0-4",
+    "model": "AMD EPYC 9V74",
+    "memory_gib": 17,
+    "filesystem_bytes": 33770192896
+  },
+  "binaries": {
+    "baseline": {
+      "path": "binaries/baseline/log-stream-query",
+      "sha256": "4759bd3e788998b66044c669105651e82cd61b254554cec04098a4b0540a0474",
+      "bytes": 195011984
+    },
+    "candidate": {
+      "path": "binaries/candidate/log-stream-query",
+      "sha256": "698c5964fa802bba22ead9bf996bc79c1e01c8da5bfe3b105f68190181313f60",
+      "bytes": 195079528
+    }
+  },
+  "timings": {
+    "measurements": 216,
+    "cases": [
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all",
+        "baseline_seconds": 0.633064202,
+        "candidate_seconds": 0.047787465,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.0754859694309488,
+        "paired_ratios": [
+          0.07392328850980769,
+          0.0900571100952111,
+          0.0754859694309488
+        ],
+        "baseline_range": [
+          0.6243382646666666,
+          0.6390924966666667
+        ],
+        "candidate_range": [
+          0.04615313766666667,
+          0.05755482333333333
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all_exact",
+        "baseline_seconds": 0.044884178999999996,
+        "candidate_seconds": 0.04484349666666667,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9696525212889232,
+        "paired_ratios": [
+          0.9624012918941909,
+          0.9696525212889232,
+          1.0056623074370765
+        ],
+        "baseline_range": [
+          0.04459100866666666,
+          0.04801239433333334
+        ],
+        "candidate_range": [
+          0.043522057333333336,
+          0.046207190333333335
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all_line",
+        "baseline_seconds": 0.3209394153333333,
+        "candidate_seconds": 0.03321027,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.10514061339256918,
+        "paired_ratios": [
+          0.10514061339256918,
+          0.10347831526242182,
+          0.12086878895046274
+        ],
+        "baseline_range": [
+          0.31488539266666665,
+          0.3270767196666667
+        ],
+        "candidate_range": [
+          0.033107243333333335,
+          0.039533367
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all_line_regex",
+        "baseline_seconds": 0.25138937733333333,
+        "candidate_seconds": 0.03450357566666667,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.14052537666635423,
+        "paired_ratios": [
+          0.14052537666635423,
+          0.1361146389569269,
+          0.1423839594606581
+        ],
+        "baseline_range": [
+          0.24553270366666669,
+          0.26184250066666664
+        ],
+        "candidate_range": [
+          0.03421777433333333,
+          0.037282172
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all_line_not_regex",
+        "baseline_seconds": 0.256187544,
+        "candidate_seconds": 0.03596797866666667,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.1403970626560465,
+        "paired_ratios": [
+          0.13545804875896886,
+          0.1403970626560465,
+          0.1433404404701327
+        ],
+        "baseline_range": [
+          0.24162879333333334,
+          0.2712677
+        ],
+        "candidate_range": [
+          0.03463517766666666,
+          0.036745393333333334
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "sparse",
+        "baseline_seconds": 0.011849932,
+        "candidate_seconds": 0.010754266,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9075382035947548,
+        "paired_ratios": [
+          1.1252746684002521,
+          0.9075382035947548,
+          0.8290148079266517
+        ],
+        "baseline_range": [
+          0.011438338,
+          0.012902076333333333
+        ],
+        "candidate_range": [
+          0.010696012333333333,
+          0.012871272000000001
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "sparse_window",
+        "baseline_seconds": 0.008115833333333334,
+        "candidate_seconds": 0.007114057666666666,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.8765652736420576,
+        "paired_ratios": [
+          0.8765652736420576,
+          0.7951709009870894,
+          1.0123770371276517
+        ],
+        "baseline_range": [
+          0.0067440749999999995,
+          0.010119582666666667
+        ],
+        "candidate_range": [
+          0.006827546666666667,
+          0.008046797666666666
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "rare",
+        "baseline_seconds": 0.0023201854,
+        "candidate_seconds": 0.00225285585,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9512077945967612,
+        "paired_ratios": [
+          0.8492835572819605,
+          1.1952375659289987,
+          0.9512077945967612
+        ],
+        "baseline_range": [
+          0.0022000471,
+          0.0026526544999999997
+        ],
+        "candidate_range": [
+          0.0020927019500000003,
+          0.00277317275
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "single",
+        "baseline_seconds": 0.0014777149999999999,
+        "candidate_seconds": 0.00147826985,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0003754783567875,
+        "paired_ratios": [
+          1.0003754783567875,
+          0.9702387120454241,
+          1.0024012150303978
+        ],
+        "baseline_range": [
+          0.0014456162,
+          0.00153922075
+        ],
+        "candidate_range": [
+          0.0014025928,
+          0.0015429167500000001
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all",
+        "baseline_seconds": 3.252418972333333,
+        "candidate_seconds": 0.2972122723333333,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.09074268194595511,
+        "paired_ratios": [
+          0.09074268194595511,
+          0.08144485153562346,
+          0.09511833541598504
+        ],
+        "baseline_range": [
+          3.124658048666667,
+          3.3070173803333334
+        ],
+        "candidate_range": [
+          0.26489278033333336,
+          0.30008762633333336
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all_exact",
+        "baseline_seconds": 0.30175184166666663,
+        "candidate_seconds": 0.29997746233333333,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0022809542360938,
+        "paired_ratios": [
+          0.9941197398380972,
+          1.005311765444701,
+          1.0022809542360938
+        ],
+        "baseline_range": [
+          0.2913527243333333,
+          0.30805937366666664
+        ],
+        "candidate_range": [
+          0.29290032166666663,
+          0.308762043
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all_line",
+        "baseline_seconds": 1.7219427456666667,
+        "candidate_seconds": 0.21203935533333332,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.12449020122555615,
+        "paired_ratios": [
+          0.12449020122555615,
+          0.1174296335784267,
+          0.1279788987930392
+        ],
+        "baseline_range": [
+          1.6568305973333333,
+          1.7690084373333335
+        ],
+        "candidate_range": [
+          0.20220710566666666,
+          0.22022421633333333
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all_line_regex",
+        "baseline_seconds": 1.3060338433333334,
+        "candidate_seconds": 0.20423826,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.15935585406189146,
+        "paired_ratios": [
+          0.1640183650371102,
+          0.15527836064644943,
+          0.15935585406189146
+        ],
+        "baseline_range": [
+          1.2782040496666667,
+          1.3153040716666666
+        ],
+        "candidate_range": [
+          0.203689298,
+          0.21421353566666668
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all_line_not_regex",
+        "baseline_seconds": 1.3217465943333333,
+        "candidate_seconds": 0.20879745233333333,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.16191026573687897,
+        "paired_ratios": [
+          0.1543534296197115,
+          0.16817645905274123,
+          0.16191026573687897
+        ],
+        "baseline_range": [
+          1.2895874846666666,
+          1.3501048093333334
+        ],
+        "candidate_range": [
+          0.20839330766666667,
+          0.222286662
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "sparse",
+        "baseline_seconds": 0.07665486766666667,
+        "candidate_seconds": 0.08138379733333333,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0092481057994338,
+        "paired_ratios": [
+          0.9934935920171081,
+          1.0931004803378368,
+          1.0092481057994338
+        ],
+        "baseline_range": [
+          0.07543692533333334,
+          0.08191678133333334
+        ],
+        "candidate_range": [
+          0.076134574,
+          0.08379147266666666
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "sparse_window",
+        "baseline_seconds": 0.04136583633333333,
+        "candidate_seconds": 0.040847397333333334,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0058417651131164,
+        "paired_ratios": [
+          1.0058417651131164,
+          1.0157248427654468,
+          0.9874669764725094
+        ],
+        "baseline_range": [
+          0.039496966333333335,
+          0.04252405
+        ],
+        "candidate_range": [
+          0.03972769833333333,
+          0.043192734
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "rare",
+        "baseline_seconds": 0.0067354007499999995,
+        "candidate_seconds": 0.00628920635,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0555272885257148,
+        "paired_ratios": [
+          1.0555272885257148,
+          1.204155346568431,
+          0.9075236243366812
+        ],
+        "baseline_range": [
+          0.00595835505,
+          0.0068790628
+        ],
+        "candidate_range": [
+          0.0061125353,
+          0.008283460250000001
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "single",
+        "baseline_seconds": 0.0020249518,
+        "candidate_seconds": 0.0020416783500000002,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9596226748850559,
+        "paired_ratios": [
+          0.9596226748850559,
+          0.9213333297631103,
+          1.008260221305021
+        ],
+        "baseline_range": [
+          0.0019243511000000002,
+          0.0023154482
+        ],
+        "candidate_range": [
+          0.00184665095,
+          0.0021332996
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all",
+        "baseline_seconds": 14.030317954,
+        "candidate_seconds": 1.574840692,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.1125220736857242,
+        "paired_ratios": [
+          0.10730035807368397,
+          0.1137634718780515,
+          0.1125220736857242
+        ],
+        "baseline_range": [
+          13.995837798,
+          14.120588656
+        ],
+        "candidate_range": [
+          1.515144219,
+          1.596137682
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all_exact",
+        "baseline_seconds": 1.5589503850000002,
+        "candidate_seconds": 1.547020704,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.011528667880991,
+        "paired_ratios": [
+          0.9429668322475369,
+          1.0672510607192927,
+          1.011528667880991
+        ],
+        "baseline_range": [
+          1.476259198,
+          1.6405886729999999
+        ],
+        "candidate_range": [
+          1.4932785,
+          1.663791452
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all_line",
+        "baseline_seconds": 7.340835772,
+        "candidate_seconds": 1.116822569,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.1553387615498648,
+        "paired_ratios": [
+          0.1553387615498648,
+          0.14399849588255453,
+          0.17505339663114317
+        ],
+        "baseline_range": [
+          7.069211857,
+          7.755793296
+        ],
+        "candidate_range": [
+          1.098122615,
+          1.2850382360000001
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all_line_regex",
+        "baseline_seconds": 5.552937957,
+        "candidate_seconds": 1.142030087,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.2065838851711028,
+        "paired_ratios": [
+          0.19764808237391038,
+          0.2065838851711028,
+          0.2156813746658614
+        ],
+        "baseline_range": [
+          5.528166372,
+          5.71597485
+        ],
+        "candidate_range": [
+          1.129751468,
+          1.197665292
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all_line_not_regex",
+        "baseline_seconds": 5.652387234,
+        "candidate_seconds": 1.093813759,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.19511598917354422,
+        "paired_ratios": [
+          0.19511598917354422,
+          0.19351359234918267,
+          0.20147028123697713
+        ],
+        "baseline_range": [
+          5.573729127,
+          5.7454760270000005
+        ],
+        "candidate_range": [
+          1.087523672,
+          1.157542671
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "sparse",
+        "baseline_seconds": 0.382146837,
+        "candidate_seconds": 0.420280468,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.003980349384311,
+        "paired_ratios": [
+          1.1354385609132487,
+          1.003980349384311,
+          0.9806068367379944
+        ],
+        "baseline_range": [
+          0.370148137,
+          0.42465845
+        ],
+        "candidate_range": [
+          0.374735801,
+          0.426348739
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "sparse_window",
+        "baseline_seconds": 0.171854056,
+        "candidate_seconds": 0.198401166,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9844955675337947,
+        "paired_ratios": [
+          0.7843759972171263,
+          1.1890391344618598,
+          0.9844955675337947
+        ],
+        "baseline_range": [
+          0.167785374,
+          0.252941404
+        ],
+        "candidate_range": [
+          0.165183957,
+          0.204341198
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "rare",
+        "baseline_seconds": 0.036150377,
+        "candidate_seconds": 0.028437113,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9646993999536989,
+        "paired_ratios": [
+          0.9646993999536989,
+          0.7241044440820159,
+          1.0060860525338982
+        ],
+        "baseline_range": [
+          0.028171791,
+          0.039272115
+        ],
+        "candidate_range": [
+          0.028343246,
+          0.034874247
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "single",
+        "baseline_seconds": 0.002914514,
+        "candidate_seconds": 0.003180479,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.1182505460319334,
+        "paired_ratios": [
+          0.8743074235928132,
+          1.1182505460319334,
+          1.190776232332389
+        ],
+        "baseline_range": [
+          0.002844156,
+          0.003485536
+        ],
+        "candidate_range": [
+          0.00304743,
+          0.003470534
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all",
+        "baseline_seconds": 76.323723975,
+        "candidate_seconds": 8.626652798,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.10974675866142708,
+        "paired_ratios": [
+          0.10863247478010832,
+          0.10974675866142708,
+          0.11302714737590215
+        ],
+        "baseline_range": [
+          74.953853325,
+          78.926125579
+        ],
+        "candidate_range": [
+          8.142422581,
+          8.661886456
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all_exact",
+        "baseline_seconds": 8.631851941,
+        "candidate_seconds": 8.218495991,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9482629647827965,
+        "paired_ratios": [
+          0.9317093189237778,
+          1.0575392441994798,
+          0.9482629647827965
+        ],
+        "baseline_range": [
+          8.41045121,
+          8.666895467
+        ],
+        "candidate_range": [
+          8.042376893,
+          8.894382216
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all_line",
+        "baseline_seconds": 38.905548344,
+        "candidate_seconds": 6.599923642,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.1713393538386675,
+        "paired_ratios": [
+          0.16423484841355745,
+          0.17350405199821897,
+          0.1713393538386675
+        ],
+        "baseline_range": [
+          38.039017337,
+          39.71344468
+        ],
+        "candidate_range": [
+          6.522331567,
+          6.666051514
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all_line_regex",
+        "baseline_seconds": 29.499661034,
+        "candidate_seconds": 6.47690001,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.22018235640681255,
+        "paired_ratios": [
+          0.22340387418025817,
+          0.22018235640681255,
+          0.2138678629910887
+        ],
+        "baseline_range": [
+          29.416071822,
+          29.929851028
+        ],
+        "candidate_range": [
+          6.401033279,
+          6.590338562
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all_line_not_regex",
+        "baseline_seconds": 30.777121908,
+        "candidate_seconds": 6.418019738,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.2086718257439635,
+        "paired_ratios": [
+          0.2086718257439635,
+          0.225324897523878,
+          0.2079929520102263
+        ],
+        "baseline_range": [
+          30.235976776,
+          30.856909698
+        ],
+        "candidate_range": [
+          6.309396477,
+          6.93485184
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "sparse",
+        "baseline_seconds": 2.64224655,
+        "candidate_seconds": 2.459099689,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9463668201069826,
+        "paired_ratios": [
+          1.0340983152975844,
+          0.9306851735694385,
+          0.9463668201069826
+        ],
+        "baseline_range": [
+          2.363729976,
+          2.902028694
+        ],
+        "candidate_range": [
+          2.444329186,
+          2.746383667
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "sparse_window",
+        "baseline_seconds": 1.283761414,
+        "candidate_seconds": 1.287593341,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0613943254245533,
+        "paired_ratios": [
+          1.0613943254245533,
+          0.9578402782559409,
+          1.132572735916272
+        ],
+        "baseline_range": [
+          1.213114966,
+          1.286010678
+        ],
+        "candidate_range": [
+          1.22963839,
+          1.456500632
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "rare",
+        "baseline_seconds": 0.196286441,
+        "candidate_seconds": 0.18999709,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9679583013072207,
+        "paired_ratios": [
+          1.2220357017580983,
+          0.9679583013072207,
+          0.9272039101649765
+        ],
+        "baseline_range": [
+          0.183315006,
+          0.198374034
+        ],
+        "candidate_range": [
+          0.18393318,
+          0.224017482
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "single",
+        "baseline_seconds": 0.008784032,
+        "candidate_seconds": 0.006926726,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.7588544759399783,
+        "paired_ratios": [
+          1.0066518382986083,
+          0.6270500008942964,
+          0.7588544759399783
+        ],
+        "baseline_range": [
+          0.006880955,
+          0.011517434
+        ],
+        "candidate_range": [
+          0.006665802,
+          0.007222007
+        ]
+      }
+    ],
+    "raw": "pairs.json",
+    "timeout_seconds": 360,
+    "censored_runs": 0,
+    "ratios": "candidate/baseline; median of corresponding pairs, distinct from ratio of independently computed medians",
+    "largest_scope": "All nine shapes have three alternating pairs at every cardinality.",
+    "numeric_benchmark_budgets_changed": false,
+    "new_unseeded_benchmarks": 8
+  },
+  "cpu": {
+    "scope": "Whole process: fixture construction, one complete verification query, three timed all queries at 20000 streams",
+    "frequency_hz": 199,
+    "event": "cpu-clock:u",
+    "stack_bytes": 8192,
+    "mmap_pages": 512,
+    "report_threshold_percent": 0.5,
+    "captures": {
+      "baseline": {
+        "report": "baseline-20000-all-perf-flat.txt",
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 57914565625,
+        "regex_automata_self_percent_above_report_threshold": 57.5
+      },
+      "candidate": {
+        "report": "candidate-20000-all-perf-flat.txt",
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 6683416250,
+        "regex_automata_self_percent_above_report_threshold": 0
+      }
+    },
+    "baseline_capture_binary_sha256": "7ac1d57f9ce88bfc8c820e84c60b10113ac1f98b442e7a497fee077e1ffae48e",
+    "baseline_capture_identity": "Preceding bounded-predicate candidate ELF. Its all-case fixture and verification are unchanged; the matched timing matrix uses rebuilt baseline and candidate fixture drivers with the two additional cases.",
+    "comparability": "Matched production compiler flags and process counts. Reported regex_automata functions include construction, search and helpers; their summed self percentages do not count compilations or establish query-only CPU ratios."
+  },
+  "heap": {
+    "scope": "Whole process: fixture construction, one complete verification query and one timed query at 5000 streams",
+    "captures": [
+      {
+        "case": "all",
+        "variant": "baseline",
+        "report": "baseline-5000-all-heap.txt",
+        "allocation_calls": 31662593,
+        "temporary_allocations": 4278879,
+        "peak_heap": "97.46M",
+        "peak_rss_including_profiler": "225.12M"
+      },
+      {
+        "case": "all",
+        "variant": "candidate",
+        "report": "candidate-5000-all-heap.txt",
+        "allocation_calls": 5062337,
+        "temporary_allocations": 178827,
+        "peak_heap": "97.15M",
+        "peak_rss_including_profiler": "219.61M"
+      },
+      {
+        "case": "all_line_regex",
+        "variant": "baseline",
+        "report": "baseline-5000-all_line_regex-heap.txt",
+        "allocation_calls": 16074505,
+        "temporary_allocations": 1328906,
+        "peak_heap": "60.40M",
+        "peak_rss_including_profiler": "181.84M"
+      },
+      {
+        "case": "all_line_regex",
+        "variant": "candidate",
+        "report": "candidate-5000-all_line_regex-heap.txt",
+        "allocation_calls": 3424507,
+        "temporary_allocations": 128905,
+        "peak_heap": "60.39M",
+        "peak_rss_including_profiler": "182.33M"
+      }
+    ],
+    "limitation": "Whole-process counts are not per-query allocations. Peak RSS includes profiler overhead; peak values and regressions remain recorded."
+  },
+  "native_comparison": {
+    "fresh_regex_round": false,
+    "preceding_round_record": "qualification/log-scan-predicate-2026-10-10.json",
+    "limitation": "The preceding native observations use the bounded-predicate candidate before regex reuse. No native API improvement or parity is attributed to this round. Current free disk space is insufficient for a fresh VFS deployment while preserving Loki defaults."
+  },
+  "build": {
+    "rustc": "1.98.1",
+    "opt_level": 3,
+    "debuginfo": "line-tables-only",
+    "force_frame_pointers": true,
+    "codegen_units": 16,
+    "lto": false,
+    "baseline_production": "Preceding bounded-predicate own observability rlib and original cached LogQL dependency, with a newly compiled fixture and driver.",
+    "candidate_production": "Fresh own LogQL and observability rlibs, fixture and driver.",
+    "dependency_graph": "Exact cached Cargo fingerprints and mapped dependencies; commands, dependency JSON and recovery failures are preserved.",
+    "transitive_dependency": "Other unused benchmark modules require original cached observability metadata in addition to the directly referenced own production library.",
+    "elf_link_strip": "Debug sections stripped; function symbols retained.",
+    "cache_archival": "Original rlib bytes gzip-archived and SHA-verified. Own libraries strip debug and LLVM bitcode only after proving metadata and allocated code/data identity; no LTO is used.",
+    "archive_proofs": [
+      "libkrabka_logql.rlib-archive.json",
+      "libkrabka_observability.rlib-archive.json",
+      "restored-cache.json",
+      "crc-cache-recovery.json",
+      "transitive-observability-cache-recovery.json",
+      "unused-cache-removal.json"
+    ],
+    "prior_evidence": [
+      "qualification/evidence/profile-query-2026-10-09/build-cache-archives",
+      "qualification/evidence/log-scan-predicate-2026-10-10"
+    ]
+  },
+  "next_investigations": [
+    "Attribute native ingest wall-clock waits at 20000 streams.",
+    "Reduce query-state and label-index cloning highlighted by the preceding resolved native profile.",
+    "Investigate remaining field/template regex paths and Loki literal simplifications with separate profiles and response checks.",
+    "Complete larger native API comparisons; engine improvements alone do not qualify parity."
+  ],
+  "reproduction_scripts_sha256": {
+    "archive-log-regex-library.py": "f9a3e9531ead7aa33da3054e592bdf4c7603b7fa07e7948cb1eecaf050805d08",
+    "build-log-regex.py": "fa051937b7933a2714719241da51c1228e8e50818fc20d3462ed9addbe15363e",
+    "cleanup-log-regex-cache.py": "1e2670f57cb1c1a5a71a7f5d28ae668bd8f71a08f823295dfa71261d40b42c4d",
+    "clippy-log-regex.py": "b59c655ac2f35699c6ca78935c316fcf713be22b57062249c7ecb103846830dc",
+    "criterion-log-regex.py": "781d8aea375a62369a41eae209789b50504404282997d5e3c01e6d831a9420e3",
+    "finalize-log-regex-record.py": "21844ae03eb53028d3879b9266b51a7e083856aea8767b821ed308780230f0b3",
+    "log-regex-build-complete.log": "5ba3b5c6b6a5c0789119cb1d22758c930328ab5f8728ad785783e0057cccc580",
+    "log-regex-build-final.log": "438181adb43c123533941c37325aae21a56d1cd0264a517284b9987518526708",
+    "log-regex-build-repeat.log": "80185940de5b30b22bf728faeb8e6ba91d557681a37a270d1bf57805b071c92c",
+    "log-regex-build.log": "bed515358ad98e153b46557c1cb12b7047e2f5c31ba5382efc4437e6224646c7",
+    "log-regex-cache-restore.log": "4318b5952efabb3615554b6af92eed2fd281f3a78dfebf63a0dd247ce28ae287",
+    "log-regex-clippy.log": "607cb2abd97d82294cdcf55e1556948c241151e86fad4fd4a37174f1879c6122",
+    "log-regex-criterion-repeat.log": "f4f422ba3563a46684360179ae8ec5667ca7e10abf055cec3d0159cbdb45c013",
+    "log-regex-criterion.log": "17becd3a1c9dbb88038f267d58677581fe64af4505cc11a1c39c25975a559f87",
+    "log-regex-library-archives.log": "36ccc7b8b5e8fafb1b34d7379d1851d8e57f2190a67ebcd33ce248ddb002311b",
+    "log-regex-tests.log": "11d005c20461ce352cf6abed149523c1ad7b09fdd675c465b1ad5217abaa932c",
+    "profile-log-regex-after-pairs.py": "c91d65c420dec07fb002c53c11d8d77c31792ed68c673eecc72846bcd9ac0ba9",
+    "restore-log-regex-cache.py": "f43774693dc7044e1c35ecd243e4b743e8e562469adc17ebe4f0221459631fa7",
+    "run-log-regex-pairs.py": "e42402f55ad26bc417803b3c881a630b3c3f286f5d65c797b88750a17798feea",
+    "summarize-log-regex-pairs.py": "a1d9eab7e343730f3363f1d2417acf026776f92898d829d82c1a186510397d77",
+    "test-log-regex.py": "7884038794d42402f35e38cbfb9e09a0970267afd253eb4810ec88af2a1ec53d"
+  },
+  "raw_manifest": {
+    "path": "qualification/evidence/log-regex-reuse-2026-10-10/raw-manifest.json",
+    "sha256": "8a8b4d1fa6bb7c3ba0e530f5b1c809bd8ec3caa8db316f053f51856a14211e14",
+    "scope": "All evidence files except raw-manifest.json itself; includes timings, ELF, verified library archives, CPU/heap reports, source snapshots and reproduction scripts.",
+    "files": 116,
+    "bytes": 1435446108
+  }
+}

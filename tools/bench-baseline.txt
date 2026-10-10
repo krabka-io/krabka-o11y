@@ -242,3 +242,13 @@ log_stream_query/rare/1000 unseeded
 log_stream_query/rare/5000 unseeded
 log_stream_query/rare/20000 unseeded
 log_stream_query/rare/100000 unseeded
+
+# Regex line evaluation with compiled query filters.
+log_stream_query/all_line_regex/1000 unseeded
+log_stream_query/all_line_regex/5000 unseeded
+log_stream_query/all_line_regex/20000 unseeded
+log_stream_query/all_line_regex/100000 unseeded
+log_stream_query/all_line_not_regex/1000 unseeded
+log_stream_query/all_line_not_regex/5000 unseeded
+log_stream_query/all_line_not_regex/20000 unseeded
+log_stream_query/all_line_not_regex/100000 unseeded

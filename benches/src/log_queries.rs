@@ -12,10 +12,12 @@ use serde_json::{Value, json};
 use crate::Seeded;
 
 /// Query shapes over the same persisted block.
-pub const CASES: [&str; 7] = [
+pub const CASES: [&str; 9] = [
     "all",
     "all_exact",
     "all_line",
+    "all_line_regex",
+    "all_line_not_regex",
     "sparse",
     "sparse_window",
     "rare",
@@ -121,6 +123,8 @@ impl LogQueryFixture {
             "all" => (r#"{app=~".+"}"#, 0, 9),
             "all_exact" => (r#"{app!=""}"#, 0, 9),
             "all_line" => (r#"{app=~".+"} |= "accepted""#, 0, 9),
+            "all_line_regex" => (r#"{app!=""} |~ "accepted$""#, 0, 9),
+            "all_line_not_regex" => (r#"{app!=""} !~ "ignored$""#, 0, 9),
             "sparse" => (r#"{app="api"}"#, 0, 9),
             "sparse_window" => (r#"{app="api"} |= "accepted""#, 2, 7),
             "rare" => (r#"{bucket="rare"}"#, 0, 9),
@@ -144,7 +148,12 @@ impl LogQueryFixture {
                 continue;
             }
             let values = (first..=last)
-                .filter(|point| !matches!(name, "all_line" | "sparse_window") || point % 2 == 0)
+                .filter(|point| {
+                    !matches!(
+                        name,
+                        "all_line" | "all_line_regex" | "all_line_not_regex" | "sparse_window"
+                    ) || point % 2 == 0
+                })
                 .map(|point| {
                     json!([
                         point.to_string(),

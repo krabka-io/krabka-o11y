@@ -299,6 +299,17 @@ See [the WAL threshold](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9
 and [the push checks](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/ingester/ingester.go#L1002-L1012).
 The repeat reserves disk space before deployment and preserves that default.
 
+Loki also constructs reusable regex filters before it evaluates log rows.
+[`NewFilter` and `parseRegexpFilter`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/logql/log/filter.go#L608-L681)
+simplify suitable expressions into literal filters; the remaining expressions
+are compiled by `newRegexpFilter`. Krabka's selector and line-filter constructors
+previously validated a regex and discarded it, then compiled it again for each
+row. They now retain that compiled regex. A source-value check preserves edits
+to their public pattern fields, and equality compares the source fields rather
+than compiled state. This change reuses compilation; it does not add Loki's
+literal simplifications. Extracted-field comparisons, label-selection patterns
+and dynamic template regexes still have separate evaluation paths.
+
 ## Tempo
 
 Tempo checks Parquet dictionaries, column chunks and page bounds before it

@@ -74,7 +74,8 @@ those costs from fixture generation.
 responses at 1,000, 5,000, 20,000 and 100,000 streams, with ten rows per stream.
 Each stream carries a deterministic 64-byte structured metadata value. Cases
 select all streams with a regex or a nonempty-value matcher, all streams with
-a line filter, one quarter of streams, that quarter with line and time
+a literal line filter, positive and negative regex line filters, one quarter
+of streams, that quarter with line and time
 filters, roughly one sixty-fourth of streams, or one stream. Every complete
 JSON response is checked against an
 independent input ledger before measurement. Fixture creation and planning
