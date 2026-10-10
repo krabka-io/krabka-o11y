@@ -39,12 +39,15 @@ use testcontainers::{
 // does it, so all metrics differential suites share one corpus definition. This
 // integration only needs `seed_dataset`; the differ/corpus helpers are unused
 // here, so allow dead code on the included module.
+#[path = "support/pinned_grafana_image.rs"]
+mod pinned_grafana_image;
 #[path = "support/seed_remote_write.rs"]
 mod seed_remote_write;
 #[path = "support/upstream_http.rs"]
 mod upstream_http;
 
 use self::{
+    pinned_grafana_image::pinned_grafana_image,
     seed_remote_write::remote_write_body,
     upstream_http::{
         KrabkaServer, RemoteWrite, TestResult, mapped_base_url, post_remote_write, wait_for_http_ok,
@@ -1347,19 +1350,9 @@ fn string_array(value: &Value) -> Vec<String> {
 async fn start_grafana(
     datasource_yaml: &str,
 ) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite compared
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+        pinned_grafana_image()
             .with_exposed_port(GRAFANA_PORT.tcp())
             // Grafana writes its go logger to STDOUT (verified: the "HTTP Server
             // Listen" line appears on stdout, not stderr). /api/health is polled for

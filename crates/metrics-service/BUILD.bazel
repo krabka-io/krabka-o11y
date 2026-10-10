@@ -124,4 +124,5 @@ crate_tests(
 exports_files([
     "tests/support/container_deployment.rs",
     "tests/support/deployment_evidence.rs",
+    "tests/support/pinned_grafana_image.rs",
 ])

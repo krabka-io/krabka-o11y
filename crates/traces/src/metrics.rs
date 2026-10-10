@@ -34,14 +34,20 @@ mod service_metrics;
 pub use self::service_metrics::ServiceMetrics;
 
 #[cfg(test)]
+#[path = "../../observability/tests/support/pipeline_bundle_metrics.rs"]
+mod pipeline_bundle_metrics;
+
+#[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use krabka_blockstore::ObjectStoreOperation;
     use krabka_observability::service_metrics::{RequestOutcome, encode_registry};
     use krabka_units::prelude::*;
 
     use super::{
         IngestRequest, QueryRequest, RouteStatusLabel, ServiceMetrics, TenantId, TenantLabel,
+        pipeline_bundle_metrics::{
+            check_pipeline_bundles_exported, record_one_event_per_pipeline_bundle,
+        },
     };
 
     fn tenant(id: &str) -> TenantId {
@@ -77,10 +83,7 @@ mod tests {
             elapsed: millis(200),
         });
         // The shared bundles must land in this signal's registry.
-        m.wal_consumer.record_partition_assigned("__wal", 2);
-        m.wal_produce.record_batch_failure(1, 3);
-        m.compaction.record_output(4);
-        m.object_store.record_retry(ObjectStoreOperation::Get);
+        record_one_event_per_pipeline_bundle(&m);
 
         let buf = encode_registry(&m.registry).await.unwrap();
         for needle in [
@@ -93,10 +96,6 @@ mod tests {
             "krabka_traces_blocks_flushed_total",
             "krabka_traces_query_requests_total",
             "krabka_traces_query_duration_seconds",
-            "krabka_traces_wal_consumer_partition_owned{topic=\"__wal\",partition=\"2\"} 1",
-            "krabka_traces_wal_partial_batch_appends_total 1",
-            "krabka_traces_compaction_blocks_total 4",
-            "krabka_traces_objstore_operation_retries_total{operation=\"get\"} 1",
             "status=\"ok\"",
             "status=\"error\"",
             "route=\"search\"",
@@ -104,6 +103,7 @@ mod tests {
         ] {
             assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
         }
+        check_pipeline_bundles_exported(&buf, "krabka_traces");
     }
 
     #[test]

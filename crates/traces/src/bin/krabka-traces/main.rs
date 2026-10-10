@@ -69,7 +69,6 @@ mod tests {
     };
     use clap::{CommandFactory as _, Parser};
     use http_body_util::BodyExt;
-    use krabka_broker::{Broker, BrokerConfig};
     use krabka_observability::{
         RoleReadiness,
         topic_contract::{TRACES_TOPICS, TopicSettings, provision_topics},
@@ -77,7 +76,7 @@ mod tests {
     use krabka_units::{hours, minutes, secs};
     use tower::ServiceExt;
 
-    use super::*;
+    use super::{in_process_broker::InProcessBroker, *};
 
     // The live-store routes read their principal from the request extensions,
     // where the authentication layer puts it. The tests serve the router
@@ -2320,11 +2319,8 @@ overrides:
     /// three that never reach a broker must be untouched by the same fault.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_missing_wal_topic_stops_the_roles_that_use_it_and_no_others() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
+        let broker = InProcessBroker::start().await;
+        let bootstrap = broker.bootstrap.clone();
 
         // The querier appears twice: it tails the WAL only with an embedded
         // live store, and reaches no broker without one.
@@ -2403,6 +2399,11 @@ mod all_in_one_serves_ingest_and_query;
 #[cfg(test)]
 mod the_compactor_runs_under_supervision;
 
+/// A bare in-process broker, shared with the other signal binary's tests.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/in_process_broker.rs"]
+mod in_process_broker;
+
 /// The invalid WAL fetch limits, shared with the other signal binary that
 /// parses them.
 #[cfg(test)]
@@ -2450,7 +2451,6 @@ mod parse_positive_time_or_millis;
 mod parse_positive_time_or_nanos;
 mod parse_positive_time_or_nanos_f64;
 mod parse_positive_time_or_secs;
-mod parse_positive_u32;
 mod parse_promoted_attr;
 mod parse_querier_addrs;
 mod parse_scan_concat_max;
@@ -2505,7 +2505,7 @@ use frontend_config_from_cli::frontend_config_from_cli;
 use indexed_live_source::IndexedLiveSource;
 use ingest_rate_from_cli::ingest_rate_from_cli;
 use krabka_observability::cli_value_parsers::{
-    parse_positive_usize, parse_positive_whole_byte_size,
+    parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
 };
 use limits_from_cli::limits_from_cli;
 use listening_role::ListeningRole;
@@ -2526,7 +2526,6 @@ use parse_positive_time_or_millis::parse_positive_time_or_millis;
 use parse_positive_time_or_nanos::parse_positive_time_or_nanos;
 use parse_positive_time_or_nanos_f64::parse_positive_time_or_nanos_f64;
 use parse_positive_time_or_secs::parse_positive_time_or_secs;
-use parse_positive_u32::parse_positive_u32;
 use parse_promoted_attr::parse_promoted_attr;
 use parse_querier_addrs::parse_querier_addrs;
 use parse_scan_concat_max::parse_scan_concat_max;

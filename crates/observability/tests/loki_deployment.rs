@@ -21,8 +21,7 @@ use testcontainers::{
 mod container_deployment;
 mod support;
 use container_deployment::{
-    DeploymentInfrastructure, TestResult, base_url, image, start, start_infrastructure,
-    wait_until_ready,
+    Deployment, TestResult, base_url, image, start, start_infrastructure, wait_until_ready,
 };
 use support::{LokiProtoEntry, LokiProtoPushRequest, LokiProtoStream, LokiProtoTimestamp};
 
@@ -31,13 +30,6 @@ const START: i64 = 1_700_000_000_000_000_000;
 const END: i64 = START + 3_000_000_000;
 const TIMEOUT: Duration = Duration::from_secs(45);
 const SELECTOR: &str = r#"{service_name="fixture"}"#;
-
-// Drop containers before the directories holding their bind mounts.
-struct Deployment {
-    distributor: ContainerAsync<GenericImage>,
-    hot: ContainerAsync<GenericImage>,
-    infrastructure: DeploymentInfrastructure,
-}
 
 impl Deployment {
     async fn start() -> TestResult<Self> {
@@ -60,14 +52,13 @@ impl Deployment {
             true,
         )
         .await?;
-        let deployment = Self {
+        Self {
             distributor,
             hot,
             infrastructure,
-        };
-        deployment.ready(&deployment.distributor).await?;
-        deployment.ready(&deployment.hot).await?;
-        Ok(deployment)
+        }
+        .wait_until_serving(PORT)
+        .await
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>) -> TestResult {

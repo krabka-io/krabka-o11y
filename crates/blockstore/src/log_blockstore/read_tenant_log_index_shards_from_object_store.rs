@@ -29,14 +29,8 @@ pub async fn read_tenant_log_index_shards_from_object_store(
     .await?;
     if shard_ranges.is_empty() {
         shard_ranges =
-            match read_tenant_log_index_shard_ranges_from_object_store(store, prefix, tenant).await
-            {
-                Ok(shard_ranges) => shard_ranges,
-                Err(BlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => {
-                    Vec::new()
-                }
-                Err(error) => return Err(error),
-            };
+            read_tenant_log_index_shard_ranges_or_empty_from_object_store(store, prefix, tenant)
+                .await?;
     }
     let mut merged_labels = LabelIndex::default();
     let mut merged_blocks = BTreeMap::new();

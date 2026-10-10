@@ -3,9 +3,13 @@ use super::{
     UInt64Builder, metadata_schema,
 };
 
-pub(crate) fn encode_metadata_rows(
-    rows: &[MetadataRow],
-) -> Result<RecordBatch, HistogramCodecError> {
+/// Encodes metric-family metadata rows into one record batch of
+/// [`metadata_schema`].
+///
+/// # Errors
+///
+/// Returns an error when Arrow rejects the assembled batch.
+pub fn encode_metadata_rows(rows: &[MetadataRow]) -> Result<RecordBatch, HistogramCodecError> {
     let mut fingerprints = UInt64Builder::new();
     let mut timestamps = Int64Builder::new();
     let mut names = StringBuilder::new();

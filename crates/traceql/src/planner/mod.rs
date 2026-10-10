@@ -33,59 +33,17 @@ mod tests {
         parser::parse,
         result::{AttrValue, EventRef},
         span_columns::{COL_NAME, InputSpan},
+        testkit::span::SpanFixture,
     };
 
-    /// A span of trace `[trace; 16]` that starts `id` nanoseconds after the
-    /// epoch. The default is root span 1 of trace `[1; 16]`, with no
-    /// attributes.
-    struct TraceSpan<'a> {
-        id: u8,
-        parent: Option<u8>,
-        trace: u8,
-        name: &'a str,
-        duration_nanos: i64,
-        attrs: Vec<(&'a str, AttrValue)>,
-    }
-
-    impl Default for TraceSpan<'_> {
-        fn default() -> Self {
-            Self {
-                id: 1,
-                parent: None,
-                trace: 1,
-                name: "span",
-                duration_nanos: 0,
-                attrs: Vec::new(),
-            }
+    /// The fixture span, starting `id` nanoseconds after the epoch rather than
+    /// a thousand nanoseconds later.
+    fn span_starting_at_id(fixture: SpanFixture<'_>) -> InputSpan {
+        let start_unix_nano = i64::from(fixture.id);
+        InputSpan {
+            start_unix_nano,
+            ..fixture.input_span()
         }
-    }
-
-    impl TraceSpan<'_> {
-        fn build(self) -> InputSpan {
-            InputSpan {
-                trace_id: [self.trace; 16],
-                start_unix_nano: i64::from(self.id),
-                ..crate::testkit::span::span(
-                    0,
-                    self.id,
-                    self.parent,
-                    self.name,
-                    self.duration_nanos,
-                    self.attrs,
-                )
-            }
-        }
-    }
-
-    fn span(id: u8, name: &str, duration_nanos: i64, attrs: Vec<(&str, AttrValue)>) -> InputSpan {
-        TraceSpan {
-            id,
-            name,
-            duration_nanos,
-            attrs,
-            ..TraceSpan::default()
-        }
-        .build()
     }
 
     const CACHE_SPAN_NAMES: [&str; 3] = ["cache-a", "cache-b", "cache-c"];
@@ -114,15 +72,14 @@ mod tests {
 
     impl SvcSpan {
         fn build(self) -> InputSpan {
-            TraceSpan {
+            span_starting_at_id(SpanFixture {
                 id: self.id,
                 trace: self.trace,
                 name: self.name,
                 duration_nanos: self.duration_nanos,
                 attrs: vec![("svc", AttrValue::Str(self.svc.into()))],
-                ..TraceSpan::default()
-            }
-            .build()
+                ..SpanFixture::default()
+            })
         }
     }
 
@@ -250,17 +207,27 @@ mod tests {
     // Two attribute-less spans in one trace and one in another.
     fn ungrouped_two_trace_store() -> InMemorySpanStore {
         store_with_traces(vec![
-            vec![span(1, "api-a", 20, vec![]), span(2, "api-b", 40, vec![])],
             vec![
-                TraceSpan {
-                    id: 3,
-                    trace: 2,
-                    name: "db-a",
-                    duration_nanos: 200,
-                    ..TraceSpan::default()
-                }
-                .build(),
+                span_starting_at_id(SpanFixture {
+                    id: 1,
+                    name: "api-a",
+                    duration_nanos: 20,
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
+                    id: 2,
+                    name: "api-b",
+                    duration_nanos: 40,
+                    ..SpanFixture::default()
+                }),
             ],
+            vec![span_starting_at_id(SpanFixture {
+                id: 3,
+                trace: 2,
+                name: "db-a",
+                duration_nanos: 200,
+                ..SpanFixture::default()
+            })],
         ])
     }
 
@@ -343,28 +310,37 @@ mod tests {
             "svc",
             "root",
             vec![
-                span(
-                    1,
-                    "equal",
-                    10,
-                    vec![("lhs", AttrValue::Int(3)), ("rhs", AttrValue::Int(3))],
-                ),
-                span(
-                    2,
-                    "different",
-                    20,
-                    vec![("lhs", AttrValue::Int(4)), ("rhs", AttrValue::Int(3))],
-                ),
-                span(3, "missing", 30, vec![("lhs", AttrValue::Int(3))]),
-                span(
-                    4,
-                    "wrong-type",
-                    40,
-                    vec![
+                span_starting_at_id(SpanFixture {
+                    id: 1,
+                    name: "equal",
+                    duration_nanos: 10,
+                    attrs: vec![("lhs", AttrValue::Int(3)), ("rhs", AttrValue::Int(3))],
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
+                    id: 2,
+                    name: "different",
+                    duration_nanos: 20,
+                    attrs: vec![("lhs", AttrValue::Int(4)), ("rhs", AttrValue::Int(3))],
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
+                    id: 3,
+                    name: "missing",
+                    duration_nanos: 30,
+                    attrs: vec![("lhs", AttrValue::Int(3))],
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
+                    id: 4,
+                    name: "wrong-type",
+                    duration_nanos: 40,
+                    attrs: vec![
                         ("text", AttrValue::Str("3".into())),
                         ("rhs", AttrValue::Int(3)),
                     ],
-                ),
+                    ..SpanFixture::default()
+                }),
             ],
         );
         for (query, expected) in [
@@ -489,18 +465,20 @@ mod tests {
             "svc",
             "root",
             vec![
-                span(
-                    1,
-                    "root",
-                    50,
-                    vec![("http.method", AttrValue::Str("GET".into()))],
-                ),
-                span(
-                    2,
-                    "db",
-                    50,
-                    vec![("http.method", AttrValue::Str("POST".into()))],
-                ),
+                span_starting_at_id(SpanFixture {
+                    id: 1,
+                    name: "root",
+                    duration_nanos: 50,
+                    attrs: vec![("http.method", AttrValue::Str("GET".into()))],
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
+                    id: 2,
+                    name: "db",
+                    duration_nanos: 50,
+                    attrs: vec![("http.method", AttrValue::Str("POST".into()))],
+                    ..SpanFixture::default()
+                }),
             ],
         );
         let out = planned("{ .http.method = \"GET\" }", &store).await.unwrap();
@@ -515,7 +493,20 @@ mod tests {
             "t",
             "svc",
             "root",
-            vec![span(1, "short", 50, vec![]), span(2, "long", 150, vec![])],
+            vec![
+                span_starting_at_id(SpanFixture {
+                    id: 1,
+                    name: "short",
+                    duration_nanos: 50,
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
+                    id: 2,
+                    name: "long",
+                    duration_nanos: 150,
+                    ..SpanFixture::default()
+                }),
+            ],
         );
         let out = planned("{ span:duration > 100 }", &store).await.unwrap();
         assert!(out.iter().map(RecordBatch::num_rows).sum::<usize>() == 1);
@@ -524,19 +515,34 @@ mod tests {
 
     #[tokio::test]
     async fn grouped_pipeline_filters_by_nested_event_intrinsic() {
-        let mut miss_one = span(1, "miss-one", 50, vec![]);
+        let mut miss_one = span_starting_at_id(SpanFixture {
+            id: 1,
+            name: "miss-one",
+            duration_nanos: 50,
+            ..SpanFixture::default()
+        });
         miss_one.events = vec![EventRef {
             time_since_start: nanos(10),
             name: "cache.miss".into(),
             attributes: Vec::new(),
         }];
-        let mut miss_two = span(2, "miss-two", 50, vec![]);
+        let mut miss_two = span_starting_at_id(SpanFixture {
+            id: 2,
+            name: "miss-two",
+            duration_nanos: 50,
+            ..SpanFixture::default()
+        });
         miss_two.events = vec![EventRef {
             time_since_start: nanos(20),
             name: "cache.miss".into(),
             attributes: Vec::new(),
         }];
-        let mut hit = span(3, "hit", 50, vec![]);
+        let mut hit = span_starting_at_id(SpanFixture {
+            id: 3,
+            name: "hit",
+            duration_nanos: 50,
+            ..SpanFixture::default()
+        });
         hit.events = vec![EventRef {
             time_since_start: nanos(30),
             name: "cache.hit".into(),
@@ -557,7 +563,14 @@ mod tests {
 
     #[tokio::test]
     async fn grouped_pipeline_by_nested_event_intrinsic_ignores_later_event_decoys() {
-        let mut one = span(1, "one", 50, vec![("svc", AttrValue::Str("api".into()))]);
+        let mut one = SvcSpan {
+            id: 1,
+            name: "one",
+            duration_nanos: 50,
+            svc: "api",
+            ..SvcSpan::default()
+        }
+        .build();
         one.events = vec![
             EventRef {
                 time_since_start: nanos(10),
@@ -570,7 +583,14 @@ mod tests {
                 attributes: Vec::new(),
             },
         ];
-        let mut two = span(2, "two", 50, vec![("svc", AttrValue::Str("api".into()))]);
+        let mut two = SvcSpan {
+            id: 2,
+            name: "two",
+            duration_nanos: 50,
+            svc: "api",
+            ..SvcSpan::default()
+        }
+        .build();
         two.events = vec![
             EventRef {
                 time_since_start: nanos(30),
@@ -601,14 +621,27 @@ mod tests {
             "svc",
             "root",
             vec![
-                span(1, "a-only", 50, vec![("a", AttrValue::Int(1))]),
-                span(2, "b-only", 50, vec![("b", AttrValue::Int(2))]),
-                span(
-                    3,
-                    "both",
-                    50,
-                    vec![("a", AttrValue::Int(1)), ("b", AttrValue::Int(2))],
-                ),
+                span_starting_at_id(SpanFixture {
+                    id: 1,
+                    name: "a-only",
+                    duration_nanos: 50,
+                    attrs: vec![("a", AttrValue::Int(1))],
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
+                    id: 2,
+                    name: "b-only",
+                    duration_nanos: 50,
+                    attrs: vec![("b", AttrValue::Int(2))],
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
+                    id: 3,
+                    name: "both",
+                    duration_nanos: 50,
+                    attrs: vec![("a", AttrValue::Int(1)), ("b", AttrValue::Int(2))],
+                    ..SpanFixture::default()
+                }),
             ],
         );
         let out = planned("{ .a = 1 && .b = 2 }", &store).await.unwrap();
@@ -624,8 +657,20 @@ mod tests {
             "svc",
             "root",
             vec![
-                span(1, "one", 50, vec![("name", AttrValue::Str("abc".into()))]),
-                span(2, "two", 50, vec![("name", AttrValue::Str("xabc".into()))]),
+                span_starting_at_id(SpanFixture {
+                    id: 1,
+                    name: "one",
+                    duration_nanos: 50,
+                    attrs: vec![("name", AttrValue::Str("abc".into()))],
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
+                    id: 2,
+                    name: "two",
+                    duration_nanos: 50,
+                    attrs: vec![("name", AttrValue::Str("xabc".into()))],
+                    ..SpanFixture::default()
+                }),
             ],
         );
         let out = planned("{ .name =~ \"ab.*\" }", &store).await.unwrap();
@@ -641,41 +686,36 @@ mod tests {
             "svc",
             "root",
             vec![
-                TraceSpan {
+                span_starting_at_id(SpanFixture {
                     id: 1,
                     trace: 1,
                     name: "a-only",
                     duration_nanos: 50,
                     attrs: vec![("a", AttrValue::Int(1))],
-                    ..TraceSpan::default()
-                }
-                .build(),
-                TraceSpan {
+                    ..SpanFixture::default()
+                }),
+                span_starting_at_id(SpanFixture {
                     id: 2,
                     trace: 1,
                     name: "b-only",
                     duration_nanos: 50,
                     attrs: vec![("b", AttrValue::Int(2))],
-                    ..TraceSpan::default()
-                }
-                .build(),
+                    ..SpanFixture::default()
+                }),
             ],
         );
         store.push_trace(
             "t",
             "svc",
             "root",
-            vec![
-                TraceSpan {
-                    id: 3,
-                    trace: 2,
-                    name: "other-a",
-                    duration_nanos: 50,
-                    attrs: vec![("a", AttrValue::Int(1))],
-                    ..TraceSpan::default()
-                }
-                .build(),
-            ],
+            vec![span_starting_at_id(SpanFixture {
+                id: 3,
+                trace: 2,
+                name: "other-a",
+                duration_nanos: 50,
+                attrs: vec![("a", AttrValue::Int(1))],
+                ..SpanFixture::default()
+            })],
         );
 
         let out = planned("{ .a = 1 } && { .b = 2 }", &store).await.unwrap();
@@ -689,42 +729,38 @@ mod tests {
             "svc",
             "root",
             vec![
-                TraceSpan {
+                SvcSpan {
                     id: 1,
                     trace: 9,
                     name: "root",
                     duration_nanos: 1,
-                    attrs: vec![("svc", AttrValue::Str("a".into()))],
-                    ..TraceSpan::default()
+                    svc: "a",
                 }
                 .build(),
-                TraceSpan {
+                span_starting_at_id(SpanFixture {
                     id: 2,
                     parent: Some(1),
                     trace: 9,
                     name: "child-x",
                     duration_nanos: 1,
                     attrs: vec![("svc", AttrValue::Str("b".into()))],
-                }
-                .build(),
-                TraceSpan {
+                }),
+                span_starting_at_id(SpanFixture {
                     id: 4,
                     parent: Some(2),
                     trace: 9,
                     name: "grand-y",
                     duration_nanos: 1,
                     attrs: vec![("svc", AttrValue::Str("c".into()))],
-                }
-                .build(),
-                TraceSpan {
+                }),
+                span_starting_at_id(SpanFixture {
                     id: 3,
                     parent: Some(1),
                     trace: 9,
                     name: "child-z",
                     duration_nanos: 1,
                     attrs: vec![("svc", AttrValue::Str("b".into()))],
-                }
-                .build(),
+                }),
             ],
         );
         store.push_trace(
@@ -732,24 +768,22 @@ mod tests {
             "svc",
             "other-root",
             vec![
-                TraceSpan {
+                SvcSpan {
                     id: 5,
                     trace: 8,
                     name: "other-root",
                     duration_nanos: 1,
-                    attrs: vec![("svc", AttrValue::Str("a".into()))],
-                    ..TraceSpan::default()
+                    svc: "a",
                 }
                 .build(),
-                TraceSpan {
+                span_starting_at_id(SpanFixture {
                     id: 6,
                     parent: Some(5),
                     trace: 8,
                     name: "other-child",
                     duration_nanos: 1,
                     attrs: vec![("svc", AttrValue::Str("d".into()))],
-                }
-                .build(),
+                }),
             ],
         );
         store
@@ -934,31 +968,28 @@ mod tests {
             "svc",
             "root",
             vec![
-                TraceSpan {
+                SvcSpan {
                     id: 1,
                     trace: 1,
                     name: "api-a",
                     duration_nanos: 1,
-                    attrs: vec![("svc", AttrValue::Str("api".into()))],
-                    ..TraceSpan::default()
+                    svc: "api",
                 }
                 .build(),
-                TraceSpan {
+                SvcSpan {
                     id: 2,
                     trace: 1,
                     name: "api-b",
                     duration_nanos: 1,
-                    attrs: vec![("svc", AttrValue::Str("api".into()))],
-                    ..TraceSpan::default()
+                    svc: "api",
                 }
                 .build(),
-                TraceSpan {
+                SvcSpan {
                     id: 3,
                     trace: 2,
                     name: "db-a",
                     duration_nanos: 1,
-                    attrs: vec![("svc", AttrValue::Str("db".into()))],
-                    ..TraceSpan::default()
+                    svc: "db",
                 }
                 .build(),
             ],
@@ -1024,8 +1055,22 @@ mod tests {
             "svc",
             "root",
             vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "db-a", 40, vec![("svc", AttrValue::Str("db".into()))]),
+                SvcSpan {
+                    id: 1,
+                    name: "api-a",
+                    duration_nanos: 20,
+                    svc: "api",
+                    ..SvcSpan::default()
+                }
+                .build(),
+                SvcSpan {
+                    id: 2,
+                    name: "db-a",
+                    duration_nanos: 40,
+                    svc: "db",
+                    ..SvcSpan::default()
+                }
+                .build(),
             ],
         );
 
@@ -1073,18 +1118,18 @@ mod tests {
 
     #[tokio::test]
     async fn avg_by_filter_keeps_spans_from_passing_groups() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-                span(4, "db-b", 400, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
+        let mut spans = api_db_spans();
+        spans.push(
+            SvcSpan {
+                id: 4,
+                name: "db-b",
+                duration_nanos: 400,
+                svc: "db",
+                ..SvcSpan::default()
+            }
+            .build(),
         );
+        let store = store_with_traces(vec![spans]);
 
         let out = planned(
             "{ .svc != nil } | avg(span:duration) | by(span.svc) > 100",

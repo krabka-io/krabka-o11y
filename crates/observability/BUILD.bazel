@@ -8,20 +8,23 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Cargo.toml",
     "tests/support/compaction_passes.rs",
+    "tests/support/in_process_broker.rs",
     "tests/support/minio_store.rs",
+    "tests/support/pipeline_bundle_metrics.rs",
     "tests/support/sigterm_child.rs",
     "tests/support/wal_fetch_limit_flags.rs",
 ])
 
 crate_library(
     name = "observability",
-    # Each one is shared by a unit suite and an integration suite, which both
-    # reach it with `#[path]`.
+    # Each one is shared by a unit suite and an integration suite, or by this
+    # crate's unit suite and //crates/traces', which all reach it with `#[path]`.
     srcs = glob(
         ["src/**/*.rs"],
         exclude = ["src/bin/**"],
     ) + [
         "tests/support/experimental_queries.rs",
+        "tests/support/pipeline_bundle_metrics.rs",
         "tests/support/server_security_pki.rs",
     ],
 )

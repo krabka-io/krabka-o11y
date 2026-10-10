@@ -3,7 +3,7 @@
 use assert2::assert;
 use krabka_units::convert::ByteSizeExt as _;
 
-use super::{ByteSize, parse_positive_usize, parse_positive_whole_byte_size};
+use super::{ByteSize, parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size};
 
 #[test]
 fn positive_usize_accepts_one_and_refuses_zero_and_text() {
@@ -13,6 +13,15 @@ fn positive_usize_accepts_one_and_refuses_zero_and_text() {
             == Err("the value must be greater than 0, but received 0".to_owned())
     );
     assert!(parse_positive_usize("many").is_err());
+}
+
+#[test]
+fn positive_u32_accepts_one_and_refuses_zero_text_and_overflow() {
+    assert!(parse_positive_u32("1") == Ok(1));
+    assert!(parse_positive_u32("4294967295") == Ok(u32::MAX));
+    assert!(parse_positive_u32("0") == Err("value must be at least 1".to_owned()));
+    assert!(parse_positive_u32("many").is_err());
+    assert!(parse_positive_u32("4294967296").is_err());
 }
 
 #[test]

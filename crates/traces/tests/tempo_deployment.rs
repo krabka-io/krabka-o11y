@@ -25,8 +25,7 @@ mod container_deployment;
 #[path = "../../metrics-service/tests/support/deployment_evidence.rs"]
 mod deployment_evidence;
 use container_deployment::{
-    DeploymentInfrastructure, TestResult, base_url, image, start, start_infrastructure,
-    wait_until_ready,
+    Deployment, TestResult, base_url, image, start, start_infrastructure, wait_until_ready,
 };
 use deployment_evidence::record_evidence;
 
@@ -35,13 +34,6 @@ const ADMIN: u16 = 9404;
 const START: u64 = 1_700_000_000_000_000_000;
 const TIMEOUT: Duration = Duration::from_secs(45);
 const TENANT: &str = "tenant-a";
-
-// Containers release their mounts before the temporary directories are removed.
-struct Deployment {
-    distributor: ContainerAsync<GenericImage>,
-    hot: ContainerAsync<GenericImage>,
-    infrastructure: DeploymentInfrastructure,
-}
 
 impl Deployment {
     async fn start(overrides: Option<&str>) -> TestResult<Self> {
@@ -62,14 +54,13 @@ impl Deployment {
             &[],
         )
         .await?;
-        let deployment = Self {
+        Self {
             distributor,
             hot,
             infrastructure,
-        };
-        deployment.ready(&deployment.distributor).await?;
-        deployment.ready(&deployment.hot).await?;
-        Ok(deployment)
+        }
+        .wait_until_serving(ADMIN)
+        .await
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>) -> TestResult {

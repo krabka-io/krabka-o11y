@@ -27,6 +27,19 @@ pub fn parse_positive_usize(value: &str) -> Result<usize, String> {
     Ok(count)
 }
 
+/// Parses a `u32` count that must be at least one.
+///
+/// # Errors
+///
+/// Returns the parse error for text that is not a `u32`, and an error for `0`.
+pub fn parse_positive_u32(value: &str) -> Result<u32, String> {
+    match value.parse::<u32>() {
+        Ok(parsed) if parsed > 0 => Ok(parsed),
+        Ok(_) => Err("value must be at least 1".to_owned()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 /// Parses a positive byte size that is a whole number of bytes no larger than
 /// 2^53, so the `f64` inside [`ByteSize`] holds it exactly.
 ///

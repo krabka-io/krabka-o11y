@@ -28,6 +28,7 @@ crate_binary(
     # `#[path]` from //crates/observability.
     extra_srcs = [
         "//crates/observability:tests/support/compaction_passes.rs",
+        "//crates/observability:tests/support/in_process_broker.rs",
         "//crates/observability:tests/support/sigterm_child.rs",
         "//crates/observability:tests/support/wal_fetch_limit_flags.rs",
     ],

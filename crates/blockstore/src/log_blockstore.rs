@@ -1313,6 +1313,7 @@ mod read_log_index_manifest_from_object_store;
 mod read_tenant_log_index_manifest_from_object_store;
 mod read_tenant_log_index_shard_from_object_store;
 mod read_tenant_log_index_shard_ranges_from_object_store;
+mod read_tenant_log_index_shard_ranges_or_empty_from_object_store;
 mod read_tenant_log_index_shards_from_object_store;
 mod register_log_blocks;
 mod register_log_blocks_from_object_store;
@@ -1388,6 +1389,7 @@ use read_tenant_log_index_shard_from_object_store::{
     log_snapshot_error, read_log_index_shard_snapshot_base,
 };
 pub use read_tenant_log_index_shard_ranges_from_object_store::read_tenant_log_index_shard_ranges_from_object_store;
+pub use read_tenant_log_index_shard_ranges_or_empty_from_object_store::read_tenant_log_index_shard_ranges_or_empty_from_object_store;
 pub use read_tenant_log_index_shards_from_object_store::read_tenant_log_index_shards_from_object_store;
 pub use register_log_blocks::register_log_blocks;
 pub use register_log_blocks_from_object_store::register_log_blocks_from_object_store;

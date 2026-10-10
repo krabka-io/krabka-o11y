@@ -1,1 +1,0 @@
-variants(count_over_time({app="ignored"}[1m])) of (({app="api"} |= "ok")[2m])

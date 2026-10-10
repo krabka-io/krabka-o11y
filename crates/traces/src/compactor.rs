@@ -822,4 +822,4 @@ use struct_string_field::struct_string_field;
 pub use sweep_orphaned_trace_blocks::sweep_orphaned_trace_blocks;
 use trace_group_buffer::TraceGroupBuffer;
 
-use crate::blockbuilder::insert_tag_value;
+use crate::blockbuilder::TagCatalog;

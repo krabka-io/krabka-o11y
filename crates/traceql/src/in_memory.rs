@@ -46,6 +46,7 @@ mod tests {
         result::{AttrValue, EventRef, LinkRef},
         span_columns::{COL_NS_LEFT, COL_PARENT_ID, InputSpan},
         span_matching::present_value_matches,
+        testkit::span::SpanFixture,
     };
 
     /// `int_matches` is the numeric comparison behind every integer attribute
@@ -73,10 +74,21 @@ mod tests {
         check!(!int_matches(6, MatchCmp::Lt, &int), "6 < 5");
     }
 
-    fn span(id: u8, parent: Option<u8>, name: &str, attrs: Vec<(&str, AttrValue)>) -> InputSpan {
+    /// A fixture span of trace `[7; 16]` that lasts five nanoseconds.
+    fn trace_seven_span<'a>() -> SpanFixture<'a> {
+        SpanFixture {
+            trace: 7,
+            duration_nanos: 5,
+            ..SpanFixture::default()
+        }
+    }
+
+    /// The fixture span, starting a thousand nanoseconds after the epoch
+    /// whatever its id.
+    fn span(fixture: SpanFixture<'_>) -> InputSpan {
         InputSpan {
             start_unix_nano: 1000,
-            ..crate::testkit::span::span(7, id, parent, name, 5, attrs)
+            ..fixture.input_span()
         }
     }
 
@@ -88,13 +100,17 @@ mod tests {
             "checkout",
             "POST /pay",
             vec![
-                span(1, None, "root", vec![]),
-                span(
-                    2,
-                    Some(1),
-                    "db",
-                    vec![("http.method", AttrValue::Str("GET".into()))],
-                ),
+                span(SpanFixture {
+                    name: "root",
+                    ..trace_seven_span()
+                }),
+                span(SpanFixture {
+                    id: 2,
+                    parent: Some(1),
+                    name: "db",
+                    attrs: vec![("http.method", AttrValue::Str("GET".into()))],
+                    ..trace_seven_span()
+                }),
             ],
         );
         let r = s.scan("t", &[], 0, 5000).await.unwrap();
@@ -129,7 +145,15 @@ mod tests {
     #[tokio::test]
     async fn trace_by_id_returns_stored_spans() {
         let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "svc", "op", vec![span(1, None, "root", vec![])]);
+        s.push_trace(
+            "t",
+            "svc",
+            "op",
+            vec![span(SpanFixture {
+                name: "root",
+                ..trace_seven_span()
+            })],
+        );
         let got = s.trace_by_id("t", &[7; 16]).await.unwrap().unwrap();
         assert!(
             got == TraceSpans {
@@ -168,12 +192,11 @@ mod tests {
             "t",
             "svc",
             "op",
-            vec![span(
-                1,
-                None,
-                "root",
-                vec![("svc", AttrValue::Str("a".into()))],
-            )],
+            vec![span(SpanFixture {
+                name: "root",
+                attrs: vec![("svc", AttrValue::Str("a".into()))],
+                ..trace_seven_span()
+            })],
         );
 
         let got = s.tag_names("t", None, 0, 10_000).await.unwrap();
@@ -208,7 +231,11 @@ mod tests {
             vec![InputSpan {
                 instrumentation_name: "tracer".into(),
                 instrumentation_version: "1.2.3".into(),
-                ..span(1, None, "root", vec![("svc", AttrValue::Str("a".into()))])
+                ..span(SpanFixture {
+                    name: "root",
+                    attrs: vec![("svc", AttrValue::Str("a".into()))],
+                    ..trace_seven_span()
+                })
             }],
         );
 
@@ -229,7 +256,10 @@ mod tests {
 
     #[tokio::test]
     async fn tag_names_and_values_return_event_and_link_metadata() {
-        let mut input = span(1, None, "root", vec![]);
+        let mut input = span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        });
         input.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
@@ -300,7 +330,15 @@ mod tests {
     #[tokio::test]
     async fn tag_names_return_intrinsic_scope() {
         let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "svc", "op", vec![span(1, None, "root", vec![])]);
+        s.push_trace(
+            "t",
+            "svc",
+            "op",
+            vec![span(SpanFixture {
+                name: "root",
+                ..trace_seven_span()
+            })],
+        );
 
         let got = s
             .tag_names("t", Some(TagScope::Intrinsic), 0, 10_000)
@@ -338,22 +376,28 @@ mod tests {
             "svc",
             "op",
             vec![
-                span(1, None, "root", vec![("svc", AttrValue::Str("a".into()))]),
+                span(SpanFixture {
+                    name: "root",
+                    attrs: vec![("svc", AttrValue::Str("a".into()))],
+                    ..trace_seven_span()
+                }),
                 InputSpan {
                     instrumentation_name: "tracer".into(),
-                    ..span(
-                        2,
-                        Some(1),
-                        "child",
-                        vec![("svc", AttrValue::Str("a".into()))],
-                    )
+                    ..span(SpanFixture {
+                        id: 2,
+                        parent: Some(1),
+                        name: "child",
+                        attrs: vec![("svc", AttrValue::Str("a".into()))],
+                        ..trace_seven_span()
+                    })
                 },
-                span(
-                    3,
-                    Some(1),
-                    "child",
-                    vec![("svc", AttrValue::Str("b".into()))],
-                ),
+                span(SpanFixture {
+                    id: 3,
+                    parent: Some(1),
+                    name: "child",
+                    attrs: vec![("svc", AttrValue::Str("b".into()))],
+                    ..trace_seven_span()
+                }),
             ],
         );
 
@@ -909,7 +953,15 @@ mod tests {
     #[tokio::test]
     async fn nested_matchers_against_span_without_events_or_links() {
         let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "svc", "op", vec![span(1, None, "root", vec![])]);
+        s.push_trace(
+            "t",
+            "svc",
+            "op",
+            vec![span(SpanFixture {
+                name: "root",
+                ..trace_seven_span()
+            })],
+        );
 
         // An event-presence (`event:name != nil`) matcher must fail when the
         // span has no events, exercising the absence path.
@@ -1084,18 +1136,17 @@ mod tests {
 
     #[tokio::test]
     async fn tag_values_separates_span_resource_and_instrumentation_attributes() {
-        let mut input = span(
-            1,
-            None,
-            "root",
-            vec![
+        let mut input = span(SpanFixture {
+            name: "root",
+            attrs: vec![
                 ("library", AttrValue::Str("span".into())),
                 (
                     "__instrumentation.library",
                     AttrValue::Str("instrumentation".into()),
                 ),
             ],
-        );
+            ..trace_seven_span()
+        });
         input.instrumentation_name = "tracer".into();
         let mut store = InMemorySpanStore::new();
         store.push_trace("t", "service", "root", vec![input]);
@@ -1146,7 +1197,15 @@ mod tests {
     #[tokio::test]
     async fn out_of_range_traces_are_excluded() {
         let mut s = InMemorySpanStore::new();
-        s.push_trace("t", "svc", "op", vec![span(1, None, "root", vec![])]);
+        s.push_trace(
+            "t",
+            "svc",
+            "op",
+            vec![span(SpanFixture {
+                name: "root",
+                ..trace_seven_span()
+            })],
+        );
         // The trace starts at 1000ns; a window entirely after it returns nothing.
         let r = s.scan("t", &[], 2000, 5000).await.unwrap();
         check!(row_count(&r).await == 0);
@@ -1431,7 +1490,15 @@ mod tests {
     async fn span_without_parent_id_omits_parent_value_and_matches_nil() {
         let mut s = InMemorySpanStore::new();
         // A root span has no parent_span_id.
-        s.push_trace("t", "svc", "op", vec![span(1, None, "root", vec![])]);
+        s.push_trace(
+            "t",
+            "svc",
+            "op",
+            vec![span(SpanFixture {
+                name: "root",
+                ..trace_seven_span()
+            })],
+        );
 
         // tag_values for span:parentID yields nothing for a parentless span.
         assert!(
@@ -1462,7 +1529,15 @@ mod tests {
     async fn empty_status_message_is_omitted_from_tag_values() {
         let mut s = InMemorySpanStore::new();
         // span() leaves status_message empty.
-        s.push_trace("t", "svc", "op", vec![span(1, None, "root", vec![])]);
+        s.push_trace(
+            "t",
+            "svc",
+            "op",
+            vec![span(SpanFixture {
+                name: "root",
+                ..trace_seven_span()
+            })],
+        );
         assert!(
             s.tag_values("t", "span:statusMessage", 0, 10_000)
                 .await
@@ -1497,7 +1572,10 @@ mod tests {
 
     #[test]
     fn intrinsic_matches_event_name_arm_presence_and_value() {
-        let mut sp = span(1, None, "root", vec![]);
+        let mut sp = span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        });
         sp.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "cache.miss".into(),
@@ -1530,7 +1608,10 @@ mod tests {
 
         // A span with NO events: `event:name != nil` is false (absence). This is
         // the other side of the `!`.
-        let empty = stored_trace_with(span(1, None, "root", vec![]));
+        let empty = stored_trace_with(span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        }));
         assert!(!intrinsic(
             &empty,
             "event:name",
@@ -1541,7 +1622,10 @@ mod tests {
 
     #[test]
     fn intrinsic_matches_event_time_since_start_arm() {
-        let mut sp = span(1, None, "root", vec![]);
+        let mut sp = span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        });
         sp.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "e".into(),
@@ -1560,7 +1644,10 @@ mod tests {
             );
         }
 
-        let empty = stored_trace_with(span(1, None, "root", vec![]));
+        let empty = stored_trace_with(span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        }));
         assert!(!intrinsic(
             &empty,
             "event:timeSinceStart",
@@ -1571,7 +1658,10 @@ mod tests {
 
     #[test]
     fn intrinsic_matches_link_trace_id_and_span_id_arms() {
-        let mut sp = span(1, None, "root", vec![]);
+        let mut sp = span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        });
         sp.links = vec![LinkRef {
             trace_id: [9; 16],
             span_id: [8; 8],
@@ -1615,7 +1705,10 @@ mod tests {
         }
 
         // No links: presence is false (other side of the `!`).
-        let empty = stored_trace_with(span(1, None, "root", vec![]));
+        let empty = stored_trace_with(span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        }));
         assert!(!intrinsic(
             &empty,
             "link:traceID",
@@ -1632,7 +1725,11 @@ mod tests {
 
     #[test]
     fn intrinsic_matches_trace_and_span_string_arms() {
-        let mut sp = span(1, Some(2), "root", vec![]);
+        let mut sp = span(SpanFixture {
+            parent: Some(2),
+            name: "root",
+            ..trace_seven_span()
+        });
         sp.status_message = "boom".into();
         sp.instrumentation_name = "tracer".into();
         sp.instrumentation_version = "1.2.3".into();
@@ -1679,7 +1776,10 @@ mod tests {
 
     #[test]
     fn intrinsic_matches_nested_set_left_and_right_arms() {
-        let trace = stored_trace_with(span(1, None, "root", vec![]));
+        let trace = stored_trace_with(span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        }));
         // nested set is { left: 1, right: 2, parent_id: 0 }.
         for (tag, value, want) in [
             ("span:nestedSetLeft", 1, true),
@@ -1700,7 +1800,10 @@ mod tests {
         // empty version. Replacing the guard with `true` would insert an empty
         // value here.
         let mut values = BTreeSet::new();
-        let empty = span(1, None, "root", vec![]); // version is empty
+        let empty = span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        }); // version is empty
         collect_span_intrinsic_values(&empty, &[], 0, "instrumentation:version", &mut values);
         assert!(values.is_empty());
 
@@ -1708,7 +1811,10 @@ mod tests {
         let mut values = BTreeSet::new();
         let with_version = InputSpan {
             instrumentation_version: "1.2.3".into(),
-            ..span(1, None, "root", vec![])
+            ..span(SpanFixture {
+                name: "root",
+                ..trace_seven_span()
+            })
         };
         collect_span_intrinsic_values(
             &with_version,
@@ -1786,7 +1892,10 @@ mod tests {
         // replacing the body with `true` would break this.
         let span = InputSpan {
             instrumentation_name: "tracer".into(),
-            ..span(1, None, "root", vec![])
+            ..span(SpanFixture {
+                name: "root",
+                ..trace_seven_span()
+            })
         };
         let hit = matcher(
             MatchScope::Instrumentation,
@@ -1808,7 +1917,10 @@ mod tests {
     fn matcher_matches_event_and_link_arms_filter_by_key() {
         // matcher_matches' Event/Link arms select attribute values by exact key
         // (`key == &matcher.key`). With `!=` they would read the wrong attribute.
-        let mut sp = span(1, None, "root", vec![]);
+        let mut sp = span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        });
         sp.events = vec![EventRef {
             time_since_start: nanos(1),
             name: "e".into(),
@@ -1891,7 +2003,10 @@ mod tests {
         // `&&`, a NEGATED event-intrinsic matcher would be (wrongly) re-evaluated
         // via matcher_matches and drop a span that the nested same-event logic
         // accepted.
-        let mut sp = span(1, None, "root", vec![]);
+        let mut sp = span(SpanFixture {
+            name: "root",
+            ..trace_seven_span()
+        });
         sp.events = vec![
             EventRef {
                 time_since_start: nanos(10),

@@ -180,6 +180,29 @@ async fn start_broker(directory: &Path, network: &str) -> TestResult<ContainerAs
     Ok(broker)
 }
 
+/// A deployment case's distributor and hot querier, and the infrastructure
+/// they run on.
+///
+/// Each suite adds the roles and requests it needs in its own
+/// `impl Deployment`. Fields drop in declaration order, so the roles release
+/// their mounts and leave the network before the infrastructure's containers
+/// and temporary directories are removed.
+pub struct Deployment {
+    pub distributor: ContainerAsync<GenericImage>,
+    pub hot: ContainerAsync<GenericImage>,
+    pub infrastructure: DeploymentInfrastructure,
+}
+
+impl Deployment {
+    /// Waits until the distributor and the hot querier both answer `/ready`
+    /// on `port`, and hands the deployment back.
+    pub async fn wait_until_serving(self, port: u16) -> TestResult<Self> {
+        wait_until_ready(&self.infrastructure.client, &self.distributor, port).await?;
+        wait_until_ready(&self.infrastructure.client, &self.hot, port).await?;
+        Ok(self)
+    }
+}
+
 pub async fn base_url(container: &ContainerAsync<GenericImage>, port: u16) -> TestResult<String> {
     Ok(format!(
         "http://{}:{}",

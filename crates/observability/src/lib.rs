@@ -93,7 +93,7 @@ use krabka_blockstore::{
     read_log_block_from_object_store, read_log_index_manifest,
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
-    read_tenant_log_index_shard_ranges_from_object_store,
+    read_tenant_log_index_shard_ranges_or_empty_from_object_store,
     read_tenant_log_index_shards_from_object_store, register_log_blocks,
     register_log_blocks_from_object_store, series_fingerprint, transient_object_store_error,
     write_log_block, write_log_block_to_object_store, write_log_index_manifest,

@@ -2958,7 +2958,7 @@ pub use deferred_block_deletions::DeferredBlockDeletions;
 pub use durable_compaction_consumer::DurableCompactionConsumer;
 use encode_clock_reading_rows::encode_clock_reading_rows;
 pub use encode_exemplar_rows::encode_exemplar_rows;
-use encode_metadata_rows::encode_metadata_rows;
+pub use encode_metadata_rows::encode_metadata_rows;
 pub use encode_tenant_batches::encode_tenant_batches;
 pub use enforce_compaction_retention::enforce_compaction_retention;
 pub use exemplar_row::ExemplarRow;

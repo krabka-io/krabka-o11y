@@ -1,6 +1,5 @@
 use super::{
-    Array, BTreeMap, BTreeSet, ListArray, StringArray, TracesError, insert_tag_value,
-    string_list_value,
+    Array, BTreeMap, BTreeSet, ListArray, StringArray, TagCatalog, TracesError, string_list_value,
 };
 
 pub(crate) fn collect_nested_attrs(
@@ -10,6 +9,10 @@ pub(crate) fn collect_nested_attrs(
     tag_names: &mut BTreeSet<String>,
     tag_values: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), TracesError> {
+    let mut catalog = TagCatalog {
+        names: tag_names,
+        values: tag_values,
+    };
     if keys.is_null(idx) {
         return Ok(());
     }
@@ -33,9 +36,9 @@ pub(crate) fn collect_nested_attrs(
         }
         let key = attr_keys.value(attr_idx);
         if let Some(value) = attr_values.and_then(|values| string_list_value(values, attr_idx)) {
-            insert_tag_value(tag_names, tag_values, key, value);
+            catalog.insert(key, value);
         } else {
-            tag_names.insert(key.to_string());
+            catalog.names.insert(key.to_string());
         }
     }
     Ok(())

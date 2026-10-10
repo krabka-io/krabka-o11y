@@ -7,6 +7,12 @@ exports_files(["Cargo.toml"])
 
 crate_library(
     name = "traces",
+    # The metrics unit tests reach the pipeline-bundle checks every signal
+    # shares with `#[path]` from //crates/observability.
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/bin/**"],
+    ) + ["//crates/observability:tests/support/pipeline_bundle_metrics.rs"],
     # `build.rs` generates prost types from these.
     build_script_data = glob(["proto/**"]),
 )
@@ -19,6 +25,7 @@ crate_binary(
     # `#[path]` from //crates/observability.
     extra_srcs = [
         "//crates/observability:tests/support/compaction_passes.rs",
+        "//crates/observability:tests/support/in_process_broker.rs",
         "//crates/observability:tests/support/wal_fetch_limit_flags.rs",
     ],
     lib = ":traces",
@@ -66,7 +73,10 @@ crate_tests(
     extra_srcs = {
         "block_lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
         "blockbuilder": ["//crates/blockstore:tests/support/hooked_store.rs"],
-        "grafana_e2e": ["src/wire/jaeger/thrift_fixture.rs"],
+        "grafana_e2e": [
+            "src/wire/jaeger/thrift_fixture.rs",
+            "//crates/metrics-service:tests/support/pinned_grafana_image.rs",
+        ],
         "index_shard_publication": ["//crates/blockstore:tests/support/hooked_store.rs"],
         "tempo_deployment": [
             "//crates/metrics-service:tests/support/container_deployment.rs",

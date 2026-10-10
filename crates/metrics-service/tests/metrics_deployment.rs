@@ -25,8 +25,7 @@ mod container_deployment;
 #[path = "support/deployment_evidence.rs"]
 mod deployment_evidence;
 use container_deployment::{
-    DeploymentInfrastructure, TestResult, base_url, image, start, start_infrastructure,
-    wait_until_ready,
+    Deployment, TestResult, base_url, image, start, start_infrastructure, wait_until_ready,
 };
 use deployment_evidence::record_evidence;
 
@@ -56,14 +55,6 @@ async fn remote_write_v1_survives_the_hot_to_block_transition_and_restart() -> T
 #[ignore = "requires Docker and the Bazel-built application and pinned dependency images"]
 async fn remote_write_v2_survives_the_hot_to_block_transition_and_restart() -> TestResult {
     deployment_roundtrip(RemoteWrite::V2).await
-}
-
-/// Containers hold the network alive; the directories outlive the broker's
-/// bind mount. Field drop order removes the roles before the infrastructure.
-struct Deployment {
-    distributor: ContainerAsync<GenericImage>,
-    hot: ContainerAsync<GenericImage>,
-    infrastructure: DeploymentInfrastructure,
 }
 
 impl Deployment {
@@ -100,14 +91,15 @@ impl Deployment {
             "--cold-cache-ttl=100ms".to_string(),
         ]))
         .await?;
-        let deployment = Self {
-            distributor,
-            hot,
-            infrastructure,
-        };
-        deployment.ready(&deployment.distributor, DATA_PORT).await?;
-        deployment.ready(&deployment.hot, DATA_PORT).await?;
-        Ok(deployment)
+        Box::pin(
+            Self {
+                distributor,
+                hot,
+                infrastructure,
+            }
+            .wait_until_serving(DATA_PORT),
+        )
+        .await
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>, port: u16) -> TestResult {

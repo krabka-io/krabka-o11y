@@ -50,7 +50,6 @@ mod tests {
 
     use assert2::{assert, check};
     use clap::{CommandFactory, Parser};
-    use krabka_broker::{Broker, BrokerConfig};
     use krabka_observability::{
         server_security::ClientAuth,
         topic_contract::{PROFILES_TOPICS, TopicSettings, provision_topics},
@@ -58,7 +57,7 @@ mod tests {
     };
     use krabka_units::{bytes, per_sec};
 
-    use super::*;
+    use super::{in_process_broker::InProcessBroker, *};
 
     /// A service that binds loopback inside a container is unreachable from
     /// outside the pod, and the symptom is a health check that fails with
@@ -1016,11 +1015,8 @@ overrides:
     /// must be untouched by the same fault.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_missing_wal_topic_stops_the_roles_that_use_it_and_no_others() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
+        let broker = InProcessBroker::start().await;
+        let bootstrap = broker.bootstrap.clone();
 
         let roles = [
             ("distributor", true),
@@ -1113,6 +1109,11 @@ mod target_names_match_the_role_vocabulary;
 #[cfg(test)]
 mod the_compactor_runs_under_supervision;
 
+/// A bare in-process broker, shared with the other signal binary's tests.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/in_process_broker.rs"]
+mod in_process_broker;
+
 /// The invalid WAL fetch limits, shared with the other signal binary that
 /// parses them.
 #[cfg(test)]
@@ -1144,7 +1145,6 @@ mod parse_non_empty_string;
 mod parse_positive_time_or_legacy;
 mod parse_positive_time_or_legacy_millis;
 mod parse_positive_time_or_legacy_nanos;
-mod parse_positive_u32;
 mod process_security;
 mod profile_read_path;
 mod read_path_stage;
@@ -1185,7 +1185,7 @@ use compactor_stage::compactor_stage;
 use configured_object_store::ConfiguredObjectStore;
 use debuginfod_config::debuginfod_config;
 use krabka_observability::cli_value_parsers::{
-    parse_positive_usize, parse_positive_whole_byte_size,
+    parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
 };
 use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
@@ -1196,7 +1196,6 @@ use parse_non_empty_string::parse_non_empty_string;
 use parse_positive_time_or_legacy::parse_positive_time_or_legacy;
 use parse_positive_time_or_legacy_millis::parse_positive_time_or_legacy_millis;
 use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
-use parse_positive_u32::parse_positive_u32;
 use process_security::ProcessSecurity;
 use profile_read_path::ProfileReadPath;
 use read_path_stage::read_path_stage;

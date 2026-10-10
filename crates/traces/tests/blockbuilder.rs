@@ -1446,8 +1446,6 @@ async fn concurrent_block_builders_sharing_one_index_key_keep_both_blocks_querya
     check!(barrier.snapshot_put_count() > 2);
 }
 
-/// One WAL partition window flushed through a builder that carries `index`,
-/// the way `run_block_builder` does between polls.
 /// One builder replica's flush: the WAL partition and offset it consumed, and
 /// the one-span trace in it.
 #[derive(Clone, Copy)]
@@ -1481,37 +1479,31 @@ async fn flush_replica_windows_concurrently(
 ) {
     futures::future::join_all(windows.iter().map(|window| async move {
         let mut index = TraceIndex::new();
-        flush_one_window(
-            store,
-            config,
-            &mut index,
-            window.partition,
-            window.offset,
-            window.trace_id,
-            window.start_ns,
-        )
-        .await;
+        flush_one_window(FlushTarget { store, config }, &mut index, *window).await;
     }))
     .await;
 }
 
-async fn flush_one_window(
-    store: &Arc<dyn ObjectStore>,
-    config: &BlockBuilderConfig,
-    index: &mut TraceIndex,
-    partition: i32,
-    offset: i64,
-    trace_id: [u8; 16],
-    start_ns: i64,
-) {
+/// The object store and configuration that a test's block builders flush
+/// into.
+#[derive(Clone, Copy)]
+struct FlushTarget<'a> {
+    store: &'a Arc<dyn ObjectStore>,
+    config: &'a BlockBuilderConfig,
+}
+
+/// One WAL partition window flushed through a builder that carries `index`,
+/// the way `run_block_builder` does between polls.
+async fn flush_one_window(target: FlushTarget<'_>, index: &mut TraceIndex, window: ReplicaWindow) {
+    let FlushTarget { store, config } = target;
     let windows = decode_consumer_records(&[consumer_record(
-        partition,
-        offset,
+        window.partition,
+        window.offset,
         &FixtureSpan {
-            trace_id,
+            trace_id: window.trace_id,
             span_id: 1,
             parent: None,
-            start_ns,
+            start_ns: window.start_ns,
         }
         .record("tenant-a"),
     )])
@@ -1603,7 +1595,20 @@ async fn a_restarted_block_builder_keeps_a_concurrent_writers_blocks() {
         let config = &config;
         async move {
             let mut index = TraceIndex::new();
-            flush_one_window(&store, config, &mut index, 3, 10, [1; 16], 100).await;
+            flush_one_window(
+                FlushTarget {
+                    store: &store,
+                    config,
+                },
+                &mut index,
+                ReplicaWindow {
+                    partition: 3,
+                    offset: 10,
+                    trace_id: [1; 16],
+                    start_ns: 100,
+                },
+            )
+            .await;
         }
     };
     let second = {
@@ -1611,7 +1616,20 @@ async fn a_restarted_block_builder_keeps_a_concurrent_writers_blocks() {
         let config = &config;
         async move {
             let mut index = TraceIndex::new();
-            flush_one_window(&store, config, &mut index, 4, 20, [2; 16], 200).await;
+            flush_one_window(
+                FlushTarget {
+                    store: &store,
+                    config,
+                },
+                &mut index,
+                ReplicaWindow {
+                    partition: 4,
+                    offset: 20,
+                    trace_id: [2; 16],
+                    start_ns: 200,
+                },
+            )
+            .await;
         }
     };
     tokio::join!(first, second);
@@ -1620,7 +1638,20 @@ async fn a_restarted_block_builder_keeps_a_concurrent_writers_blocks() {
     let mut restarted = TraceIndex::load_latest_snapshot(&store, &config.index_key)
         .await
         .unwrap();
-    flush_one_window(&store, &config, &mut restarted, 3, 11, [4; 16], 400).await;
+    flush_one_window(
+        FlushTarget {
+            store: &store,
+            config: &config,
+        },
+        &mut restarted,
+        ReplicaWindow {
+            partition: 3,
+            offset: 11,
+            trace_id: [4; 16],
+            start_ns: 400,
+        },
+    )
+    .await;
 
     let reloaded = TraceIndex::load_latest_snapshot(&store, &config.index_key)
         .await
@@ -1788,7 +1819,20 @@ async fn a_builder_merge_does_not_resurrect_the_block_a_compactor_replaced() {
     // The builder publishes one block, so builder and compactor both name it
     // from the same durable snapshot.
     let mut builder_index = TraceIndex::new();
-    flush_one_window(&store, &config, &mut builder_index, 3, 10, [1; 16], 100).await;
+    flush_one_window(
+        FlushTarget {
+            store: &store,
+            config: &config,
+        },
+        &mut builder_index,
+        ReplicaWindow {
+            partition: 3,
+            offset: 10,
+            trace_id: [1; 16],
+            start_ns: 100,
+        },
+    )
+    .await;
     let input_key = block_key(3, 10, 100);
     check!(indexed_block_keys(&builder_index) == vec![input_key.clone()]);
 
@@ -1808,7 +1852,20 @@ async fn a_builder_merge_does_not_resurrect_the_block_a_compactor_replaced() {
     // already merged a base that still names the input block.
     let handoff = handoff_store.arm();
     let builder = async {
-        flush_one_window(&store, &config, &mut builder_index, 3, 11, [2; 16], 200).await;
+        flush_one_window(
+            FlushTarget {
+                store: &store,
+                config: &config,
+            },
+            &mut builder_index,
+            ReplicaWindow {
+                partition: 3,
+                offset: 11,
+                trace_id: [2; 16],
+                start_ns: 200,
+            },
+        )
+        .await;
     };
     let compactor = async {
         handoff.reached.await.unwrap();

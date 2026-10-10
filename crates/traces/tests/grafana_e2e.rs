@@ -89,6 +89,8 @@ use tonic::Request as GrpcRequest;
 mod container_url;
 mod ingest_capture;
 mod metrics_span;
+#[path = "../../metrics-service/tests/support/pinned_grafana_image.rs"]
+mod pinned_grafana_image;
 mod search_json;
 mod span_store;
 #[path = "../src/wire/jaeger/thrift_fixture.rs"]
@@ -98,6 +100,7 @@ use self::{
     container_url::mapped_base_url,
     ingest_capture::{CapturingSink, DoorPush, push_to_door, serve_until_shutdown, string_kv},
     metrics_span::MetricsSpan,
+    pinned_grafana_image::pinned_grafana_image,
     search_json::search_contains_span_id_hex,
     span_store::{resource_attr, span_store_from_records},
     thrift_fixture::{CompactStructWriter, encode_binary_sample_batch},
@@ -644,19 +647,9 @@ async fn start_krabka_querier(records: &[SpanRecord]) -> TestResult<KrabkaPair> 
 // ---------------------------------------------------------------------------
 
 async fn start_grafana() -> TestResult<ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite compared
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+        pinned_grafana_image()
             .with_exposed_port(GRAFANA_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::seconds(5))
             .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")

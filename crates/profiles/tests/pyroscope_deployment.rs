@@ -18,8 +18,7 @@ use testcontainers::{
 #[path = "../../metrics-service/tests/support/container_deployment.rs"]
 mod container_deployment;
 use self::container_deployment::{
-    DeploymentInfrastructure, TestResult, base_url, image, start, start_infrastructure,
-    wait_until_ready,
+    Deployment, TestResult, base_url, image, start, start_infrastructure, wait_until_ready,
 };
 
 const PORT: u16 = 4040;
@@ -32,13 +31,6 @@ const OTLP_TYPE: &str = "cpu:cpu:nanoseconds:cpu:nanoseconds";
 const SELECTOR: &str = r#"{service_name="checkout"}"#;
 const PUSH: &str = "/push.v1.PusherService/Push";
 const QUERY: &str = "/querier.v1.QuerierService";
-
-// Containers release their mounts before the temporary directories are removed.
-struct Deployment {
-    distributor: ContainerAsync<GenericImage>,
-    hot: ContainerAsync<GenericImage>,
-    infrastructure: DeploymentInfrastructure,
-}
 
 impl Deployment {
     async fn start() -> TestResult<Self> {
@@ -57,14 +49,13 @@ impl Deployment {
             false,
         )
         .await?;
-        let deployment = Self {
+        Self {
             distributor,
             hot,
             infrastructure,
-        };
-        deployment.ready(&deployment.distributor, PORT).await?;
-        deployment.ready(&deployment.hot, PORT).await?;
-        Ok(deployment)
+        }
+        .wait_until_serving(PORT)
+        .await
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>, port: u16) -> TestResult {

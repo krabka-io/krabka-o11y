@@ -1,6 +1,6 @@
 use super::{
     BlockDescriptor, BlockIndex, BlockStoreError, LabelIndex, LogCompactionIndexOutput, ObjectPath,
-    ObjectStore, read_tenant_log_index_shard_ranges_from_object_store,
+    ObjectStore, read_tenant_log_index_shard_ranges_or_empty_from_object_store,
     update_tenant_log_index_shard_to_object_store, write_tenant_log_index_manifest_to_object_store,
     write_tenant_log_index_shard_catalog_to_object_store,
     write_tenant_log_index_shard_to_object_store,
@@ -53,11 +53,8 @@ pub(crate) async fn write_tenant_compaction_indexes_to_object_store(
     .await?;
 
     let mut shard_ranges =
-        match read_tenant_log_index_shard_ranges_from_object_store(store, prefix, tenant).await {
-            Ok(shard_ranges) => shard_ranges,
-            Err(BlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => Vec::new(),
-            Err(error) => return Err(error),
-        };
+        read_tenant_log_index_shard_ranges_or_empty_from_object_store(store, prefix, tenant)
+            .await?;
     if !shard_ranges.contains(&new_descriptor.key.time_range) {
         shard_ranges.push(new_descriptor.key.time_range);
     }

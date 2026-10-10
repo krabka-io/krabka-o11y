@@ -448,16 +448,10 @@ impl QuerierState {
             )
             .await?;
         if shard_ranges.is_empty() {
-            shard_ranges =
-                match read_tenant_log_index_shard_ranges_from_object_store(store, prefix, tenant)
-                    .await
-                {
-                    Ok(shard_ranges) => shard_ranges,
-                    Err(BlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => {
-                        Vec::new()
-                    }
-                    Err(error) => return Err(error),
-                };
+            shard_ranges = read_tenant_log_index_shard_ranges_or_empty_from_object_store(
+                store, prefix, tenant,
+            )
+            .await?;
         }
 
         self.dynamic_index_cache

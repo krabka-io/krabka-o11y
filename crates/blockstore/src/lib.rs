@@ -94,6 +94,7 @@ pub use log_blockstore::{
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
     read_tenant_log_index_shard_ranges_from_object_store,
+    read_tenant_log_index_shard_ranges_or_empty_from_object_store,
     read_tenant_log_index_shards_from_object_store, register_log_blocks,
     register_log_blocks_from_object_store, series_fingerprint,
     update_tenant_log_index_shard_to_object_store, write_log_block,

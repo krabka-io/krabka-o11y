@@ -14,13 +14,14 @@ pub(crate) async fn metadata_answers_around_a_deleted_block_and_warns() {
         MetricBlockKind::Metadata,
         "metrics/metadata/0001.parquet",
         metadata_schema(),
-        metadata_batch(
-            series.fingerprint(),
-            "http_requests_total",
-            "counter",
-            "Requests served, before the help text was corrected.",
-            "requests",
-        ),
+        encode_metadata_rows(&[MetadataRow {
+            fingerprint: series.fingerprint(),
+            metric_family_name: "http_requests_total".to_string(),
+            metric_type: "counter".to_string(),
+            help: "Requests served, before the help text was corrected.".to_string(),
+            unit: "requests".to_string(),
+        }])
+        .unwrap(),
         &series,
     )
     .await;
@@ -29,13 +30,14 @@ pub(crate) async fn metadata_answers_around_a_deleted_block_and_warns() {
         MetricBlockKind::Metadata,
         "metrics/metadata/0002.parquet",
         metadata_schema(),
-        metadata_batch(
-            series.fingerprint(),
-            "http_requests_total",
-            "counter",
-            "Total HTTP requests.",
-            "requests",
-        ),
+        encode_metadata_rows(&[MetadataRow {
+            fingerprint: series.fingerprint(),
+            metric_family_name: "http_requests_total".to_string(),
+            metric_type: "counter".to_string(),
+            help: "Total HTTP requests.".to_string(),
+            unit: "requests".to_string(),
+        }])
+        .unwrap(),
         &series,
     )
     .await;

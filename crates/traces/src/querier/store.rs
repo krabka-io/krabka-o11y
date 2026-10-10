@@ -2089,21 +2089,20 @@ mod tests {
             object_store.clone(),
             Url::parse("memory:///").unwrap(),
         ));
-        let first = encode_span_rows(&[block_attr_span_row(
-            [1; 16],
-            [1; 8],
-            "first-rg",
-            false,
-            vec!["GET".into()],
-        )])
+        let first = encode_span_rows(&[HttpMethodSpanRow {
+            name: "first-rg",
+            ..HttpMethodSpanRow::default()
+        }
+        .row()])
         .unwrap();
-        let second = encode_span_rows(&[block_attr_span_row(
-            [2; 16],
-            [2; 8],
-            "second-rg",
-            false,
-            vec!["POST".into()],
-        )])
+        let second = encode_span_rows(&[HttpMethodSpanRow {
+            trace_id: [2; 16],
+            span_id: [2; 8],
+            name: "second-rg",
+            methods: vec!["POST".into()],
+            ..HttpMethodSpanRow::default()
+        }
+        .row()])
         .unwrap();
         write_row_group_block(
             &object_store,
@@ -2178,24 +2177,23 @@ mod tests {
         ));
         let promoted = [PromotedSpanAttr::string("http.method")];
         let first = encode_span_rows_with_promoted_attrs(
-            &[block_attr_span_row(
-                [1; 16],
-                [1; 8],
-                "first-rg",
-                false,
-                vec!["GET".into()],
-            )],
+            &[HttpMethodSpanRow {
+                name: "first-rg",
+                ..HttpMethodSpanRow::default()
+            }
+            .row()],
             &promoted,
         )
         .unwrap();
         let second = encode_span_rows_with_promoted_attrs(
-            &[block_attr_span_row(
-                [2; 16],
-                [2; 8],
-                "second-rg",
-                false,
-                vec!["POST".into()],
-            )],
+            &[HttpMethodSpanRow {
+                trace_id: [2; 16],
+                span_id: [2; 8],
+                name: "second-rg",
+                methods: vec!["POST".into()],
+                ..HttpMethodSpanRow::default()
+            }
+            .row()],
             &promoted,
         )
         .unwrap();
@@ -2278,13 +2276,11 @@ mod tests {
             object_store.clone(),
             Url::parse("memory:///").unwrap(),
         ));
-        let batch = encode_span_rows(&[block_attr_span_row(
-            [1; 16],
-            [1; 8],
-            "tenant-a-only",
-            false,
-            vec!["GET".into()],
-        )])
+        let batch = encode_span_rows(&[HttpMethodSpanRow {
+            name: "tenant-a-only",
+            ..HttpMethodSpanRow::default()
+        }
+        .row()])
         .unwrap();
         let object_writer = BufWriter::new(
             object_store.clone(),
@@ -3612,20 +3608,22 @@ mod tests {
     #[tokio::test]
     async fn cold_traceql_search_applies_block_array_attr_any_none_semantics() {
         let rows = vec![
-            block_attr_span_row(
-                [1; 16],
-                [2; 8],
-                "GET /users",
-                true,
-                vec!["GET".into(), "POST".into()],
-            ),
-            block_attr_span_row(
-                [3; 16],
-                [4; 8],
-                "DELETE /users",
-                false,
-                vec!["DELETE".into()],
-            ),
+            HttpMethodSpanRow {
+                span_id: [2; 8],
+                name: "GET /users",
+                method_shape: MethodShape::Array,
+                methods: vec!["GET".into(), "POST".into()],
+                ..HttpMethodSpanRow::default()
+            }
+            .row(),
+            HttpMethodSpanRow {
+                trace_id: [3; 16],
+                span_id: [4; 8],
+                name: "DELETE /users",
+                methods: vec!["DELETE".into()],
+                ..HttpMethodSpanRow::default()
+            }
+            .row(),
         ];
         let batch = encode_span_rows(&rows).unwrap();
         let engine = cold_block_engine(IndexedBlock {
@@ -3701,7 +3699,12 @@ mod tests {
                 ),
             },
         ];
-        let mut row = block_attr_span_row([1; 16], [2; 8], "typed", false, vec!["GET".into()]);
+        let mut row = HttpMethodSpanRow {
+            span_id: [2; 8],
+            name: "typed",
+            ..HttpMethodSpanRow::default()
+        }
+        .row();
         row.events.push(krabka_blockstore::SpanEvent {
             name: "typed".into(),
             time_since_start: nanos(1),
@@ -3748,22 +3751,48 @@ mod tests {
         assert2::assert!(event_values(&restored, 0).unwrap()[0].attributes != wrong);
     }
 
-    fn block_attr_span_row(
+    /// Whether a test row's `http.method` attribute is one value or an array.
+    #[derive(Clone, Copy)]
+    enum MethodShape {
+        Scalar,
+        Array,
+    }
+
+    /// A block span row under a `root` span whose one `http.method` attribute
+    /// holds `methods`. The defaults are a scalar `GET` on span `[1; 8]` of
+    /// trace `[1; 16]`.
+    struct HttpMethodSpanRow<'a> {
         trace_id: [u8; 16],
         span_id: [u8; 8],
-        name: &str,
-        is_array: bool,
-        values: Vec<String>,
-    ) -> SpanRow {
-        SpanRow {
-            root_span_name: Some("root".into()),
-            name: Some(name.into()),
-            attrs: vec![SpanAttr {
-                key: "http.method".into(),
-                is_array,
-                value: BlockAttrValue::Str(values),
-            }],
-            ..crate::querier::test_rows::api_root_server_row(trace_id, span_id)
+        name: &'a str,
+        method_shape: MethodShape,
+        methods: Vec<String>,
+    }
+
+    impl Default for HttpMethodSpanRow<'_> {
+        fn default() -> Self {
+            Self {
+                trace_id: [1; 16],
+                span_id: [1; 8],
+                name: "span",
+                method_shape: MethodShape::Scalar,
+                methods: vec!["GET".into()],
+            }
+        }
+    }
+
+    impl HttpMethodSpanRow<'_> {
+        fn row(self) -> SpanRow {
+            SpanRow {
+                root_span_name: Some("root".into()),
+                name: Some(self.name.into()),
+                attrs: vec![SpanAttr {
+                    key: "http.method".into(),
+                    is_array: matches!(self.method_shape, MethodShape::Array),
+                    value: BlockAttrValue::Str(self.methods),
+                }],
+                ..crate::querier::test_rows::api_root_server_row(self.trace_id, self.span_id)
+            }
         }
     }
 

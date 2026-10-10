@@ -25,7 +25,6 @@ use std::{
 
 use assert2::{assert, check};
 use clap::Parser as _;
-use krabka_broker::{Broker, BrokerConfig};
 use krabka_observability::topic_contract::{TRACES_TOPICS, TopicSettings, provision_topics};
 use krabka_traces::frontend::TraceByIdResponseJson;
 use opentelemetry_proto::tonic::trace::v1::{
@@ -33,7 +32,7 @@ use opentelemetry_proto::tonic::trace::v1::{
 };
 use prost::Message as _;
 
-use super::{Cli, run};
+use super::{Cli, in_process_broker::InProcessBroker, run};
 
 /// Set on the child re-execution, and the marker that tells it to be the role
 /// rather than the test. It carries the broker the child's WAL clients reach.
@@ -78,11 +77,8 @@ async fn spans_pushed_to_the_ingest_port_come_back_through_the_tempo_api_port() 
         return;
     }
 
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
+    let broker = InProcessBroker::start().await;
+    let bootstrap = broker.bootstrap.clone();
     provision_topics(
         &bootstrap,
         &TRACES_TOPICS,

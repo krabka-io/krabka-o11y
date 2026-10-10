@@ -332,29 +332,48 @@ mod tests {
         series::{Series, SeriesSample},
     };
 
-    fn span(
-        service: &str,
+    /// One span of a test call edge. The defaults are a root client span,
+    /// status OK, that lasted one nanosecond.
+    struct EdgeSpan<'a> {
+        service: &'a str,
         span_id: [u8; 8],
-        parent: [u8; 8],
+        parent_span_id: [u8; 8],
         kind: SpanKind,
         status: StatusCode,
-        dur_ns: i64,
-    ) -> SpanRecord {
-        SpanRecord {
-            tenant: "t".into(),
-            trace_id: [0x11; 16],
-            span_id,
-            parent_span_id: parent,
-            name: "op".into(),
-            kind,
-            start_ns: 0,
-            duration_ns: dur_ns,
-            status,
-            status_message: String::new(),
-            service_name: service.into(),
-            attributes: vec![],
-            resource_attributes: vec![],
-            size: ByteSize::from_bytes(0),
+        duration_ns: i64,
+    }
+
+    impl Default for EdgeSpan<'_> {
+        fn default() -> Self {
+            Self {
+                service: "service",
+                span_id: [0x1; 8],
+                parent_span_id: [0; 8],
+                kind: SpanKind::Client,
+                status: StatusCode::Ok,
+                duration_ns: 1,
+            }
+        }
+    }
+
+    impl EdgeSpan<'_> {
+        fn record(self) -> SpanRecord {
+            SpanRecord {
+                tenant: "t".into(),
+                trace_id: [0x11; 16],
+                span_id: self.span_id,
+                parent_span_id: self.parent_span_id,
+                name: "op".into(),
+                kind: self.kind,
+                start_ns: 0,
+                duration_ns: self.duration_ns,
+                status: self.status,
+                status_message: String::new(),
+                service_name: self.service.into(),
+                attributes: vec![],
+                resource_attributes: vec![],
+                size: ByteSize::from_bytes(0),
+            }
         }
     }
 
@@ -413,31 +432,30 @@ mod tests {
     #[test]
     fn an_edge_needs_both_sides_before_it_completes() {
         let mut store = EdgeStore::new(&MetricsGenConfig::default());
-        let client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            10_000_000,
-        );
+        let client = EdgeSpan {
+            service: "frontend",
+            span_id: [0xA; 8],
+            duration_ns: 10_000_000,
+            ..EdgeSpan::default()
+        }
+        .record();
         // Same edge, same side: a retry of the same call.
-        let retry = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            12_000_000,
-        );
-        let server = span(
-            "backend",
-            [0xB; 8],
-            [0xA; 8],
-            SpanKind::Server,
-            StatusCode::Ok,
-            8_000_000,
-        );
+        let retry = EdgeSpan {
+            service: "frontend",
+            span_id: [0xA; 8],
+            duration_ns: 12_000_000,
+            ..EdgeSpan::default()
+        }
+        .record();
+        let server = EdgeSpan {
+            service: "backend",
+            span_id: [0xB; 8],
+            parent_span_id: [0xA; 8],
+            kind: SpanKind::Server,
+            duration_ns: 8_000_000,
+            ..EdgeSpan::default()
+        }
+        .record();
 
         // The first span creates the edge. The second takes the update path
         // with the server side still missing, and must not complete it.
@@ -475,22 +493,22 @@ mod tests {
     /// and drains the store.
     fn drain_edge(edge: FrontendBackendEdge) -> Vec<Series> {
         let mut store = EdgeStore::new(&MetricsGenConfig::default());
-        let client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            edge.client_duration_ns,
-        );
-        let server = span(
-            "backend",
-            [0xB; 8],
-            [0xA; 8],
-            SpanKind::Server,
-            edge.server_status,
-            edge.server_duration_ns,
-        );
+        let client = EdgeSpan {
+            service: "frontend",
+            span_id: [0xA; 8],
+            duration_ns: edge.client_duration_ns,
+            ..EdgeSpan::default()
+        }
+        .record();
+        let server = EdgeSpan {
+            service: "backend",
+            span_id: [0xB; 8],
+            parent_span_id: [0xA; 8],
+            kind: SpanKind::Server,
+            status: edge.server_status,
+            duration_ns: edge.server_duration_ns,
+        }
+        .record();
 
         assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
         assert2::assert!(store.record_span(&server, 1) == RecordOutcome::Completed);
@@ -533,26 +551,26 @@ mod tests {
         cfg.processor.service_graphs.enable_client_server_prefix = true;
         cfg.processor.service_graphs.span_multiplier_key = Some("sample.weight".into());
         let mut store = EdgeStore::new(&cfg);
-        let mut client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            10_000_000,
-        );
+        let mut client = EdgeSpan {
+            service: "frontend",
+            span_id: [0xA; 8],
+            duration_ns: 10_000_000,
+            ..EdgeSpan::default()
+        }
+        .record();
         client.attributes = vec![
             ("http.method".into(), "GET".into()),
             ("sample.weight".into(), "3".into()),
         ];
-        let mut server = span(
-            "backend",
-            [0xB; 8],
-            [0xA; 8],
-            SpanKind::Server,
-            StatusCode::Ok,
-            8_000_000,
-        );
+        let mut server = EdgeSpan {
+            service: "backend",
+            span_id: [0xB; 8],
+            parent_span_id: [0xA; 8],
+            kind: SpanKind::Server,
+            duration_ns: 8_000_000,
+            ..EdgeSpan::default()
+        }
+        .record();
         server
             .attributes
             .push(("http.method".into(), "POST".into()));
@@ -619,14 +637,12 @@ mod tests {
             ..MetricsGenConfig::default()
         };
         let mut store = EdgeStore::new(&cfg);
-        let client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
+        let client = EdgeSpan {
+            service: "frontend",
+            span_id: [0xA; 8],
+            ..EdgeSpan::default()
+        }
+        .record();
         check!(store.record_span(&client, 0) == RecordOutcome::Recorded);
 
         check!(store.expire(5_000_000_000) == 0);
@@ -645,14 +661,12 @@ mod tests {
             ..MetricsGenConfig::default()
         };
         let mut store = EdgeStore::new(&cfg);
-        let client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
+        let client = EdgeSpan {
+            service: "frontend",
+            span_id: [0xA; 8],
+            ..EdgeSpan::default()
+        }
+        .record();
         assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
         assert2::assert!(store.expire(10_000_000_000) == 1);
 
@@ -675,8 +689,17 @@ mod tests {
             ..MetricsGenConfig::default()
         };
         let mut store = EdgeStore::new(&cfg);
-        let a = span("s1", [0x1; 8], [0; 8], SpanKind::Client, StatusCode::Ok, 1);
-        let b = span("s2", [0x2; 8], [0; 8], SpanKind::Client, StatusCode::Ok, 1);
+        let a = EdgeSpan {
+            service: "s1",
+            ..EdgeSpan::default()
+        }
+        .record();
+        let b = EdgeSpan {
+            service: "s2",
+            span_id: [0x2; 8],
+            ..EdgeSpan::default()
+        }
+        .record();
 
         assert2::assert!(store.record_span(&a, 0) == RecordOutcome::Recorded);
         assert2::assert!(store.record_span(&b, 1) == RecordOutcome::Dropped);
@@ -695,22 +718,17 @@ mod tests {
             ..MetricsGenConfig::default()
         };
         let mut store = EdgeStore::new(&cfg);
-        let stale = span(
-            "stale-client",
-            [0x1; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
-        let fresh = span(
-            "fresh-client",
-            [0x2; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
+        let stale = EdgeSpan {
+            service: "stale-client",
+            ..EdgeSpan::default()
+        }
+        .record();
+        let fresh = EdgeSpan {
+            service: "fresh-client",
+            span_id: [0x2; 8],
+            ..EdgeSpan::default()
+        }
+        .record();
 
         assert2::assert!(store.record_span(&stale, 0) == RecordOutcome::Recorded);
         assert2::assert!(store.record_span(&fresh, 10_000_000_000) == RecordOutcome::Recorded);
@@ -729,15 +747,17 @@ mod tests {
             ..MetricsGenConfig::default()
         };
         let mut store = EdgeStore::new(&cfg);
-        let a = span("s1", [0x1; 8], [0; 8], SpanKind::Client, StatusCode::Ok, 1);
-        let mut b = span(
-            "database",
-            [0x2; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
+        let a = EdgeSpan {
+            service: "s1",
+            ..EdgeSpan::default()
+        }
+        .record();
+        let mut b = EdgeSpan {
+            service: "database",
+            span_id: [0x2; 8],
+            ..EdgeSpan::default()
+        }
+        .record();
         b.attributes.push(("db.system".into(), "postgresql".into()));
 
         assert2::assert!(store.record_span(&a, 0) == RecordOutcome::Recorded);
@@ -758,7 +778,12 @@ mod tests {
     #[test]
     fn non_client_server_spans_ignored() {
         let mut store = EdgeStore::new(&MetricsGenConfig::default());
-        let internal = span("s", [0x1; 8], [0; 8], SpanKind::Internal, StatusCode::Ok, 1);
+        let internal = EdgeSpan {
+            service: "s",
+            kind: SpanKind::Internal,
+            ..EdgeSpan::default()
+        }
+        .record();
 
         assert2::assert!(store.record_span(&internal, 0) == RecordOutcome::Ignored);
     }
@@ -766,14 +791,12 @@ mod tests {
     #[test]
     fn database_connection_type_from_db_system_attr() {
         let mut store = EdgeStore::new(&MetricsGenConfig::default());
-        let mut client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
+        let mut client = EdgeSpan {
+            service: "frontend",
+            span_id: [0xA; 8],
+            ..EdgeSpan::default()
+        }
+        .record();
         client
             .attributes
             .push(("db.system".into(), "postgresql".into()));
@@ -797,14 +820,12 @@ mod tests {
     #[test]
     fn virtual_node_uses_peer_service_as_server_label() {
         let mut store = EdgeStore::new(&MetricsGenConfig::default());
-        let mut client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
+        let mut client = EdgeSpan {
+            service: "frontend",
+            span_id: [0xA; 8],
+            ..EdgeSpan::default()
+        }
+        .record();
         client
             .attributes
             .push(("peer.service".into(), "db-proxy".into()));
@@ -831,22 +852,20 @@ mod tests {
         // backfilled into the server label — the same result as if the
         // virtual-node span had arrived first (the create path).
         let mut store = EdgeStore::new(&MetricsGenConfig::default());
-        let server = span(
-            "backend",
-            [0xB; 8],
-            [0xA; 8],
-            SpanKind::Server,
-            StatusCode::Ok,
-            1,
-        );
-        let mut client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            1,
-        );
+        let server = EdgeSpan {
+            service: "backend",
+            span_id: [0xB; 8],
+            parent_span_id: [0xA; 8],
+            kind: SpanKind::Server,
+            ..EdgeSpan::default()
+        }
+        .record();
+        let mut client = EdgeSpan {
+            service: "frontend",
+            span_id: [0xA; 8],
+            ..EdgeSpan::default()
+        }
+        .record();
         client
             .attributes
             .push(("peer.service".into(), "db-proxy".into()));
@@ -877,25 +896,26 @@ mod tests {
             ..MetricsGenConfig::default()
         };
         let mut store = EdgeStore::new(&cfg);
-        let mut producer = span(
-            "publisher",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Producer,
-            StatusCode::Ok,
-            7_000_000,
-        );
+        let mut producer = EdgeSpan {
+            service: "publisher",
+            span_id: [0xA; 8],
+            kind: SpanKind::Producer,
+            duration_ns: 7_000_000,
+            ..EdgeSpan::default()
+        }
+        .record();
         producer
             .attributes
             .push(("messaging.system".into(), "kafka".into()));
-        let mut consumer = span(
-            "worker",
-            [0xB; 8],
-            [0xA; 8],
-            SpanKind::Consumer,
-            StatusCode::Ok,
-            5_000_000,
-        );
+        let mut consumer = EdgeSpan {
+            service: "worker",
+            span_id: [0xB; 8],
+            parent_span_id: [0xA; 8],
+            kind: SpanKind::Consumer,
+            duration_ns: 5_000_000,
+            ..EdgeSpan::default()
+        }
+        .record();
         consumer
             .attributes
             .push(("messaging.system".into(), "kafka".into()));

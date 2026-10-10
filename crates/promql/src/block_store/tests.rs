@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use arrow::{
-    array::{ArrayRef, Int64Builder, StringBuilder, UInt64Builder},
-    datatypes::SchemaRef,
-    record_batch::RecordBatch,
-};
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use assert2::check;
 use axum::{
     body::{Body, to_bytes},
@@ -13,8 +9,8 @@ use axum::{
 use krabka_blockstore::{BlockStore, Labels};
 use krabka_metrics::{
     CompactionIndexManifest, CompactionObjectPlan, CompactionSeriesLabels, ExemplarRow,
-    MetricBlockKind, encode_exemplar_rows, encode_float_samples, exemplar_schema,
-    float_sample_schema, metadata_schema,
+    MetadataRow, MetricBlockKind, encode_exemplar_rows, encode_float_samples, encode_metadata_rows,
+    exemplar_schema, float_sample_schema, metadata_schema,
 };
 use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use object_store::{
@@ -52,7 +48,6 @@ mod instant_up_query;
 mod labels;
 mod manifest_store;
 mod metadata_answers_around_a_deleted_block_and_warns;
-mod metadata_batch;
 mod metadata_reads_compacted_metadata_sidecar_blocks;
 mod prometheus_query_reads_float_samples_from_blockstore;
 mod prometheus_query_rebuilds_float_index_from_compaction_manifest;
@@ -68,7 +63,6 @@ use expected_stats::expected_stats;
 use instant_up_query::{InstantUpQuery, instant_up_query};
 use labels::labels;
 use manifest_store::{ManifestBlock, api_exemplars, assert_up_is_one, manifest_store};
-use metadata_batch::metadata_batch;
 use request_counts::RequestCounts;
 use sidecar_manifest::sidecar_manifest;
 use write_float_block::write_float_block;
