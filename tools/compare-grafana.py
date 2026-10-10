@@ -9,6 +9,7 @@ import base64
 from decimal import Decimal, InvalidOperation
 import functools
 import hashlib
+from http.client import HTTPConnection, HTTPException
 import importlib.util
 import json
 import math
@@ -17,6 +18,7 @@ import pathlib
 import re
 import statistics
 import struct
+import socket
 import tempfile
 import threading
 import time
@@ -452,8 +454,72 @@ def log_seed_queries(records, limit):
         yield [{'request': {'streams': streams}}], '/loki/api/v1/query_range?' + query
 
 
+def docker_cpu_stats(identity):
+    """Read cumulative counters when the daemon's cgroups are not mounted here."""
+    endpoint = os.environ.get('DOCKER_HOST', 'unix:///var/run/docker.sock')
+    if not endpoint.startswith('unix://'):
+        raise ValueError('CPU counter fallback requires a local Docker socket')
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection_socket:
+        connection_socket.settimeout(5)
+        connection_socket.connect(endpoint.removeprefix('unix://'))
+        connection = HTTPConnection('localhost', timeout=5)
+        connection.sock = connection_socket
+        try:
+            connection.request('GET', f'/v1.41/containers/{identity}/stats?stream=false&one-shot=true')
+            response = connection.getresponse()
+            if response.status != 200:
+                raise ValueError(f'Docker CPU counters returned HTTP {response.status}')
+            stats = json.loads(response.read())['cpu_stats']
+            counters = (stats['cpu_usage']['total_usage'], stats['throttling_data']['throttled_time'])
+            if any(type(value) is not int or value < 0 for value in counters):
+                raise ValueError('Docker CPU counters must be nonnegative integer nanoseconds')
+            return tuple(value // 1000 for value in counters)
+        finally:
+            connection.close()
+
+
+def cpu_counter_self_test():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    for usage, throttle, status, expected in [
+        (1_234_567, 8_765_432, 200, (1234, 8765)),
+        (-1, 0, 200, None), (True, 0, 200, None),
+        (0, 0, 404, None),
+    ]:
+        response = Mock(status=status)
+        response.read.return_value = json.dumps({'cpu_stats': {
+            'cpu_usage': {'total_usage': usage},
+            'throttling_data': {'throttled_time': throttle}}}).encode()
+        connection = Mock()
+        connection.getresponse.return_value = response
+        with patch.dict(os.environ, {'DOCKER_HOST': 'unix:///test.sock'}), \
+                patch.object(socket, 'socket'), \
+                patch(__name__ + '.HTTPConnection', return_value=connection):
+            try:
+                actual = docker_cpu_stats('test-container')
+            except ValueError:
+                assert expected is None
+            else:
+                assert actual == expected
+            connection.close.assert_called_once()
+    deployment = SimpleNamespace(pids={'test': 123}, ids={'test': 'test-container'})
+    metrics = b'minio_s3_requests_total 0\nminio_s3_traffic_sent_bytes 0\nminio_s3_traffic_received_bytes 0\n'
+    for counters, errors in [((1234, 8765), []), (ValueError('missing counters'), ['test/cpu'])]:
+        kwargs = {'side_effect': counters} if isinstance(counters, Exception) else {'return_value': counters}
+        with patch.object(pathlib.Path, 'read_text', return_value='cpu 1 0 0 0 0 0 0 0\n'), \
+                patch(__name__ + '.docker_cpu_stats', **kwargs) as fallback, \
+                patch(__name__ + '._original_http', return_value=(200, metrics)):
+            sample = resource_sample(deployment, {'scrape_errors': []})
+            fallback.assert_called_once_with('test-container')
+            assert sample['scrape_errors'] == errors
+            if not errors:
+                assert sample['cpu_usec'] == {'test': 1234}
+                assert sample['throttled_usec'] == {'test': 8765}
+                assert sample['cpu_counter_sources'] == {'test': 'docker_engine_stats'}
+
+
 def resource_sample(deployment, sample):
-    sample['cpu_usec'], sample['throttled_usec'] = {}, {}
+    sample['cpu_usec'], sample['throttled_usec'], sample['cpu_counter_sources'] = {}, {}, {}
     sample['load_generator_cpu_seconds'] = time.process_time()
     ticks = [int(value) for value in pathlib.Path('/proc/stat').read_text().splitlines()[0].split()[1:]]
     sample['host_cpu_seconds'] = (sum(ticks[:8]) - ticks[3] - ticks[4]) / os.sysconf('SC_CLK_TCK')
@@ -463,8 +529,14 @@ def resource_sample(deployment, sample):
             stats = dict(line.split() for line in (pathlib.Path('/sys/fs/cgroup') / group.lstrip('/') / 'cpu.stat').read_text().splitlines())
             sample['cpu_usec'][role] = int(stats['usage_usec'])
             sample['throttled_usec'][role] = int(stats.get('throttled_usec', 0))
+            sample['cpu_counter_sources'][role] = 'cgroup_cpu_stat'
         except (OSError, IndexError, KeyError, ValueError):
-            sample['scrape_errors'].append(role + '/cpu')
+            try:
+                cpu, throttled = docker_cpu_stats(deployment.ids[role])
+                sample['cpu_usec'][role], sample['throttled_usec'][role] = cpu, throttled
+                sample['cpu_counter_sources'][role] = 'docker_engine_stats'
+            except (OSError, KeyError, ValueError, HTTPException):
+                sample['scrape_errors'].append(role + '/cpu')
     code, body = _original_http(19000, '/minio/v2/metrics/cluster')
     if code == 200:
         sample['s3'] = env.prometheus(body.decode())
@@ -572,13 +644,42 @@ def configure_trace_capacity(roles, target):
     config.write_text(config.read_text() + '\nmax-ingest-spans-per-second: 0\n')
 
 
+def configure_cpu_budget(services, signal, native, application_cpus, object_store_cpus):
+    """Set matched application/broker CPU caps without changing memory caps."""
+    names = ([PRODUCTS[signal][0]] if native else
+             [name for name in services if name == 'broker' or name.startswith(signal + '-')])
+    total = sum(float(services[name]['cpus']) for name in names)
+    if application_cpus is not None:
+        for name in names:
+            services[name]['cpus'] = float(services[name]['cpus']) * application_cpus / total
+        total = application_cpus
+    if object_store_cpus is not None:
+        services['minio']['cpus'] = object_store_cpus
+    return total
+
+
+def configure_internal_proxy_bypass(services):
+    """Keep Compose service traffic local when Docker injects session proxies."""
+    hosts = {'localhost', '127.0.0.1', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', *services}
+    for service in services.values():
+        environment = service.setdefault('environment', {})
+        existing = {value.strip() for name in ('NO_PROXY', 'no_proxy')
+                    for value in (environment.get(name) or '').split(',') if value.strip()}
+        bypass = ','.join(sorted(hosts | existing))
+        environment['NO_PROXY'] = environment['no_proxy'] = bypass
+
+
 class ComparisonDeployment(env.Deployment):
-    def __init__(self, evidence, image, signal, native, profiles_target='split', deployment_target='split'):
+    def __init__(self, evidence, image, signal, native, profiles_target='split', deployment_target='split',
+                 application_cpus=None, object_store_cpus=None, init_image=None):
         super().__init__(evidence, image)
         self.signal, self.native = signal, native
         self.target = profiles_target if signal == 'profiles' and deployment_target == 'split' else deployment_target
         data = json.loads(self.file.read_text())
         services = data['services']
+        if init_image is not None:
+            for name in ('bootstrap', 'broker-permissions', 'minio-permissions'):
+                services[name]['image'] = init_image
         for name in list(services):
             if any(name.startswith(s + '-') for s in PRODUCTS) and not name.startswith(signal + '-'):
                 del services[name]
@@ -623,6 +724,8 @@ class ComparisonDeployment(env.Deployment):
                 env.QUERY[signal] = {'metrics': 9090, 'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
             if signal == 'traces':
                 configure_trace_capacity(self.evidence / 'roles', self.target)
+        self.service_cpu = configure_cpu_budget(services, signal, native, application_cpus, object_store_cpus)
+        configure_internal_proxy_bypass(services)
         self.file.write_text(json.dumps(data, indent=2))
 
     def drain(self, signal, timeout=180):
@@ -886,10 +989,13 @@ def run(args):
               'signal': args.signal, 'seed': env.SEED, 'phase_seconds': args.seconds,
               'acknowledgements': 'API accepted; native durability contracts differ',
               'resource_accounting_scope': RESOURCE_ACCOUNTING_SCOPE,
-              'object_store_budget': {'cpu': 2, 'memory_gib': 2, 'included_in_application_budget': False},
+              'object_store_budget': {'cpu': getattr(args, 'object_store_cpus', None) or 2,
+                                      'memory_gib': 2, 'included_in_application_budget': False},
               'write_interval_seconds': 1, 'query_interval_seconds': 0.25,
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'image_identity': identity,
+              'init_image_identity': json.loads(env.command('docker', 'inspect', args.init_image))[0]
+                                     if getattr(args, 'init_image', None) else None,
               'profiles_target': args.profiles_target if args.signal == 'profiles' else None,
               'deployment_target': args.deployment_target,
               'host_activity': {'wait_seconds': args.host_wait_seconds,
@@ -914,7 +1020,9 @@ def run(args):
             backend = PRODUCTS[args.signal][0] if native else 'krabka'
             for phase in args.phases:
                 output = args.output / f'{repetition + 1}-{backend}-{phase}'
-                deployment = ComparisonDeployment(output, args.image, args.signal, native, args.profiles_target, args.deployment_target)
+                deployment = ComparisonDeployment(output, args.image, args.signal, native, args.profiles_target,
+                    args.deployment_target, getattr(args, 'application_cpus', None), getattr(args, 'object_store_cpus', None),
+                    getattr(args, 'init_image', None))
                 try:
                     deployment.start()
                     levels = report['workload']['writers'] if phase == 'burst' else report['workload']['cardinalities'] if phase == 'high_cardinality' else [2]
@@ -949,7 +1057,8 @@ def run(args):
                         result.update(backend=backend, repetition=repetition + 1, phase=phase,
                                       deployment_target='native' if native else deployment.target,
                                       service_cpu=deployment.service_cpu, service_memory_gib=deployment.service_memory_gib,
-                                      minio_cpu=2, minio_memory_gib=2)
+                                      minio_cpu=getattr(args, 'object_store_cpus', None) or 2,
+                                      minio_memory_gib=2)
                         result['container_states'] = {name: json.loads(env.command('docker', 'inspect', '--format', '{{json .State}}', identity)) for name, identity in deployment.ids.items()}
                         report['entries'].append(result)
                         (args.output / 'comparison-report.json').write_text(json.dumps(report, indent=2) + '\n')
@@ -1292,6 +1401,14 @@ def profile_seed_self_test():
 
 
 def self_test():
+    cpu_counter_self_test()
+    services = {'minio': {'environment': {'NO_PROXY': 'existing.internal'}}, 'broker': {}}
+    configure_internal_proxy_bypass(services)
+    for service in services.values():
+        environment = service['environment']
+        assert environment['NO_PROXY'] == environment['no_proxy']
+        assert {'minio', 'broker', 'localhost', '127.0.0.1', '::1', '172.16.0.0/12'} <= set(environment['NO_PROXY'].split(','))
+    assert 'existing.internal' in services['minio']['environment']['NO_PROXY'].split(',')
     trace_seed_self_test()
     profile_seed_self_test()
     from unittest.mock import patch
@@ -1629,6 +1746,23 @@ def self_test():
             config.write_text(initial)
             configure_trace_capacity(roles, target)
             assert config.read_text() == initial + '\nmax-ingest-spans-per-second: 0\n'
+    for signal in PRODUCTS:
+        services = {'broker': {'cpus': 2, 'mem_limit': '2g'},
+                    signal + '-all': {'cpus': 4, 'mem_limit': '4g'},
+                    'minio': {'cpus': 2, 'mem_limit': '2g'}}
+        unchanged = json.loads(json.dumps(services))
+        assert configure_cpu_budget(services, signal, False, None, None) == 6
+        assert services == unchanged
+        assert configure_cpu_budget(services, signal, False, 2.5, 0.5) == 2.5
+        assert services == {'broker': {'cpus': 5 / 6, 'mem_limit': '2g'},
+                            signal + '-all': {'cpus': 5 / 3, 'mem_limit': '4g'},
+                            'minio': {'cpus': 0.5, 'mem_limit': '2g'}}
+        product = PRODUCTS[signal][0]
+        native = {product: {'cpus': 6, 'mem_limit': '6g'},
+                  'minio': {'cpus': 2, 'mem_limit': '2g'}}
+        assert configure_cpu_budget(native, signal, True, 2.5, 0.5) == 2.5
+        assert native == {product: {'cpus': 2.5, 'mem_limit': '6g'},
+                          'minio': {'cpus': 0.5, 'mem_limit': '2g'}}
     # Run the real phase loop with external deployment and measurement stubbed.
     for signal, phase, seconds, maximum, levels, duration in [
         ('metrics', 'steady', 60, 20000, [1000], 60),
@@ -1670,11 +1804,15 @@ def self_test():
                                       image_commit='test-source', seconds=seconds, repetitions=1,
                                       phases=[phase], backends=['krabka'], max_writers=256,
                                       max_cardinality=maximum, host_wait_seconds=120,
+                                      application_cpus=2.5, object_store_cpus=0.5,
                                       output=pathlib.Path(directory))
             with patch.dict(globals(), {'ComparisonDeployment': deployment_for_phase,
                                         'cost': lambda _: {'cpu_seconds_total': 1, 'host_activity_qualified': True}}), \
                     patch.object(env, 'command', return_value='[{}]'), patch.object(env, 'measure', phase_measure):
                 run(args)
+            report = json.loads((args.output / 'comparison-report.json').read_text())
+            assert report['object_store_budget']['cpu'] == 0.5
+            assert all(entry['minio_cpu'] == 0.5 for entry in report['entries'])
             assert calls == [
                 (signal, duration, duration / 4, 2, level,
                  {'cold': phase == 'high_cardinality', 'interval': 1,
@@ -1696,12 +1834,17 @@ if __name__ == '__main__':
     p.add_argument('--image')
     p.add_argument('--image-digest')
     p.add_argument('--image-commit')
+    p.add_argument('--init-image', help='Optional smaller image with busybox and krabka-o11y-bootstrap for setup containers')
     p.add_argument('--profiles-target', choices=('split', 'all'), default='split',
                    help='Separate profiles role containers or the existing all target; same aggregate budget')
     p.add_argument('--deployment-target', choices=('split', 'all'), default='split',
                    help='Separate roles or the all target for every signal; same aggregate budget')
     p.add_argument('--host-wait-seconds', type=int, default=0,
                    help='Wait for ten host sample intervals without excessive external CPU before warm-up')
+    p.add_argument('--application-cpus', type=float,
+                   help='Aggregate application and broker CPU cap for both backends; memory caps unchanged')
+    p.add_argument('--object-store-cpus', type=float,
+                   help='MinIO CPU cap, identical for both backends')
     p.add_argument('--seconds', type=int, default=60)
     p.add_argument('--repetitions', type=int, default=3)
     p.add_argument('--max-writers', type=int, default=256)
@@ -1722,6 +1865,9 @@ if __name__ == '__main__':
             p.error('image digest must be sha256 followed by exactly 64 lowercase hexadecimal digits')
         if options.host_wait_seconds < 0:
             p.error('host wait must be nonnegative')
+        if any(value is not None and (not math.isfinite(value) or value <= 0)
+               for value in (options.application_cpus, options.object_store_cpus)):
+            p.error('CPU caps must be finite and positive')
         if len(set(options.phases)) != len(options.phases) or len(set(options.backends)) != len(options.backends):
             p.error('phases and backends must be unique')
         run(options)

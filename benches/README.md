@@ -48,6 +48,28 @@ tools/bench.sh --quick index_prune # one benchmark
 
 The results go to `benches/target/criterion`. Criterion writes an HTML report at `benches/target/criterion/report/index.html`, which the `bench` job uploads as an artifact.
 
+`tools/bench.sh --quick profile_query` exercises complete profile queries at
+1,000, 10,000, 100,000 and 1,000,000 samples. The fixture repeats 256 stack IDs
+across four symbol partitions, with 16 frames per stack and 16 trace IDs.
+The grouped query is a control for SQL aggregation; the trace cases select
+all traces, one trace, or all traces with a `main` call-site filter. Each case
+checks its complete flamegraph against an independently accumulated fixture
+ledger before measurement. Fixture construction stays outside query timing,
+and queries bypass the frontend result cache.
+
+For CPU or allocation captures, build `profile_query_profile` from this
+workspace and run it with a sample count, iteration count and case name:
+
+```bash
+cargo build --manifest-path benches/Cargo.toml --release --example profile_query_profile
+benches/target/release/examples/profile_query_profile 1000000 3 trace_all
+```
+
+The driver checks the full result once, then consumes each timed result.
+Whole-process captures also include fixture creation and the verification
+query; attribution to symbol resolution and query tree insertion separates
+those costs from fixture generation.
+
 ## Where they run
 
 The `bench` job in [//.github/workflows/ci.yml](../.github/workflows/ci.yml) runs them on a schedule, not on a pull request. This follows the fuzz run, which is scheduled for the same reason: the work is unbounded, and a pull request cannot pay for it.

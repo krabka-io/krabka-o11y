@@ -26,7 +26,7 @@
   "artifact": {
     "name": "command-0/criterion.tar.gz",
     "sha256": "4aa77f0e7c6556550ddd2637d9f94e23bbcd1000ac7ece2123fcee93d95069c2",
-    "baseline_sha256": "bdf3e01c523638b0803cec14af20ebe6a6bd79752145f8064e2c3bf8615c5dee"
+    "baseline_sha256": "23fd43e804db588e9fa55bbdc1164e624858834d5f2b9ebeb1fb9d39253d9304"
   },
   "gate": {
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35692500769",
@@ -43,7 +43,7 @@
   "inventory_extension": {
     "date": "2026-10-09",
     "seeded_baseline_sha256": "e6a583f8a703397b3a12c13b528e370854a8aab7c051ce700934a44b07c47e6c",
-    "unseeded_benchmark_count": 76,
-    "reason": "Add large multi-matcher workloads. All 85 historical numeric budgets and their run provenance are unchanged; new workloads require the recorded runner before seeding."
+    "unseeded_benchmark_count": 92,
+    "reason": "Add large matcher workloads and full profile queries with repeated stack IDs and trace selectors. All 85 historical numeric budgets and their run provenance are unchanged; new workloads require the recorded runner before seeding."
   }
 }

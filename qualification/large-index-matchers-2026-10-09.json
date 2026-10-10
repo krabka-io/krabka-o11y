@@ -1507,5 +1507,83 @@
   "historical_source_snapshots": {
     "crates/blockstore/src/index/resolve_selective.rs": "qualification/evidence/large-index-2026-10-09/posting-guard-resolve-selective.rs",
     "benches/examples/index_matchers_profile.rs": "qualification/evidence/large-index-2026-10-09/posting-guard-profile-driver.rs"
+  },
+  "binary_archives": [
+    {
+      "original": "qualification/evidence/large-index-2026-10-09/binaries/baseline-profile",
+      "archive": "qualification/evidence/large-index-2026-10-09/binaries/baseline-profile.gz",
+      "original_sha256": "6ca10a045f71377534337435d0717e1545085876260e18ac029491636c70d4d9",
+      "archive_sha256": "c4629a1172fde3bf725900648314c5b6fb8fe96d8706d520c30ade5a95bc18d7",
+      "verified_decompressed_sha256": "6ca10a045f71377534337435d0717e1545085876260e18ac029491636c70d4d9",
+      "removed_exact_perf_cache_hardlinks": [
+        "/home/agent/.debug/workspace/krabka-o11y/qualification/evidence/large-index-2026-10-09/binaries/baseline-profile/d0782f6e36f0ded3ba1bdd01a8b27b8ed7a343d4/elf"
+      ],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    },
+    {
+      "original": "qualification/evidence/large-index-2026-10-09/binaries/candidate-profile-final",
+      "archive": "qualification/evidence/large-index-2026-10-09/binaries/candidate-profile-final.gz",
+      "original_sha256": "c4d49676e9835f6ac7c3ad3f96485eeb317d40cfcd50980c51f7a17e1f290b93",
+      "archive_sha256": "bc0821c26dc752a392ba4bfa4b410a8322cd07020a7a23092d220eb770dcad35",
+      "verified_decompressed_sha256": "c4d49676e9835f6ac7c3ad3f96485eeb317d40cfcd50980c51f7a17e1f290b93",
+      "removed_exact_perf_cache_hardlinks": [
+        "/home/agent/.debug/workspace/krabka-o11y/qualification/evidence/large-index-2026-10-09/binaries/candidate-profile-final/bae5b829de49b81191562aec5676879665fc21fe/elf"
+      ],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    },
+    {
+      "original": "qualification/evidence/large-index-2026-10-09/binaries/refined-profile",
+      "archive": "qualification/evidence/large-index-2026-10-09/binaries/refined-profile.gz",
+      "original_sha256": "8db3fd1a23e23d9b58d71ba2e3be2516f8d3c6ca445933bdcc71a270678f0054",
+      "archive_sha256": "8d9947595753988a924e1ade176a65ce7682dc12584fb1441ef407108047f53d",
+      "verified_decompressed_sha256": "8db3fd1a23e23d9b58d71ba2e3be2516f8d3c6ca445933bdcc71a270678f0054",
+      "removed_exact_perf_cache_hardlinks": [],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    },
+    {
+      "original": "qualification/evidence/large-index-2026-10-09/binaries/broad-negative-profile",
+      "archive": "qualification/evidence/large-index-2026-10-09/binaries/broad-negative-profile.gz",
+      "original_sha256": "3725d6dc076a75557c898d7f0e8eee4b96b9ba9ae814e3eab51e6d3f2eb14eb7",
+      "archive_sha256": "52812f02a4af9ea9bea2d3a7bc873d70fbff510e0ba81c2f40ff7e2017469543",
+      "verified_decompressed_sha256": "3725d6dc076a75557c898d7f0e8eee4b96b9ba9ae814e3eab51e6d3f2eb14eb7",
+      "removed_exact_perf_cache_hardlinks": [
+        "/home/agent/.debug/workspace/krabka-o11y/qualification/evidence/large-index-2026-10-09/binaries/broad-negative-profile/8d8bea8820b52ed963930b70b437f586950953a2/elf"
+      ],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    },
+    {
+      "original": "qualification/evidence/large-index-2026-10-09/binaries/candidate-profile",
+      "archive": "qualification/evidence/large-index-2026-10-09/binaries/candidate-profile.gz",
+      "original_sha256": "eebe30ad7040b9ddcda096bbd1482a5f55b79ebf981c79a83b118384b0a28436",
+      "archive_sha256": "23ed4a21380165e8d1fd2908e851191c445f6872cee0fcdfbb1dc5a810a94cb2",
+      "verified_decompressed_sha256": "eebe30ad7040b9ddcda096bbd1482a5f55b79ebf981c79a83b118384b0a28436",
+      "removed_exact_perf_cache_hardlinks": [
+        "/home/agent/.debug/workspace/krabka-o11y/qualification/evidence/large-index-2026-10-09/binaries/candidate-profile/543fd73dc4170cab5b6705dda13dbeba1d181a4d/elf"
+      ],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    },
+    {
+      "original": "qualification/evidence/large-index-2026-10-09/binaries/posting-guard-profile",
+      "archive": "qualification/evidence/large-index-2026-10-09/binaries/posting-guard-profile.gz",
+      "original_sha256": "2316068dee40ba1eac3f408dab314becf0f7aa2d038eb9f03f171d3fddc18ffb",
+      "archive_sha256": "165aaaa8f957154c119f7a4d1f680b742f68f29de2d768ae3abc3ffda805a13d",
+      "verified_decompressed_sha256": "2316068dee40ba1eac3f408dab314becf0f7aa2d038eb9f03f171d3fddc18ffb",
+      "removed_exact_perf_cache_hardlinks": [
+        "/home/agent/.debug/workspace/krabka-o11y/qualification/evidence/large-index-2026-10-09/binaries/posting-guard-profile/147a2886a39bc74ec28cf0ed8b4d0cc7e7c4ac89/elf"
+      ],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    },
+    {
+      "original": "qualification/evidence/large-index-2026-10-09/binaries/blockstore-final-unit-test",
+      "archive": "qualification/evidence/large-index-2026-10-09/binaries/blockstore-final-unit-test.gz",
+      "original_sha256": "d931ce42a317306b4982a74129526a05d9238dd69bdfbb5a15fdead6161d42e2",
+      "archive_sha256": "504843c43568253e6211b986b12ba3d86b29e4b58b2b99a0b375f27f943100b9",
+      "verified_decompressed_sha256": "d931ce42a317306b4982a74129526a05d9238dd69bdfbb5a15fdead6161d42e2",
+      "removed_exact_perf_cache_hardlinks": [],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    }
+  ],
+  "historical_tool_snapshots": {
+    "tools/compare-grafana.py": "qualification/evidence/large-index-2026-10-09/first-round-compare-grafana.py"
   }
 }

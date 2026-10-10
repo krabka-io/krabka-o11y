@@ -210,6 +210,13 @@ comparison does not exercise it. See the
 [plan pass](https://github.com/grafana/mimir/blob/e49585d43c6e852225e114bd1ddd98da58a4c060/pkg/streamingpromql/optimize/plan/skip_histogram_decoding.go#L30-L75)
 and [`collect_histogram_rows`](../crates/promql/src/engine/row_cache/collect_histogram_rows.rs).
 
+The local 100,000-series application CPU capture adds a concrete target for
+that label representation work. With no lost samples, metric-label fingerprinting
+accounts for 12.11% of self CPU and blockstore-label fingerprinting for 5.32%.
+Label-map and head-summary clones remain visible. The capture includes both
+writes and queries, so these percentages do not isolate query CPU or establish
+an improvement from changing representation.
+
 ## Loki
 
 Loki merges already ordered stream iterators with a loser tree. It reads a
@@ -268,6 +275,18 @@ queries. `distinct` and tail retain those labels. Those measured changes
 address an observed allocation source; do not discard their ownership guards.
 See the [Loki experiment record](grafana-performance-profiling.md).
 
+The local 20,000-stream cold-query capture points to planning before further
+iterator work: `ScalarValue::eq` consumes 80.65% of sampled self CPU, and
+`FilterExec::statistics_helper` another 6.30%. At the pinned DataFusion revision
+`532cd0376448c94b6a87d03fe2072d5094764704`, `restricted_column` deduplicates
+literal `IN` values with `Vec::contains`, before checking whether the column
+holds each value once. That performs quadratic comparisons for a large list,
+even when the uniqueness condition cannot hold. Krabka's log scan emits every
+selected fingerprint as one `IN` list; the metric scan already bounds large
+lists. Bounding the log scan predicate and retaining the existing exact Rust
+membership check is a follow-up candidate. The current PR does not change
+that scan contract or DataFusion dependency.
+
 ## Tempo
 
 Tempo checks Parquet dictionaries, column chunks and page bounds before it
@@ -310,16 +329,26 @@ Krabka already interns symbols and groups ordinary tree queries by partition
 and stack ID before resolution. See
 [`apply_record`](../crates/profiles/src/hot_store/apply_record.rs) and
 [`merge_scan_to_tree`](../crates/pprof/src/engine/merge_scan_to_tree.rs).
-Its trace-selector branch retains individual samples. The
-[tree merger](../crates/pprof/src/engine/merge_sql_to_tree.rs) resolves frames
-for each resulting row, and [symbol resolution](../crates/pprof/src/symbol_db/symbol_db_type.rs)
-constructs owned function and filename strings. A bounded, query-local cache
-can avoid repeated resolution or call-site tests when IDs repeat.
+Its trace-selector branch retains individual samples. Previously the
+[tree merger](../crates/pprof/src/engine/merge_sql_to_tree.rs) resolved frames
+for every resulting row, and [symbol resolution](../crates/pprof/src/symbol_db/symbol_db_type.rs)
+constructed owned function and filename strings each time.
 
-Key such a cache by both partition and stack ID, and bind it to the captured
-symbol resolver. Preserve trace/span selection, prefix frames, inline frames,
-empty stacks, negative values and exact tree output. Ordinary grouped queries
-may already resolve each ID once, so measure the repeated-ID trace path first.
+The merger now reuses symbol resolution and call-site matching for adjacent
+equal `(partition, stack ID)` keys within each Arrow batch. The query SQL
+orders those keys, so repeated samples share frames without a persistent
+cache or another hash lookup. Individual values still enter the tree in their
+original order, including negative and zero values. Call-site matching happens
+before prefix frames are appended. Tree insertion also borrows function names
+for existing children and clones them only for new nodes.
+
+This follows Pyroscope's reuse by stack ID, while retaining Krabka's existing
+sample arithmetic. The state belongs to one batch and its captured symbol
+resolver. The complete-query `profile_query` benchmark covers four symbol
+partitions with overlapping IDs, repeated stacks, trace selection and call-site
+filtering, alongside ordinary grouped-query controls. Regression coverage
+includes inline frames, empty stacks, signed values, batch boundaries and
+prefix filtering.
 The upstream dense accumulator alone does not justify replacing DataFusion:
 the earlier direct-table experiment was rejected. The benchmark's small stack
 set also does not justify an adaptive dense-set abstraction.

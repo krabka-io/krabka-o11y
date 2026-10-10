@@ -194,3 +194,21 @@ log_index_matchers/two_broad_equalities/1000         unseeded
 log_index_matchers/two_broad_equalities/10000        unseeded
 log_index_matchers/two_broad_equalities/100000       unseeded
 log_index_matchers/two_broad_equalities/1000000      unseeded
+
+# Full profile query workloads; seed on the recorded stable runner.
+profile_query/grouped/1000 unseeded
+profile_query/grouped/10000 unseeded
+profile_query/grouped/100000 unseeded
+profile_query/grouped/1000000 unseeded
+profile_query/trace_all/1000 unseeded
+profile_query/trace_all/10000 unseeded
+profile_query/trace_all/100000 unseeded
+profile_query/trace_all/1000000 unseeded
+profile_query/trace_one/1000 unseeded
+profile_query/trace_one/10000 unseeded
+profile_query/trace_one/100000 unseeded
+profile_query/trace_one/1000000 unseeded
+profile_query/trace_callsite/1000 unseeded
+profile_query/trace_callsite/10000 unseeded
+profile_query/trace_callsite/100000 unseeded
+profile_query/trace_callsite/1000000 unseeded

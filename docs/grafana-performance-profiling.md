@@ -908,3 +908,127 @@ perf record -e cpu-clock:u -F 199 --call-graph dwarf,16384 -- \
 heaptrack benches/target/release/examples/index_matchers_profile \
   1000000 10 broad_regex
 ```
+
+## Complete profile queries with repeated stacks
+
+The `profile_query` target adds complete-query coverage at 1,000 through
+1,000,000 samples. Its deterministic fixture has 256 repeated stack IDs across
+four symbol partitions, 16 frames per stack and 16 trace IDs. Each query
+checks its complete flamegraph against a separate sample ledger before timing.
+The frontend result cache is bypassed. Ordinary SQL-grouped queries are controls
+for the trace-selection paths, which retain individual samples.
+
+Three alternating baseline/candidate pairs ran on this VM, pinned to CPU 4,
+with compilers and profilers stopped. At one million samples:
+
+| Query | Baseline median mean | Candidate median mean | Median paired ratio |
+| --- | ---: | ---: | ---: |
+| All 16 traces | 3.255 s | 0.730 s | 0.2222 |
+| All traces, `main` call site | 2.698 s | 0.555 s | 0.2019 |
+| One trace | 0.452 s | 0.352 s | 0.7853 |
+| Ordinary grouped query | 0.1383 s | 0.1386 s | 1.0017 |
+
+The 10,000- and 100,000-sample grouped controls are about 4.8% and 5.0% slower
+by median paired ratio. The smallest one-trace case changes by about 0.2%.
+These controls remain in the qualification record; the new benchmark IDs stay
+unseeded, and existing numeric ratchet baselines are unchanged.
+
+At 100,000 samples, allocation captures each include one verification query
+and one timed query. Source-frame filtering attributes symbol resolution to
+`symbol_db_type.rs` and query tree insertion to `tree_type.rs` with a
+`merge_sql_to_tree.rs` caller. Counts per query fall from 3,500,000 to 9,380
+for symbol resolution and from 1,610,529 to 14,179 for tree insertion. The
+whole-process counts also include fixture generation and are not per-query
+allocation figures.
+
+The baseline and candidate million-sample CPU captures lose no samples.
+They include fixture creation, verification and three or ten timed queries,
+respectively; their whole-process percentages are attribution evidence rather
+than matched query CPU costs. After the change, tree insertion and string
+hashing dominate the report, and symbol resolution falls below its 0.5%
+report threshold. The merger reuses adjacent `(partition, stack ID)` runs
+within one Arrow batch and preserves individual signed values and their order.
+Tree insertion borrows names for existing children.
+
+[The qualification record](../qualification/profile-query-2026-10-09.json)
+contains all sixteen cases, confidence intervals, source and binary hashes,
+allocation counts and archived ELF identities. Raw captures and timings are
+under `qualification/evidence/profile-query-2026-10-09/`. Original ELF bytes
+are preserved in verified gzip archives; decompress them before regenerating
+symbolized reports. These engine measurements do not establish native API
+performance parity.
+
+Local native comparisons use `--application-cpus 2.5 --object-store-cpus 0.5`
+with the existing matched application/broker and MinIO memory budgets. The
+application cap includes Krabka's broker. Both backends use the same object
+store cap. When the VM hides the daemon's cgroups, the harness reads cumulative
+CPU and throttling counters from the local Docker Engine API and records the
+counter source in each telemetry sample. Host-activity and telemetry gates
+remain enabled.
+
+The local VM API pilots use one repetition and a requested 30-second measured
+window per cardinality. They are diagnostic Cargo deployments. The application
+and broker retain their scaled role shares; they do not share one movable CPU
+pool. Complete seed ledgers precede timing, and acknowledgements mean API
+acceptance under each backend's durability contract.
+
+| Signal and cardinality | Krabka query p99 | Upstream query p99 |
+| --- | ---: | ---: |
+| Metrics, 20,000 series | 0.289 s | Mimir: 0.081 s |
+| Metrics, 100,000 series | 1.399 s | Mimir: 0.505 s |
+| Logs, 5,000 streams | 0.149 s | Loki: 1.276 s |
+| Traces, 5,000 traces | 0.418 s | Tempo: 0.206 s |
+| Profiles, 1,000 series | 0.0288 s | Pyroscope: 0.0370 s |
+
+These single-run observations do not establish performance parity. At 100,000
+metric series, Krabka's ingest p99 is 2.215 seconds and fails the two-second
+objective. Mimir completes all four stages through 100,000 after private-address
+proxy bypass is added. The original failed Mimir attempt remains in the record.
+
+At 20,000 log streams, Krabka records two queries at roughly 13.5–14 seconds.
+Loki rejects writes with `Ingester is shutting down`; that stage cannot qualify
+a throughput comparison. At 20,000 traces, Krabka fails seed payload verification
+with a missing compacted Parquet object. Native Tempo's corresponding full-payload
+verification is stopped before completion; only its complete 1,000- and
+5,000-trace stages appear as measurements. These failures guide the next service
+investigations and do not count as successful large-dataset comparisons.
+
+The profile stage completes with zero API errors and complete telemetry for
+both backends. Krabka and Pyroscope ingest p99 are 0.0227 and 0.2946 seconds;
+their simultaneous application/broker RSS peaks are 142,996 and 143,980 KiB.
+The original profile pilot used a private PID namespace and missed RSS samples,
+so its objective gates fail. A host-process repeat fixes that visibility issue
+without changing application bytes or budgets. Both reports remain recorded.
+This API pilot covers only 1,000 series; the larger profile workload is the
+million-sample engine fixture above.
+
+Final profile validation passes 134 unit tests, four golden merges and seven
+native Pyroscope tests, plus scoped package and benchmark Clippy checks with
+`-D warnings`. A disk-full native attempt remains in the evidence; the identical
+linked test executable passes after cache recovery. The fixture seed's hex
+digit grouping is corrected after measurement without changing its value, and
+the measured source snapshot is preserved separately.
+
+Docker uses VFS on this 32 GiB VM. `--init-image` can supply a smaller image with
+BusyBox and the bootstrap binary for setup containers; its identity is recorded
+separately. Internal service names and private addresses bypass injected session
+proxies. This keeps MinIO and native frontend RPC traffic on the local network.
+
+Local service CPU captures also cover 20,000 log streams and 100,000 metric
+series. They sample the application role during concurrent writes and cold-window
+reads; broker and MinIO CPU are outside the captures. The logs capture loses no
+samples: `ScalarValue::eq` accounts for 80.65% of self CPU and filter statistics
+for another 6.30%. The pinned DataFusion `restricted_column` helper deduplicates
+literal `IN` values with `Vec::contains`. Log scan SQL supplies an unbounded
+fingerprint list, so that planning work grows quadratically. Metrics already
+bounds large fingerprint scan predicates. A bounded log scan predicate with the
+existing exact row membership check is a follow-up candidate; it is not changed
+by this profile-query optimization.
+
+The first 199 Hz metrics capture loses 47.41% of its samples and is excluded
+from attribution conclusions. Its 49 Hz repeat, with a larger ring buffer and
+8 KiB DWARF stacks, loses no samples. Metric-label fingerprinting accounts for
+12.11% of self CPU and blockstore-label fingerprinting for 5.32%; label-map and
+head-summary cloning also remain visible. A separate 15-second logs seed
+verification capture includes regex compilation and is not an ingest-only
+profile. All these captures are diagnostic and do not supply performance ratios.

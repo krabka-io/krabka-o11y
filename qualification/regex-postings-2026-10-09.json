@@ -2116,5 +2116,31 @@
     "benches/target/release/deps/index_selective_matchers-e68a5478bc07944c": "8643b5aedc8b6aca6d4e253e416f5dff7d4cdcf46151f548453892b2197c3b4f",
     "benches/target/release/deps/log_selective_matchers-ef08d4a65cfe36a2": "6b08be502b1acfbd8d82016d8266ddcf8472455689ad712bcacf5cc1064274a3",
     "benches/target/release/deps/diff_mimir-b2f26287ee6fe6e8": "d9b902fdd99e3d575088d36df1091d910eabdd175cea6094fef0ca3b1c5e0c3e"
-  }
+  },
+  "binary_archives": [
+    {
+      "original": "qualification/evidence/regex-postings-2026-10-09/baseline-profile",
+      "archive": "qualification/evidence/regex-postings-2026-10-09/baseline-profile.gz",
+      "original_sha256": "10f94d01ece2919497ca059ab61ca10374f3ab25e5de96688d39b9bb3101f3ae",
+      "archive_sha256": "5c02f222132d0cf37f3bd0dc2d1b477d156f540867fe3d119c5092d1a103c14b",
+      "verified_decompressed_sha256": "10f94d01ece2919497ca059ab61ca10374f3ab25e5de96688d39b9bb3101f3ae",
+      "removed_exact_perf_cache_hardlinks": [
+        "/home/agent/.debug/workspace/krabka-o11y/qualification/evidence/regex-postings-2026-10-09/baseline-profile/cd2312e1655e2f4d3b5f6f5c394ddcf761b6adf9/elf"
+      ],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    },
+    {
+      "original": "qualification/evidence/regex-postings-2026-10-09/refined-profile",
+      "archive": "qualification/evidence/regex-postings-2026-10-09/refined-profile.gz",
+      "original_sha256": "b32e761b93564b6fbbaf17a9343803df638e02d573987bbf4a0741807cdfe403",
+      "archive_sha256": "3cc1b97358ccb3fdc5fb0e58637c71d3a41a69c6377b9cc4430d5e8dadd509fb",
+      "verified_decompressed_sha256": "b32e761b93564b6fbbaf17a9343803df638e02d573987bbf4a0741807cdfe403",
+      "removed_exact_perf_cache_hardlinks": [
+        "/home/agent/.debug/workspace/krabka-o11y/qualification/evidence/regex-postings-2026-10-09/refined-profile/95bf2ac0b63627836059cf843c3adc99c4dadc56/elf",
+        "/workspace/krabka-o11y/benches/target/release/examples/index_matchers_profile",
+        "/workspace/krabka-o11y/benches/target/release/examples/index_matchers_profile-c6af29458a252fdc"
+      ],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    }
+  ]
 }

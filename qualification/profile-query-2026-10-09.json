@@ -1,0 +1,2411 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-09",
+  "status": "local_profile_optimization_validated_native_pilots_diagnostic",
+  "evidence_directory": "qualification/evidence/profile-query-2026-10-09",
+  "baseline_commit": "4eefcc7adeb1466c74b7243d1e5bea3e99530408",
+  "native_parity": "not established",
+  "binary_archives": [
+    {
+      "original": "qualification/evidence/profile-query-2026-10-09/baseline-profile",
+      "archive": "qualification/evidence/profile-query-2026-10-09/baseline-profile.gz",
+      "original_sha256": "cc29539d9c87b69e226a8411ca8543f5cb2836f908b3987acf3107d05c76bcf8",
+      "archive_sha256": "3f716562d064e74a9d7b315064e5933cee167d2a14f1df69acab568aa07e5e7c",
+      "verified_decompressed_sha256": "cc29539d9c87b69e226a8411ca8543f5cb2836f908b3987acf3107d05c76bcf8",
+      "removed_exact_perf_cache_hardlinks": [
+        "/home/agent/.debug/workspace/krabka-o11y/qualification/evidence/profile-query-2026-10-09/baseline-profile/6529f2a916ce8ecf86452541000b337a3db8ef9e/elf",
+        "/workspace/krabka-o11y/benches/target/release/examples/profile_query_profile-e31f6c39138ace14",
+        "/workspace/krabka-o11y/benches/target/release/examples/profile_query_profile"
+      ],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    },
+    {
+      "original": "qualification/evidence/profile-query-2026-10-09/candidate-profile",
+      "archive": "qualification/evidence/profile-query-2026-10-09/candidate-profile.gz",
+      "original_sha256": "d20672145f26ef8e289cebfa7bc74bf7266da6a35e81f02f03beb0d3807f1138",
+      "archive_sha256": "c36b0bc8638c6645bdb30bf6eceea229ff7c4f39de3ce00192d1503edb87eecc",
+      "verified_decompressed_sha256": "d20672145f26ef8e289cebfa7bc74bf7266da6a35e81f02f03beb0d3807f1138",
+      "removed_exact_perf_cache_hardlinks": [
+        "/home/agent/.debug/workspace/krabka-o11y/qualification/evidence/profile-query-2026-10-09/candidate-profile/e098882c0d061bf926d77241e97681402952a9e2/elf",
+        "/workspace/krabka-o11y/benches/target/release/examples/profile_query_profile-e31f6c39138ace14",
+        "/workspace/krabka-o11y/benches/target/release/examples/profile_query_profile"
+      ],
+      "note": "Complete original ELF bytes preserved. Decompress to the original path before regenerating reports."
+    },
+    {
+      "original": "qualification/evidence/profile-query-2026-10-09/baseline-bench",
+      "archive": "qualification/evidence/profile-query-2026-10-09/baseline-bench.gz",
+      "original_sha256": "06b7f4263370b9a0898bc7a2b8f5a7d6c93e66624da13360d1e8310ed186fdd3",
+      "archive_sha256": "b8970528852184d11a255928c40ac46d94d75bdaeba954f3a129f0b93e717bfe",
+      "verified_decompressed_sha256": "06b7f4263370b9a0898bc7a2b8f5a7d6c93e66624da13360d1e8310ed186fdd3",
+      "removed_exact_cargo_hardlinks": [],
+      "note": "Exact measured Criterion executable bytes preserved. Decompress to the original path before rerunning."
+    },
+    {
+      "original": "qualification/evidence/profile-query-2026-10-09/candidate-bench",
+      "archive": "qualification/evidence/profile-query-2026-10-09/candidate-bench.gz",
+      "original_sha256": "5c2ae03ab660eec13fe1314471d5f03df4bbf378d3814f2377caae193f83fc57",
+      "archive_sha256": "237f85e024dbe4b8b71246dc1b2903fa568c336cf388fae0dfb1f1c21384ea78",
+      "verified_decompressed_sha256": "5c2ae03ab660eec13fe1314471d5f03df4bbf378d3814f2377caae193f83fc57",
+      "removed_exact_cargo_hardlinks": [],
+      "note": "Exact measured Criterion executable bytes preserved. Decompress to the original path before rerunning."
+    }
+  ],
+  "workload": {
+    "seed": "0x5A6D1E5",
+    "samples": [
+      1000,
+      10000,
+      100000,
+      1000000
+    ],
+    "partitions": 4,
+    "stacks_per_partition": 64,
+    "stack_depth": 16,
+    "trace_ids": 16,
+    "case_count": 16,
+    "complete_flamegraph_verification": true,
+    "frontend_result_cache": "bypassed",
+    "sample_values": "deterministic positive 1..1000; signed/zero/empty/inline/batch boundaries in regression test"
+  },
+  "timing": {
+    "pairs": 3,
+    "order": [
+      [
+        "baseline",
+        "candidate"
+      ],
+      [
+        "candidate",
+        "baseline"
+      ],
+      [
+        "baseline",
+        "candidate"
+      ]
+    ],
+    "criterion": {
+      "samples": 10,
+      "warm_up_seconds": 0.3,
+      "requested_measurement_seconds": 1,
+      "actual_durations_in_raw_logs": true
+    },
+    "cpu_affinity": "4",
+    "cases": [
+      {
+        "id": "profile_query/grouped/1000",
+        "baseline": [
+          {
+            "mean_ns": 3143382.8502050266,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3033744.0212962967,
+              "upper_bound": 3253592.9012055225
+            }
+          },
+          {
+            "mean_ns": 3023776.0667517004,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2765263.3218707484,
+              "upper_bound": 3484819.564920919
+            }
+          },
+          {
+            "mean_ns": 2669811.492152778,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2586776.101208333,
+              "upper_bound": 2776357.475482639
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 2742811.262380953,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2720937.634821428,
+              "upper_bound": 2765597.813238095
+            }
+          },
+          {
+            "mean_ns": 3053441.8743386245,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2969889.4036640213,
+              "upper_bound": 3135831.9653981486
+            }
+          },
+          {
+            "mean_ns": 2802735.559251701,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2768898.2260926873,
+              "upper_bound": 2837766.995714286
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.8725667197051907,
+          1.0098108480694448,
+          1.0497878099220184
+        ],
+        "median_ratio": 1.0098108480694448,
+        "baseline_median_ns": 3023776.0667517004,
+        "candidate_median_ns": 2802735.559251701
+      },
+      {
+        "id": "profile_query/grouped/10000",
+        "baseline": [
+          {
+            "mean_ns": 3838058.143674603,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3774221.2021958334,
+              "upper_bound": 3901948.7490142863
+            }
+          },
+          {
+            "mean_ns": 3459109.6891269847,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3438398.3074047617,
+              "upper_bound": 3480495.4460317465
+            }
+          },
+          {
+            "mean_ns": 3681703.2341071432,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3608022.2895535715,
+              "upper_bound": 3788349.112244048
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 3829722.7960634916,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3706818.6948666666,
+              "upper_bound": 3956921.2573285718
+            }
+          },
+          {
+            "mean_ns": 3700354.8154920638,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3658006.0134285716,
+              "upper_bound": 3750909.2626666664
+            }
+          },
+          {
+            "mean_ns": 3857692.763579366,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3683006.226,
+              "upper_bound": 4044439.98663631
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.9978282383176376,
+          1.0697419706357925,
+          1.0478011176571385
+        ],
+        "median_ratio": 1.0478011176571385,
+        "baseline_median_ns": 3681703.2341071432,
+        "candidate_median_ns": 3829722.7960634916
+      },
+      {
+        "id": "profile_query/grouped/100000",
+        "baseline": [
+          {
+            "mean_ns": 17130698.44384921,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 16980256.74566865,
+              "upper_bound": 17279774.07469742
+            }
+          },
+          {
+            "mean_ns": 17432855.336448412,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 17236500.927011903,
+              "upper_bound": 17641022.085130952
+            }
+          },
+          {
+            "mean_ns": 17492382.73813492,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 17113809.41174107,
+              "upper_bound": 17891838.27293651
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 19298368.630833335,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 18734547.33308333,
+              "upper_bound": 19859103.177500002
+            }
+          },
+          {
+            "mean_ns": 18299205.964484125,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 18042998.957857143,
+              "upper_bound": 18605664.555555556
+            }
+          },
+          {
+            "mean_ns": 17929735.92559524,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 17748913.706190474,
+              "upper_bound": 18125125.289166667
+            }
+          }
+        ],
+        "paired_ratios": [
+          1.1265371750071538,
+          1.049696427310124,
+          1.0250024936000772
+        ],
+        "median_ratio": 1.049696427310124,
+        "baseline_median_ns": 17432855.336448412,
+        "candidate_median_ns": 18299205.964484125
+      },
+      {
+        "id": "profile_query/grouped/1000000",
+        "baseline": [
+          {
+            "mean_ns": 138322018.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 134693119.5375,
+              "upper_bound": 142951293.73000002
+            }
+          },
+          {
+            "mean_ns": 138381545.8,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 136009428.3,
+              "upper_bound": 140983155.91
+            }
+          },
+          {
+            "mean_ns": 138172611.1,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 136954166.1975,
+              "upper_bound": 139598670.605
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 153078978.6,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 150354239.2,
+              "upper_bound": 155899551.6
+            }
+          },
+          {
+            "mean_ns": 138610324.2,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 135785134.50750002,
+              "upper_bound": 142154977.13
+            }
+          },
+          {
+            "mean_ns": 138094634.8,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 135588333.61999997,
+              "upper_bound": 141071629.4
+            }
+          }
+        ],
+        "paired_ratios": [
+          1.1066855446348398,
+          1.001653243564215,
+          0.999435660226877
+        ],
+        "median_ratio": 1.001653243564215,
+        "baseline_median_ns": 138322018.7,
+        "candidate_median_ns": 138610324.2
+      },
+      {
+        "id": "profile_query/trace_all/1000",
+        "baseline": [
+          {
+            "mean_ns": 4798317.710863096,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4301360.873125,
+              "upper_bound": 5554220.484256694
+            }
+          },
+          {
+            "mean_ns": 4102466.3755476186,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4066921.470547619,
+              "upper_bound": 4137637.892801786
+            }
+          },
+          {
+            "mean_ns": 4868708.118230158,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4542663.175238095,
+              "upper_bound": 5363487.879777778
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 2893452.157318595,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2840377.4060966554,
+              "upper_bound": 2987864.481026077
+            }
+          },
+          {
+            "mean_ns": 3088199.7403769842,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3011224.980138889,
+              "upper_bound": 3168186.1781250006
+            }
+          },
+          {
+            "mean_ns": 3060262.3875170066,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3001777.4460884356,
+              "upper_bound": 3120476.280714285
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.6030138752104717,
+          0.7527666183405964,
+          0.6285573735788978
+        ],
+        "median_ratio": 0.6285573735788978,
+        "baseline_median_ns": 4798317.710863096,
+        "candidate_median_ns": 3060262.3875170066
+      },
+      {
+        "id": "profile_query/trace_all/10000",
+        "baseline": [
+          {
+            "mean_ns": 39352756.86666666,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 37189395.78083333,
+              "upper_bound": 41753523.53333333
+            }
+          },
+          {
+            "mean_ns": 34763251.026230164,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 33803936.82002778,
+              "upper_bound": 35753291.317261904
+            }
+          },
+          {
+            "mean_ns": 37500386.48734127,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 36467372.56928571,
+              "upper_bound": 38460999.74055556
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 8886812.422354499,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 8717123.55919775,
+              "upper_bound": 9069022.726560846
+            }
+          },
+          {
+            "mean_ns": 8961796.233994707,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 8667313.97475,
+              "upper_bound": 9302959.179734789
+            }
+          },
+          {
+            "mean_ns": 9083238.958948413,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 8952876.184583334,
+              "upper_bound": 9226934.43003373
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.22582439274748703,
+          0.25779511321402876,
+          0.24221720920168582
+        ],
+        "median_ratio": 0.24221720920168582,
+        "baseline_median_ns": 37500386.48734127,
+        "candidate_median_ns": 8961796.233994707
+      },
+      {
+        "id": "profile_query/trace_all/100000",
+        "baseline": [
+          {
+            "mean_ns": 334024636.3,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 318552204.16999996,
+              "upper_bound": 354692076.8
+            }
+          },
+          {
+            "mean_ns": 341549847.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 332247178.21999997,
+              "upper_bound": 351317830.6
+            }
+          },
+          {
+            "mean_ns": 333935443.1,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 325119752.715,
+              "upper_bound": 345031091.1549999
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 75398639.05,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 71908638.52375,
+              "upper_bound": 79565466.9
+            }
+          },
+          {
+            "mean_ns": 73278727.15,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 71942630.03125,
+              "upper_bound": 74853908.9
+            }
+          },
+          {
+            "mean_ns": 74849079.15,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 73734812.88125,
+              "upper_bound": 75931291.9
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.22572777830160307,
+          0.2145476791849262,
+          0.2241423625331851
+        ],
+        "median_ratio": 0.2241423625331851,
+        "baseline_median_ns": 334024636.3,
+        "candidate_median_ns": 74849079.15
+      },
+      {
+        "id": "profile_query/trace_all/1000000",
+        "baseline": [
+          {
+            "mean_ns": 3254816669.3,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3182388513.7,
+              "upper_bound": 3332358992.8
+            }
+          },
+          {
+            "mean_ns": 3284369981.4,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3185014261.0925,
+              "upper_bound": 3381845676.19
+            }
+          },
+          {
+            "mean_ns": 3237996243.1,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3164288453.85,
+              "upper_bound": 3318945937.7675
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 732614936.2,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 715703851.0,
+              "upper_bound": 747636018.755
+            }
+          },
+          {
+            "mean_ns": 729598421.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 720675755.4725,
+              "upper_bound": 739501054.3
+            }
+          },
+          {
+            "mean_ns": 719472145.6,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 706365829.7175,
+              "upper_bound": 735349574.5
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.22508639061307267,
+          0.22214258010877339,
+          0.2221967203121861
+        ],
+        "median_ratio": 0.2221967203121861,
+        "baseline_median_ns": 3254816669.3,
+        "candidate_median_ns": 729598421.7
+      },
+      {
+        "id": "profile_query/trace_callsite/1000",
+        "baseline": [
+          {
+            "mean_ns": 3482600.5276587293,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3336310.1384920636,
+              "upper_bound": 3651805.9620773806
+            }
+          },
+          {
+            "mean_ns": 3239030.7338955025,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3212001.3566732807,
+              "upper_bound": 3264959.4739991734
+            }
+          },
+          {
+            "mean_ns": 3400422.2368888883,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3326192.978466667,
+              "upper_bound": 3494346.2599111106
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 2198629.1507010586,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2174062.4259993387,
+              "upper_bound": 2226700.5549603174
+            }
+          },
+          {
+            "mean_ns": 2346646.34734127,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2242077.8297486776,
+              "upper_bound": 2477326.72403869
+            }
+          },
+          {
+            "mean_ns": 2240108.1171825393,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2190469.924404762,
+              "upper_bound": 2305704.981224702
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.6313182155804545,
+          0.7244902997629221,
+          0.6587735172653315
+        ],
+        "median_ratio": 0.6587735172653315,
+        "baseline_median_ns": 3400422.2368888883,
+        "candidate_median_ns": 2240108.1171825393
+      },
+      {
+        "id": "profile_query/trace_callsite/10000",
+        "baseline": [
+          {
+            "mean_ns": 30703767.660238095,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 28991311.467142858,
+              "upper_bound": 32527028.70423214
+            }
+          },
+          {
+            "mean_ns": 29699109.50853174,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 28350325.478809524,
+              "upper_bound": 31523006.398817454
+            }
+          },
+          {
+            "mean_ns": 29380532.290873013,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 28529046.92476191,
+              "upper_bound": 30417164.998095237
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 6304532.643425926,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 6228265.645277778,
+              "upper_bound": 6382280.364662037
+            }
+          },
+          {
+            "mean_ns": 6554679.020568783,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 6335763.815444444,
+              "upper_bound": 6806781.054400794
+            }
+          },
+          {
+            "mean_ns": 5969491.558888889,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 5924848.204770834,
+              "upper_bound": 6020644.31215625
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.20533416983839425,
+          0.22070288062629634,
+          0.2031784686468494
+        ],
+        "median_ratio": 0.20533416983839425,
+        "baseline_median_ns": 29699109.50853174,
+        "candidate_median_ns": 6304532.643425926
+      },
+      {
+        "id": "profile_query/trace_callsite/100000",
+        "baseline": [
+          {
+            "mean_ns": 268768687.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 262979926.0,
+              "upper_bound": 275490513.2
+            }
+          },
+          {
+            "mean_ns": 264451198.4,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 260361061.0,
+              "upper_bound": 268497949.3175
+            }
+          },
+          {
+            "mean_ns": 321037663.5,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 302605384.52500004,
+              "upper_bound": 340421791.4
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 58250607.15,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 56914841.27,
+              "upper_bound": 59556178.1
+            }
+          },
+          {
+            "mean_ns": 54640001.5,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 53324704.04625,
+              "upper_bound": 55976802.7
+            }
+          },
+          {
+            "mean_ns": 52718158.15,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 52245895.67625,
+              "upper_bound": 53161381.061249994
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.2167313746570784,
+          0.2066165773896527,
+          0.16421175501733615
+        ],
+        "median_ratio": 0.2066165773896527,
+        "baseline_median_ns": 268768687.7,
+        "candidate_median_ns": 54640001.5
+      },
+      {
+        "id": "profile_query/trace_callsite/1000000",
+        "baseline": [
+          {
+            "mean_ns": 2750151598.0,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2640304786.7,
+              "upper_bound": 2860351284.5
+            }
+          },
+          {
+            "mean_ns": 2697839387.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2650338313.9575,
+              "upper_bound": 2744396483.0425
+            }
+          },
+          {
+            "mean_ns": 2688293592.5,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2632609207.835,
+              "upper_bound": 2739174797.575
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 555364969.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 535683825.12,
+              "upper_bound": 573366714.5
+            }
+          },
+          {
+            "mean_ns": 533271763.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 526851438.1,
+              "upper_bound": 538872705.13
+            }
+          },
+          {
+            "mean_ns": 558491336.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 544303354.13,
+              "upper_bound": 574944601.8325
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.2019397658310471,
+          0.19766623844669728,
+          0.2077493835710952
+        ],
+        "median_ratio": 0.2019397658310471,
+        "baseline_median_ns": 2697839387.7,
+        "candidate_median_ns": 555364969.7
+      },
+      {
+        "id": "profile_query/trace_one/1000",
+        "baseline": [
+          {
+            "mean_ns": 1285676.6354814812,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1255311.7398148149,
+              "upper_bound": 1318856.4757444444
+            }
+          },
+          {
+            "mean_ns": 1292141.7697534016,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1257869.4260459184,
+              "upper_bound": 1336004.5562276784
+            }
+          },
+          {
+            "mean_ns": 1299863.8457312924,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1279327.4476105443,
+              "upper_bound": 1323516.9738775508
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 1288398.8468703702,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1264101.6117328706,
+              "upper_bound": 1318891.9743703704
+            }
+          },
+          {
+            "mean_ns": 1285771.285903541,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1271109.1156898658,
+              "upper_bound": 1301112.6754903847
+            }
+          },
+          {
+            "mean_ns": 1331366.8833333333,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1306225.273017857,
+              "upper_bound": 1360742.0305863095
+            }
+          }
+        ],
+        "paired_ratios": [
+          1.0021173375277754,
+          0.9950698259285616,
+          1.0242356441449585
+        ],
+        "median_ratio": 1.0021173375277754,
+        "baseline_median_ns": 1292141.7697534016,
+        "candidate_median_ns": 1288398.8468703702
+      },
+      {
+        "id": "profile_query/trace_one/10000",
+        "baseline": [
+          {
+            "mean_ns": 5933145.868918651,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 5626740.372358383,
+              "upper_bound": 6232863.576210318
+            }
+          },
+          {
+            "mean_ns": 5147372.791517857,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 5092397.719498511,
+              "upper_bound": 5209717.808927083
+            }
+          },
+          {
+            "mean_ns": 5243991.211438492,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 5126659.6935811015,
+              "upper_bound": 5384921.294918898
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 4653494.599940477,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4579033.45952381,
+              "upper_bound": 4755538.446019344
+            }
+          },
+          {
+            "mean_ns": 4843468.867579364,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4724759.376493055,
+              "upper_bound": 4960606.282366072
+            }
+          },
+          {
+            "mean_ns": 4461107.407428572,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4433000.68915238,
+              "upper_bound": 4493284.028095238
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.7843216234271689,
+          0.9409594105095158,
+          0.850708406546859
+        ],
+        "median_ratio": 0.850708406546859,
+        "baseline_median_ns": 5243991.211438492,
+        "candidate_median_ns": 4653494.599940477
+      },
+      {
+        "id": "profile_query/trace_one/100000",
+        "baseline": [
+          {
+            "mean_ns": 42654926.13333333,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 42161155.659166664,
+              "upper_bound": 43173639.707499996
+            }
+          },
+          {
+            "mean_ns": 47321449.4,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 46072383.66666667,
+              "upper_bound": 48718134.9
+            }
+          },
+          {
+            "mean_ns": 53047378.1,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 50783376.695,
+              "upper_bound": 55579103.165
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 38044758.43333334,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 37495320.17833334,
+              "upper_bound": 38640627.49999999
+            }
+          },
+          {
+            "mean_ns": 35183740.27035715,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 34027020.97202381,
+              "upper_bound": 36400999.696815476
+            }
+          },
+          {
+            "mean_ns": 34484955.34595238,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 33557379.229630955,
+              "upper_bound": 35752728.79595238
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.8919194541425471,
+          0.7435051275153282,
+          0.6500784125644162
+        ],
+        "median_ratio": 0.7435051275153282,
+        "baseline_median_ns": 47321449.4,
+        "candidate_median_ns": 35183740.27035715
+      },
+      {
+        "id": "profile_query/trace_one/1000000",
+        "baseline": [
+          {
+            "mean_ns": 434119423.6,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 421625584.175,
+              "upper_bound": 451294734.6
+            }
+          },
+          {
+            "mean_ns": 452369370.3,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 446656881.5,
+              "upper_bound": 459046200.46500003
+            }
+          },
+          {
+            "mean_ns": 474307545.0,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 461768300.5,
+              "upper_bound": 485236861.0
+            }
+          }
+        ],
+        "candidate": [
+          {
+            "mean_ns": 349263898.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 336800859.83,
+              "upper_bound": 362295510.1625
+            }
+          },
+          {
+            "mean_ns": 355231220.7,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 349158429.3925,
+              "upper_bound": 363235839.6275
+            }
+          },
+          {
+            "mean_ns": 351557232.2,
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 346658722.6,
+              "upper_bound": 356900383.4425
+            }
+          }
+        ],
+        "paired_ratios": [
+          0.8045341436318998,
+          0.7852680663689046,
+          0.7412010116769279
+        ],
+        "median_ratio": 0.7852680663689046,
+        "baseline_median_ns": 452369370.3,
+        "candidate_median_ns": 351557232.2
+      }
+    ]
+  },
+  "allocations": {
+    "baseline": {
+      "capture_includes": {
+        "samples": 100000,
+        "verification_queries": 1,
+        "timed_queries": 1,
+        "fixture_and_process_lifetime": true
+      },
+      "allocation_calls": {
+        "symbol_resolution": 7000000,
+        "query_tree_insertion": 3221058,
+        "whole_process": 11227476
+      },
+      "query_allocation_calls_per_query": {
+        "symbol_resolution": 3500000,
+        "query_tree_insertion": 1610529
+      }
+    },
+    "candidate": {
+      "capture_includes": {
+        "samples": 100000,
+        "verification_queries": 1,
+        "timed_queries": 1,
+        "fixture_and_process_lifetime": true
+      },
+      "allocation_calls": {
+        "symbol_resolution": 18760,
+        "query_tree_insertion": 28358,
+        "whole_process": 1057282
+      },
+      "query_allocation_calls_per_query": {
+        "symbol_resolution": 9380,
+        "query_tree_insertion": 14179
+      }
+    }
+  },
+  "profiling": {
+    "perf_event": "cpu-clock:u",
+    "frequency_hz": 199,
+    "callgraph": "DWARF,16384",
+    "lost_samples": {
+      "baseline": 0,
+      "candidate": 0
+    },
+    "heaptrack_samples": 100000,
+    "query_counts_per_heap_capture": 2,
+    "capture_scope": "whole process including fixture creation, verification and timed queries; source-frame filters isolate query allocations",
+    "candidate_hotspots": "Tree::add_stack and string hashing; symbol resolution falls below 0.5% report threshold"
+  },
+  "controls": {
+    "grouped_10000_median_paired_ratio": 1.0478,
+    "grouped_100000_median_paired_ratio": 1.0497,
+    "grouped_1000000_median_paired_ratio": 1.0017,
+    "trace_one_1000_median_paired_ratio": 1.0021,
+    "qualification": "No historical numeric ratchet values were changed; the 16 new IDs remain unseeded."
+  },
+  "host": {
+    "hostname": "bce6f61f7cac",
+    "kernel": "6.18.44",
+    "cgroup_cpu_max": "400000 100000",
+    "cpu_affinity": "4",
+    "rustc": "1.98.1",
+    "docker_storage_driver": "vfs",
+    "native_comparison_budget": {
+      "application_and_broker_cpus": 2.5,
+      "object_store_cpus": 0.5,
+      "memory_caps": "Existing per-signal matched application+broker memory: logs 5 GiB, metrics/profiles 6 GiB, traces 7 GiB; MinIO 2 GiB."
+    }
+  },
+  "source_sha256": {
+    "crates/pprof/src/engine/merge_sql_to_tree.rs": "87e6795732a9e480199d0ba9e917dad69c8c7e3200077ff5de5247a4d62a180a",
+    "crates/pprof/src/tree/tree_type.rs": "799b8736e43a48653ba9a288d70cd9c3d403fb005185ef466221519b24394799",
+    "benches/src/profile_samples.rs": "404b68b25285a6e71a46875b9fb6bd1d8617337855810e6a487fc8f19b5274d3",
+    "benches/benches/profile_query.rs": "08eddae609654c0f17fb8e0a513ad7b1edcc54baed38fae8ee7214cd626ebc68",
+    "benches/examples/profile_query_profile.rs": "4b3ef5d4fa84e9ed7392ecff6331354a552969d31c4a2591b81f03400d86f5d7",
+    "tools/compare-grafana.py": "fe2d806d0f1d9218230c7cd44af2ae8bc5718b7303cae0f99804f2d834c7bff7"
+  },
+  "binary_sha256": {
+    "candidate-profile": "d20672145f26ef8e289cebfa7bc74bf7266da6a35e81f02f03beb0d3807f1138",
+    "candidate-bench": "5c2ae03ab660eec13fe1314471d5f03df4bbf378d3814f2377caae193f83fc57",
+    "baseline-bench": "06b7f4263370b9a0898bc7a2b8f5a7d6c93e66624da13360d1e8310ed186fdd3"
+  },
+  "upstream": {
+    "pyroscope_revision": "7aeaa0ff91e83538b3ff0d09bfefb168bddc022d",
+    "approach": "Stack ID aggregation and call-site memoization; Krabka reuses adjacent (partition, stack ID) runs within each Arrow batch while preserving individual value order."
+  },
+  "rebase": {
+    "origin_main": "9e630202d4b190e7ae1c50950da8cca789b1fe53",
+    "fetch_confirmed_no_upstream_commits_missing": true
+  },
+  "limitations": [
+    "Standalone profile query benchmarks do not establish native API performance parity.",
+    "10k and 100k grouped controls show about 5% slower median paired means.",
+    "A VM reconnect interrupted unfinished builds; completed captures were preserved.",
+    "Local Cargo/scratch images are diagnostic images, not Bazel release image qualification."
+  ],
+  "local_native_pilots": {
+    "status": "all_four_signals_attempted_diagnostic_limits_preserved",
+    "scope": "Single-repetition diagnostic pilots; 30-second requested measurement windows, 7.5-second warm-up; API accepted acknowledgements differ in durability.",
+    "application_cpu_caps": "Matched aggregate 2.5 CPUs including Krabka broker; each role keeps its scaled share.",
+    "object_store_cpu_cap": 0.5,
+    "runs": [
+      {
+        "report": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-pilot-3/comparison-report.json",
+        "report_sha256": "45e8e4f4f00099b8308691dc5089a2c166fc0ba4908f6a87541349fd7e97ea97",
+        "signal": "metrics",
+        "repetitions": 1,
+        "harness_sha256": {
+          "compare-grafana.py": "1ff991b5a5d56abbd3d1217ee22ffccee6f4c8c3dbf34b762eb2228e217951c9",
+          "deployment-envelope.py": "2038dcff6219429e61a4923d2f6408a83bd96faecb4ab5125f07faa89d29206d",
+          "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+        },
+        "entries": [
+          {
+            "backend": "krabka",
+            "cardinality": 1000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.018620951999764657,
+                "p95": 0.04136796099919593,
+                "p99": 0.05544483500125352
+              },
+              "accepted_rows_per_sec": 1939.3342473911307,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.03649322000273969,
+                "p95": 0.04952940099974512,
+                "p99": 0.054489933001605095
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 4.737886,
+              "rss_kib_simultaneous_peak": 183300,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9836272298479257
+            }
+          },
+          {
+            "backend": "krabka",
+            "cardinality": 5000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.030397271999390796,
+                "p95": 0.08449171900065267,
+                "p99": 0.08926902800158132
+              },
+              "accepted_rows_per_sec": 1940.73600587645,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.042814252999960445,
+                "p95": 0.0688095389996306,
+                "p99": 0.08851930300079403
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 6.4815,
+              "rss_kib_simultaneous_peak": 239628,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9836901159332756
+            }
+          },
+          {
+            "backend": "krabka",
+            "cardinality": 20000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.14616938299877802,
+                "p95": 0.22257436200015945,
+                "p99": 0.22877020600208198
+              },
+              "accepted_rows_per_sec": 1964.7374644471427,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 119,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 119,
+                "p50": 0.1589064710024104,
+                "p95": 0.24096396200184245,
+                "p99": 0.2890896039971267
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 21.882588,
+              "rss_kib_simultaneous_peak": 433680,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9834803320252027
+            }
+          },
+          {
+            "backend": "krabka",
+            "cardinality": 100000,
+            "objectives_met": false,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 38,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 38,
+                "p50": 1.5865654870030994,
+                "p95": 2.167305214003136,
+                "p99": 2.2145525609994365
+              },
+              "accepted_rows_per_sec": 1232.1850701206197,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 29,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 29,
+                "p50": 1.118727310000395,
+                "p95": 1.3761912390000361,
+                "p99": 1.3986700729983568
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 30.721714,
+              "rss_kib_simultaneous_peak": 1154032,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9836083971670537
+            }
+          },
+          {
+            "backend": "mimir",
+            "cardinality": 1000,
+            "objectives_met": false,
+            "seed_error": "metrics/cardinality-1000 query never became present=True: [{'status': 0, 'has_data': False, 'elapsed_seconds': 60.29879626299953}, {'status': 0, 'has_data': False, 'elapsed_seconds': 90.57976672899895}, {'status': 0, 'has_data': False, 'elapsed_seconds': 120.86076730599962}]",
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5
+          }
+        ]
+      },
+      {
+        "report": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-pilot-4/comparison-report.json",
+        "report_sha256": "a0be19d7b904293ea13c821cfec994223dce2c1c12e6ab9a3bb8f1e8b5b090b4",
+        "signal": "metrics",
+        "repetitions": 1,
+        "harness_sha256": {
+          "compare-grafana.py": "fe2d806d0f1d9218230c7cd44af2ae8bc5718b7303cae0f99804f2d834c7bff7",
+          "deployment-envelope.py": "2038dcff6219429e61a4923d2f6408a83bd96faecb4ab5125f07faa89d29206d",
+          "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+        },
+        "entries": [
+          {
+            "backend": "mimir",
+            "cardinality": 1000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.0050874150001618546,
+                "p95": 0.006587200001376914,
+                "p99": 0.010047448999102926
+              },
+              "accepted_rows_per_sec": 1934.5166777160039,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.010197182000410976,
+                "p95": 0.017515848001494305,
+                "p99": 0.02010691599934944
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 3.940015,
+              "rss_kib_simultaneous_peak": 163180,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9837019455493063
+            }
+          },
+          {
+            "backend": "mimir",
+            "cardinality": 5000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.0054079750007076655,
+                "p95": 0.007229620001453441,
+                "p99": 0.011506286999065196
+              },
+              "accepted_rows_per_sec": 1966.1693962282686,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.021633808999467874,
+                "p95": 0.029715593002038077,
+                "p99": 0.03148149800108513
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 7.797453,
+              "rss_kib_simultaneous_peak": 196552,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9834329952002295
+            }
+          },
+          {
+            "backend": "mimir",
+            "cardinality": 20000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.005445570997835603,
+                "p95": 0.00737607000337448,
+                "p99": 0.007739497999864398
+              },
+              "accepted_rows_per_sec": 1966.1157709422125,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.05904314999861526,
+                "p95": 0.07289939700058312,
+                "p99": 0.0809578420012258
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 22.183944,
+              "rss_kib_simultaneous_peak": 263196,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9834922293109325
+            }
+          },
+          {
+            "backend": "mimir",
+            "cardinality": 100000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.050055105002684286,
+                "p95": 0.08880033400055254,
+                "p99": 0.1579764679991058
+              },
+              "accepted_rows_per_sec": 1947.6035086764628,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 78,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 78,
+                "p50": 0.3794507730017358,
+                "p95": 0.45611856899995473,
+                "p99": 0.505141530000401
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 73.907603,
+              "rss_kib_simultaneous_peak": 559272,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.983649843283143
+            }
+          }
+        ]
+      },
+      {
+        "report": "qualification/evidence/profile-query-2026-10-09/local-native-logs-pilot-3/comparison-report.json",
+        "report_sha256": "be1b2b15f855f96614b1d44decd7abfff42a3fe06ade4046fca7962b60ab7b10",
+        "signal": "logs",
+        "repetitions": 1,
+        "harness_sha256": {
+          "compare-grafana.py": "1ff991b5a5d56abbd3d1217ee22ffccee6f4c8c3dbf34b762eb2228e217951c9",
+          "deployment-envelope.py": "2038dcff6219429e61a4923d2f6408a83bd96faecb4ab5125f07faa89d29206d",
+          "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+        },
+        "entries": [
+          {
+            "backend": "krabka",
+            "cardinality": 1000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.1296554210020986,
+                "p95": 0.616807221002091,
+                "p99": 0.6528312539994658
+              },
+              "accepted_rows_per_sec": 1964.1767376622913,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 118,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 118,
+                "p50": 0.1277627540002868,
+                "p95": 0.290472303997376,
+                "p99": 0.3032559659986873
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 18.43759,
+              "rss_kib_simultaneous_peak": 234888,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9832666021380205
+            }
+          },
+          {
+            "backend": "krabka",
+            "cardinality": 5000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.0846010329987621,
+                "p95": 0.12358251299883705,
+                "p99": 0.16667304799921112
+              },
+              "accepted_rows_per_sec": 1938.2192793990894,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.07577088000107324,
+                "p95": 0.1025662630017905,
+                "p99": 0.1490952920030395
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 11.535136,
+              "rss_kib_simultaneous_peak": 406160,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9837332390607879
+            }
+          },
+          {
+            "backend": "krabka",
+            "cardinality": 20000,
+            "objectives_met": false,
+            "service_cpu": 2.5,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 2,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 2,
+                "p50": 13.544469581000158,
+                "p95": 13.545355072001257,
+                "p99": 13.545355072001257
+              },
+              "accepted_rows_per_sec": 57.92303945158936,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 2,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 2,
+                "p50": 13.530715893000888,
+                "p95": 14.036344998999994,
+                "p99": 14.036344998999994
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 28.105014,
+              "rss_kib_simultaneous_peak": 621068,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9853886025419875
+            }
+          },
+          {
+            "backend": "loki",
+            "cardinality": 1000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.006942078001884511,
+                "p95": 0.011974651999480557,
+                "p99": 0.0166898149982444
+              },
+              "accepted_rows_per_sec": 1940.569912780414,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 111,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 111,
+                "p50": 0.047830378000071505,
+                "p95": 0.08192507100102375,
+                "p99": 0.7809400649966847
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 8.356156,
+              "rss_kib_simultaneous_peak": 303424,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9833695907598244
+            }
+          },
+          {
+            "backend": "loki",
+            "cardinality": 5000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.00902885100003914,
+                "p95": 0.028699492999294307,
+                "p99": 0.04409067199958372
+              },
+              "accepted_rows_per_sec": 1936.2997017399514,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 101,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 101,
+                "p50": 0.04928453699903912,
+                "p95": 0.12300926299940329,
+                "p99": 1.2756066719994124
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 13.276982,
+              "rss_kib_simultaneous_peak": 458728,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9834297290857015
+            }
+          },
+          {
+            "backend": "loki",
+            "cardinality": 20000,
+            "objectives_met": false,
+            "service_cpu": 2.5,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 60,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.006712544000038179,
+                "p95": 0.014061070000025211,
+                "p99": 0.0358885019995796
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 83,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 83,
+                "p50": 0.12610895500256447,
+                "p95": 1.2539168419971247,
+                "p99": 1.4658541249991686
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 22.169736,
+              "rss_kib_simultaneous_peak": 801784,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9832159815949187
+            }
+          }
+        ]
+      },
+      {
+        "report": "qualification/evidence/profile-query-2026-10-09/local-native-traces-pilot-3/comparison-report.json",
+        "report_sha256": "807e08b81ad6553337b2892a8b750a973a07603b7f4ebbc8dd37695facf6e418",
+        "signal": "traces",
+        "repetitions": 1,
+        "harness_sha256": {
+          "compare-grafana.py": "fe2d806d0f1d9218230c7cd44af2ae8bc5718b7303cae0f99804f2d834c7bff7",
+          "deployment-envelope.py": "2038dcff6219429e61a4923d2f6408a83bd96faecb4ab5125f07faa89d29206d",
+          "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+        },
+        "entries": [
+          {
+            "backend": "krabka",
+            "cardinality": 1000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 7.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.007755013000860345,
+                "p95": 0.07516484300140291,
+                "p99": 0.08006995500181802
+              },
+              "accepted_rows_per_sec": 193.53265555138847,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 118,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 118,
+                "p50": 0.07884529399962048,
+                "p95": 0.09200529599911533,
+                "p99": 0.1108662299993739
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 9.670534,
+              "rss_kib_simultaneous_peak": 340996,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9836756446010256
+            }
+          },
+          {
+            "backend": "krabka",
+            "cardinality": 5000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 7.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.08887657600280363,
+                "p95": 0.22190283400050248,
+                "p99": 0.2599779310003214
+              },
+              "accepted_rows_per_sec": 195.89619568438482,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 115,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 115,
+                "p50": 0.2246720830007689,
+                "p95": 0.2611540160032746,
+                "p99": 0.4182505500029947
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 26.232674,
+              "rss_kib_simultaneous_peak": 1167616,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9834825010729898
+            }
+          },
+          {
+            "backend": "krabka",
+            "cardinality": 20000,
+            "objectives_met": false,
+            "seed_error": "trace seed mismatch: trace seed payload differs: 00788e9715d27818527c0de26111ecc8 (500)",
+            "service_cpu": 2.5,
+            "service_memory_gib": 7.0,
+            "minio_cpu": 0.5
+          },
+          {
+            "backend": "tempo",
+            "cardinality": 1000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 7.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.0017354569972667377,
+                "p95": 0.0028582669983734377,
+                "p99": 0.004077100998983951
+              },
+              "accepted_rows_per_sec": 194.0271937045815,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 113,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 113,
+                "p50": 0.13445801600028062,
+                "p95": 0.19086767900080304,
+                "p99": 0.21058670000275015
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 17.895732,
+              "rss_kib_simultaneous_peak": 262932,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9836394335387476
+            }
+          },
+          {
+            "backend": "tempo",
+            "cardinality": 5000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 7.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.0015010260030976497,
+                "p95": 0.002765102999546798,
+                "p99": 0.005031279997638194
+              },
+              "accepted_rows_per_sec": 194.16019217565466,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 113,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 113,
+                "p50": 0.1310726430019713,
+                "p95": 0.14855368400094449,
+                "p99": 0.2057353910022357
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 17.055498,
+              "rss_kib_simultaneous_peak": 305620,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9836254832496014
+            }
+          }
+        ]
+      },
+      {
+        "report": "qualification/evidence/profile-query-2026-10-09/local-native-profiles-pilot-5/comparison-report.json",
+        "report_sha256": "a63f3398b0200e20f30e96e29a7b1b19efb7caeb715f9f071edf43957f6bf5fd",
+        "signal": "profiles",
+        "repetitions": 1,
+        "harness_sha256": {
+          "compare-grafana.py": "fe2d806d0f1d9218230c7cd44af2ae8bc5718b7303cae0f99804f2d834c7bff7",
+          "deployment-envelope.py": "2038dcff6219429e61a4923d2f6408a83bd96faecb4ab5125f07faa89d29206d",
+          "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+        },
+        "entries": [
+          {
+            "backend": "krabka",
+            "cardinality": 1000,
+            "objectives_met": false,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.014218418000382371,
+                "p95": 0.021078137993754353,
+                "p99": 0.025877102998492774
+              },
+              "accepted_rows_per_sec": 19.44979194773013,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.009981373004848137,
+                "p95": 0.027471610002976377,
+                "p99": 0.02987247399869375
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 2.318858,
+              "rss_kib_simultaneous_peak": 0,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9836595566968507
+            },
+            "telemetry_scrape_errors": 93
+          },
+          {
+            "backend": "pyroscope",
+            "cardinality": 1000,
+            "objectives_met": false,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.4033685690010316,
+                "p95": 0.4098795899990364,
+                "p99": 0.4118341200010036
+              },
+              "accepted_rows_per_sec": 19.363100169993498,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.01808851899841102,
+                "p95": 0.02845384399552131,
+                "p99": 0.02992101699783234
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 4.347294,
+              "rss_kib_simultaneous_peak": 0,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9833465155385609
+            },
+            "telemetry_scrape_errors": 62
+          }
+        ],
+        "mounted_application_identity": "qualification/evidence/profile-query-2026-10-09/local-native-profiles-pilot-5/mounted-application.json",
+        "mounted_application_identity_sha256": "3afe9f218701e29e3b9c990bd46a076119db8480e28ef9bbcf74df7dcd4e3813",
+        "qualification_limit": "Private runner PID namespace hid host Docker process RSS. Both backends completed without API errors, but missing RSS samples fail telemetry/objective gates. Repeat from the host."
+      },
+      {
+        "report": "qualification/evidence/profile-query-2026-10-09/local-native-profiles-pilot-6/comparison-report.json",
+        "report_sha256": "8c0485996a82788076ddd764a9f20ec1aad67205881db77fd3cd1777ff026f91",
+        "signal": "profiles",
+        "repetitions": 1,
+        "harness_sha256": {
+          "compare-grafana.py": "fe2d806d0f1d9218230c7cd44af2ae8bc5718b7303cae0f99804f2d834c7bff7",
+          "deployment-envelope.py": "2038dcff6219429e61a4923d2f6408a83bd96faecb4ab5125f07faa89d29206d",
+          "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+        },
+        "entries": [
+          {
+            "backend": "krabka",
+            "cardinality": 1000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.014348001997859683,
+                "p95": 0.020364004994917195,
+                "p99": 0.02272109100158559
+              },
+              "accepted_rows_per_sec": 19.425622624940193,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.010116780002135783,
+                "p95": 0.02618271199753508,
+                "p99": 0.028835497003456112
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 2.350506,
+              "rss_kib_simultaneous_peak": 142996,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.983675731582301
+            },
+            "telemetry_scrape_errors": 0
+          },
+          {
+            "backend": "pyroscope",
+            "cardinality": 1000,
+            "objectives_met": true,
+            "service_cpu": 2.5,
+            "service_memory_gib": 6.0,
+            "minio_cpu": 0.5,
+            "ingest": {
+              "attempts": 60,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 60,
+                "p50": 0.27884433200233616,
+                "p95": 0.2854216410050867,
+                "p99": 0.2946391590012354
+              },
+              "accepted_rows_per_sec": 19.377795888884553,
+              "empty_queries": 0
+            },
+            "query": {
+              "attempts": 120,
+              "errors": 0,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.01884863000304904,
+                "p95": 0.026952582004014403,
+                "p99": 0.03704184100206476
+              },
+              "accepted_rows_per_sec": 0.0,
+              "empty_queries": 0
+            },
+            "resources": {
+              "cpu_seconds_total": 4.342218,
+              "rss_kib_simultaneous_peak": 143980,
+              "host_activity_qualified": true,
+              "coverage_fraction": 0.9836909427405632
+            },
+            "telemetry_scrape_errors": 0
+          }
+        ],
+        "mounted_application_identity": "qualification/evidence/profile-query-2026-10-09/local-native-profiles-pilot-6/mounted-application.json",
+        "mounted_application_identity_sha256": "3afe9f218701e29e3b9c990bd46a076119db8480e28ef9bbcf74df7dcd4e3813",
+        "runner": "Detached host process with host PID visibility; same application executable, source and resource budgets."
+      }
+    ],
+    "trace_bound": {
+      "requested_cardinality": 20000,
+      "last_completed_native_cardinality": 5000,
+      "native_20000_verified_payloads_at_interrupt": 2463,
+      "reason": "Bound unfinished 20k native by-ID verification after the matching Krabka stage failed; preserve fully verified 1k/5k pilot results.",
+      "signal": "SIGINT",
+      "time_unix": 1791588225.213415
+    },
+    "observations": [
+      "Mimir retried with private-network proxy bypass: all four cardinalities through 100k passed.",
+      "Krabka metrics 100k query p99 1.399s and ingest p99 2.215s; ingest exceeds the 2s objective.",
+      "Logs 20k Krabka measured only two slow queries; Loki rejected writes with ingester shutting down. This stage cannot qualify throughput parity.",
+      "Krabka traces 20k failed seed payload verification with a missing compacted Parquet object; native 20k verification was bounded before completion."
+    ],
+    "profiles_scope": "Local diagnostic stage at 1,000 series, repeated from the host after correcting missing RSS visibility in the private-PID runner. Large repeated-stack coverage is supplied by the 1,000,000-sample engine fixtures. Neither single-repetition API pilot establishes native parity."
+  },
+  "build_cache_debug_archives": {
+    "first_validation": "qualification/evidence/profile-query-2026-10-09/build-cache-archives/first-strip-validation.json",
+    "bulk_validation": "qualification/evidence/profile-query-2026-10-09/build-cache-archives/archives.json",
+    "scope": "Complete old task-owned rlibs archived and decompressed SHA verified before debug stripping. Rust metadata payloads retained; bulk records also verify allocated ELF code/data section hashes. Original mtimes restored. Timed standalone ELFs captured before this cache cleanup.",
+    "unused_datafusion_cache_removal": {
+      "record": "qualification/evidence/profile-query-2026-10-09/unused-datafusion-cache-removal.json",
+      "record_sha256": "23828e83495929caba344ef579b6b71b1b748d414ef760c01a15f86520cfabd1",
+      "files": 61,
+      "bytes_reclaimed": 1986899410,
+      "scope": "Remove completed older task-owned DataFusion rlib variants after matching their current hashes against the archive records. Verified full original archives and Rust metadata files remain available. Measured executable artifacts are unchanged."
+    },
+    "completed_archive_record_sha256": "5bdad5cdacd0ea8e0aa95078f787d10314424fa0b99a03a15498740f265d6f84",
+    "completed_archived_rlib_count": 148,
+    "post_validation_cache_removal": {
+      "record": "qualification/evidence/profile-query-2026-10-09/post-validation-cache-removal.json",
+      "record_sha256": "894f1dde769aa7d972742d81c877f0c9c0fddc94698360fa9141ad34c5f3d080",
+      "files": 62,
+      "bytes_reclaimed": 2341750278,
+      "scope": "Only after all tests and lints finish, remove completed task-owned rlibs with matching archive-record hashes. Verified full original archives and rmeta files remain."
+    }
+  },
+  "local_service_cpu_profiles": {
+    "status": "complete",
+    "runs": [
+      {
+        "signal": "logs",
+        "cardinality": 20000,
+        "scope": "Instrumented 30-second application-role window with two writers and cold-window queries; broker/MinIO not sampled. Not a paired performance measurement.",
+        "capture": "qualification/evidence/profile-query-2026-10-09/local-native-logs-cpu-profile-pinned-runtime-5/logs-all.perf.data",
+        "capture_sha256": "c26a94fec1556fb31b7c0e88fb6efa71cd49f4f7cd1bf9c8f4ff4ab298d37318",
+        "frequency_hz": 199,
+        "dwarf_stack_bytes": 16384,
+        "lost_samples": 0,
+        "top_report": "qualification/evidence/profile-query-2026-10-09/local-native-logs-cpu-profile-pinned-runtime-5/top-demangled.txt",
+        "cumulative_report": "qualification/evidence/profile-query-2026-10-09/local-native-logs-cpu-profile-pinned-runtime-5/cum-demangled.txt",
+        "result": "qualification/evidence/profile-query-2026-10-09/local-native-logs-cpu-profile-pinned-runtime-5/profile-result.json",
+        "application_binary_sha256": {
+          "krabka-observability": "cb849049de54a1cb40e511016ed01bfeb9fdd0d4bef926b4900118a7c015acf5",
+          "krabka-o11y-bootstrap": "262fb5db9f9d9297e90d84e3ce0dd8df150d17d0e0c9767d966494933e626a21"
+        },
+        "runtime_image": "codex-local-init:profile-query-20261009",
+        "runtime_bindings": "qualification/evidence/profile-query-2026-10-09/local-native-logs-cpu-profile-pinned-runtime-5/pinned-runtime-binaries.json",
+        "diagnostic_only": true
+      },
+      {
+        "signal": "metrics",
+        "cardinality": 100000,
+        "scope": "Instrumented 30-second application-role window with two writers and cold-window queries; broker/MinIO not sampled. Not a paired performance measurement.",
+        "capture": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-cpu-profile-pinned-runtime-6/metrics-all.perf.data",
+        "capture_sha256": "490fb3a4c09873d53e27f243c7aaa7b5c3cf4c803f4037bb9481072c36319a8b",
+        "frequency_hz": 49,
+        "dwarf_stack_bytes": 8192,
+        "lost_samples": 0,
+        "top_report": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-cpu-profile-pinned-runtime-6/top-demangled.txt",
+        "cumulative_report": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-cpu-profile-pinned-runtime-6/cum-demangled.txt",
+        "result": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-cpu-profile-pinned-runtime-6/profile-result.json",
+        "application_binary_sha256": {
+          "krabka-metrics-service": "d8340b3f4f582d1e0a7836b9d274cd6bd0c309529f3ab66010245f9b3a9dc804",
+          "krabka-o11y-bootstrap": "262fb5db9f9d9297e90d84e3ce0dd8df150d17d0e0c9767d966494933e626a21"
+        },
+        "runtime_image": "codex-local-init:profile-query-20261009",
+        "runtime_bindings": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-cpu-profile-pinned-runtime-6/pinned-runtime-binaries.json",
+        "diagnostic_only": true
+      }
+    ],
+    "discarded_metrics_capture": {
+      "capture": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-cpu-profile-pinned-runtime-5/metrics-all.perf.data",
+      "reason": "199 Hz capture lost 47.41% of samples; exclude its percentages and use the 49 Hz repeat.",
+      "archive": {
+        "path": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-cpu-profile-pinned-runtime-5/metrics-all.perf.data.gz",
+        "sha256": "3acf97aac09968df32bfee10fbffa43d729df21d483ee13a36233a8c5577bd8d",
+        "original_sha256": "106d10b27ff3e9083d41b244fc1c4e347c5f53431ffb83bf78df24e7e85eeaa5",
+        "verified_decompressed_sha256": "106d10b27ff3e9083d41b244fc1c4e347c5f53431ffb83bf78df24e7e85eeaa5",
+        "bytes": 11217397,
+        "note": "Full rejected capture bytes preserved. Decompress to the recorded capture path before reinspection."
+      }
+    },
+    "report_method": "Symbolize after deployment teardown using exact mounted application ELFs in symfs, --no-demangle and GNU c++filt -s rust; in-container namespace reports before teardown are unsymbolized.",
+    "observations": [
+      "Logs 20k: ScalarValue::eq 80.65% self CPU; FilterExec::statistics_helper 6.30%. Pinned DataFusion restricted_column deduplicates literal IN values with Vec::contains (quadratic). Log scan SQL emits an unbounded fingerprint IN list, unlike bounded metric scan predicates.",
+      "Metrics 100k: MetricLabels::fingerprint 12.11% plus blockstore Labels::fingerprint 5.32%; cloning label maps and head summaries remains visible."
+    ],
+    "seed_verification_capture": {
+      "signal": "logs",
+      "seconds": 15,
+      "capture": "qualification/evidence/profile-query-2026-10-09/local-native-logs-cpu-profile-pinned-runtime-5/logs-seed.perf.data",
+      "report": "qualification/evidence/profile-query-2026-10-09/local-native-logs-cpu-profile-pinned-runtime-5/seed-top-demangled.txt",
+      "scope": "Seed/full-payload query verification, including regex compilation; not ingest-only or a measured query window.",
+      "lost_samples": 0
+    },
+    "scan_source_audit": {
+      "datafusion_revision": "532cd0376448c94b6a87d03fe2072d5094764704",
+      "snapshot": "qualification/evidence/profile-query-2026-10-09/datafusion-filter-532cd037.rs",
+      "snapshot_sha256": "ea1df16ae9ea1a060a2b15acd9521dd28ba12ecf6c644485b201cc4d07920da2",
+      "log_scan": "crates/observability/src/querier/scan/stream_scans/stream_plan_scan_sql_for_time_range.rs",
+      "metric_scan": "crates/blockstore/src/store/scan_filter.rs",
+      "follow_up": "Bound broad log scan predicates while retaining exact Rust row membership; alternatively fix deduplication/check order in pinned DataFusion. Not implemented in this round."
+    },
+    "measured_elf_archives": {
+      "record": "qualification/evidence/profile-query-2026-10-09/completed-local-service-elf-archives.json",
+      "record_sha256": "974b4d5d1700d76a8ef9e53632b38f2526d2160f5d36546281c52789557b0d0c",
+      "scope": "Exact completed metrics and logs service ELFs, including the bytes needed to restore profiler symfs paths, preserved with decompressed SHA verification."
+    }
+  },
+  "unused_service_elf_preservation": "qualification/evidence/profile-query-2026-10-09/unused-trace-cli-archive-validation.json",
+  "local_validation_runtime": {
+    "container": "codex-local-profile-validation",
+    "compiler_cpu_cap": 3.5,
+    "compiler_memory_gib": 6,
+    "linker_retry": "Task-local cc wrapper adds -Wl,--strip-debug for the diagnostic service/test executables. Dependency compile flags stay unchanged. Omit debug sections during linking to avoid a large transient ELF on the 32 GiB filesystem; no measured standalone binary is relinked.",
+    "linker_wrapper_sha256": "ca096b940afdf8b272904c36f05a9e04d971291c7a48ccee856275d4bea68997",
+    "completed_test_elf_archives": "qualification/evidence/profile-query-2026-10-09/completed-test-elf-archives/archives.json",
+    "baseline_service_elf_archive": "qualification/evidence/profile-query-2026-10-09/baseline-profile-cli-archive-validation.json",
+    "fresh_profiles_cli": {
+      "binary": "benches/target/release/krabka-profiles",
+      "sha256": "075fd22fdc9724d3f0cb0d194c31867020ad3ad33755e18733fb4e431f14d98a",
+      "bytes": 238794384,
+      "build_log": "/workspace/scratch/local-profiles-build-retry.log",
+      "build_succeeded": true,
+      "source_sha256": {
+        "crates/pprof/src/tree/tree_type.rs": "799b8736e43a48653ba9a288d70cd9c3d403fb005185ef466221519b24394799",
+        "crates/pprof/src/engine/merge_sql_to_tree.rs": "87e6795732a9e480199d0ba9e917dad69c8c7e3200077ff5de5247a4d62a180a"
+      },
+      "build_configuration": "Final Cargo integration-test dependency configuration; production profile source unchanged.",
+      "archive": {
+        "path": "qualification/evidence/profile-query-2026-10-09/candidate-profile-cli.gz",
+        "sha256": "9409061d2ea2b9504a93d69ddbe8ab3ee029f7473e461d6864ab43077a8443a9",
+        "verified_decompressed_sha256": "075fd22fdc9724d3f0cb0d194c31867020ad3ad33755e18733fb4e431f14d98a",
+        "bytes": 74848546,
+        "scope": "Exact diagnostic service CLI used in the final local pilot; full executable bytes preserved."
+      }
+    },
+    "runtime_preflight": {
+      "command": "docker run --rm with the fresh CLI mounted read-only; krabka-profiles --help",
+      "exit_code": 0,
+      "log": "/workspace/scratch/local-profiles-runtime-preflight.log",
+      "log_sha256": "6c858fc11035247f973c08522c4458b44e538eaf116f61a806f36f5b2800be7e"
+    },
+    "pre_test_profiles_cli": {
+      "binary": "benches/target/release/krabka-profiles",
+      "sha256": "02c076b111a6277327c2ca0aad7b442301e2144d15b01a3851a4fc2e7acf3c7b",
+      "bytes": 238702528,
+      "build_log": "/workspace/scratch/local-profiles-build-retry.log",
+      "build_succeeded": true,
+      "source_sha256": {
+        "crates/pprof/src/tree/tree_type.rs": "799b8736e43a48653ba9a288d70cd9c3d403fb005185ef466221519b24394799",
+        "crates/pprof/src/engine/merge_sql_to_tree.rs": "87e6795732a9e480199d0ba9e917dad69c8c7e3200077ff5de5247a4d62a180a"
+      },
+      "pre_test_archive": {
+        "path": "qualification/evidence/profile-query-2026-10-09/pre-test-profile-cli.gz",
+        "sha256": "edd9bf8bbaf92960602cb7847250057c722e503dd646e7fb890940be805b5e17",
+        "verified_decompressed_sha256": "02c076b111a6277327c2ca0aad7b442301e2144d15b01a3851a4fc2e7acf3c7b",
+        "bytes": 74794800,
+        "scope": "Exact diagnostic service CLI used in the final local pilot; full executable bytes preserved."
+      }
+    },
+    "completed_broker_cache_archive": {
+      "record": "qualification/evidence/profile-query-2026-10-09/native-broker-cache-removal.json",
+      "record_sha256": "581ff1e2c70e3a92626f6ed5d3002ba408b1d5e11c04f1d41c24b6ec7ab974c1"
+    },
+    "pre_test_cli_disk_recovery": {
+      "record": "qualification/evidence/profile-query-2026-10-09/pre-test-cli-hardlink-removal.json",
+      "record_sha256": "72d64a9dd01e0d4f808275dc4ad317bea9059e0cedfdecf210edc8ee5ae06d22"
+    }
+  },
+  "measured_source_sha256": {
+    "crates/pprof/src/engine/merge_sql_to_tree.rs": "87e6795732a9e480199d0ba9e917dad69c8c7e3200077ff5de5247a4d62a180a",
+    "crates/pprof/src/tree/tree_type.rs": "799b8736e43a48653ba9a288d70cd9c3d403fb005185ef466221519b24394799",
+    "benches/src/profile_samples.rs": "dbf8fbf56c244e1cde711010095d7bc353be36c6b690a52a8c7d1f4d4d604ec8",
+    "benches/benches/profile_query.rs": "08eddae609654c0f17fb8e0a513ad7b1edcc54baed38fae8ee7214cd626ebc68",
+    "benches/examples/profile_query_profile.rs": "4b3ef5d4fa84e9ed7392ecff6331354a552969d31c4a2591b81f03400d86f5d7",
+    "tools/compare-grafana.py": "fe2d806d0f1d9218230c7cd44af2ae8bc5718b7303cae0f99804f2d834c7bff7"
+  },
+  "post_measurement_source_edits": [
+    {
+      "path": "benches/src/profile_samples.rs",
+      "measurement_snapshot": "qualification/evidence/profile-query-2026-10-09/measurement-sources/benches/src/profile_samples.rs",
+      "measurement_sha256": "dbf8fbf56c244e1cde711010095d7bc353be36c6b690a52a8c7d1f4d4d604ec8",
+      "final_sha256": "404b68b25285a6e71a46875b9fb6bd1d8617337855810e6a487fc8f19b5274d3",
+      "change": "Clippy hex digit grouping only: 0x_5A6D_1E5 to 0x05A6_D1E5. The numeric seed and generated inputs are unchanged."
+    }
+  ],
+  "validation": {
+    "scope": "Scoped tests and lints; no full workspace or all-target Bazel test run. Earlier matcher native checks are preserved in their investigation records.",
+    "profile_unit_tests": 134,
+    "profile_golden_merges": 4,
+    "native_pyroscope_tests": 7,
+    "native_pyroscope_ignored": 0,
+    "final_profile_and_benchmark_clippy": "pass, -D warnings",
+    "logs": {
+      "profile_unit_and_golden": {
+        "path": "/workspace/scratch/profile-query-pprof-tests.log",
+        "sha256": "f36cf419b5916a64dc4729314efb2f37b712c1d311e596f7f6c40cc4654a4448"
+      },
+      "native_pyroscope": {
+        "path": "/workspace/scratch/profile-query-pyroscope-tests.log",
+        "sha256": "128fe6cecb0a829b3ea601476c186a19aed5c294cfec5f7b917026a9cda17863"
+      },
+      "pprof_clippy": {
+        "path": "/workspace/scratch/profile-query-pprof-clippy.log",
+        "sha256": "a3ef20df96bfba383cb83ec40bdd2fcc51121dc01417bbb4086fe1437b8604dc"
+      },
+      "benchmark_clippy": {
+        "path": "/workspace/scratch/profile-query-benches-clippy.log",
+        "sha256": "6864b4d9d96cf57c2d5a1cd44b19ae3346be1be996f5966fdf327f338bb97f31"
+      },
+      "format": {
+        "path": "/workspace/scratch/profile-query-format-final.log",
+        "sha256": "d73a1487069f5c68de7bc1bc7cf685a0b7e58d96b96e1e4b06e31b772bf9e2b7"
+      },
+      "comparison_self_test": {
+        "path": "/workspace/scratch/local-comparison-self-test-completion.log",
+        "sha256": "c5812c482fb69baade8bb0972354ecb15605db6bbd51e2acbf9ffaae4002d6db"
+      },
+      "benchmark_inventory": {
+        "path": "/workspace/scratch/profile-query-ratchet.log",
+        "sha256": "963c78613f71dce2afb8f69aa448a454f7be37027fd27be48f34829e7519a1a3"
+      },
+      "local_loki_version": {
+        "path": "/workspace/scratch/local-loki-version-bazel.log",
+        "sha256": "70916deeae393dac7feae14e97367ce4f67acf37f3045558d46b3c62f4da952e"
+      }
+    },
+    "disk_full_attempt": {
+      "log": "qualification/evidence/profile-query-2026-10-09/native-tests-disk-full-attempt.log",
+      "log_sha256": "2c338aebd7bc41529c5170e53a9eb6458b120248a9087edcb2d6a433bbd771c2",
+      "passed": 0,
+      "failed": 7,
+      "reason": "Filesystem reached capacity during a failed temporary broker rlib strip copy. Native Pyroscope reported no space left on device. Retry uses the identical linked test ELF after removing the temporary copy and verifying/removing the unused broker code cache."
+    },
+    "native_test_executable": {
+      "path": "benches/target/release/deps/pyroscope_differential-ba68e87c26d74634",
+      "sha256": "5389309609bc564613f7afff004c36ce51a5b9d208bbb90a6e5fb244071eed60",
+      "bytes": 214303480,
+      "command": "pyroscope_differential-ba68e87c26d74634 real_pyroscope_ --ignored --test-threads=1",
+      "scope": "Exact Cargo-linked final-source test ELF rerun directly; no source change or rebuild between the disk-full attempt and successful retry."
+    }
+  },
+  "completed_at_utc": "2026-10-10T02:52:31.961427+00:00",
+  "raw_evidence_manifest": {
+    "path": "qualification/evidence/profile-query-2026-10-09/raw-manifest.json",
+    "sha256": "69beecf69066661ac0e8eb1a1e664f54724cafe5db33bb4a3d0739f2ab7e20de",
+    "files": 3234,
+    "bytes": 4523694331
+  }
+}

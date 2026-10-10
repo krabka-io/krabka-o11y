@@ -75,6 +75,7 @@ object_store = { version = "0.14", features = ["aws", "azure", "gcp"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
+assert2 = "0.4"
 # `async_tokio` so a bench body can be an `async` block driven by a runtime
 # Criterion enters once per iteration rather than by a hand-rolled `block_on`
 # inside `iter()`, which would time runtime construction as part of the
@@ -131,6 +132,10 @@ harness = false
 
 [[bench]]
 name = "pprof_merge"
+harness = false
+
+[[bench]]
+name = "profile_query"
 harness = false
 
 [patch.crates-io]
