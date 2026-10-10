@@ -1687,3 +1687,53 @@ reduces Krabka's selection after materialization; it does not implement that
 streaming approach. The preceding full frontend workspace measurements use
 the earlier retained executable. No new full HTTP or native comparison is
 claimed for partial selection; overall upstream parity remains unqualified.
+
+
+## Rejected flat mask for log selection
+
+The cutoff profile above identifies the cost of parsing timestamps twice.
+The [flat-mask prototype](../qualification/flat-log-limit-2026-10-10.json)
+tries smaller `(timestamp, flat position)` tuples and a boolean selection
+mask. Flat positions preserve the same stream/entry tie order, and retention
+can use the mask without another parse. The mask uses one byte per row;
+its element storage plus two-field tuples is theoretically 17 bytes per row
+instead of 24 for three-field tuples, excluding capacity and JSON storage.
+These structural differences do not establish a performance gain.
+
+All 192 complete independent response checks pass in three alternating pairs,
+with the same four sizes, limits, directions and helper-only timing scope as
+the retained cutoff experiment. Forward selection of 100 entries shows:
+
+| Input rows | Cutoff median | Mask median | Median paired ratio |
+| --- | --- | --- | --- |
+| 1,000 | 53.480 us | 44.540 us | 0.8272 |
+| 20,000 | 1.377 ms | 1.909 ms | 1.3891 |
+| 100,000 | 17.139 ms | 30.472 ms | 1.7704 |
+| 1,000,000 | 183.373 ms | 337.942 ms | 1.8111 |
+
+Both million-row limit-100 cases and both half-limit cases regress in every
+pair with disjoint ranges. Half-limit paired ratios are 1.3979 and 1.4010.
+Small truncated cases improve, but that does not qualify retaining a change
+that slows the large controls. The helper is restored to the retained cutoff
+implementation byte for byte; the candidate is not rebuilt or qualified as
+a full production crate.
+
+Four CPU captures at 100,000 rows include setup, independent verification,
+cloning/disposal and 100 timed helper iterations. They contain 879–1,167
+samples with zero lost samples. In the half-limit capture, timestamp parsing
+falls from 14.57% to 6.98% self while `Value` drop-glue attribution rises
+from 4.88% to 12.25%. Those relative whole-process percentages do not isolate
+the cause of the timed-helper regression. Sample counts come from actual
+`PERF_RECORD_SAMPLE` records; a rounded report header initially parsed as
+one sample is corrected in the tracked record, with all raw files preserved.
+Four heap captures at 20,000 rows and ten timed iterations allocate eleven
+extra times, with 0.15 MB less peak heap. Instrumented RSS differs by only
+0.09/0.07 MB. No normalized CPU or general memory improvement is qualified.
+
+All measurements and profiles run on this VM with the demo paused and restored
+healthy afterward. Verified build-only RAM dependencies are removed before
+timing. The retained source still matches the previously tested implementation;
+all 587 tests and strict lint passed for that source. Benchmark IDs, historical
+budgets, WAL locations and default disk guards remain unchanged. The next
+investigation needs to explain row disposal and allocation behavior or measure
+complete HTTP processing; this experiment does not qualify upstream parity.
