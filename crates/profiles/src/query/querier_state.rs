@@ -1,12 +1,14 @@
+use krabka_pprof::{ProfileSelection, SpanProfileShards};
 use krabka_units::convert::TimeExt as _;
 
 use super::{
     Arc, BTreeMap, DEFAULT_HEATMAP_TIME_BUCKETS_MAX, DEFAULT_HEATMAP_VALUE_BUCKETS, DefaultStore,
-    EndMs, EngineOpts, FlameEngine, FlameGraph, FrontendConfig, HeatmapSpanExemplarsBySeries,
-    InMemoryProfileStore, LabelMatcher, Limits, MatchOp, OverridesProvider, PROFILE_ID_LABEL,
-    ProfileError, ProfileStats, ProfileStore, QueryExecution, QueryRange, QueryTarget,
-    SampleSelector, Series, SeriesAgg, ServiceMetrics, SpanExemplarsBySeries, StartMs, TenantId,
-    TenantPolicy, Time, heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan,
+    EndMs, EngineOpts, FlameEngine, FlameGraph, FrontendConfig, HeatmapSlotsMillis,
+    HeatmapSpanExemplarsBySeries, InMemoryProfileStore, IndividualProfile, LabelMatcher, Limits,
+    MatchOp, OverridesProvider, PROFILE_ID_LABEL, ProfileError, ProfileStats, ProfileStore,
+    QueryExecution, QueryRange, QueryTarget, SampleSelector, Series, SeriesAgg,
+    SeriesExemplarQuery, ServiceMetrics, SpanExemplarsBySeries, StartMs, TenantId, TenantPolicy,
+    Time, heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan,
     individual_exemplars_from_scan, parse_label_selector, span_exemplars_from_scan,
     span_heatmap_points_from_scan, split_inclusive_range,
 };
@@ -413,13 +415,15 @@ impl<S: ProfileStore> QuerierState<S> {
 
     pub(crate) async fn select_series_span_exemplars(
         &self,
-        target: QueryTarget<'_>,
-        group_by: &[String],
-        step: Time,
-        range: QueryRange,
-        call_sites: &[String],
+        query: SeriesExemplarQuery<'_>,
     ) -> Result<SpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
+        let SeriesExemplarQuery {
+            target: (tenant, profile_type, label_selector),
+            group_by,
+            step,
+            range,
+            call_sites,
+        } = query;
         let (start_ms, end_ms) = range;
         self.validate_query_range(tenant, start_ms, end_ms)?;
         let scan_start = start_ms.saturating_sub(step.millis_i64());
@@ -462,13 +466,15 @@ impl<S: ProfileStore> QuerierState<S> {
 
     pub(crate) async fn select_series_individual_exemplars(
         &self,
-        target: QueryTarget<'_>,
-        group_by: &[String],
-        step: Time,
-        range: QueryRange,
-        call_sites: &[String],
+        query: SeriesExemplarQuery<'_>,
     ) -> Result<SpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
+        let SeriesExemplarQuery {
+            target: (tenant, profile_type, label_selector),
+            group_by,
+            step,
+            range,
+            call_sites,
+        } = query;
         let (start_ms, end_ms) = range;
         self.validate_query_range(tenant, start_ms, end_ms)?;
         let scan_start = start_ms.saturating_sub(step.millis_i64());
@@ -536,11 +542,14 @@ impl<S: ProfileStore> QuerierState<S> {
         &self,
         target: QueryTarget<'_>,
         group_by: &[String],
-        range: QueryRange,
-        step_ms: i64,
+        slots: HeatmapSlotsMillis,
     ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
+        let HeatmapSlotsMillis {
+            start: start_ms,
+            end: end_ms,
+            ..
+        } = slots;
         let (base_matchers, groups) = self
             .heatmap_exemplar_series(HeatmapExemplarQuery {
                 tenant,
@@ -558,14 +567,8 @@ impl<S: ProfileStore> QuerierState<S> {
                 .await?;
             let exemplar_labels = heatmap_exemplar_labels(&labels, group_by);
             let series_labels = labels_grouped_by(&labels, group_by);
-            let exemplars = heatmap_span_exemplars_from_scan(
-                &scan,
-                start_ms,
-                end_ms,
-                step_ms,
-                &exemplar_labels,
-            )
-            .await?;
+            let exemplars =
+                heatmap_span_exemplars_from_scan(&scan, slots, &exemplar_labels).await?;
             if !exemplars.is_empty() {
                 let slots = out.entry(series_labels).or_insert_with(BTreeMap::new);
                 for (timestamp, mut exemplars) in exemplars {
@@ -583,11 +586,14 @@ impl<S: ProfileStore> QuerierState<S> {
         &self,
         target: QueryTarget<'_>,
         group_by: &[String],
-        range: QueryRange,
-        step_ms: i64,
+        slots: HeatmapSlotsMillis,
     ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
+        let HeatmapSlotsMillis {
+            start: start_ms,
+            end: end_ms,
+            ..
+        } = slots;
         let (base_matchers, groups) = self
             .heatmap_exemplar_series(HeatmapExemplarQuery {
                 tenant,
@@ -610,11 +616,11 @@ impl<S: ProfileStore> QuerierState<S> {
                 .await?;
             let exemplars = heatmap_individual_exemplars_from_scan(
                 &scan,
-                start_ms,
-                end_ms,
-                step_ms,
-                &exemplar_labels,
-                &profile_id,
+                slots,
+                IndividualProfile {
+                    profile_id: &profile_id,
+                    labels: &exemplar_labels,
+                },
             )
             .await?;
             let slots = out.entry(series_labels).or_default();
@@ -683,14 +689,16 @@ impl<S: ProfileStore> QuerierState<S> {
             QueryExecution::Sharded(config) => {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
-                    .select_merge_span_profile_sharded(
-                        tenant.as_str(),
-                        profile_type,
-                        label_selector,
-                        span_ids,
-                        &shards,
+                    .select_merge_span_profile_sharded(SpanProfileShards {
+                        selection: ProfileSelection {
+                            tenant: tenant.as_str(),
+                            profile_type,
+                            label_selector,
+                        },
+                        span_selector: span_ids,
+                        ranges: &shards,
                         max_nodes,
-                    )
+                    })
                     .await
             }
         }
@@ -721,14 +729,16 @@ impl<S: ProfileStore> QuerierState<S> {
             QueryExecution::Sharded(config) => {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
-                    .select_merge_span_profile_tree_sharded(
-                        tenant.as_str(),
-                        profile_type,
-                        label_selector,
-                        span_ids,
-                        &shards,
+                    .select_merge_span_profile_tree_sharded(SpanProfileShards {
+                        selection: ProfileSelection {
+                            tenant: tenant.as_str(),
+                            profile_type,
+                            label_selector,
+                        },
+                        span_selector: span_ids,
+                        ranges: &shards,
                         max_nodes,
-                    )
+                    })
                     .await
             }
         }

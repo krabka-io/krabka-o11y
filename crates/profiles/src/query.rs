@@ -562,9 +562,22 @@ mod tests {
         store
     }
 
-    fn store_with_span_leaf_frames(frames: &[(&str, u64, i64)]) -> InMemoryProfileStore {
+    /// A sample of value `value` on the one-frame stack `frame`, recorded
+    /// under span `span_id`.
+    struct SpanLeafSample {
+        frame: &'static str,
+        span_id: u64,
+        value: i64,
+    }
+
+    fn store_with_span_leaf_frames(frames: &[SpanLeafSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        for (name, span_id, value) in frames {
+        for SpanLeafSample {
+            frame: name,
+            span_id,
+            value,
+        } in frames
+        {
             let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample_with_total_and_span(
                 ("tenant-a", PT),
@@ -578,11 +591,24 @@ mod tests {
         store
     }
 
-    fn store_with_associated_leaf_frames(
-        frames: &[(&str, u64, [u8; 16], i64)],
-    ) -> InMemoryProfileStore {
+    /// A sample of value `value` on the one-frame stack `frame`, recorded
+    /// under span `span_id` of trace `trace_id`.
+    struct AssociatedLeafSample {
+        frame: &'static str,
+        span_id: u64,
+        trace_id: [u8; 16],
+        value: i64,
+    }
+
+    fn store_with_associated_leaf_frames(frames: &[AssociatedLeafSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        for (name, span_id, trace_id, value) in frames {
+        for AssociatedLeafSample {
+            frame: name,
+            span_id,
+            trace_id,
+            value,
+        } in frames
+        {
             let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample_with_total_and_associations(
                 ("tenant-a", PT),
@@ -596,10 +622,20 @@ mod tests {
         store
     }
 
-    fn store_with_frame_samples(name: &str, samples: &[(i64, i64)]) -> InMemoryProfileStore {
+    /// A sample of value `value`, taken at `timestamp_ms` Unix milliseconds.
+    struct TimedSample {
+        timestamp_ms: i64,
+        value: i64,
+    }
+
+    fn store_with_frame_samples(name: &str, samples: &[TimedSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
         let stacktrace = intern_leaf_stacktrace(&mut store, name);
-        for (timestamp, value) in samples {
+        for TimedSample {
+            timestamp_ms: timestamp,
+            value,
+        } in samples
+        {
             store.push_sample(
                 ("tenant-a", PT),
                 vec![("service_name".to_string(), "api".to_string())],
@@ -611,10 +647,22 @@ mod tests {
         store
     }
 
-    fn store_with_services(samples: &[(&str, &str, i64)]) -> InMemoryProfileStore {
+    /// A sample of value `value` from `service_name` `service` in `env`.
+    struct ServiceSample {
+        service: &'static str,
+        env: &'static str,
+        value: i64,
+    }
+
+    fn store_with_services(samples: &[ServiceSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
         let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
-        for (service, env, value) in samples {
+        for ServiceSample {
+            service,
+            env,
+            value,
+        } in samples
+        {
             store.push_sample(
                 ("tenant-a", PT),
                 vec![
@@ -629,9 +677,15 @@ mod tests {
         store
     }
 
-    fn store_with_leaf_frames(frames: &[(&str, i64)]) -> InMemoryProfileStore {
+    /// A sample of value `value` on the one-frame stack `frame`.
+    struct LeafSample {
+        frame: &'static str,
+        value: i64,
+    }
+
+    fn store_with_leaf_frames(frames: &[LeafSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        for (name, value) in frames {
+        for LeafSample { frame: name, value } in frames {
             let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample(
                 ("tenant-a", PT),
@@ -662,11 +716,24 @@ mod tests {
         store
     }
 
+    /// A sample of value `value` on the one-frame stack `frame`, from the
+    /// profile `profile_id`.
+    struct ProfileLeafSample {
+        profile_id: &'static str,
+        frame: &'static str,
+        value: i64,
+    }
+
     fn store_with_profile_ids_and_leaf_frames(
-        frames: &[(&str, &str, i64)],
+        frames: &[ProfileLeafSample],
     ) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        for (profile_id, name, value) in frames {
+        for ProfileLeafSample {
+            profile_id,
+            frame: name,
+            value,
+        } in frames
+        {
             let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample(
                 ("tenant-a", PT),
@@ -824,8 +891,16 @@ overrides:
     #[tokio::test]
     async fn select_series_limit_keeps_the_largest_series() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_services(&[
-            ("small", "prod", 1),
-            ("large", "prod", 10),
+            ServiceSample {
+                service: "small",
+                env: "prod",
+                value: 1,
+            },
+            ServiceSample {
+                service: "large",
+                env: "prod",
+                value: 10,
+            },
         ]))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let response = post_querier(
@@ -869,9 +944,18 @@ overrides:
     async fn select_merge_stacktraces_clamps_requested_nodes_to_configured_max() {
         let state = QuerierState::new_with_limits(
             Arc::new(store_with_leaf_frames(&[
-                ("hot.path", 10),
-                ("warm.path", 8),
-                ("cold.path", 6),
+                LeafSample {
+                    frame: "hot.path",
+                    value: 10,
+                },
+                LeafSample {
+                    frame: "warm.path",
+                    value: 8,
+                },
+                LeafSample {
+                    frame: "cold.path",
+                    value: 6,
+                },
             ])),
             Limits {
                 max_flamegraph_nodes_default: 2048,
@@ -1529,8 +1613,16 @@ overrides:
     #[tokio::test]
     async fn render_group_by_adds_group_frames_to_flamebearer() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_services(&[
-            ("api", "prod", 5),
-            ("worker", "prod", 7),
+            ServiceSample {
+                service: "api",
+                env: "prod",
+                value: 5,
+            },
+            ServiceSample {
+                service: "worker",
+                env: "prod",
+                value: 7,
+            },
         ]))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let query = url::form_urlencoded::Serializer::new(String::new())
@@ -1615,7 +1707,16 @@ overrides:
     async fn render_diff_uses_side_specific_windows() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame_samples(
             "main.work",
-            &[(1_700_000_010_000, 5), (1_700_000_090_000, 7)],
+            &[
+                TimedSample {
+                    timestamp_ms: 1_700_000_010_000,
+                    value: 5,
+                },
+                TimedSample {
+                    timestamp_ms: 1_700_000_090_000,
+                    value: 7,
+                },
+            ],
         ))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let query = url::form_urlencoded::Serializer::new(String::new())
@@ -1724,8 +1825,18 @@ overrides:
     async fn current_query_selectors_pprof_and_async_fields_are_honored() {
         let state = Arc::new(QuerierState::new(Arc::new(
             store_with_associated_leaf_frames(&[
-                ("hot.path", 0x2a, [0xaa; 16], 5),
-                ("cold.path", 0x2b, [0xbb; 16], 7),
+                AssociatedLeafSample {
+                    frame: "hot.path",
+                    span_id: 0x2a,
+                    trace_id: [0xaa; 16],
+                    value: 5,
+                },
+                AssociatedLeafSample {
+                    frame: "cold.path",
+                    span_id: 0x2b,
+                    trace_id: [0xbb; 16],
+                    value: 7,
+                },
             ]),
         )));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
@@ -2046,8 +2157,14 @@ overrides:
     #[tokio::test]
     async fn select_merge_profile_stack_trace_selector_filters_call_sites() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("hot.path", 7),
-            ("cold.path", 10),
+            LeafSample {
+                frame: "hot.path",
+                value: 7,
+            },
+            LeafSample {
+                frame: "cold.path",
+                value: 10,
+            },
         ]))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let response = post_querier(
@@ -2073,16 +2190,46 @@ overrides:
     #[tokio::test]
     async fn select_merge_profile_max_nodes_truncates_to_other() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("leaf0", 1),
-            ("leaf1", 2),
-            ("leaf2", 3),
-            ("leaf3", 4),
-            ("leaf4", 5),
-            ("leaf5", 6),
-            ("leaf6", 7),
-            ("leaf7", 8),
-            ("leaf8", 9),
-            ("leaf9", 10),
+            LeafSample {
+                frame: "leaf0",
+                value: 1,
+            },
+            LeafSample {
+                frame: "leaf1",
+                value: 2,
+            },
+            LeafSample {
+                frame: "leaf2",
+                value: 3,
+            },
+            LeafSample {
+                frame: "leaf3",
+                value: 4,
+            },
+            LeafSample {
+                frame: "leaf4",
+                value: 5,
+            },
+            LeafSample {
+                frame: "leaf5",
+                value: 6,
+            },
+            LeafSample {
+                frame: "leaf6",
+                value: 7,
+            },
+            LeafSample {
+                frame: "leaf7",
+                value: 8,
+            },
+            LeafSample {
+                frame: "leaf8",
+                value: 9,
+            },
+            LeafSample {
+                frame: "leaf9",
+                value: 10,
+            },
         ]))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let response = post_querier(
@@ -2134,8 +2281,14 @@ overrides:
     #[tokio::test]
     async fn select_merge_stacktraces_stack_trace_selector_filters_call_sites() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("hot.path", 7),
-            ("cold.path", 10),
+            LeafSample {
+                frame: "hot.path",
+                value: 7,
+            },
+            LeafSample {
+                frame: "cold.path",
+                value: 10,
+            },
         ]))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let response = post_querier(
@@ -2163,8 +2316,14 @@ overrides:
     #[tokio::test]
     async fn diff_honors_embedded_stack_trace_selectors() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("hot.path", 7),
-            ("cold.path", 10),
+            LeafSample {
+                frame: "hot.path",
+                value: 7,
+            },
+            LeafSample {
+                frame: "cold.path",
+                value: 10,
+            },
         ]))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let response = post_querier(
@@ -2252,8 +2411,14 @@ overrides:
     #[tokio::test]
     async fn select_series_stack_trace_selector_filters_call_sites() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("hot.path", 7),
-            ("cold.path", 10),
+            LeafSample {
+                frame: "hot.path",
+                value: 7,
+            },
+            LeafSample {
+                frame: "cold.path",
+                value: 10,
+            },
         ]))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let response = post_querier(
@@ -2384,7 +2549,12 @@ overrides:
     #[tokio::test]
     async fn select_series_span_exemplar_returns_span_metadata() {
         let state = Arc::new(QuerierState::new(Arc::new(
-            store_with_associated_leaf_frames(&[("span.path", 0x2a, [0xab; 16], 7)]),
+            store_with_associated_leaf_frames(&[AssociatedLeafSample {
+                frame: "span.path",
+                span_id: 0x2a,
+                trace_id: [0xab; 16],
+                value: 7,
+            }]),
         )));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let response = post_querier(
@@ -2430,8 +2600,16 @@ overrides:
     #[tokio::test]
     async fn select_series_span_exemplar_honors_stack_trace_selector() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_span_leaf_frames(&[
-            ("hot.path", 0x2a, 5),
-            ("cold.path", 0x2b, 7),
+            SpanLeafSample {
+                frame: "hot.path",
+                span_id: 0x2a,
+                value: 5,
+            },
+            SpanLeafSample {
+                frame: "cold.path",
+                span_id: 0x2b,
+                value: 7,
+            },
         ]))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let response = post_querier(
@@ -2502,8 +2680,16 @@ overrides:
     async fn select_series_individual_exemplar_honors_stack_trace_selector() {
         let state = Arc::new(QuerierState::new(Arc::new(
             store_with_profile_ids_and_leaf_frames(&[
-                ("profile-a", "hot.path", 5),
-                ("profile-b", "cold.path", 7),
+                ProfileLeafSample {
+                    profile_id: "profile-a",
+                    frame: "hot.path",
+                    value: 5,
+                },
+                ProfileLeafSample {
+                    profile_id: "profile-b",
+                    frame: "cold.path",
+                    value: 7,
+                },
             ]),
         )));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
@@ -3428,12 +3614,14 @@ mod heatmap_from_points;
 mod heatmap_individual_exemplars_from_scan;
 mod heatmap_series;
 mod heatmap_slot_timestamp;
+mod heatmap_slots_millis;
 mod heatmap_span_exemplars_by_series;
 mod heatmap_span_exemplars_from_scan;
 mod heatmap_time_buckets;
 mod heatmap_y_mins;
 mod individual_exemplars_from_scan;
 mod individual_exemplars_from_totals;
+mod individual_profile;
 mod is_internal_label;
 mod label_matcher_value_escape;
 mod label_names_handler;
@@ -3461,6 +3649,7 @@ mod profile_id_label;
 mod profile_types_handler;
 mod profile_types_inner;
 mod pyroscope_query_architecture;
+mod querier_request_parts;
 mod querier_state;
 mod query_execution;
 mod query_param_i64;
@@ -3484,6 +3673,7 @@ mod select_merge_stacktraces_handler;
 mod select_merge_stacktraces_inner;
 mod select_series_handler;
 mod select_series_inner;
+mod series_exemplar_query;
 mod series_handler;
 mod series_inner;
 mod series_key;
@@ -3528,12 +3718,14 @@ use get_profile_stats_inner::get_profile_stats_inner;
 use heatmap_from_points::heatmap_from_points;
 use heatmap_individual_exemplars_from_scan::heatmap_individual_exemplars_from_scan;
 use heatmap_slot_timestamp::heatmap_slot_timestamp;
+use heatmap_slots_millis::HeatmapSlotsMillis;
 use heatmap_span_exemplars_by_series::HeatmapSpanExemplarsBySeries;
 use heatmap_span_exemplars_from_scan::heatmap_span_exemplars_from_scan;
 use heatmap_time_buckets::heatmap_time_buckets;
 use heatmap_y_mins::heatmap_y_mins;
 use individual_exemplars_from_scan::individual_exemplars_from_scan;
 use individual_exemplars_from_totals::individual_exemplars_from_totals;
+use individual_profile::IndividualProfile;
 use is_internal_label::is_internal_label;
 use label_matcher_value_escape::label_matcher_value_escape;
 use label_names_handler::label_names_handler;
@@ -3561,6 +3753,7 @@ use profile_id_label::PROFILE_ID_LABEL;
 use profile_types_handler::profile_types_handler;
 use profile_types_inner::profile_types_inner;
 pub use pyroscope_query_architecture::PyroscopeQueryArchitecture;
+use querier_request_parts::QuerierRequestParts;
 pub use querier_state::QuerierState;
 use query_execution::QueryExecution;
 use query_param_i64::query_param_i64;
@@ -3584,6 +3777,7 @@ use select_merge_stacktraces_handler::select_merge_stacktraces_handler;
 use select_merge_stacktraces_inner::select_merge_stacktraces_inner;
 use select_series_handler::select_series_handler;
 use select_series_inner::select_series_inner;
+use series_exemplar_query::SeriesExemplarQuery;
 use series_handler::series_handler;
 use series_inner::series_inner;
 use series_key::SeriesKey;

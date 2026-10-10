@@ -1,8 +1,8 @@
 use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
 
 use super::{
-    Arc, AuditService, CancellationToken, Cli, ProcessSecurity, ServiceMetrics, Target,
-    krabka_product, require_role_topics, role_shutdown_token, run_all, run_block_builder,
+    Arc, AuditService, CancellationToken, Cli, ProcessSecurity, ReadRoleInputs, ServiceMetrics,
+    Target, krabka_product, require_role_topics, role_shutdown_token, run_all, run_block_builder,
     run_compactor, run_distributor, run_querier, run_query_frontend, run_symbolizer,
 };
 
@@ -83,9 +83,25 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             Target::BlockBuilder => {
                 run_block_builder(cli, metrics, readiness, shutdown, security.wal).await?;
             }
-            Target::Querier => run_querier(cli, metrics, readiness, shutdown, security).await?,
+            Target::Querier => {
+                run_querier(ReadRoleInputs {
+                    cli,
+                    metrics,
+                    readiness,
+                    shutdown,
+                    security,
+                })
+                .await?;
+            }
             Target::QueryFrontend => {
-                run_query_frontend(cli, metrics, readiness, shutdown, security).await?;
+                run_query_frontend(ReadRoleInputs {
+                    cli,
+                    metrics,
+                    readiness,
+                    shutdown,
+                    security,
+                })
+                .await?;
             }
             Target::Compactor => run_compactor(cli, metrics, readiness, shutdown).await?,
             Target::Symbolizer => run_symbolizer(cli, metrics, shutdown).await?,

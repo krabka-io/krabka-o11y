@@ -1,7 +1,8 @@
 use super::{
-    AsArray, BTreeMap, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_STACKTRACE_ID,
-    PCOL_STACKTRACE_PARTITION, PCOL_VALUE, ProfileError, Time, UInt64Type, frames_match_call_sites,
-    individual_exemplars_from_totals, pb, step_bucket_ms, types_label_pairs,
+    AsArray, BTreeMap, COL_FINGERPRINT, COL_TIMESTAMP, IndividualProfile, Int64Type,
+    PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_VALUE, ProfileError, Time, UInt64Type,
+    frames_match_call_sites, individual_exemplars_from_totals, pb, step_bucket_ms,
+    types_label_pairs,
 };
 
 pub(crate) async fn individual_exemplars_from_scan(
@@ -12,7 +13,12 @@ pub(crate) async fn individual_exemplars_from_scan(
     call_sites: &[String],
 ) -> Result<BTreeMap<i64, Vec<pb::types::v1::Exemplar>>, ProfileError> {
     if call_sites.is_empty() {
-        return individual_exemplars_from_totals(scan, step, labels, profile_id).await;
+        return individual_exemplars_from_totals(
+            scan,
+            step,
+            IndividualProfile { profile_id, labels },
+        )
+        .await;
     }
     let sql = format!(
         "SELECT {timestamp}, {fingerprint}, {partition}, {stacktrace}, SUM({value}) AS v \

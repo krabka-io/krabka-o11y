@@ -1,16 +1,19 @@
 use super::{
     Arc, Array, AsArray, BTreeMap, BinaryArray, Frame, Int64Type, PprofProfile, ProfileError,
-    ProfileType, ResolvedLocation, SampleSelector, UInt64Type, resolved_to_pprof_with_max_nodes,
-    sample_selector_sql, stack_matches_call_sites,
+    ProfileType, ResolvedLocation, SampleSelector, ScanMerge, UInt64Type,
+    resolved_to_pprof_with_max_nodes, sample_selector_sql, stack_matches_call_sites,
 };
 
 pub(crate) async fn merge_scan_to_pprof(
-    scan: &crate::ProfileScan,
+    merge: ScanMerge<'_>,
     profile_type: &ProfileType,
     max_nodes: i64,
-    sample_selector: SampleSelector<'_>,
-    call_sites: &[String],
 ) -> Result<PprofProfile, ProfileError> {
+    let ScanMerge {
+        scan,
+        sample_selector,
+        call_sites,
+    } = merge;
     let sql = sample_selector_sql(scan, sample_selector);
     let batches = scan
         .ctx

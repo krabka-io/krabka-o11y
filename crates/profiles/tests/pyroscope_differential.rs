@@ -165,11 +165,10 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
     let store = WalTailProfileStore::new();
     let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
 
-    post_push_profile(&client, &pyroscope_base, None, &gzipped_pprof).await?;
+    post_push_profile(&client, PushTarget::oracle(&pyroscope_base), &gzipped_pprof).await?;
     post_push_profile(
         &client,
-        &krabka.distributor_base,
-        Some(TENANT),
+        PushTarget::krabka(&krabka.distributor_base),
         &gzipped_pprof,
     )
     .await?;
@@ -300,11 +299,10 @@ async fn real_pyroscope_series_and_stats_match_krabka_after_identical_ingest() -
     let store = WalTailProfileStore::new();
     let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
 
-    post_push_profile(&client, &pyroscope_base, None, &gzipped_pprof).await?;
+    post_push_profile(&client, PushTarget::oracle(&pyroscope_base), &gzipped_pprof).await?;
     post_push_profile(
         &client,
-        &krabka.distributor_base,
-        Some(TENANT),
+        PushTarget::krabka(&krabka.distributor_base),
         &gzipped_pprof,
     )
     .await?;
@@ -1098,6 +1096,29 @@ struct PushJson<'a> {
     what: &'a str,
 }
 
+/// Where a test push goes: the push API at `base`, as `tenant`.
+#[derive(Clone, Copy)]
+struct PushTarget<'a> {
+    base: &'a str,
+    /// Sent as `X-Scope-OrgID` when given.
+    tenant: Option<&'a str>,
+}
+
+impl<'a> PushTarget<'a> {
+    /// The upstream oracle at `base`, which takes no tenant.
+    fn oracle(base: &'a str) -> Self {
+        Self { base, tenant: None }
+    }
+
+    /// The Krabka distributor at `base`, as the test tenant.
+    fn krabka(base: &'a str) -> Self {
+        Self {
+            base,
+            tenant: Some(TENANT),
+        }
+    }
+}
+
 /// Posts `push` and fails unless it is accepted.
 async fn post_push_json(client: &reqwest::Client, push: PushJson<'_>) -> TestResult {
     let PushJson {
@@ -1124,10 +1145,10 @@ async fn post_push_json(client: &reqwest::Client, push: PushJson<'_>) -> TestRes
 
 async fn post_push_profile(
     client: &reqwest::Client,
-    base: &str,
-    tenant: Option<&str>,
+    target: PushTarget<'_>,
     gzipped_pprof: &[u8],
 ) -> TestResult {
+    let PushTarget { base, tenant } = target;
     let body = json!({
         "series": [{
             "labels": [
@@ -3044,16 +3065,34 @@ async fn post_cpu_profile(
     tenant: Option<&str>,
     gzipped_pprof: &[u8],
 ) -> TestResult {
-    post_cpu_profile_with_id(client, base, tenant, gzipped_pprof, "krabka-grafana-e2e").await
+    post_cpu_profile_with_id(
+        client,
+        PushTarget { base, tenant },
+        IdentifiedCpuProfile {
+            gzipped_pprof,
+            profile_id: "krabka-grafana-e2e",
+        },
+    )
+    .await
+}
+
+/// A gzipped CPU pprof profile, pushed under the sample `ID` `profile_id`.
+#[derive(Clone, Copy)]
+struct IdentifiedCpuProfile<'a> {
+    gzipped_pprof: &'a [u8],
+    profile_id: &'a str,
 }
 
 async fn post_cpu_profile_with_id(
     client: &reqwest::Client,
-    base: &str,
-    tenant: Option<&str>,
-    gzipped_pprof: &[u8],
-    profile_id: &str,
+    target: PushTarget<'_>,
+    profile: IdentifiedCpuProfile<'_>,
 ) -> TestResult {
+    let PushTarget { base, tenant } = target;
+    let IdentifiedCpuProfile {
+        gzipped_pprof,
+        profile_id,
+    } = profile;
     let body = json!({
         "series": [{
             "labels": [
@@ -3814,8 +3853,8 @@ async fn real_pyroscope_profile_types_match_krabka() -> TestResult {
     let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
 
     for case in &cases {
-        post_push_typed(&client, &pyroscope_base, None, case).await?;
-        post_push_typed(&client, &krabka.distributor_base, Some(TENANT), case).await?;
+        post_push_typed(&client, PushTarget::oracle(&pyroscope_base), case).await?;
+        post_push_typed(&client, PushTarget::krabka(&krabka.distributor_base), case).await?;
     }
     drain_sink_into_cold_store(&sink)?;
 
@@ -3867,10 +3906,10 @@ async fn fetch_debug_pprof(
 
 async fn post_push_typed(
     client: &reqwest::Client,
-    base: &str,
-    tenant: Option<&str>,
+    target: PushTarget<'_>,
     case: &ProfileTypeCase,
 ) -> TestResult {
+    let PushTarget { base, tenant } = target;
     let body = json!({
         "series": [{
             "labels": [
@@ -4204,10 +4243,11 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
         post_cpu_profile(&client, base, tenant, &cpu_profile).await?;
         post_cpu_profile_with_id(
             &client,
-            base,
-            tenant,
-            &cpu_right_profile,
-            "krabka-diff-right",
+            PushTarget { base, tenant },
+            IdentifiedCpuProfile {
+                gzipped_pprof: &cpu_right_profile,
+                profile_id: "krabka-diff-right",
+            },
         )
         .await?;
         post_otlp_export(
@@ -4868,10 +4908,12 @@ async fn compare_generated_populated_profiles(
     write_profile_rpc_evidence(evidence)?;
     let rejection_result = run_generated_profile_rejections(
         client,
-        oracle_base,
-        krabka_base,
-        store,
-        fixture_timestamp,
+        PopulatedBackends {
+            oracle_base,
+            krabka_base,
+            store,
+            fixture_timestamp,
+        },
         &output,
     )
     .await;
@@ -4881,12 +4923,15 @@ async fn compare_generated_populated_profiles(
 
 async fn run_generated_profile_rejections(
     client: &reqwest::Client,
-    oracle_base: &str,
-    krabka_base: &str,
-    store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
-    time_ms: i64,
+    backends: PopulatedBackends<'_>,
     output: &std::path::Path,
 ) -> TestResult {
+    let PopulatedBackends {
+        oracle_base,
+        krabka_base,
+        store,
+        fixture_timestamp: time_ms,
+    } = backends;
     let (frontend_base, shutdown) = start_sharded_frontend(store).await?;
     let frontend_base = &frontend_base;
     let result = generated_differential::run(
@@ -6190,10 +6235,11 @@ async fn profile_v2_fixtures(
     }
     post_cpu_profile_with_id(
         client,
-        oracle_base,
-        None,
-        &synthetic_cpu_pprof(time * 1_000_000)?,
-        "03030303-0303-0303-0303-030303030303",
+        PushTarget::oracle(oracle_base),
+        IdentifiedCpuProfile {
+            gzipped_pprof: &synthetic_cpu_pprof(time * 1_000_000)?,
+            profile_id: "03030303-0303-0303-0303-030303030303",
+        },
     )
     .await?;
     let identity = connect_json_until(client, oracle_base, None, "SelectSeries", json!({"profileTypeID":CPU_PROFILE_TYPE,"labelSelector":E2E_SELECTOR,"start":time-1000,"end":time+1000,"step":1.0,"exemplarType":"EXEMPLAR_TYPE_INDIVIDUAL"}),
@@ -6205,10 +6251,11 @@ async fn profile_v2_fixtures(
     assert_eq!(identity["series"][0]["points"][0]["value"], 140.0);
     post_cpu_profile_with_id(
         client,
-        &candidate.distributor_base,
-        Some(TENANT),
-        &synthetic_cpu_pprof(time * 1_000_000)?,
-        &profile_id,
+        PushTarget::krabka(&candidate.distributor_base),
+        IdentifiedCpuProfile {
+            gzipped_pprof: &synthetic_cpu_pprof(time * 1_000_000)?,
+            profile_id: &profile_id,
+        },
     )
     .await?;
     drain_sink_into_cold_store(sink)?;

@@ -8,8 +8,8 @@ use krabka_units::{convert::TimeExt as _, millis};
 use super::{
     Arc, BTreeMap, Duration, EngineOpts, FRONTEND_RESULT_CACHE_ENTRIES, FRONTEND_RESULT_CACHE_TTL,
     FlameGraph, FlameGraphDiff, Frame, Heatmap, LabelMatcher, LabeledHeatmap, MatchOp,
-    NonZeroUsize, ProfileError, ProfileStore, ProfileType, SampleSelector, Series, SeriesAgg, Time,
-    Tree, bin_heatmap, covering_range, diff_trees, fold_bucket, group_frame_name,
+    NonZeroUsize, ProfileError, ProfileStore, ProfileType, SampleSelector, ScanMerge, Series,
+    SeriesAgg, Time, Tree, bin_heatmap, covering_range, diff_trees, fold_bucket, group_frame_name,
     heatmap_points_from_totals, merge_scan_to_pprof, merge_scan_to_tree,
     series_buckets_from_stacktrace_selector, series_buckets_from_totals, validate_range,
     validated_step,
@@ -18,11 +18,11 @@ use crate::{ProfileScan, series_bucket_ms};
 
 /// The profiles an engine query selects: one tenant's profiles of one type
 /// whose labels match `label_selector`.
-#[derive(Clone, Copy)]
-struct ProfileSelection<'q> {
-    tenant: &'q str,
-    profile_type: &'q str,
-    label_selector: &'q str,
+#[derive(Clone, Copy, Debug)]
+pub struct ProfileSelection<'q> {
+    pub tenant: &'q str,
+    pub profile_type: &'q str,
+    pub label_selector: &'q str,
 }
 
 /// A time range in Unix milliseconds.
@@ -33,12 +33,26 @@ struct MillisRange {
 }
 
 /// A span-profile merge over several time-range shards.
-struct SpanProfileShards<'q> {
-    selection: ProfileSelection<'q>,
-    span_selector: &'q [u64],
-    ranges: &'q [(i64, i64)],
+#[derive(Clone, Copy, Debug)]
+pub struct SpanProfileShards<'q> {
+    pub selection: ProfileSelection<'q>,
+    /// Keeps only samples of these span ids; must not be empty.
+    pub span_selector: &'q [u64],
+    /// Inclusive `(start_ms, end_ms)` shards, in Unix milliseconds.
+    pub ranges: &'q [(i64, i64)],
     /// Non-positive values resolve to the engine default.
-    max_nodes: i64,
+    pub max_nodes: i64,
+}
+
+/// A merge of the samples that `sample_selector` and `call_sites` keep, from
+/// the profiles `selection` picks over `range`.
+#[derive(Clone, Copy)]
+struct ProfileMerge<'q> {
+    selection: ProfileSelection<'q>,
+    range: MillisRange,
+    sample_selector: SampleSelector<'q>,
+    /// Keeps only stacks that match these call sites; empty keeps every stack.
+    call_sites: &'q [String],
 }
 
 /// Profiles flamegraph engine.
@@ -177,7 +191,16 @@ impl<S: ProfileStore> FlameEngine<S> {
                 file: String::new(),
                 line: 0,
             }];
-            merge_scan_to_tree(&scan, &mut tree, &prefix, SampleSelector::None, &[]).await?;
+            merge_scan_to_tree(
+                ScanMerge {
+                    scan: &scan,
+                    sample_selector: SampleSelector::None,
+                    call_sites: &[],
+                },
+                &mut tree,
+                &prefix,
+            )
+            .await?;
         }
         let max_nodes = if max_nodes > 0 {
             max_nodes
@@ -220,14 +243,19 @@ impl<S: ProfileStore> FlameEngine<S> {
     ) -> Result<FlameGraph, ProfileError> {
         let (tenant, profile_type, label_selector) = query;
         let tree = self
-            .merge_to_tree_with_sample_selector(
-                tenant,
-                profile_type,
-                label_selector,
-                range_ms,
+            .merge_to_tree_with_sample_selector(ProfileMerge {
+                selection: ProfileSelection {
+                    tenant,
+                    profile_type,
+                    label_selector,
+                },
+                range: MillisRange {
+                    start_ms: range_ms.0,
+                    end_ms: range_ms.1,
+                },
                 sample_selector,
                 call_sites,
-            )
+            })
             .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
@@ -270,14 +298,19 @@ impl<S: ProfileStore> FlameEngine<S> {
     ) -> Result<Vec<u8>, ProfileError> {
         let (tenant, profile_type, label_selector) = query;
         let tree = self
-            .merge_to_tree_with_sample_selector(
-                tenant,
-                profile_type,
-                label_selector,
-                range_ms,
+            .merge_to_tree_with_sample_selector(ProfileMerge {
+                selection: ProfileSelection {
+                    tenant,
+                    profile_type,
+                    label_selector,
+                },
+                range: MillisRange {
+                    start_ms: range_ms.0,
+                    end_ms: range_ms.1,
+                },
                 sample_selector,
                 call_sites,
-            )
+            })
             .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
@@ -464,42 +497,40 @@ impl<S: ProfileStore> FlameEngine<S> {
         span_ids: Option<&[u64]>,
         call_sites: &[String],
     ) -> Result<Tree, ProfileError> {
-        self.merge_to_tree_with_sample_selector(
-            tenant,
-            profile_type,
-            label_selector,
-            range_ms,
-            span_ids.map_or(SampleSelector::None, SampleSelector::Span),
+        self.merge_to_tree_with_sample_selector(ProfileMerge {
+            selection: ProfileSelection {
+                tenant,
+                profile_type,
+                label_selector,
+            },
+            range: MillisRange {
+                start_ms: range_ms.0,
+                end_ms: range_ms.1,
+            },
+            sample_selector: span_ids.map_or(SampleSelector::None, SampleSelector::Span),
             call_sites,
-        )
+        })
         .await
     }
 
-    pub(crate) async fn merge_to_tree_with_sample_selector(
+    async fn merge_to_tree_with_sample_selector(
         &self,
-        tenant: &str,
-        profile_type: &str,
-        label_selector: &str,
-        range_ms: (i64, i64),
-        sample_selector: SampleSelector<'_>,
-        call_sites: &[String],
+        merge: ProfileMerge<'_>,
     ) -> Result<Tree, ProfileError> {
         let scan = self
-            .select_for_sample_selector(
-                ProfileSelection {
-                    tenant,
-                    profile_type,
-                    label_selector,
-                },
-                MillisRange {
-                    start_ms: range_ms.0,
-                    end_ms: range_ms.1,
-                },
-                sample_selector,
-            )
+            .select_for_sample_selector(merge.selection, merge.range, merge.sample_selector)
             .await?;
         let mut tree = Tree::new();
-        merge_scan_to_tree(&scan, &mut tree, &[], sample_selector, call_sites).await?;
+        merge_scan_to_tree(
+            ScanMerge {
+                scan: &scan,
+                sample_selector: merge.sample_selector,
+                call_sites: merge.call_sites,
+            },
+            &mut tree,
+            &[],
+        )
+        .await?;
         Ok(tree)
     }
 
@@ -536,30 +567,27 @@ impl<S: ProfileStore> FlameEngine<S> {
             .await
     }
 
+    /// Merges into a pprof profile of `profile_type`, which
+    /// `merge.selection` names in its string form.
     async fn merge_to_pprof(
         &self,
-        query: (&str, &ProfileType, &str),
-        range: (i64, i64),
+        merge: ProfileMerge<'_>,
+        profile_type: &ProfileType,
         max_nodes: i64,
-        sample_selector: SampleSelector<'_>,
-        call_sites: &[String],
     ) -> Result<crate::PprofProfile, ProfileError> {
-        let (tenant, profile_type, label_selector) = query;
         let scan = self
-            .select_for_sample_selector(
-                ProfileSelection {
-                    tenant,
-                    profile_type: &profile_type.to_string(),
-                    label_selector,
-                },
-                MillisRange {
-                    start_ms: range.0,
-                    end_ms: range.1,
-                },
-                sample_selector,
-            )
+            .select_for_sample_selector(merge.selection, merge.range, merge.sample_selector)
             .await?;
-        merge_scan_to_pprof(&scan, profile_type, max_nodes, sample_selector, call_sites).await
+        merge_scan_to_pprof(
+            ScanMerge {
+                scan: &scan,
+                sample_selector: merge.sample_selector,
+                call_sites: merge.call_sites,
+            },
+            profile_type,
+            max_nodes,
+        )
+        .await
     }
 
     /// # Errors
@@ -775,24 +803,34 @@ impl<S: ProfileStore> FlameEngine<S> {
         let (left, left_call_sites, left_selector) = left;
         let (right, right_call_sites, right_selector) = right;
         let left_tree = self
-            .merge_to_tree_with_sample_selector(
-                tenant,
-                left.0,
-                left.1,
-                (left.2, left.3),
-                left_selector,
-                left_call_sites,
-            )
+            .merge_to_tree_with_sample_selector(ProfileMerge {
+                selection: ProfileSelection {
+                    tenant,
+                    profile_type: left.0,
+                    label_selector: left.1,
+                },
+                range: MillisRange {
+                    start_ms: left.2,
+                    end_ms: left.3,
+                },
+                sample_selector: left_selector,
+                call_sites: left_call_sites,
+            })
             .await?;
         let right_tree = self
-            .merge_to_tree_with_sample_selector(
-                tenant,
-                right.0,
-                right.1,
-                (right.2, right.3),
-                right_selector,
-                right_call_sites,
-            )
+            .merge_to_tree_with_sample_selector(ProfileMerge {
+                selection: ProfileSelection {
+                    tenant,
+                    profile_type: right.0,
+                    label_selector: right.1,
+                },
+                range: MillisRange {
+                    start_ms: right.2,
+                    end_ms: right.3,
+                },
+                sample_selector: right_selector,
+                call_sites: right_call_sites,
+            })
             .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
@@ -837,11 +875,18 @@ impl<S: ProfileStore> FlameEngine<S> {
         let profile_type = ProfileType::parse(profile_type)?;
         let profile = self
             .merge_to_pprof(
-                (tenant, &profile_type, label_selector),
-                (start_ms, end_ms),
+                ProfileMerge {
+                    selection: ProfileSelection {
+                        tenant,
+                        profile_type: &profile_type.to_string(),
+                        label_selector,
+                    },
+                    range: MillisRange { start_ms, end_ms },
+                    sample_selector: SampleSelector::None,
+                    call_sites,
+                },
+                &profile_type,
                 i64::MAX,
-                SampleSelector::None,
-                call_sites,
             )
             .await?;
         Ok(profile.encode())
@@ -886,11 +931,18 @@ impl<S: ProfileStore> FlameEngine<S> {
         };
         let profile = self
             .merge_to_pprof(
-                (tenant, &profile_type, label_selector),
-                (start_ms, end_ms),
+                ProfileMerge {
+                    selection: ProfileSelection {
+                        tenant,
+                        profile_type: &profile_type.to_string(),
+                        label_selector,
+                    },
+                    range: MillisRange { start_ms, end_ms },
+                    sample_selector,
+                    call_sites,
+                },
+                &profile_type,
                 max_nodes,
-                sample_selector,
-                call_sites,
             )
             .await?;
         Ok(profile.encode())
@@ -998,25 +1050,9 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_span_profile_sharded(
         &self,
-        tenant: &str,
-        profile_type: &str,
-        label_selector: &str,
-        span_selector: &[u64],
-        ranges: &[(i64, i64)],
-        max_nodes: i64,
+        shards: SpanProfileShards<'_>,
     ) -> Result<FlameGraph, ProfileError> {
-        let (merged, max_nodes) = self
-            .merge_span_profile_shards(SpanProfileShards {
-                selection: ProfileSelection {
-                    tenant,
-                    profile_type,
-                    label_selector,
-                },
-                span_selector,
-                ranges,
-                max_nodes,
-            })
-            .await?;
+        let (merged, max_nodes) = self.merge_span_profile_shards(shards).await?;
         Ok(merged.to_flamegraph(max_nodes))
     }
 
@@ -1024,25 +1060,9 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_span_profile_tree_sharded(
         &self,
-        tenant: &str,
-        profile_type: &str,
-        label_selector: &str,
-        span_selector: &[u64],
-        ranges: &[(i64, i64)],
-        max_nodes: i64,
+        shards: SpanProfileShards<'_>,
     ) -> Result<Vec<u8>, ProfileError> {
-        let (merged, max_nodes) = self
-            .merge_span_profile_shards(SpanProfileShards {
-                selection: ProfileSelection {
-                    tenant,
-                    profile_type,
-                    label_selector,
-                },
-                span_selector,
-                ranges,
-                max_nodes,
-            })
-            .await?;
+        let (merged, max_nodes) = self.merge_span_profile_shards(shards).await?;
         Ok(merged.to_pyroscope_tree_bytes(max_nodes))
     }
 
@@ -1196,14 +1216,19 @@ impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
 
     async fn execute(&self, range: &Self::Query) -> Result<Self::Output, Self::Error> {
         self.engine
-            .merge_to_tree_with_sample_selector(
-                self.tenant,
-                self.profile_type,
-                self.label_selector,
-                *range,
-                self.sample_selector,
-                self.call_sites,
-            )
+            .merge_to_tree_with_sample_selector(ProfileMerge {
+                selection: ProfileSelection {
+                    tenant: self.tenant,
+                    profile_type: self.profile_type,
+                    label_selector: self.label_selector,
+                },
+                range: MillisRange {
+                    start_ms: range.0,
+                    end_ms: range.1,
+                },
+                sample_selector: self.sample_selector,
+                call_sites: self.call_sites,
+            })
             .await
     }
 

@@ -1,14 +1,14 @@
 use super::{
-    BTreeMap, BucketExemplars, ExemplarRow, ExemplarSource, ProfileError, Time, bucket_exemplars,
-    pb, step_bucket_ms, types_label_pairs,
+    BTreeMap, BucketExemplars, ExemplarRow, ExemplarSource, IndividualProfile, ProfileError, Time,
+    bucket_exemplars, pb, step_bucket_ms, types_label_pairs,
 };
 
 pub(crate) async fn individual_exemplars_from_totals(
     scan: &krabka_pprof::ProfileScan,
     step: Time,
-    labels: &[(String, String)],
-    profile_id: &str,
+    profile: IndividualProfile<'_>,
 ) -> Result<BTreeMap<i64, Vec<pb::types::v1::Exemplar>>, ProfileError> {
+    let IndividualProfile { profile_id, labels } = profile;
     let label_pairs = types_label_pairs(labels.to_vec());
     bucket_exemplars(BucketExemplars {
         scan,

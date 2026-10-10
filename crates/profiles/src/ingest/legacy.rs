@@ -371,17 +371,22 @@ mod tests {
         );
     }
 
-    /// Wraps `parts`, each a part name and its octet-stream content, as a
-    /// multipart body with a fixed boundary.
-    fn multipart_body(parts: &[(&str, &[u8])]) -> bytes::Bytes {
+    /// One named octet-stream part of a multipart form.
+    struct NamedPart<'a> {
+        name: &'a str,
+        content: &'a [u8],
+    }
+
+    /// Wraps `parts` as a multipart body with a fixed boundary.
+    fn multipart_body(parts: &[NamedPart<'_>]) -> bytes::Bytes {
         let dispositions = parts
             .iter()
-            .map(|(name, _)| format!("name=\"{name}\""))
+            .map(|part| format!("name=\"{}\"", part.name))
             .collect::<Vec<_>>();
         let parts = parts
             .iter()
             .zip(&dispositions)
-            .map(|((_, content), disposition)| FormPart {
+            .map(|(&NamedPart { content, .. }, disposition)| FormPart {
                 disposition,
                 content_type: "application/octet-stream",
                 content,
@@ -501,7 +506,10 @@ mod tests {
             let result = futures::executor::block_on(super::decode_ingest_multipart_with_limits(
                 &query,
                 "multipart/form-data; boundary=test-boundary",
-                multipart_body(&[(part, payload)]),
+                multipart_body(&[NamedPart {
+                    name: part,
+                    content: payload,
+                }]),
                 mebibytes(1),
                 LegacyDecodeLimits::default(),
             ));
@@ -522,7 +530,10 @@ mod tests {
             futures::executor::block_on(super::decode_ingest_multipart_with_limits(
                 &query,
                 "multipart/form-data; boundary=test-boundary",
-                multipart_body(&[("profile", folded)]),
+                multipart_body(&[NamedPart {
+                    name: "profile",
+                    content: folded,
+                }]),
                 krabka_units::bytes(limit),
                 LegacyDecodeLimits::default(),
             ))
@@ -575,7 +586,16 @@ mod tests {
             futures::executor::block_on(super::decode_ingest_multipart_with_limits(
                 &query,
                 "multipart/form-data; boundary=test-boundary",
-                multipart_body(&[("labels", labels), (profile_part, folded)]),
+                multipart_body(&[
+                    NamedPart {
+                        name: "labels",
+                        content: labels,
+                    },
+                    NamedPart {
+                        name: profile_part,
+                        content: folded,
+                    },
+                ]),
                 mebibytes(1),
                 LegacyDecodeLimits::default(),
             ))

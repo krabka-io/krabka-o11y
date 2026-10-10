@@ -193,7 +193,6 @@ use parse_configured_logfmt_fields::parse_configured_logfmt_fields;
 use parse_json_fields::parse_json_fields;
 use parse_logfmt_fields::parse_logfmt_fields;
 use parse_pattern_parts::parse_pattern_parts;
-use parse_selected_json_fields::parse_selected_json_fields;
 use parse_selected_logfmt_fields::parse_selected_logfmt_fields;
 pub use parser_stage::ParserStage;
 use pattern_parse_error::pattern_parse_error;

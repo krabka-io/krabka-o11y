@@ -133,7 +133,16 @@ fn a_push_at_the_ingest_door_is_answered_at_the_query_door() {
         // wrote to -- which is the point.
         push(
             &listen,
-            &[(ARCHIVED_SERVICE, archived_ms), (RECENT_SERVICE, now_ms)],
+            &[
+                ServiceProfile {
+                    service: ARCHIVED_SERVICE,
+                    at_ms: archived_ms,
+                },
+                ServiceProfile {
+                    service: RECENT_SERVICE,
+                    at_ms: now_ms,
+                },
+            ],
         )
         .await;
 
@@ -191,7 +200,14 @@ fn a_sigterm_stops_every_role_and_the_process_exits_cleanly() {
         wait_until_ready(&listen, Duration::from_secs(90)).await;
         // Something in the WAL, so the block builder has a partition
         // assignment and an offset to commit rather than nothing to drain.
-        push(&listen, &[(RECENT_SERVICE, epoch_millis())]).await;
+        push(
+            &listen,
+            &[ServiceProfile {
+                service: RECENT_SERVICE,
+                at_ms: epoch_millis(),
+            }],
+        )
+        .await;
     });
 
     // Through `sh` rather than a `kill` binary: the shell builtin is always
@@ -365,9 +381,16 @@ async fn wait_until_ready(listen: &str, within: Duration) {
     panic!("`--target all` was not ready within {within:?}: {last}");
 }
 
-/// Pushes one profile per `(service, timestamp)` pair, through the
-/// distributor's Connect door, in the order given.
-async fn push(listen: &str, series: &[(&str, i64)]) {
+/// One synthetic CPU profile of `service`, taken at `at_ms` Unix
+/// milliseconds.
+struct ServiceProfile {
+    service: &'static str,
+    at_ms: i64,
+}
+
+/// Pushes one series per profile, through the distributor's Connect door, in
+/// the order given.
+async fn push(listen: &str, series: &[ServiceProfile]) {
     let response = reqwest::Client::new()
         .post(format!("http://{listen}/push.v1.PusherService/Push"))
         .header("content-type", "application/json")
@@ -432,10 +455,10 @@ async fn render_until_answered(
     panic!("no profile for {service} came back within {within:?}; last answer was {last}");
 }
 
-fn push_body(series: &[(&str, i64)]) -> Value {
+fn push_body(series: &[ServiceProfile]) -> Value {
     let series: Vec<Value> = series
         .iter()
-        .map(|(service, at_ms)| {
+        .map(|&ServiceProfile { service, at_ms }| {
             let profile = SyntheticCpuProfile {
                 time_nanos: at_ms * 1_000_000,
                 hot_value: LEAF_VALUE,

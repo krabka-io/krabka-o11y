@@ -1,8 +1,8 @@
 use super::{
     Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, EndMs, Extension, HeaderMap,
-    Principal, ProfileStore, QuerierState, StartMs, TimeExt, authorize_tenant, connect_error,
-    heatmap_from_points, heatmap_time_buckets, limit, pb, step_from_secs, tenant_connect_error,
-    tenant_denied_connect_error, tenant_from_headers,
+    HeatmapSlotsMillis, Principal, ProfileStore, QuerierState, StartMs, TimeExt, authorize_tenant,
+    connect_error, heatmap_from_points, heatmap_time_buckets, limit, pb, step_from_secs,
+    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
 };
 
 pub(crate) async fn select_heatmap_inner<S>(
@@ -41,8 +41,11 @@ where
             .select_heatmap_span_exemplars(
                 (&tenant, &req.profile_type_id, &req.label_selector),
                 &req.group_by,
-                (scan_start, req.end),
-                step_ms,
+                HeatmapSlotsMillis {
+                    start: scan_start,
+                    end: req.end,
+                    step: step_ms,
+                },
             )
             .await
             .map_err(connect_error)?,
@@ -50,8 +53,11 @@ where
             .select_heatmap_individual_exemplars(
                 (&tenant, &req.profile_type_id, &req.label_selector),
                 &req.group_by,
-                (scan_start, req.end),
-                step_ms,
+                HeatmapSlotsMillis {
+                    start: scan_start,
+                    end: req.end,
+                    step: step_ms,
+                },
             )
             .await
             .map_err(connect_error)?,

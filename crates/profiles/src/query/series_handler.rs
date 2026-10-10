@@ -1,6 +1,6 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, pb, series_inner, timed_query,
+    ProfileStore, QuerierRequestParts, QuerierState, pb, series_inner, timed_query,
 };
 
 pub(crate) async fn series_handler<S>(
@@ -16,7 +16,14 @@ where
     timed_query(
         &metrics,
         "series",
-        series_inner(state, principal, headers, req),
+        series_inner(
+            QuerierRequestParts {
+                state: state.0,
+                principal: principal.0,
+                headers,
+            },
+            req,
+        ),
     )
     .await
 }

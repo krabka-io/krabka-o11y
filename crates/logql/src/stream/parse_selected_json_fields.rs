@@ -9,79 +9,84 @@ use serde_json::value::RawValue;
 use super::{JsonParserConfig, Labels, insert_raw_parsed_field, selected_json_value_to_string};
 use crate::extract::JsonPathPart;
 
-pub(crate) fn parse_selected_json_fields(
-    line: &str,
-    fields: &mut Labels,
-    config: &JsonParserConfig,
-    has_existing: impl Fn(&str) -> bool,
-) {
-    if line.is_empty() {
-        return;
-    }
-    if !matches!(line.as_bytes()[0], b'"' | b'{' | b'[') {
-        insert_raw_parsed_field(fields, "__error__", "JSONParserErr".into());
-        return;
-    }
-    // Borrow complete values without normalizing number lexemes, whitespace,
-    // duplicate object keys, or the text following a complete root value.
-    let mut parser = serde_json::Deserializer::from_str(line);
-    if let Ok(value) = <&RawValue>::deserialize(&mut parser) {
-        let selected = config
+impl JsonParserConfig {
+    /// Parses the JSON paths this config selects out of `line` into `fields`.
+    /// A requested destination that `has_existing` reports present is not
+    /// filled with an empty value when its path is absent.
+    pub(crate) fn parse_selected_fields(
+        &self,
+        line: &str,
+        fields: &mut Labels,
+        has_existing: impl Fn(&str) -> bool,
+    ) {
+        if line.is_empty() {
+            return;
+        }
+        if !matches!(line.as_bytes()[0], b'"' | b'{' | b'[') {
+            insert_raw_parsed_field(fields, "__error__", "JSONParserErr".into());
+            return;
+        }
+        // Borrow complete values without normalizing number lexemes, whitespace,
+        // duplicate object keys, or the text following a complete root value.
+        let mut parser = serde_json::Deserializer::from_str(line);
+        if let Ok(value) = <&RawValue>::deserialize(&mut parser) {
+            let selected = self
+                .extractions()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, extraction)| {
+                    let matched = extraction.evaluate(value)?;
+                    matched.value.map(|matched_json| SelectedField {
+                        position: matched.position,
+                        extraction: index,
+                        extracted_text: selected_json_value_to_string(matched_json),
+                    })
+                })
+                .collect();
+            SelectedFields(selected).insert_into(fields, self, &has_existing);
+            return;
+        }
+
+        // EachKey stops once its requested paths match: a malformed unrequested
+        // tail must not discard earlier selected values. This visitor reads only
+        // the requested branches, retaining successfully decoded values on error.
+        let mut selection = Selection {
+            config: self,
+            values: vec![None; self.extractions().len()],
+            claimed: vec![false; self.extractions().len()],
+            error_details: None,
+        };
+        let targets = self
             .extractions()
             .iter()
             .enumerate()
-            .filter_map(|(index, extraction)| {
-                let matched = extraction.evaluate(value)?;
-                matched.value.map(|matched_json| SelectedField {
-                    position: matched.position,
+            .map(|(index, extraction)| (index, extraction.path.parts.as_slice()))
+            .collect();
+        let mut parser = serde_json::Deserializer::from_str(line);
+        let _ = SelectedValue {
+            selection: &mut selection,
+            targets,
+            array_element: false,
+        }
+        .deserialize(&mut parser);
+        if let Some(details) = selection.error_details {
+            insert_raw_parsed_field(fields, "__error__", "JSONParserErr".into());
+            insert_raw_parsed_field(fields, "__error_details__", details);
+        }
+        let selected = selection
+            .values
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, selected_text)| {
+                selected_text.map(|(position, extracted_text)| SelectedField {
+                    position,
                     extraction: index,
-                    extracted_text: selected_json_value_to_string(matched_json),
+                    extracted_text,
                 })
             })
             .collect();
-        SelectedFields(selected).insert_into(fields, config, &has_existing);
-        return;
+        SelectedFields(selected).insert_into(fields, self, &has_existing);
     }
-
-    // EachKey stops once its requested paths match: a malformed unrequested
-    // tail must not discard earlier selected values. This visitor reads only
-    // the requested branches, retaining successfully decoded values on error.
-    let mut selection = Selection {
-        config,
-        values: vec![None; config.extractions().len()],
-        claimed: vec![false; config.extractions().len()],
-        error_details: None,
-    };
-    let targets = config
-        .extractions()
-        .iter()
-        .enumerate()
-        .map(|(index, extraction)| (index, extraction.path.parts.as_slice()))
-        .collect();
-    let mut parser = serde_json::Deserializer::from_str(line);
-    let _ = SelectedValue {
-        selection: &mut selection,
-        targets,
-        array_element: false,
-    }
-    .deserialize(&mut parser);
-    if let Some(details) = selection.error_details {
-        insert_raw_parsed_field(fields, "__error__", "JSONParserErr".into());
-        insert_raw_parsed_field(fields, "__error_details__", details);
-    }
-    let selected = selection
-        .values
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, selected_text)| {
-            selected_text.map(|(position, extracted_text)| SelectedField {
-                position,
-                extraction: index,
-                extracted_text,
-            })
-        })
-        .collect();
-    SelectedFields(selected).insert_into(fields, config, &has_existing);
 }
 
 /// One extracted value, at `position` in the document.

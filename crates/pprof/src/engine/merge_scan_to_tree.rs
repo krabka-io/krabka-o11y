@@ -1,12 +1,17 @@
-use super::{Frame, ProfileError, SampleSelector, Tree, merge_sql_to_tree, sample_selector_sql};
+use super::{
+    Frame, ProfileError, SampleSelector, ScanMerge, Tree, merge_sql_to_tree, sample_selector_sql,
+};
 
 pub(crate) async fn merge_scan_to_tree(
-    scan: &crate::ProfileScan,
+    merge: ScanMerge<'_>,
     tree: &mut Tree,
     prefix_frames: &[Frame],
-    sample_selector: SampleSelector<'_>,
-    call_sites: &[String],
 ) -> Result<(), ProfileError> {
+    let ScanMerge {
+        scan,
+        sample_selector,
+        call_sites,
+    } = merge;
     let sql = sample_selector_sql(scan, sample_selector);
     merge_sql_to_tree(
         scan,

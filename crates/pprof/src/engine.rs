@@ -28,6 +28,15 @@ pub enum SampleSelector<'a> {
     Trace(&'a [Vec<u8>]),
 }
 
+/// The samples of one profile scan that a merge keeps.
+#[derive(Clone, Copy)]
+pub(crate) struct ScanMerge<'a> {
+    pub(crate) scan: &'a crate::ProfileScan,
+    pub(crate) sample_selector: SampleSelector<'a>,
+    /// Keeps only stacks that match these call sites; empty keeps every stack.
+    pub(crate) call_sites: &'a [String],
+}
+
 const FRONTEND_RESULT_CACHE_ENTRIES: usize = 256;
 const FRONTEND_RESULT_CACHE_TTL: Duration = Duration::from_secs(30);
 
@@ -455,14 +464,16 @@ mod tests {
             .await
             .unwrap();
         let sharded = engine
-            .select_merge_span_profile_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 10_000), (10_001, 60_000)],
-                0,
-            )
+            .select_merge_span_profile_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 10_000), (10_001, 60_000)],
+                max_nodes: 0,
+            })
             .await
             .unwrap();
 
@@ -733,25 +744,29 @@ mod tests {
             .await
             .unwrap();
         let span_sharded_default = engine
-            .select_merge_span_profile_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 0), (30_000, 30_000)],
-                0,
-            )
+            .select_merge_span_profile_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 0), (30_000, 30_000)],
+                max_nodes: 0,
+            })
             .await
             .unwrap();
         let span_sharded_limited = engine
-            .select_merge_span_profile_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 0), (30_000, 30_000)],
-                16,
-            )
+            .select_merge_span_profile_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 0), (30_000, 30_000)],
+                max_nodes: 16,
+            })
             .await
             .unwrap();
         check!(has_name(&span_default, "other"));
@@ -858,25 +873,29 @@ mod tests {
         check!(!bytes_contain(&span_tree_limited, "other"));
 
         let span_tree_sharded_default = engine
-            .select_merge_span_profile_tree_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 0), (30_000, 30_000)],
-                0,
-            )
+            .select_merge_span_profile_tree_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 0), (30_000, 30_000)],
+                max_nodes: 0,
+            })
             .await
             .unwrap();
         let span_tree_sharded = engine
-            .select_merge_span_profile_tree_sharded(
-                "tenant-a",
-                PT,
-                "{}",
-                &[111],
-                &[(0, 0), (30_000, 30_000)],
-                16,
-            )
+            .select_merge_span_profile_tree_sharded(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                span_selector: &[111],
+                ranges: &[(0, 0), (30_000, 30_000)],
+                max_nodes: 16,
+            })
             .await
             .unwrap();
         check!(bytes_contain(&span_tree_sharded_default, "other"));
@@ -1320,7 +1339,7 @@ mod validate_range;
 
 use covering_range::covering_range;
 pub use engine_opts::EngineOpts;
-pub use flame_engine::FlameEngine;
+pub use flame_engine::{FlameEngine, ProfileSelection, SpanProfileShards};
 use group_frame_name::group_frame_name;
 use heatmap_points_from_totals::heatmap_points_from_totals;
 use merge_scan_to_pprof::merge_scan_to_pprof;

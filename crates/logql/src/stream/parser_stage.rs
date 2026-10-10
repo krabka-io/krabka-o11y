@@ -1,8 +1,7 @@
 use super::{
     JsonParserConfig, Labels, LogfmtParserConfig, PatternParser, RegexpParser,
     parse_configured_logfmt_fields, parse_json_fields, parse_logfmt_fields,
-    parse_selected_json_fields, parse_selected_logfmt_fields, unpack_json_line,
-    variant_metadata::PipelineLabels,
+    parse_selected_logfmt_fields, unpack_json_line, variant_metadata::PipelineLabels,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,7 +43,7 @@ impl ParserStage {
         match self {
             Self::Json => parse_json_fields(line, fields),
             Self::JsonSelected(config) => {
-                parse_selected_json_fields(line, fields, config, |name| {
+                config.parse_selected_fields(line, fields, |name| {
                     existing.get(name).is_some_and(|value| !value.is_empty())
                         || (existing.contains_key(name)
                             && (categories.has_metadata(name) || categories.has_extracted(name)))

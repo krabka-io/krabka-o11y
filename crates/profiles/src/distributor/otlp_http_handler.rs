@@ -1,9 +1,11 @@
 use super::*;
 
 pub(crate) async fn otlp_http_handler(
-    Extension(state): Extension<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    IngestRequestParts {
+        state,
+        principal,
+        headers,
+    }: IngestRequestParts,
     body: Bytes,
 ) -> Response {
     let start = std::time::Instant::now();

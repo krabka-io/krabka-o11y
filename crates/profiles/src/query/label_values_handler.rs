@@ -1,6 +1,6 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, label_values_inner, pb, timed_query,
+    ProfileStore, QuerierRequestParts, QuerierState, label_values_inner, pb, timed_query,
 };
 
 pub(crate) async fn label_values_handler<S>(
@@ -16,7 +16,14 @@ where
     timed_query(
         &metrics,
         "label_values",
-        label_values_inner(state, principal, headers, req),
+        label_values_inner(
+            QuerierRequestParts {
+                state: state.0,
+                principal: principal.0,
+                headers,
+            },
+            req,
+        ),
     )
     .await
 }

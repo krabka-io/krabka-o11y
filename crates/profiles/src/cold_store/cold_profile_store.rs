@@ -6,14 +6,14 @@ use krabka_units::ByteSize;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 
 use super::{
-    AddressFallbackResolver, Arc, AsArray, BTreeMap, BTreeSet, ChainedResolver, CompositeSymbols,
-    DebuginfodConfig, DebuginfodResolver, ExternalPartition, FileSystemResolver, HashMap,
-    Int64Type, LabelMatcher, LazySymbolizer, LocalPartition, MemTable, Mutex, NativeResolver,
-    ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path, ProfileError, ProfileIndex,
-    ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore, RecordBatch, RwLock,
-    SeriesFingerprint, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
-    block_partition_map, filter_and_remap_batch, is_unbounded_metadata_range,
-    local_native_resolver, profile_samples_schema,
+    AddressFallbackResolver, Arc, AsArray, BTreeMap, BTreeSet, BlockRowFilter, ChainedResolver,
+    CompositeSymbols, DebuginfodConfig, DebuginfodResolver, ExternalPartition, FileSystemResolver,
+    HashMap, Int64Type, LabelMatcher, LazySymbolizer, LocalPartition, MemTable, Mutex,
+    NativeResolver, ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path,
+    ProfileError, ProfileIndex, ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore,
+    RecordBatch, RwLock, SeriesFingerprint, SymbolDb, UInt64Type, VecDeque,
+    batch_fingerprints_overlap, block_partition_map, filter_and_remap_batch,
+    is_unbounded_metadata_range, local_native_resolver, profile_samples_schema,
 };
 
 const SYMBOL_DB_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -194,10 +194,12 @@ impl ColdProfileStore {
                         .load_block_batches(
                             &block_key,
                             &partition_map,
-                            fps,
-                            profile_type,
-                            start_ms,
-                            end_ms,
+                            BlockRowFilter {
+                                fps,
+                                profile_type,
+                                start_ms,
+                                end_ms,
+                            },
                         )
                         .await?;
                     Ok::<_, ProfileError>((partition_map, symdb, batches))
@@ -615,17 +617,13 @@ impl ColdProfileStore {
         &self,
         block_key: &str,
         partition_map: &BTreeMap<u64, u64>,
-        fps: &std::collections::BTreeSet<SeriesFingerprint>,
-        profile_type: &str,
-        start_ms: i64,
-        end_ms: i64,
+        filter: BlockRowFilter<'_>,
     ) -> Result<Vec<RecordBatch>, ProfileError> {
         let reader = self.open_block_reader(block_key).await?;
         let mut out = Vec::new();
         for batch in reader {
             let batch = batch.map_err(|err| ProfileError::Store(err.to_string()))?;
-            let filtered =
-                filter_and_remap_batch(&batch, partition_map, fps, profile_type, start_ms, end_ms)?;
+            let filtered = filter_and_remap_batch(&batch, partition_map, filter)?;
             if filtered.num_rows() > 0 {
                 out.push(filtered);
             }

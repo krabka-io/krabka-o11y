@@ -1169,9 +1169,11 @@ overrides:
         let state = state_with(sink.clone());
 
         push_handler(
-            Extension(state.clone()),
-            Extension(Principal::Unauthenticated),
-            tenant_a_headers(),
+            IngestRequestParts {
+                state: state.clone(),
+                principal: Principal::Unauthenticated,
+                headers: tenant_a_headers(),
+            },
             ConnectRequest(push_request_one_sample()),
         )
         .await
@@ -1193,9 +1195,11 @@ overrides:
         let state = state_with(sink.clone());
 
         export_handler(
-            Extension(state.clone()),
-            Extension(Principal::Unauthenticated),
-            tenant_a_headers(),
+            IngestRequestParts {
+                state: state.clone(),
+                principal: Principal::Unauthenticated,
+                headers: tenant_a_headers(),
+            },
             ConnectRequest(otlp_export_request()),
         )
         .await
@@ -1603,6 +1607,7 @@ mod evict_one_tenant;
 mod export_handler;
 mod extract_symbols;
 mod ingest_handler;
+mod ingest_request_parts;
 mod ingest_request_span;
 mod ingest_span_tenant;
 mod ingestion_bucket_for_tenant;
@@ -1635,6 +1640,7 @@ use evict_one_tenant::evict_one_tenant;
 use export_handler::export_handler;
 use extract_symbols::extract_symbols;
 use ingest_handler::ingest_handler;
+use ingest_request_parts::IngestRequestParts;
 use ingest_request_span::ingest_request_span;
 use ingest_span_tenant::ingest_span_tenant;
 use ingestion_bucket_for_tenant::ingestion_bucket_for_tenant;

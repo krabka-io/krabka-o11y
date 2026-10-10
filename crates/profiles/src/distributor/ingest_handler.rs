@@ -1,9 +1,11 @@
 use super::*;
 
 pub(crate) async fn ingest_handler(
-    Extension(state): Extension<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    IngestRequestParts {
+        state,
+        principal,
+        headers,
+    }: IngestRequestParts,
     RawQuery(query): RawQuery,
     body: Bytes,
 ) -> Response {

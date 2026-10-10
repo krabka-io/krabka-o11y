@@ -834,7 +834,17 @@ mod tests {
         // Dense per-block map: stored partitions {0, 1} -> {base|0, base|1}.
         let partition_map = BTreeMap::from([(0_u64, partition_base), (1_u64, partition_base | 1)]);
         let fps = BTreeSet::from([fp_keep]);
-        let out = filter_and_remap_batch(&batch, &partition_map, &fps, PT, 0, 5_000).unwrap();
+        let out = filter_and_remap_batch(
+            &batch,
+            &partition_map,
+            BlockRowFilter {
+                fps: &fps,
+                profile_type: PT,
+                start_ms: 0,
+                end_ms: 5_000,
+            },
+        )
+        .unwrap();
 
         // Two surviving rows (the partition-0 and partition-1 keeps).
         assert!(out.num_rows() == 2);
@@ -911,6 +921,6 @@ use batch_fingerprints_overlap::batch_fingerprints_overlap;
 use block_partition_map::block_partition_map;
 pub use cold_profile_store::ColdProfileStore;
 use composite_symbols::CompositeSymbols;
-use filter_and_remap_batch::filter_and_remap_batch;
+use filter_and_remap_batch::{BlockRowFilter, filter_and_remap_batch};
 use is_unbounded_metadata_range::is_unbounded_metadata_range;
 use local_native_resolver::local_native_resolver;

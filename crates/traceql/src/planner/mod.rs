@@ -35,23 +35,57 @@ mod tests {
         span_columns::{COL_NAME, InputSpan},
     };
 
-    fn span_with_parent(
+    /// A span of trace `[trace; 16]` that starts `id` nanoseconds after the
+    /// epoch. The default is root span 1 of trace `[1; 16]`, with no
+    /// attributes.
+    struct TraceSpan<'a> {
         id: u8,
         parent: Option<u8>,
-        trace_id: [u8; 16],
-        name: &str,
+        trace: u8,
+        name: &'a str,
         duration_nanos: i64,
-        attrs: Vec<(&str, AttrValue)>,
-    ) -> InputSpan {
-        InputSpan {
-            trace_id,
-            start_unix_nano: i64::from(id),
-            ..crate::testkit::span::span(0, id, parent, name, duration_nanos, attrs)
+        attrs: Vec<(&'a str, AttrValue)>,
+    }
+
+    impl Default for TraceSpan<'_> {
+        fn default() -> Self {
+            Self {
+                id: 1,
+                parent: None,
+                trace: 1,
+                name: "span",
+                duration_nanos: 0,
+                attrs: Vec::new(),
+            }
+        }
+    }
+
+    impl TraceSpan<'_> {
+        fn build(self) -> InputSpan {
+            InputSpan {
+                trace_id: [self.trace; 16],
+                start_unix_nano: i64::from(self.id),
+                ..crate::testkit::span::span(
+                    0,
+                    self.id,
+                    self.parent,
+                    self.name,
+                    self.duration_nanos,
+                    self.attrs,
+                )
+            }
         }
     }
 
     fn span(id: u8, name: &str, duration_nanos: i64, attrs: Vec<(&str, AttrValue)>) -> InputSpan {
-        span_with_parent(id, None, [1; 16], name, duration_nanos, attrs)
+        TraceSpan {
+            id,
+            name,
+            duration_nanos,
+            attrs,
+            ..TraceSpan::default()
+        }
+        .build()
     }
 
     const CACHE_SPAN_NAMES: [&str; 3] = ["cache-a", "cache-b", "cache-c"];
@@ -80,14 +114,15 @@ mod tests {
 
     impl SvcSpan {
         fn build(self) -> InputSpan {
-            span_with_parent(
-                self.id,
-                None,
-                [self.trace; 16],
-                self.name,
-                self.duration_nanos,
-                vec![("svc", AttrValue::Str(self.svc.into()))],
-            )
+            TraceSpan {
+                id: self.id,
+                trace: self.trace,
+                name: self.name,
+                duration_nanos: self.duration_nanos,
+                attrs: vec![("svc", AttrValue::Str(self.svc.into()))],
+                ..TraceSpan::default()
+            }
+            .build()
         }
     }
 
@@ -196,7 +231,16 @@ mod tests {
     fn ungrouped_two_trace_store() -> InMemorySpanStore {
         store_with_traces(vec![
             vec![span(1, "api-a", 20, vec![]), span(2, "api-b", 40, vec![])],
-            vec![span_with_parent(3, None, [2; 16], "db-a", 200, vec![])],
+            vec![
+                TraceSpan {
+                    id: 3,
+                    trace: 2,
+                    name: "db-a",
+                    duration_nanos: 200,
+                    ..TraceSpan::default()
+                }
+                .build(),
+            ],
         ])
     }
 
@@ -577,36 +621,41 @@ mod tests {
             "svc",
             "root",
             vec![
-                span_with_parent(
-                    1,
-                    None,
-                    [1; 16],
-                    "a-only",
-                    50,
-                    vec![("a", AttrValue::Int(1))],
-                ),
-                span_with_parent(
-                    2,
-                    None,
-                    [1; 16],
-                    "b-only",
-                    50,
-                    vec![("b", AttrValue::Int(2))],
-                ),
+                TraceSpan {
+                    id: 1,
+                    trace: 1,
+                    name: "a-only",
+                    duration_nanos: 50,
+                    attrs: vec![("a", AttrValue::Int(1))],
+                    ..TraceSpan::default()
+                }
+                .build(),
+                TraceSpan {
+                    id: 2,
+                    trace: 1,
+                    name: "b-only",
+                    duration_nanos: 50,
+                    attrs: vec![("b", AttrValue::Int(2))],
+                    ..TraceSpan::default()
+                }
+                .build(),
             ],
         );
         store.push_trace(
             "t",
             "svc",
             "root",
-            vec![span_with_parent(
-                3,
-                None,
-                [2; 16],
-                "other-a",
-                50,
-                vec![("a", AttrValue::Int(1))],
-            )],
+            vec![
+                TraceSpan {
+                    id: 3,
+                    trace: 2,
+                    name: "other-a",
+                    duration_nanos: 50,
+                    attrs: vec![("a", AttrValue::Int(1))],
+                    ..TraceSpan::default()
+                }
+                .build(),
+            ],
         );
 
         let out = planned("{ .a = 1 } && { .b = 2 }", &store).await.unwrap();
@@ -620,38 +669,42 @@ mod tests {
             "svc",
             "root",
             vec![
-                span_with_parent(
-                    1,
-                    None,
-                    [9; 16],
-                    "root",
-                    1,
-                    vec![("svc", AttrValue::Str("a".into()))],
-                ),
-                span_with_parent(
-                    2,
-                    Some(1),
-                    [9; 16],
-                    "child-x",
-                    1,
-                    vec![("svc", AttrValue::Str("b".into()))],
-                ),
-                span_with_parent(
-                    4,
-                    Some(2),
-                    [9; 16],
-                    "grand-y",
-                    1,
-                    vec![("svc", AttrValue::Str("c".into()))],
-                ),
-                span_with_parent(
-                    3,
-                    Some(1),
-                    [9; 16],
-                    "child-z",
-                    1,
-                    vec![("svc", AttrValue::Str("b".into()))],
-                ),
+                TraceSpan {
+                    id: 1,
+                    trace: 9,
+                    name: "root",
+                    duration_nanos: 1,
+                    attrs: vec![("svc", AttrValue::Str("a".into()))],
+                    ..TraceSpan::default()
+                }
+                .build(),
+                TraceSpan {
+                    id: 2,
+                    parent: Some(1),
+                    trace: 9,
+                    name: "child-x",
+                    duration_nanos: 1,
+                    attrs: vec![("svc", AttrValue::Str("b".into()))],
+                }
+                .build(),
+                TraceSpan {
+                    id: 4,
+                    parent: Some(2),
+                    trace: 9,
+                    name: "grand-y",
+                    duration_nanos: 1,
+                    attrs: vec![("svc", AttrValue::Str("c".into()))],
+                }
+                .build(),
+                TraceSpan {
+                    id: 3,
+                    parent: Some(1),
+                    trace: 9,
+                    name: "child-z",
+                    duration_nanos: 1,
+                    attrs: vec![("svc", AttrValue::Str("b".into()))],
+                }
+                .build(),
             ],
         );
         store.push_trace(
@@ -659,22 +712,24 @@ mod tests {
             "svc",
             "other-root",
             vec![
-                span_with_parent(
-                    5,
-                    None,
-                    [8; 16],
-                    "other-root",
-                    1,
-                    vec![("svc", AttrValue::Str("a".into()))],
-                ),
-                span_with_parent(
-                    6,
-                    Some(5),
-                    [8; 16],
-                    "other-child",
-                    1,
-                    vec![("svc", AttrValue::Str("d".into()))],
-                ),
+                TraceSpan {
+                    id: 5,
+                    trace: 8,
+                    name: "other-root",
+                    duration_nanos: 1,
+                    attrs: vec![("svc", AttrValue::Str("a".into()))],
+                    ..TraceSpan::default()
+                }
+                .build(),
+                TraceSpan {
+                    id: 6,
+                    parent: Some(5),
+                    trace: 8,
+                    name: "other-child",
+                    duration_nanos: 1,
+                    attrs: vec![("svc", AttrValue::Str("d".into()))],
+                }
+                .build(),
             ],
         );
         store
@@ -880,30 +935,33 @@ mod tests {
             "svc",
             "root",
             vec![
-                span_with_parent(
-                    1,
-                    None,
-                    [1; 16],
-                    "api-a",
-                    1,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-                span_with_parent(
-                    2,
-                    None,
-                    [1; 16],
-                    "api-b",
-                    1,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-                span_with_parent(
-                    3,
-                    None,
-                    [2; 16],
-                    "db-a",
-                    1,
-                    vec![("svc", AttrValue::Str("db".into()))],
-                ),
+                TraceSpan {
+                    id: 1,
+                    trace: 1,
+                    name: "api-a",
+                    duration_nanos: 1,
+                    attrs: vec![("svc", AttrValue::Str("api".into()))],
+                    ..TraceSpan::default()
+                }
+                .build(),
+                TraceSpan {
+                    id: 2,
+                    trace: 1,
+                    name: "api-b",
+                    duration_nanos: 1,
+                    attrs: vec![("svc", AttrValue::Str("api".into()))],
+                    ..TraceSpan::default()
+                }
+                .build(),
+                TraceSpan {
+                    id: 3,
+                    trace: 2,
+                    name: "db-a",
+                    duration_nanos: 1,
+                    attrs: vec![("svc", AttrValue::Str("db".into()))],
+                    ..TraceSpan::default()
+                }
+                .build(),
             ],
         );
 

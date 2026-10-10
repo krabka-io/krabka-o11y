@@ -610,11 +610,24 @@ mod tests {
             ),
         ];
         for (op, value, expected) in cases {
-            let sql = comparison_to_sql_qualified(&field, op, &value, "s", "p").unwrap();
+            let sql = comparison_to_sql_qualified(&QualifiedComparison {
+                field: &field,
+                op,
+                operand: &value,
+                span_alias: "s",
+                parent_alias: "p",
+            })
+            .unwrap();
             assert!(sql == expected, "{op:?} {value:?} -> {sql}");
         }
         // regex against non-string errors
-        let err = comparison_to_sql_qualified(&field, ComparisonOp::Re, &Value::Int(1), "s", "p");
+        let err = comparison_to_sql_qualified(&QualifiedComparison {
+            field: &field,
+            op: ComparisonOp::Re,
+            operand: &Value::Int(1),
+            span_alias: "s",
+            parent_alias: "p",
+        });
         assert!(matches!(err, Err(TraceqlError::Plan(_))));
     }
 
@@ -976,7 +989,7 @@ use anchored::anchored;
 use collect_table::collect_table;
 use column_comparison_sql::{ColumnComparison, column_comparison_sql};
 pub(crate) use comparison_to_sql::comparison_to_sql;
-use comparison_to_sql_qualified::comparison_to_sql_qualified;
+use comparison_to_sql_qualified::{QualifiedComparison, comparison_to_sql_qualified};
 use comparison_value_sql::comparison_value_sql;
 use enum_value_sql::enum_value_sql;
 pub(crate) use field_expr_to_matcher_disjuncts::field_expr_to_matcher_disjuncts;

@@ -1,15 +1,18 @@
 use super::{
-    BTreeMap, BucketExemplars, ExemplarRow, ExemplarSource, ProfileError, bucket_exemplars,
-    heatmap_slot_timestamp, label_pairs, pb,
+    BTreeMap, BucketExemplars, ExemplarRow, ExemplarSource, HeatmapSlotsMillis, ProfileError,
+    bucket_exemplars, heatmap_slot_timestamp, label_pairs, pb,
 };
 
 pub(crate) async fn heatmap_span_exemplars_from_scan(
     scan: &krabka_pprof::ProfileScan,
-    start_ms: i64,
-    end_ms: i64,
-    step_ms: i64,
+    slots: HeatmapSlotsMillis,
     labels: &[(String, String)],
 ) -> Result<BTreeMap<i64, Vec<pb::querier::v1::Exemplar>>, ProfileError> {
+    let HeatmapSlotsMillis {
+        start: start_ms,
+        end: end_ms,
+        step: step_ms,
+    } = slots;
     let labels = label_pairs(labels.to_vec());
     bucket_exemplars(BucketExemplars {
         scan,

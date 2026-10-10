@@ -1,13 +1,14 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataRequest,
-    MetadataScope, Principal, ProfileStore, QuerierState, connect_error, is_internal_label,
-    metadata_scope, pb,
+    ConnectError, ConnectRequest, ConnectResponse, MetadataRequest, MetadataScope, ProfileStore,
+    QuerierRequestParts, connect_error, is_internal_label, metadata_scope, pb,
 };
 
 pub(crate) async fn label_values_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    QuerierRequestParts {
+        state,
+        principal,
+        headers,
+    }: QuerierRequestParts<S>,
     req: ConnectRequest<pb::querier::v1::LabelValuesRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::LabelValuesResponse>, ConnectError>
 where
