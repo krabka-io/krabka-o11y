@@ -1,5 +1,6 @@
 use super::{
-    format_metric_binary_expression, format_metric_query, format_metric_scalar_arithmetic_operator,
+    ComparisonResult, MetricBinaryExpressionText, format_metric_binary_expression,
+    format_metric_query, format_metric_scalar_arithmetic_operator,
     parse_metric_binary_arithmetic_query, parse_metric_query,
     split_leading_vector_binary_modifiers, split_top_level_arithmetic_query,
 };
@@ -14,10 +15,12 @@ pub(crate) fn format_metric_binary_arithmetic_query(query: &str) -> Option<Strin
     let right = format_metric_query(&arithmetic.right)?;
     let operator = format_metric_scalar_arithmetic_operator(arithmetic.op);
     Some(format_metric_binary_expression(
-        &left,
-        operator,
-        false,
-        arithmetic.matching.as_ref(),
-        &right,
+        &MetricBinaryExpressionText {
+            left: &left,
+            operator,
+            comparison_result: ComparisonResult::Filter,
+            matching: arithmetic.matching.as_ref(),
+            right: &right,
+        },
     ))
 }

@@ -13,7 +13,7 @@ use krabka_blockstore::{
 };
 use krabka_pprof::{EngineOpts, FlameEngine};
 use krabka_profiles::{
-    ProfileRecord, WalFunction, WalLocation, WalSample, WalSymbolSet,
+    ProfileRecord, WalSample, WalSymbolSet,
     blockbuilder::{BLOCK_OBJECT_PREFIX, STACKTRACE_PARTITION, build_block},
     cold_store::ColdProfileStore,
     lifecycle::{LifecycleOptions, run_lifecycle_pass},
@@ -145,21 +145,7 @@ impl Signal for ProfilesSignal {
                         trace_id: None,
                     })
                     .collect(),
-                symbols: WalSymbolSet {
-                    strings: vec![String::new(), function],
-                    functions: vec![WalFunction {
-                        name: 1,
-                        system_name: 1,
-                        filename: 0,
-                        start_line: 0,
-                    }],
-                    locations: vec![WalLocation {
-                        address: 0,
-                        mapping_id: 0,
-                        lines: vec![(0, 1)],
-                    }],
-                    mappings: Vec::new(),
-                },
+                symbols: WalSymbolSet::single_frame(function),
             };
             let labels = Labels::from_pairs(record.labels.iter().cloned());
             index

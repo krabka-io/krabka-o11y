@@ -32,32 +32,11 @@ pub(crate) async fn vector_vector_group_right_fill_left_preserves_unmatched_many
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     // Prometheus swaps the operand sides for group_right before applying fill flags.
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "job_quota + on (job) group_right(region) fill_right(0) http_requests_total",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
-    let values = samples
-        .iter()
-        .map(|sample| {
-            (
-                sample.labels.get("instance").expect("instance label"),
-                (sample.labels.get("region"), float_value(&sample.value)),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    assert2::assert!(values.len() == 3);
-    assert2::assert!(values["a"].0 == Some("east"));
-    assert2::assert!(approx_eq(values["a"].1, 110.0));
-    assert2::assert!(values["b"].0 == Some("east"));
-    assert2::assert!(approx_eq(values["b"].1, 60.0));
-    assert2::assert!(values["c"].0 == None);
-    assert2::assert!(approx_eq(values["c"].1, 7.0));
+    let samples = instant_vector(
+        &engine,
+        "job_quota + on (job) group_right(region) fill_right(0) http_requests_total",
+        10_000,
+    )
+    .await;
+    assert_filled_many_side(&samples);
 }

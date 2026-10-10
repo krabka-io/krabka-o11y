@@ -1,3 +1,5 @@
+use opentelemetry_proto::tonic::{common::v1::KeyValue, metrics::v1::ResourceMetrics};
+
 use super::{
     DecodedMetadata, DecodedSample, DecodedSeries, DeltaAccumulator, MetricsData, OtlpError,
     TranslationStrategy, labels, metric, metric_attributes, metric_series,
@@ -10,35 +12,28 @@ pub(crate) struct PartialOtlpDecode {
     pub(crate) error_message: Option<String>,
 }
 
-pub(crate) fn decode_otlp_inner(
-    data: &MetricsData,
-    strategy: TranslationStrategy,
-    mut accumulator: Option<&mut DeltaAccumulator>,
-    additional_resource_attributes: &[String],
-) -> Result<Vec<DecodedSeries>, OtlpError> {
-    let mut out = Vec::new();
-    for resource_metrics in &data.resource_metrics {
-        let resource_attributes = resource_metrics
-            .resource
-            .as_ref()
-            .map_or(&[][..], |resource| resource.attributes.as_slice());
+/// How a decode translates names and handles delta temporality.
+pub(crate) struct OtlpDecodeOptions<'a> {
+    pub(crate) strategy: TranslationStrategy,
+    /// Delta state carried across requests; `None` refuses delta points.
+    pub(crate) accumulator: Option<&'a mut DeltaAccumulator>,
+    /// Resource attributes promoted to labels beyond the default set.
+    pub(crate) additional_resource_attributes: &'a [String],
+}
 
-        if !resource_attributes.is_empty()
-            && let Some(timestamp_ms) = resource_metrics_timestamp_ms(resource_metrics)
-        {
-            out.push(DecodedSeries {
-                labels: labels("target_info", resource_attributes, &[], None, strategy),
-                samples: vec![DecodedSample::new(timestamp_ms, 1.0)],
-                histograms: Vec::new(),
-                exemplars: Vec::new(),
-                metadata: Some(DecodedMetadata {
-                    metric_family_name: "target_info".into(),
-                    metric_type: "gauge".into(),
-                    help: "Target metadata.".into(),
-                    unit: String::new(),
-                }),
-            });
-        }
+pub(crate) fn decode_otlp_inner(
+    metrics: &MetricsData,
+    options: OtlpDecodeOptions<'_>,
+) -> Result<Vec<DecodedSeries>, OtlpError> {
+    let OtlpDecodeOptions {
+        strategy,
+        mut accumulator,
+        additional_resource_attributes,
+    } = options;
+    let mut out = Vec::new();
+    for resource_metrics in &metrics.resource_metrics {
+        let resource_attributes = resource_attributes(resource_metrics);
+        out.extend(target_info_series(resource_metrics, strategy));
 
         let promoted_resource_attributes =
             promoted_resource_attributes(resource_attributes, additional_resource_attributes);
@@ -59,37 +54,22 @@ pub(crate) fn decode_otlp_inner(
 }
 
 pub(crate) fn decode_otlp_inner_partial(
-    data: &MetricsData,
-    strategy: TranslationStrategy,
-    mut accumulator: Option<&mut DeltaAccumulator>,
-    additional_resource_attributes: &[String],
+    metrics: &MetricsData,
+    options: OtlpDecodeOptions<'_>,
 ) -> Result<PartialOtlpDecode, OtlpError> {
+    let OtlpDecodeOptions {
+        strategy,
+        mut accumulator,
+        additional_resource_attributes,
+    } = options;
     let mut series = Vec::new();
     let mut accepted_data_points = 0_u64;
     let mut rejected_data_points = 0_u64;
     let mut first_error = None;
 
-    for resource_metrics in &data.resource_metrics {
-        let resource_attributes = resource_metrics
-            .resource
-            .as_ref()
-            .map_or(&[][..], |resource| resource.attributes.as_slice());
-        if !resource_attributes.is_empty()
-            && let Some(timestamp_ms) = resource_metrics_timestamp_ms(resource_metrics)
-        {
-            series.push(DecodedSeries {
-                labels: labels("target_info", resource_attributes, &[], None, strategy),
-                samples: vec![DecodedSample::new(timestamp_ms, 1.0)],
-                histograms: Vec::new(),
-                exemplars: Vec::new(),
-                metadata: Some(DecodedMetadata {
-                    metric_family_name: "target_info".into(),
-                    metric_type: "gauge".into(),
-                    help: "Target metadata.".into(),
-                    unit: String::new(),
-                }),
-            });
-        }
+    for resource_metrics in &metrics.resource_metrics {
+        let resource_attributes = resource_attributes(resource_metrics);
+        series.extend(target_info_series(resource_metrics, strategy));
 
         let promoted =
             promoted_resource_attributes(resource_attributes, additional_resource_attributes);
@@ -192,4 +172,36 @@ fn with_data(metric: &super::Metric, data: metric::Data) -> super::Metric {
     let mut one = metric.clone();
     one.data = Some(data);
     one
+}
+
+fn resource_attributes(resource_metrics: &ResourceMetrics) -> &[KeyValue] {
+    resource_metrics
+        .resource
+        .as_ref()
+        .map_or(&[][..], |resource| resource.attributes.as_slice())
+}
+
+/// The `target_info` series a resource with attributes contributes, stamped
+/// with the resource's latest data point.
+fn target_info_series(
+    resource_metrics: &ResourceMetrics,
+    strategy: TranslationStrategy,
+) -> Option<DecodedSeries> {
+    let resource_attributes = resource_attributes(resource_metrics);
+    if resource_attributes.is_empty() {
+        return None;
+    }
+    let timestamp_ms = resource_metrics_timestamp_ms(resource_metrics)?;
+    Some(DecodedSeries {
+        labels: labels("target_info", resource_attributes, &[], None, strategy),
+        samples: vec![DecodedSample::new(timestamp_ms, 1.0)],
+        histograms: Vec::new(),
+        exemplars: Vec::new(),
+        metadata: Some(DecodedMetadata {
+            metric_family_name: "target_info".into(),
+            metric_type: "gauge".into(),
+            help: "Target metadata.".into(),
+            unit: String::new(),
+        }),
+    })
 }

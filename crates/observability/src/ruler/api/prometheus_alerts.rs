@@ -1,6 +1,6 @@
 use super::{
     expand_prometheus_alert_template, prometheus_alert_template_map, yaml_duration_ns_field,
-    yaml_string_template_map_field,
+    yaml_string_labels_field,
 };
 use crate::{
     BTreeMap, BTreeSet, Labels, OffsetDateTime, PrometheusAlertKey, PrometheusAlertRuntimeState,

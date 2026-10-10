@@ -1,8 +1,9 @@
 use std::future::Future;
 
 use super::{
-    Arc, Bytes, Header, PROFILES_WAL_TOPIC, ProduceWindow, Producer, ProducerRecord, ProfileRecord,
-    ProfilesError, WalBatchError, WalSink, partition_key, write_batch_pipelined,
+    Arc, Bytes, PROFILES_WAL_TOPIC, ProduceWindow, Producer, ProducerRecord, ProfileRecord,
+    ProfilesError, WalBatchError, WalSink, partition_key, wal_record_headers,
+    write_batch_pipelined,
 };
 
 pub struct KafkaSink {
@@ -32,25 +33,10 @@ impl KafkaSink {
     ) -> Result<impl Future<Output = Result<(), ProfilesError>> + use<>, ProfilesError> {
         let key = partition_key(&rec.tenant, rec.series_fingerprint());
         let value = rec.encode()?;
-        // Inject the current span's W3C trace context (traceparent/tracestate)
-        // as Kafka record headers so the block-builder consumer can re-parent
-        // its block-build span onto this ingest span, stitching one distributed
-        // trace across the WAL. Additive: empty when no active/sampled span.
-        let headers = std::iter::once(Header {
-            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
-            value: Some(Bytes::from_static(
-                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
-            )),
-        })
-        .chain(
-            krabka_telemetry::propagation::current_trace_headers()
-                .into_iter()
-                .map(|(k, v)| Header {
-                    key: k,
-                    value: Some(Bytes::from(v.into_bytes())),
-                }),
-        )
-        .collect();
+        // The format version, then the current span's W3C trace context, so
+        // the block-builder consumer can re-parent its block-build span onto
+        // this ingest span, stitching one distributed trace across the WAL.
+        let headers = wal_record_headers();
         let ack = self
             .producer
             .enqueue(ProducerRecord {

@@ -50,27 +50,6 @@ mod tests {
     use super::*;
     use crate::compaction::BlockLevel;
 
-    /// A per-tenant window table. A tenant it does not name keeps its blocks
-    /// forever, which is what an unconfigured tenant does in production.
-    struct Windows(BTreeMap<String, Time>);
-
-    impl Windows {
-        fn new(entries: &[(&str, Time)]) -> Self {
-            Self(
-                entries
-                    .iter()
-                    .map(|(tenant, window)| ((*tenant).to_string(), *window))
-                    .collect(),
-            )
-        }
-    }
-
-    impl RetentionWindows for Windows {
-        fn block_retention(&self, tenant: &str) -> Time {
-            self.0.get(tenant).copied().unwrap_or(Time::ZERO)
-        }
-    }
-
     fn candidate(tenant: &str, object_key: &str, max_ts: i64) -> CompactionCandidate {
         CompactionCandidate {
             tenant: tenant.to_string(),
@@ -95,7 +74,7 @@ mod tests {
     #[test]
     fn a_block_expires_only_once_it_ends_before_the_cutoff() {
         const NOW: i64 = 10_000;
-        let windows = Windows::new(&[("t", millis(1_000))]);
+        let windows = BTreeMap::from([("t".to_string(), millis(1_000))]);
 
         for (name, max_ts, want) in [
             ("well before the cutoff", 8_000_i64, true),
@@ -116,7 +95,7 @@ mod tests {
     /// the other way round would make an unconfigured tenant lose its data.
     #[test]
     fn a_zero_window_keeps_every_block_forever() {
-        let windows = Windows::new(&[("t", Time::ZERO)]);
+        let windows = BTreeMap::from([("t".to_string(), Time::ZERO)]);
         let candidates = vec![
             candidate("t", "ancient", i64::MIN + 1),
             candidate("t", "recent", 0),
@@ -129,7 +108,10 @@ mod tests {
 
     #[test]
     fn each_tenant_is_swept_by_its_own_window() {
-        let windows = Windows::new(&[("short", millis(1_000)), ("long", millis(100_000))]);
+        let windows = BTreeMap::from([
+            ("short".to_string(), millis(1_000)),
+            ("long".to_string(), millis(100_000)),
+        ]);
         let candidates = vec![
             candidate("short", "short-block", 5_000),
             candidate("long", "long-block", 5_000),
@@ -156,7 +138,7 @@ mod tests {
         const NOW_MS: i64 = 1_700_000_000_000;
         const HOUR_MS: i64 = 60 * 60 * 1_000;
         const DAY_MS: i64 = 24 * HOUR_MS;
-        let windows = Windows::new(&[("t", days(1))]);
+        let windows = BTreeMap::from([("t".to_string(), days(1))]);
 
         for (unit, now, per_ms) in [
             (BlockTimestampUnit::Millis, NOW_MS, 1_i64),
@@ -180,7 +162,7 @@ mod tests {
     /// the plan cannot depend on the order the candidates arrived in.
     #[test]
     fn the_plan_is_ordered_by_tenant_and_then_object_key() {
-        let windows = Windows::new(&[("a", millis(1)), ("b", millis(1))]);
+        let windows = BTreeMap::from([("a".to_string(), millis(1)), ("b".to_string(), millis(1))]);
         let candidates = vec![
             candidate("b", "z", 0),
             candidate("a", "y", 0),
@@ -216,7 +198,7 @@ mod tests {
     /// must not panic the compactor.
     #[test]
     fn a_clock_at_the_bounds_of_the_range_saturates_rather_than_overflowing() {
-        let windows = Windows::new(&[("t", days(365))]);
+        let windows = BTreeMap::from([("t".to_string(), days(365))]);
 
         for (name, now, max_ts, want) in [
             ("the clock at its floor", i64::MIN, i64::MIN, false),
@@ -250,7 +232,7 @@ mod tests {
         check!(BlockTimestampUnit::Millis.ticks(negative) == 0);
         check!(BlockTimestampUnit::Nanos.ticks(negative) == 0);
 
-        let windows = Windows::new(&[("t", negative)]);
+        let windows = BTreeMap::from([("t".to_string(), negative)]);
         let candidates = vec![candidate("t", "b", 0)];
         check!(
             plan_expired_blocks(&candidates, 10_000, BlockTimestampUnit::Millis, &windows)

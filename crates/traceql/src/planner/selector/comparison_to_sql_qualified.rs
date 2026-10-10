@@ -1,35 +1,29 @@
 use super::{
-    ComparisonOp, Field, Result, TraceqlError, Value, anchored, comparison_value_sql,
-    qualified_field_ident, string_lit,
+    ColumnComparison, ComparisonOp, Field, Result, Value, column_comparison_sql,
+    qualified_field_ident,
 };
 
-pub(crate) fn comparison_to_sql_qualified(
-    field: &Field,
-    op: ComparisonOp,
-    value: &Value,
-    span_alias: &str,
-    parent_alias: &str,
-) -> Result<String> {
-    let col = qualified_field_ident(field, span_alias, parent_alias);
-    Ok(match (op, value) {
-        (ComparisonOp::Eq, Value::Nil) => format!("{col} IS NULL"),
-        (ComparisonOp::Neq, Value::Nil) => format!("{col} IS NOT NULL"),
-        (ComparisonOp::Re, Value::Str(pattern)) => {
-            format!("regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Nre, Value::Str(pattern)) => {
-            format!("NOT regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Eq, v) => format!("{col} = {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Neq, v) => format!("{col} != {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lt, v) => format!("{col} < {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lte, v) => format!("{col} <= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gt, v) => format!("{col} > {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gte, v) => format!("{col} >= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Re | ComparisonOp::Nre, _) => {
-            return Err(TraceqlError::Plan(
-                "regex comparison requires string value".into(),
-            ));
-        }
+/// A `field <op> operand` comparison inside a span-to-parent join, whose
+/// span and parent sides are the tables aliased `span_alias` and
+/// `parent_alias`.
+pub(crate) struct QualifiedComparison<'a> {
+    pub(crate) field: &'a Field,
+    pub(crate) op: ComparisonOp,
+    pub(crate) operand: &'a Value,
+    pub(crate) span_alias: &'a str,
+    pub(crate) parent_alias: &'a str,
+}
+
+pub(crate) fn comparison_to_sql_qualified(comparison: &QualifiedComparison<'_>) -> Result<String> {
+    let col = qualified_field_ident(
+        comparison.field,
+        comparison.span_alias,
+        comparison.parent_alias,
+    );
+    column_comparison_sql(ColumnComparison {
+        col: &col,
+        field: comparison.field,
+        op: comparison.op,
+        operand: comparison.operand,
     })
 }

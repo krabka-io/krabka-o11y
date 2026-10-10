@@ -22,9 +22,13 @@ pub(crate) fn a_group_right_comparison_keeps_the_right_series_it_matched() {
     apply_metric_binary_comparison_to_loki_result(
         &mut left,
         &right,
-        ComparisonOp::Greater,
-        false,
-        Some(&matching),
+        VectorComparison {
+            comparison: MetricComparison {
+                op: ComparisonOp::Greater,
+                result: ComparisonResult::Filter,
+            },
+            matching: Some(&matching),
+        },
     );
 
     // Only the right series the left one beat survives, wearing the

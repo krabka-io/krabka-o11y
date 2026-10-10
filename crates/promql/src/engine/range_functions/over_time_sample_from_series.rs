@@ -87,8 +87,8 @@ pub(crate) fn over_time_sample_from_series(
         OverTimeFn::Count => unreachable!("count_over_time handled before float extraction"),
         OverTimeFn::Min => fold_over_time_extremum(&samples, ExtremumKind::Min),
         OverTimeFn::Max => fold_over_time_extremum(&samples, ExtremumKind::Max),
-        OverTimeFn::Stddev => over_time_variance(&samples).sqrt(),
-        OverTimeFn::Stdvar => over_time_variance(&samples),
+        OverTimeFn::Stddev => over_time_variance(samples.iter().map(|(_, value)| *value)).sqrt(),
+        OverTimeFn::Stdvar => over_time_variance(samples.iter().map(|(_, value)| *value)),
         OverTimeFn::Mad => over_time_mad(&samples).expect("non-empty samples"),
         OverTimeFn::First => samples
             .into_iter()

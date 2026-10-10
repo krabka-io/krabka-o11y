@@ -2,26 +2,6 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn util_planner_path_matches_interpreter() {
-    use crate::{DurationExprContext, parse_promql_with_duration_context};
-
-    // NaN-aware vector comparison: labels + ts must match exactly; values
-    // match when bit-equal or both NaN (Prometheus treats all NaNs alike).
-    fn samples_match(left: &[crate::InstantSample], right: &[crate::InstantSample]) -> bool {
-        if left.len() != right.len() {
-            return false;
-        }
-        left.iter().zip(right).all(|(a, b)| {
-            a.labels == b.labels
-                && a.ts_ms == b.ts_ms
-                && match (&a.value, &b.value) {
-                    (SampleValue::Float(x), SampleValue::Float(y)) => {
-                        x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan())
-                    }
-                    _ => false,
-                }
-        })
-    }
-
     // NaN-aware whole-result comparison covering both scalar and vector
     // results, sorting vector samples by fingerprint first.
     fn results_match(left: QueryResult, right: QueryResult) -> bool {
@@ -39,7 +19,7 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
             (QueryResult::InstantVector(mut l), QueryResult::InstantVector(mut r)) => {
                 l.sort_by_key(|sample| sample.labels.fingerprint());
                 r.sort_by_key(|sample| sample.labels.fingerprint());
-                samples_match(&l, &r)
+                nan_equal_samples(&l, &r)
             }
             _ => false,
         }
@@ -109,22 +89,8 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
     ];
 
     for query in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-
-        let plan = engine
-            .plan_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = engine
-            .assemble_planned_instant(plan, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-        let via_interpreter = engine
-            .eval_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
+        let (via_operators, via_interpreter) =
+            planned_and_interpreted(&engine, query, time_ms).await;
 
         assert2::assert!(results_match(
             via_interpreter.clone(),

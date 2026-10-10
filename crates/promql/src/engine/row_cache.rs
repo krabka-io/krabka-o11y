@@ -40,6 +40,7 @@ mod windowed;
 pub(super) use collect_float_rows::collect_float_rows;
 pub(super) use collect_histogram_rows::collect_histogram_rows;
 pub(super) use float_row::FloatRow;
+use float_row::{FLOAT_ROW_COLUMNS, FloatRowColumns};
 pub(super) use float_window::FloatWindow;
 pub(super) use histogram_row::HistogramRow;
 pub(super) use matchers_cache_key::matchers_cache_key;

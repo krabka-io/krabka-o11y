@@ -1,6 +1,6 @@
 use super::{
     Arc, Bytes, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
-    Response, State, query_range_inner, range_query_params_from_form,
+    RequestAuth, Response, State, query_range_inner, range_query_params_from_form,
 };
 
 pub(crate) async fn query_range_post<S: MetricStore>(
@@ -13,5 +13,13 @@ pub(crate) async fn query_range_post<S: MetricStore>(
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    query_range_inner(state, headers, principal, params).await
+    query_range_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        params,
+    )
+    .await
 }

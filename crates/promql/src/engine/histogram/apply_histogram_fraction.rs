@@ -1,11 +1,10 @@
 use super::{
-    BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
-    classic_bucket_bound, classic_histogram_fraction, float_sample_value, labels_key,
-    labels_without_label, labels_without_metric_name, native_histogram_fraction,
-    record_metric_name, warn_mixed_histograms,
+    ClassicBucket, FractionBounds, HistogramReducers, InstantSample, NativeHistogram, Result,
+    apply_histogram_reduction, classic_histogram_fraction, native_histogram_fraction,
 };
 
-/// Applies `histogram_fraction(lower, upper, v)` to an instant vector `v`.
+/// Applies `histogram_fraction(lower, upper, v)` to an instant vector `v`,
+/// with `bounds` holding `lower` and `upper`.
 ///
 /// This function mirrors `PromqlEngine::eval_histogram_fraction_call` exactly.
 /// Native-histogram rows fold through [`native_histogram_fraction`] and keep the
@@ -25,74 +24,21 @@ use super::{
 /// [`PromqlError`] for a non-float classic bucket count. These are exactly the
 /// errors the interpreter raised inline.
 pub(crate) fn apply_histogram_fraction(
-    lower: f64,
-    upper: f64,
+    bounds: FractionBounds,
     samples: Vec<InstantSample>,
     time_ms: i64,
 ) -> Result<Vec<InstantSample>> {
-    let mut native_samples = BTreeMap::new();
-    let mut groups: BTreeMap<String, (Labels, Vec<ClassicBucket>)> = BTreeMap::new();
-    let mut metric_names: BTreeMap<String, String> = BTreeMap::new();
-    for sample in samples {
-        if let SampleValue::Histogram(hist) = sample.value {
-            let labels = labels_without_metric_name(&sample.labels);
-            let key = labels_key(&labels);
-            record_metric_name(&mut metric_names, &key, &sample.labels);
-            native_samples.insert(
-                key,
-                InstantSample {
-                    labels,
-                    ts_ms: sample.ts_ms,
-                    value: SampleValue::Float(native_histogram_fraction(
-                        lower,
-                        upper,
-                        &hist,
-                        sample.labels.get("__name__").unwrap_or(""),
-                    )),
-                    drop_name: true,
-                },
-            );
-            continue;
-        }
-        let Some(upper_bound) = classic_bucket_bound(&sample.labels) else {
-            continue;
-        };
-        let count = float_sample_value(&sample)?;
-        let labels = labels_without_label(&labels_without_metric_name(&sample.labels), "le");
-        let key = labels_key(&labels);
-        record_metric_name(&mut metric_names, &key, &sample.labels);
-        groups
-            .entry(key)
-            .or_insert_with(|| (labels, Vec::new()))
-            .1
-            .push(ClassicBucket { upper_bound, count });
-    }
-
-    let mixed_histogram_keys = native_samples
-        .keys()
-        .filter(|key| groups.contains_key(*key))
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    warn_mixed_histograms(&mixed_histogram_keys, &metric_names);
-    let mut out = native_samples
-        .into_iter()
-        .filter_map(|(key, sample)| (!mixed_histogram_keys.contains(&key)).then_some(sample))
-        .collect::<Vec<_>>();
-    out.extend(
-        groups
-            .into_iter()
-            .filter_map(|(key, (labels, mut buckets))| {
-                (!mixed_histogram_keys.contains(&key)).then_some(InstantSample {
-                    labels,
-                    ts_ms: time_ms,
-                    value: SampleValue::Float(classic_histogram_fraction(
-                        lower,
-                        upper,
-                        &mut buckets,
-                    )),
-                    drop_name: true,
-                })
-            }),
-    );
-    Ok(out)
+    let FractionBounds { lower, upper } = bounds;
+    apply_histogram_reduction(
+        samples,
+        time_ms,
+        HistogramReducers {
+            native: |histogram: &NativeHistogram, metric: &str| {
+                native_histogram_fraction(lower, upper, histogram, metric)
+            },
+            classic: |_: &str, buckets: &mut Vec<ClassicBucket>| {
+                classic_histogram_fraction(lower, upper, buckets)
+            },
+        },
+    )
 }

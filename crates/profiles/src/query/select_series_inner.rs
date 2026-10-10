@@ -1,14 +1,16 @@
 use super::{
-    Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, SeriesAgg, authorize_tenant, connect_error, label_pairs, limit, pb,
+    BTreeMap, ConnectError, ConnectRequest, ConnectResponse, ProfileStore, QuerierRequestParts,
+    SeriesAgg, SeriesExemplarQuery, authorize_tenant, connect_error, label_pairs, limit, pb,
     stack_trace_call_sites, step_from_secs, tenant_connect_error, tenant_denied_connect_error,
     tenant_from_headers,
 };
 
 pub(crate) async fn select_series_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    QuerierRequestParts {
+        state,
+        principal,
+        headers,
+    }: QuerierRequestParts<S>,
     req: ConnectRequest<pb::querier::v1::SelectSeriesRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::SelectSeriesResponse>, ConnectError>
 where
@@ -41,24 +43,24 @@ where
                 && state.query_architecture == super::PyroscopeQueryArchitecture::V1 =>
         {
             state
-                .select_series_span_exemplars(
-                    (&tenant, &req.profile_type_id, &req.label_selector),
-                    &req.group_by,
+                .select_series_span_exemplars(SeriesExemplarQuery {
+                    target: (&tenant, &req.profile_type_id, &req.label_selector),
+                    group_by: &req.group_by,
                     step,
-                    (req.start, req.end),
-                    &stack_trace_call_sites,
-                )
+                    range: (req.start, req.end),
+                    call_sites: &stack_trace_call_sites,
+                })
                 .await
                 .map_err(connect_error)?
         }
         exemplar_type if exemplar_type == pb::querier::v1::ExemplarType::Individual as i32 => state
-            .select_series_individual_exemplars(
-                (&tenant, &req.profile_type_id, &req.label_selector),
-                &req.group_by,
+            .select_series_individual_exemplars(SeriesExemplarQuery {
+                target: (&tenant, &req.profile_type_id, &req.label_selector),
+                group_by: &req.group_by,
                 step,
-                (req.start, req.end),
-                &stack_trace_call_sites,
-            )
+                range: (req.start, req.end),
+                call_sites: &stack_trace_call_sites,
+            })
             .await
             .map_err(connect_error)?,
         _ => BTreeMap::new(),

@@ -30,37 +30,18 @@ pub(crate) async fn vector_vector_arithmetic_scales_native_histograms_with_match
         ("factor * on (x) duration", 8.0, 20.0),
         ("duration / on (x) factor", 2.0, 5.0),
     ] {
-        let count = engine
-            .query_instant(
-                &tenant_id("tenant-a"),
-                &format!("histogram_count({query})"),
-                10_000,
-            )
-            .await
-            .unwrap();
-        let sum = engine
-            .query_instant(
-                &tenant_id("tenant-a"),
-                &format!("histogram_sum({query})"),
-                10_000,
-            )
-            .await
-            .unwrap();
-
-        assert_single_on_x_float_sample(&count, expected_count, query);
-        assert_single_on_x_float_sample(&sum, expected_sum, query);
+        assert_on_x_histogram_stats(
+            &engine,
+            OnXHistogramStats {
+                query,
+                count: expected_count,
+                sum: expected_sum,
+            },
+        )
+        .await;
     }
 
-    let invalid = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "histogram_count(factor / on (x) duration)",
-            10_000,
-        )
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = invalid else {
-        panic!("expected vector");
-    };
+    let samples =
+        instant_vector(&engine, "histogram_count(factor / on (x) duration)", 10_000).await;
     assert2::assert!(samples.is_empty());
 }

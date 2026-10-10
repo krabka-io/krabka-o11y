@@ -1,1 +1,0 @@
-label_replace(label_replace(rate({app="web"}[5m]),"inner","$1","app","(.*)"),

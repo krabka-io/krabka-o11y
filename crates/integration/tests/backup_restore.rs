@@ -77,7 +77,7 @@ use krabka_observability::{
     wal_consumer_metrics::WalConsumerMetrics,
 };
 use krabka_profiles::{
-    ProfileRecord, WalFunction, WalLocation, WalMapping, WalSample, WalSymbolSet,
+    ProfileRecord, WalSample,
     blockbuilder::{BlockBuilderConfig as ProfilesBlockBuilderConfig, run_with_config},
     cold_store::ColdProfileStore,
     distributor::{KafkaSink as ProfilesKafkaSink, WalSink as _},
@@ -106,6 +106,9 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt as _;
 use tsdb_fixture::{FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FIXTURE_ULID, fixture_files};
 
+use self::one_frame_profile::one_frame_symbols;
+
+mod one_frame_profile;
 #[path = "../../metrics/tests/support/tsdb_fixture.rs"]
 mod tsdb_fixture;
 
@@ -185,23 +188,7 @@ impl Deployment {
 async fn an_empty_deployment_restores_every_tenant_and_signal_and_resumes_ingest() {
     let evidence = Evidence::from_env();
     let live = Deployment::empty();
-    let broker = start_broker(live.broker_dir.path(), BootstrapMode::Bootstrap).await;
-    let bootstrap = broker.listen_addr().to_string();
-    provision_topics(
-        &bootstrap,
-        &ALL_TOPICS,
-        &TopicSettings::single_broker(),
-        None,
-    )
-    .await
-    .expect("provision topics");
-    let producer = Arc::new(
-        Producer::builder()
-            .bootstrap(&bootstrap)
-            .build()
-            .await
-            .expect("producer"),
-    );
+    let (broker, bootstrap, producer) = start_provisioned_broker(&live).await;
 
     // --- write every signal and every kind of state, then build blocks ----
     for tenant in TENANTS {
@@ -338,23 +325,7 @@ async fn an_empty_deployment_restores_every_tenant_and_signal_and_resumes_ingest
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_broker_restored_from_another_time_is_refused_before_any_write() {
     let live = Deployment::empty();
-    let broker = start_broker(live.broker_dir.path(), BootstrapMode::Bootstrap).await;
-    let bootstrap = broker.listen_addr().to_string();
-    provision_topics(
-        &bootstrap,
-        &ALL_TOPICS,
-        &TopicSettings::single_broker(),
-        None,
-    )
-    .await
-    .expect("provision topics");
-    let producer = Arc::new(
-        Producer::builder()
-            .bootstrap(&bootstrap)
-            .build()
-            .await
-            .expect("producer"),
-    );
+    let (broker, bootstrap, producer) = start_provisioned_broker(&live).await;
     produce_generation(&producer, &bootstrap, TENANTS[0], 0).await;
     build_all_blocks(&live, &bootstrap).await;
 
@@ -491,6 +462,29 @@ async fn a_restored_deployment_keeps_a_tsdb_import_and_does_not_import_it_again(
 
 fn cut_broker_state(bootstrap: &str) -> KafkaBrokerState {
     KafkaBrokerState::new(bootstrap, None, ALL_TOPICS.iter().map(|topic| topic.name))
+}
+
+// Starts a bootstrapping broker over `live`, provisions every topic on it,
+// and returns it with its address and a producer bound to it.
+async fn start_provisioned_broker(live: &Deployment) -> (BrokerHandle, String, Arc<Producer>) {
+    let broker = start_broker(live.broker_dir.path(), BootstrapMode::Bootstrap).await;
+    let bootstrap = broker.listen_addr().to_string();
+    provision_topics(
+        &bootstrap,
+        &ALL_TOPICS,
+        &TopicSettings::single_broker(),
+        None,
+    )
+    .await
+    .expect("provision topics");
+    let producer = Arc::new(
+        Producer::builder()
+            .bootstrap(&bootstrap)
+            .build()
+            .await
+            .expect("producer"),
+    );
+    (broker, bootstrap, producer)
 }
 
 /// Starts a broker on `dir`.
@@ -655,31 +649,7 @@ fn profile_record(tenant: &str, ts_ms: i64, span_id: u64) -> ProfileRecord {
             span_id: Some(span_id),
             trace_id: Some(TRACE_ID.to_vec()),
         }],
-        symbols: WalSymbolSet {
-            strings: vec![String::new(), FRAME.into()],
-            functions: vec![WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![WalLocation {
-                address: 0x1000,
-                mapping_id: 0,
-                lines: vec![(0, 10)],
-            }],
-            mappings: vec![WalMapping {
-                memory_start: 0,
-                memory_limit: 0,
-                file_offset: 0,
-                filename: 0,
-                build_id: 0,
-                has_functions: true.into(),
-                has_filenames: false.into(),
-                has_line_numbers: false.into(),
-                has_inline_frames: false.into(),
-            }],
-        },
+        symbols: one_frame_symbols(FRAME),
     }
 }
 
@@ -1182,44 +1152,50 @@ async fn query_everything(deployment: &Deployment, bootstrap: &str) -> BTreeMap<
                 json!({"root": trace.root_trace_name, "spans": spans})
             });
         answers.insert(format!("{tenant}/traces/trace_by_id"), json!(trace));
-        for (name, selector) in [
-            (
-                "filtered",
-                "{service_name=~\"check.*\",service_name!=\"absent\"}",
-            ),
-            ("absent", "{service_name=\"absent\"}"),
-        ] {
-            let query = url::form_urlencoded::byte_serialize(
-                format!("{PROFILE_TYPE}{selector}").as_bytes(),
-            )
-            .collect::<String>();
-            answers.insert(
-                format!("{tenant}/profiles/{name}"),
-                get_json(
-                    &profiles,
-                    tenant,
-                    &format!("/pyroscope/render?query={query}&from=0&until={}", i64::MAX),
-                )
-                .await,
-            );
-        }
+        answers.extend(profile_answers(&profiles, tenant).await);
+    }
+    answers
+}
+
+// The profiles answers of one tenant, keyed as `query_everything` keys them.
+async fn profile_answers(profiles: &axum::Router, tenant: &str) -> BTreeMap<String, Value> {
+    let mut answers = BTreeMap::new();
+    for (name, selector) in [
+        (
+            "filtered",
+            "{service_name=~\"check.*\",service_name!=\"absent\"}",
+        ),
+        ("absent", "{service_name=\"absent\"}"),
+    ] {
+        let query =
+            url::form_urlencoded::byte_serialize(format!("{PROFILE_TYPE}{selector}").as_bytes())
+                .collect::<String>();
         answers.insert(
-            format!("{tenant}/profiles/render"),
+            format!("{tenant}/profiles/{name}"),
             get_json(
-                &profiles,
+                profiles,
                 tenant,
-                &format!(
-                    "/pyroscope/render?query={}&from=0&until={}",
-                    url::form_urlencoded::byte_serialize(
-                        format!("{PROFILE_TYPE}{{service_name=\"checkout\"}}").as_bytes()
-                    )
-                    .collect::<String>(),
-                    i64::MAX
-                ),
+                &format!("/pyroscope/render?query={query}&from=0&until={}", i64::MAX),
             )
             .await,
         );
     }
+    answers.insert(
+        format!("{tenant}/profiles/render"),
+        get_json(
+            profiles,
+            tenant,
+            &format!(
+                "/pyroscope/render?query={}&from=0&until={}",
+                url::form_urlencoded::byte_serialize(
+                    format!("{PROFILE_TYPE}{{service_name=\"checkout\"}}").as_bytes()
+                )
+                .collect::<String>(),
+                i64::MAX
+            ),
+        )
+        .await,
+    );
     answers
 }
 
@@ -1862,14 +1838,9 @@ fn offset_range_in(
 }
 
 async fn list_paths(store: &Arc<dyn ObjectStore>) -> Vec<String> {
-    let mut paths = futures::TryStreamExt::try_collect::<Vec<_>>(store.list(None))
+    krabka_blockstore::sorted_object_paths(store.as_ref())
         .await
         .expect("list")
-        .into_iter()
-        .map(|meta| meta.location.to_string())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
 }
 
 // ---------------------------------------------------------------------------

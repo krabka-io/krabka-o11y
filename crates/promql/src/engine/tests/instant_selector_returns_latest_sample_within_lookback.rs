@@ -2,42 +2,14 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_selector_returns_latest_sample_within_lookback() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        20_000,
-        2.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        40_000,
-        4.0,
-    );
+    let store = SeriesFixture::new(labels(&[("__name__", "up"), ("job", "api")]))
+        .at(10_000, 1.0)
+        .at(20_000, 2.0)
+        .at(40_000, 4.0)
+        .store();
+    let engine = lookback_engine(store, millis(15_000));
 
-    let engine = PromqlEngine::new(
-        Arc::new(store),
-        EngineOpts {
-            lookback_delta: millis(15_000),
-            max_samples: 100,
-            ..EngineOpts::default()
-        },
-    );
-
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "up", 30_000)
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "up", 30_000).await;
     check!(
         (
             samples.len(),

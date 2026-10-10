@@ -27,31 +27,22 @@ pub(crate) async fn vector_vector_group_right_carries_labels_from_one_side() {
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "target_limit / on (job) group_right(region) http_requests_total",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(
+        &engine,
+        "target_limit / on (job) group_right(region) http_requests_total",
+        10_000,
+    )
+    .await;
     check!(samples.len() == 2);
-    check!(samples.iter().any(|sample| {
-        sample.labels.get("__name__").is_none()
-            && sample.labels.get("job") == Some("api")
-            && sample.labels.get("region") == Some("east")
-            && sample.labels.get("instance") == Some("a")
-            && approx_eq(float_value(&sample.value), 10.0)
-    }));
-    check!(samples.iter().any(|sample| {
-        sample.labels.get("__name__").is_none()
-            && sample.labels.get("job") == Some("api")
-            && sample.labels.get("region") == Some("east")
-            && sample.labels.get("instance") == Some("b")
-            && approx_eq(float_value(&sample.value), 4.0)
-    }));
+    let has_east_api_sample = |instance: &str, want: f64| {
+        samples.iter().any(|sample| {
+            sample.labels.get("__name__").is_none()
+                && sample.labels.get("job") == Some("api")
+                && sample.labels.get("region") == Some("east")
+                && sample.labels.get("instance") == Some(instance)
+                && approx_eq(float_value(&sample.value), want)
+        })
+    };
+    check!(has_east_api_sample("a", 10.0));
+    check!(has_east_api_sample("b", 4.0));
 }

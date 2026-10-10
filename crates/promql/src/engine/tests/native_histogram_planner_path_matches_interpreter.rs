@@ -69,32 +69,10 @@ pub(crate) async fn native_histogram_planner_path_matches_interpreter() {
     ];
 
     for (query, time_ms) in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
+        let (via_operators, via_interpreter) =
+            planned_and_interpreted(&engine, query, time_ms).await;
 
-        // The recursive planner must claim this query (the `Precomputed` path).
-        let plan = engine
-            .plan_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = engine
-            .assemble_planned_instant(plan, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-
-        let via_interpreter = engine
-            .eval_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-
-        let normalize = |result: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut samples) = result else {
-                panic!("expected vector for `{query}`");
-            };
-            samples.sort_by_key(|sample| sample.labels.fingerprint());
-            samples
-        };
+        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
 
         let via_interpreter = normalize(via_interpreter);
         let via_operators = normalize(via_operators);
@@ -135,28 +113,9 @@ pub(crate) async fn native_histogram_planner_path_matches_interpreter() {
         "histogram_quantiles(nh, \"q\", 0.5, 0.9)",
         "histogram_quantiles(cls_bucket, \"q\", 0.5)",
     ] {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(300_000))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-        let plan = engine
-            .plan_instant_expr("t", &expr, 300_000)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = engine
-            .assemble_planned_instant(plan, 300_000)
-            .await
-            .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-        let via_interpreter = engine
-            .eval_instant_expr("t", &expr, 300_000)
-            .await
-            .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-        let normalize = |result: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut samples) = result else {
-                panic!("expected vector for `{query}`");
-            };
-            samples.sort_by_key(|sample| sample.labels.fingerprint());
-            samples
-        };
+        let (via_operators, via_interpreter) =
+            planned_and_interpreted(&engine, query, 300_000).await;
+        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
         assert2::assert!(instant_samples_match(
             &normalize(via_interpreter),
             &normalize(via_operators)

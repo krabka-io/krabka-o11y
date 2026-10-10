@@ -3,7 +3,7 @@ use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 
 use super::{
-    RangeEval, add_compatible_native_histogram,
+    RangeEval, RangeWindow, add_compatible_native_histogram,
     annotations::{
         emit_info, emit_warning, histogram_counter_reset_collision_warning,
         histogram_ignored_in_mixed_range_info, mismatched_custom_buckets_info,
@@ -64,7 +64,6 @@ mod over_time_mad;
 mod over_time_mean;
 mod over_time_sample_from_series;
 mod over_time_sum;
-mod over_time_variance;
 mod predict_linear;
 mod predict_linear_sample_from_series;
 mod quantile_over_time_sample_from_series;
@@ -112,17 +111,16 @@ pub(super) use instant_smoothed_boundary_value::instant_smoothed_boundary_value;
 use interpolate_boundary::interpolate_boundary;
 pub(super) use irate_fn::IrateFn;
 pub(super) use kahan_sum_inc::kahan_sum_inc;
-use native_histograms_equal::native_histograms_equal;
+pub(super) use native_histograms_equal::native_histograms_equal;
 use note_histograms_ignored_in_range::note_histograms_ignored_in_range;
 pub(super) use outer_range_fn::OuterRangeFn;
-use outer_range_sample_from_series::outer_range_sample_from_series;
+use outer_range_sample_from_series::{OuterRangeFold, outer_range_sample_from_series};
 pub(super) use over_time_fn::OverTimeFn;
 use over_time_histogram_sample::over_time_histogram_sample;
 use over_time_mad::over_time_mad;
-pub(super) use over_time_mean::over_time_mean;
+pub(crate) use over_time_mean::over_time_mean;
 use over_time_sample_from_series::over_time_sample_from_series;
 pub(super) use over_time_sum::over_time_sum;
-use over_time_variance::over_time_variance;
 use predict_linear::predict_linear;
 use predict_linear_sample_from_series::predict_linear_sample_from_series;
 use quantile_over_time_sample_from_series::quantile_over_time_sample_from_series;
@@ -137,4 +135,4 @@ use regression_slope_and_intercept::regression_slope_and_intercept;
 #[cfg(feature = "experimental-functions")]
 pub(super) use validate_smoothing_factor::validate_smoothing_factor;
 
-use crate::functions::extrapolate::start_timestamp_reset;
+use crate::functions::{extrapolate::start_timestamp_reset, over_time::over_time_variance};

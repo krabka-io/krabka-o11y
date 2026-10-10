@@ -6,16 +6,7 @@ use super::*;
 /// -- it reaches almost twice as far -- so the bound has to be spelled out.
 #[tokio::test]
 pub(crate) async fn topk_refuses_a_k_that_does_not_fit_an_int64() {
-    let mut store = InMemoryMetricStore::new();
-    for (instance, value) in [("a", 1.0), ("b", 3.0), ("c", 2.0)] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "memory_bytes"), ("instance", instance)]),
-            10_000,
-            value,
-        );
-    }
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let engine = memory_bytes_engine();
 
     // `2^63` and the bound itself are both refused; `1e19` is the value that a
     // `u64` would have swallowed whole.

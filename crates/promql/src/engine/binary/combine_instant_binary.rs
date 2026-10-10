@@ -1,7 +1,8 @@
 use super::{
-    BinaryExpr, BinaryOp, InstantValue, PromqlError, QueryResult, Result, ScalarSide, SetOp,
-    eval_vector_set_binary, eval_vector_vector_binary, is_result_metadata_label,
-    validate_binary_modifier, validate_set_modifier,
+    BinaryExpr, BinaryOp, InstantOperands, InstantValue, PromqlError, QueryResult, Result,
+    ScalarSide, SetOp, VectorMatching, VectorOperands, eval_vector_set_binary,
+    eval_vector_vector_binary, is_result_metadata_label, validate_binary_modifier,
+    validate_set_modifier,
 };
 
 /// Combines two already-evaluated instant operands into the binary result.
@@ -20,10 +21,10 @@ use super::{
 /// copying. The call site decides none of them.
 pub(crate) fn combine_instant_binary(
     binary: &BinaryExpr,
-    lhs: InstantValue,
-    rhs: InstantValue,
+    operands: InstantOperands,
     time_ms: i64,
 ) -> Result<QueryResult> {
+    let InstantOperands { lhs, rhs } = operands;
     let modifier = binary.modifier.as_ref();
 
     if let Some(op) = SetOp::from_token(binary.op) {
@@ -78,7 +79,10 @@ pub(crate) fn combine_instant_binary(
             Ok(QueryResult::InstantVector(samples))
         }
         (InstantValue::Vector(left), InstantValue::Vector(right)) => {
-            let mut samples = eval_vector_vector_binary(left, right, op, modifier)?;
+            let mut samples = eval_vector_vector_binary(
+                VectorOperands { left, right },
+                VectorMatching { op, modifier },
+            )?;
             if op.changes_metric_schema() {
                 // Unlike vector/scalar arithmetic, resultMetric clears schema
                 // metadata eagerly. A subquery must not treat the left metric

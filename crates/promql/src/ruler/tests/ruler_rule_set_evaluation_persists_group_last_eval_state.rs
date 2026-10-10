@@ -2,38 +2,16 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn ruler_rule_set_evaluation_persists_group_last_eval_state() {
-    let recording_group: serde_yaml::Value = serde_yaml::from_str(
-        r"
-name: recording
-rules:
-  - record: job:up:current
-    expr: up
-",
-    )
-    .expect("recording group yaml");
-    let alerting_group: serde_yaml::Value = serde_yaml::from_str(
+    let rules = namespaced_rule_set(
         r"
 name: alerting
 rules:
   - alert: InstanceUp
     expr: up > 0
 ",
-    )
-    .expect("alerting group yaml");
-    let mut rules = BTreeMap::new();
-    rules
-        .entry("team-a".to_string())
-        .or_insert_with(BTreeMap::new)
-        .insert("recording".to_string(), recording_group);
-    rules
-        .entry("team-b".to_string())
-        .or_insert_with(BTreeMap::new)
-        .insert("alerting".to_string(), alerting_group);
+    );
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels("up", "api"), 120_000, 1.0);
-    let store = Arc::new(store);
-    let engine = PromqlEngine::new(store, EngineOpts::default());
+    let engine = up_api_engine(&[120_000]);
     let wal_sink = RecordingSink::default();
     let alert_sink = RecordingAlertmanagerSink::default();
     let state_sink = RecordingRulerStateSink::default();

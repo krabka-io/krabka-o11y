@@ -3,18 +3,7 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn vector_and_keeps_left_samples_with_matching_right_key() {
     let engine = PromqlEngine::new(Arc::new(set_op_store()), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "up and on (instance) target_info",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "up and on (instance) target_info", 10_000).await;
     check!(samples.len() == 1);
     check!(samples[0].labels.get("__name__") == Some("up"));
     check!(samples[0].labels.get("instance") == Some("b"));

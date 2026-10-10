@@ -179,10 +179,11 @@ async fn persist_marker(
     Ok(())
 }
 
-async fn load_marker(
+/// The JSON document at `key`, or `None` when no object is there.
+pub(crate) async fn read_optional_json<T: serde::de::DeserializeOwned>(
     store: &Arc<dyn ObjectStore>,
     key: &Path,
-) -> Result<Option<TenantDeletionMarker>, String> {
+) -> Result<Option<T>, String> {
     let bytes = match store.get(key).await {
         Ok(object) => object.bytes().await.map_err(|error| error.to_string())?,
         Err(object_store::Error::NotFound { .. }) => return Ok(None),
@@ -191,6 +192,13 @@ async fn load_marker(
     serde_json::from_slice(&bytes)
         .map(Some)
         .map_err(|error| error.to_string())
+}
+
+async fn load_marker(
+    store: &Arc<dyn ObjectStore>,
+    key: &Path,
+) -> Result<Option<TenantDeletionMarker>, String> {
+    read_optional_json(store, key).await
 }
 
 async fn marker_objects_absent(

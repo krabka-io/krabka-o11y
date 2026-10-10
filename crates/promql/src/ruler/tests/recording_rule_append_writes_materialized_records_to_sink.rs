@@ -2,10 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn recording_rule_append_writes_materialized_records_to_sink() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels("up", "api"), 60_000, 1.0);
-    let store = Arc::new(store);
-    let engine = PromqlEngine::new(store, EngineOpts::default());
+    let engine = up_api_engine(&[60_000]);
     let sink = RecordingSink::default();
 
     let appended = super::super::evaluate_and_append_recording_rule(
@@ -21,20 +18,5 @@ pub(crate) async fn recording_rule_append_writes_materialized_records_to_sink() 
     .expect("recording rule append");
 
     assert2::assert!(appended == 1);
-    assert2::assert!(
-        sink.records()
-            == vec![WalRecord {
-                tenant: "tenant-a".to_string(),
-                labels: vec![
-                    ("__name__".to_string(), "job:up:current".into()),
-                    ("job".to_string(), "api".into()),
-                ],
-                payload: SamplePayload::Float {
-                    timestamp_ms: 60_000,
-                    value: 1.0,
-                    start_timestamp_ms: None,
-                },
-                exemplars: Vec::new(),
-            }]
-    );
+    assert2::assert!(sink.records() == vec![job_up_current_record(60_000)]);
 }

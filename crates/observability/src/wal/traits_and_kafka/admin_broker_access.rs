@@ -1,8 +1,9 @@
 use krabka_client_core::ClientError;
 
 use super::{
-    AclSet, AdminClient, AdminError, BTreeMap, BrokerAccessSource, TenantId, acl_set_from_describe,
-    async_trait, wal_topic_acl_filters,
+    AclSet, AdminClient, AdminError, Arc, BTreeMap, BrokerAccessSource, ClientResourcePolicy,
+    ClientSecurity, TenantId, acl_set_from_describe, admin_connection_options, async_trait,
+    wal_topic_acl_filters,
 };
 
 /// A [`BrokerAccessSource`] that asks a broker over one admin connection.
@@ -13,6 +14,24 @@ use super::{
 /// request waits in a queue on this mutex.
 pub(crate) struct AdminBrokerAccess {
     pub(crate) admin: tokio::sync::Mutex<AdminClient>,
+}
+
+impl AdminBrokerAccess {
+    /// Connects the admin client to `bootstrap` under `security`.
+    pub(crate) async fn connect(
+        bootstrap: &str,
+        client_resource_policy: ClientResourcePolicy,
+        security: Option<&ClientSecurity>,
+    ) -> Result<Arc<Self>, AdminError> {
+        let admin = AdminClient::connect_with_options(
+            &[bootstrap.to_string()],
+            admin_connection_options(client_resource_policy, security),
+        )
+        .await?;
+        Ok(Arc::new(Self {
+            admin: tokio::sync::Mutex::new(admin),
+        }))
+    }
 }
 
 #[async_trait]

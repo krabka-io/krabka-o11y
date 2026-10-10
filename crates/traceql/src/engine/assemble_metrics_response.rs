@@ -25,10 +25,7 @@ pub(crate) fn assemble_metrics_response(
     let exemplar_rows = sample_exemplar_rows(batches, start_ns, end_ns, metric_policy.0)?;
     let mut buckets: BTreeMap<MetricLabels, Vec<MetricBucket>> = BTreeMap::new();
     for (batch_index, batch) in batches.iter().enumerate() {
-        let starts = batch
-            .column_by_name(COL_START)
-            .ok_or_else(|| TraceqlError::Exec(format!("missing column {COL_START}")))?
-            .as_primitive::<arrow::datatypes::Int64Type>();
+        let starts = span_start_column(batch)?;
         for row in 0..batch.num_rows() {
             let ts = UnixNano(starts.value(row));
             if ts < start_ns || ts > end_ns {

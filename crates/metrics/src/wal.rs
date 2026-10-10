@@ -86,66 +86,49 @@ mod tests {
     }
 
     #[test]
-    fn float_record_round_trips() {
-        let rec = WalRecord {
-            tenant: "t1".into(),
-            labels: vec![
-                ("__name__".into(), "up".into()),
-                ("job".into(), "api".into()),
-            ],
-            payload: SamplePayload::Float {
-                timestamp_ms: 100,
-                value: 1.5,
-                start_timestamp_ms: Some(50),
+    fn records_round_trip() {
+        let trace_exemplar = || WalExemplar {
+            labels: vec![("trace_id".into(), "abc".into())],
+            value: 0.9,
+            timestamp_ms: 200,
+        };
+        let records = [
+            WalRecord {
+                tenant: "t1".into(),
+                labels: vec![
+                    ("__name__".into(), "up".into()),
+                    ("job".into(), "api".into()),
+                ],
+                payload: SamplePayload::Float {
+                    timestamp_ms: 100,
+                    value: 1.5,
+                    start_timestamp_ms: Some(50),
+                },
+                exemplars: Vec::new(),
             },
-            exemplars: Vec::new(),
-        };
-
-        let bytes = rec.encode().unwrap();
-        let back = WalRecord::decode(&bytes).unwrap();
-
-        assert!(back == rec);
-    }
-
-    #[test]
-    fn hist_record_round_trips() {
-        let rec = WalRecord {
-            tenant: "t1".into(),
-            labels: vec![("__name__".into(), "latency".into())],
-            payload: SamplePayload::Hist {
-                timestamp_ms: 200,
-                hist: hist(),
+            WalRecord {
+                tenant: "t1".into(),
+                labels: vec![("__name__".into(), "latency".into())],
+                payload: SamplePayload::Hist {
+                    timestamp_ms: 200,
+                    hist: hist(),
+                },
+                exemplars: vec![trace_exemplar()],
             },
-            exemplars: vec![WalExemplar {
-                labels: vec![("trace_id".into(), "abc".into())],
-                value: 0.9,
-                timestamp_ms: 200,
-            }],
-        };
+            WalRecord {
+                tenant: "t1".into(),
+                labels: vec![("__name__".into(), "requests_total".into())],
+                payload: SamplePayload::Exemplars,
+                exemplars: vec![trace_exemplar()],
+            },
+        ];
 
-        let bytes = rec.encode().unwrap();
-        let back = WalRecord::decode(&bytes).unwrap();
+        for rec in records {
+            let bytes = rec.encode().unwrap();
+            let back = WalRecord::decode(&bytes).unwrap();
 
-        assert!(back == rec);
-    }
-
-    #[test]
-    fn exemplar_record_round_trips() {
-        let rec = WalRecord {
-            tenant: "t1".into(),
-            labels: vec![("__name__".into(), "requests_total".into())],
-            payload: SamplePayload::Exemplars,
-            exemplars: vec![WalExemplar {
-                labels: vec![("trace_id".into(), "abc".into())],
-                value: 0.9,
-                timestamp_ms: 200,
-            }],
-        };
-
-        let bytes = rec.encode().unwrap();
-        let back = WalRecord::decode(&bytes).unwrap();
-
-        assert!(back == rec);
+            assert!(back == rec);
+        }
     }
 
     #[test]

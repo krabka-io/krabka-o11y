@@ -10,17 +10,19 @@ use std::{
 
 use assert2::assert;
 use prost::Message as _;
-use reqwest::{Client, StatusCode};
+use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
     ContainerAsync, ContainerRequest, GenericImage, ImageExt as _,
-    core::{ContainerPort, Mount, WaitFor},
+    core::{ContainerPort, Mount},
 };
 
 #[path = "../../metrics-service/tests/support/container_deployment.rs"]
 mod container_deployment;
 mod support;
-use container_deployment::{TestResult, base_url, image, start, start_broker};
+use container_deployment::{
+    Deployment, TestResult, base_url, image, start, start_infrastructure, wait_until_ready,
+};
 use support::{LokiProtoEntry, LokiProtoPushRequest, LokiProtoStream, LokiProtoTimestamp};
 
 const PORT: u16 = 3100;
@@ -29,104 +31,68 @@ const END: i64 = START + 3_000_000_000;
 const TIMEOUT: Duration = Duration::from_secs(45);
 const SELECTOR: &str = r#"{service_name="fixture"}"#;
 
-// Drop containers before the directories holding their bind mounts.
-struct Deployment {
-    distributor: ContainerAsync<GenericImage>,
-    hot: ContainerAsync<GenericImage>,
-    _minio: ContainerAsync<GenericImage>,
-    _broker: ContainerAsync<GenericImage>,
-    data: tempfile::TempDir,
-    _broker_data: tempfile::TempDir,
-    network: String,
-    client: Client,
-}
-
 impl Deployment {
     async fn start() -> TestResult<Self> {
         Self::with_overrides(None).await
     }
 
     async fn with_overrides(overrides: Option<&str>) -> TestResult<Self> {
-        let broker_data = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
-        if let Some(overrides) = overrides {
-            std::fs::write(data.path().join("overrides.yaml"), overrides)?;
-        }
-        let network = format!(
-            "krabka-logs-{}",
-            broker_data
-                .path()
-                .file_name()
-                .ok_or("directory name")?
-                .to_string_lossy()
-                .trim_start_matches('.')
-                .to_ascii_lowercase()
-        );
-        let broker = start_broker(broker_data.path(), &network).await?;
-        let minio = start(
-            image("MINIO")
-                .with_entrypoint("/bin/sh")
-                .with_wait_for(WaitFor::message_on_stderr("API:"))
-                .with_network(&network)
-                .with_container_name(format!("{network}-minio"))
-                .with_env_var("MINIO_ROOT_USER", "krabkalogs")
-                .with_env_var("MINIO_ROOT_PASSWORD", "krabkalogs")
-                .with_cmd([
-                    "-c",
-                    "mkdir -p /data/logs && exec /usr/bin/minio server /data",
-                ]),
+        let infrastructure = start_infrastructure("logs", overrides).await?;
+        let distributor = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "distributor",
+            true,
         )
         .await?;
-        let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
-        let distributor = role(&network, data.path(), "distributor", true).await?;
-        let hot = role(&network, data.path(), "querier", true).await?;
-        let deployment = Self {
+        let hot = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "querier",
+            true,
+        )
+        .await?;
+        Self {
             distributor,
             hot,
-            _minio: minio,
-            _broker: broker,
-            data,
-            _broker_data: broker_data,
-            network,
-            client,
-        };
-        deployment.ready(&deployment.distributor).await?;
-        deployment.ready(&deployment.hot).await?;
-        Ok(deployment)
+            infrastructure,
+        }
+        .wait_until_serving(PORT)
+        .await
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>) -> TestResult {
-        let base = base_url(container, PORT).await?;
-        tokio::time::timeout(TIMEOUT, async {
-            loop {
-                if let Ok(response) = self.client.get(format!("{base}/ready")).send().await
-                    && response.status() == StatusCode::OK
-                {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .map_err(|error| format!("{base}/ready: {error}"))?;
-        Ok(())
+        wait_until_ready(&self.infrastructure.client, container, PORT).await
     }
 
     async fn builder(&self) -> TestResult<ContainerAsync<GenericImage>> {
-        let builder = role(&self.network, self.data.path(), "block-builder", true).await?;
+        let builder = role(
+            &self.infrastructure.network,
+            self.infrastructure.data.path(),
+            "block-builder",
+            true,
+        )
+        .await?;
         self.ready(&builder).await?;
         Ok(builder)
     }
 
     async fn cold(&self) -> TestResult<ContainerAsync<GenericImage>> {
-        let cold = role(&self.network, self.data.path(), "querier", false).await?;
+        let cold = role(
+            &self.infrastructure.network,
+            self.infrastructure.data.path(),
+            "querier",
+            false,
+        )
+        .await?;
         self.ready(&cold).await?;
         Ok(cold)
     }
 
     async fn push(&self, tenant: &str, streams: Value) -> TestResult {
         accepted(
-            self.client
+            self.infrastructure
+                .client
                 .post(format!(
                     "{}/loki/api/v1/push",
                     base_url(&self.distributor, PORT).await?
@@ -181,7 +147,11 @@ impl Deployment {
             url.query_pairs_mut()
                 .extend_pairs([("direction", "forward"), ("limit", "1000")]);
         }
-        Ok(self.client.get(url).header("X-Scope-OrgID", tenant))
+        Ok(self
+            .infrastructure
+            .client
+            .get(url)
+            .header("X-Scope-OrgID", tenant))
     }
 
     async fn wait(
@@ -395,6 +365,7 @@ async fn roundtrip(encoding: Encoding) -> TestResult {
         }
     };
     let mut request = deployment
+        .infrastructure
         .client
         .post(format!(
             "{}/loki/api/v1/push",
@@ -585,6 +556,7 @@ async fn tenant_query_limits_apply_before_and_after_storage() -> TestResult {
             ("direction", "forward"),
         ]);
         let response: Value = deployment
+            .infrastructure
             .client
             .get(url)
             .header("X-Scope-OrgID", "tenant-a")
@@ -698,6 +670,7 @@ async fn otlp_normalization_and_metadata_survive_storage() -> TestResult {
     let body = json!({"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"fixture"}},{"key":"cloud/region","value":{"stringValue":"west"}}]},"scopeLogs":[{"scope":{"attributes":[{"key":"instrumentation.scope","value":{"stringValue":"api"}}]},"logRecords":[{"timeUnixNano":START.to_string(),"body":{"stringValue":"checkout"},"attributes":[{"key":"thread.name","value":{"stringValue":"worker-1"}},{"key":"http.status-code","value":{"intValue":"200"}}]}]}]}]});
     accepted(
         deployment
+            .infrastructure
             .client
             .post(format!(
                 "{}/otlp/v1/logs",
@@ -724,11 +697,18 @@ async fn otlp_normalization_and_metadata_survive_storage() -> TestResult {
 #[ignore = "requires Docker and Bazel-loaded images"]
 async fn single_binary_shutdown_drains_logs_to_storage() -> TestResult {
     let deployment = Deployment::start().await?;
-    let all = role(&deployment.network, deployment.data.path(), "all", true).await?;
+    let all = role(
+        &deployment.infrastructure.network,
+        deployment.infrastructure.data.path(),
+        "all",
+        true,
+    )
+    .await?;
     deployment.ready(&all).await?;
     let empty = deployment.cold().await?;
     accepted(
         deployment
+            .infrastructure
             .client
             .post(format!("{}/loki/api/v1/push", base_url(&all, PORT).await?))
             .header("X-Scope-OrgID", "tenant-a")
@@ -884,6 +864,7 @@ async fn deletes_cancel_and_remove_matching_metadata_from_stored_blocks() -> Tes
     url.query_pairs_mut().append_pair("request_id", id);
     accepted(
         deployment
+            .infrastructure
             .client
             .delete(url)
             .header("X-Scope-OrgID", "tenant-a")
@@ -928,7 +909,13 @@ async fn deletes_cancel_and_remove_matching_metadata_from_stored_blocks() -> Tes
     // An independent data root has no delete-request file. Its result proves
     // that compaction removed the row physically, rather than filtering it.
     let clean_data = tempfile::tempdir()?;
-    let unfiltered = role(&deployment.network, clean_data.path(), "querier", false).await?;
+    let unfiltered = role(
+        &deployment.infrastructure.network,
+        clean_data.path(),
+        "querier",
+        false,
+    )
+    .await?;
     deployment.ready(&unfiltered).await?;
     deployment
         .wait(&unfiltered, "tenant-a", SELECTOR, true, &after)
@@ -936,7 +923,13 @@ async fn deletes_cancel_and_remove_matching_metadata_from_stored_blocks() -> Tes
     deployment.wait(&unfiltered,"tenant-b",SELECTOR,true,&expected(json!([[(START+1_000_000_000).to_string(),"remove me",{"structuredMetadata":{"detected_level":"unknown","user":"secret"}}]]))).await?;
     builder.stop().await?;
     unfiltered.stop().await?;
-    let restarted = role(&deployment.network, clean_data.path(), "querier", false).await?;
+    let restarted = role(
+        &deployment.infrastructure.network,
+        clean_data.path(),
+        "querier",
+        false,
+    )
+    .await?;
     deployment.ready(&restarted).await?;
     deployment
         .wait(&restarted, "tenant-a", SELECTOR, true, &after)
@@ -959,6 +952,7 @@ async fn create_delete(
     ]);
     accepted(
         deployment
+            .infrastructure
             .client
             .post(url)
             .header("X-Scope-OrgID", "tenant-a")

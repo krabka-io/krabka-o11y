@@ -16,6 +16,39 @@ use crate::{
     InMemoryMetricStore, MergedMetricStore, PromqlString, WalHead, evaluate_recording_rule,
 };
 
+/// The cold store over every compaction manifest in `object_store`.
+async fn manifest_cold_store(
+    object_store: &Arc<dyn ObjectStore>,
+    base: &url::Url,
+) -> MetricBlockStore {
+    let manifests = list_compaction_manifests(object_store).await.unwrap();
+    MetricBlockStore::from_compaction_manifests(
+        BlockStore::new(object_store.clone(), base.clone()),
+        Some(BlockStore::new(object_store.clone(), base.clone())),
+        &manifests,
+    )
+}
+
+/// Runs two metric-block compaction passes over `object_store`.
+async fn compact_twice(
+    object_store: &Arc<dyn ObjectStore>,
+    policy: CompactionPolicy,
+    deferred: &mut DeferredBlockDeletions,
+) {
+    for _ in 0..2 {
+        compact_metric_blocks_once(
+            object_store,
+            &BlockWriter::new(object_store.clone()),
+            &ObjectStoreCompactionIndexSink::new(object_store.clone()),
+            policy,
+            DEFAULT_BLOCK_READ_MAX,
+            deferred,
+        )
+        .await
+        .unwrap();
+    }
+}
+
 #[tokio::test]
 async fn byte_recording_rules_survive_wal_compaction_and_restart() {
     let directory = tempfile::tempdir().unwrap();
@@ -61,12 +94,7 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
         }
     }
     let base = url::Url::parse("file:///").unwrap();
-    let manifests = list_compaction_manifests(&object_store).await.unwrap();
-    let cold = MetricBlockStore::from_compaction_manifests(
-        BlockStore::new(object_store.clone(), base.clone()),
-        Some(BlockStore::new(object_store.clone(), base.clone())),
-        &manifests,
-    );
+    let cold = manifest_cold_store(&object_store, &base).await;
     let overlap_engine = PromqlEngine::new(
         Arc::new(MergedMetricStore::new(cold, WalHead::from_store(head))),
         EngineOpts::default(),
@@ -81,30 +109,16 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
         hours(24),
         BlockTimestampUnit::Millis,
     );
-    for _ in 0..2 {
-        compact_metric_blocks_once(
-            &object_store,
-            &BlockWriter::new(object_store.clone()),
-            &ObjectStoreCompactionIndexSink::new(object_store.clone()),
-            policy,
-            DEFAULT_BLOCK_READ_MAX,
-            &mut deferred,
-        )
-        .await
-        .unwrap();
-    }
+    compact_twice(&object_store, policy, &mut deferred).await;
     drop(object_store);
     // Reopening the filesystem and rebuilding solely from persisted sidecars
     // prevents an in-process label cache from hiding a lossy storage adapter.
     let reopened: Arc<dyn ObjectStore> =
         Arc::new(LocalFileSystem::new_with_prefix(&objects).unwrap());
-    let manifests = list_compaction_manifests(&reopened).await.unwrap();
-    let cold = MetricBlockStore::from_compaction_manifests(
-        BlockStore::new(reopened.clone(), base.clone()),
-        Some(BlockStore::new(reopened.clone(), base.clone())),
-        &manifests,
+    let engine = PromqlEngine::new(
+        Arc::new(manifest_cold_store(&reopened, &base).await),
+        EngineOpts::default(),
     );
-    let engine = PromqlEngine::new(Arc::new(cold), EngineOpts::default());
     check_byte_ledger(&engine, &values).await;
     drop(engine);
     let raw_matcher = |byte| krabka_blockstore::ByteLabelMatcher {
@@ -136,28 +150,14 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
         .await
         .unwrap();
     }
-    for _ in 0..2 {
-        compact_metric_blocks_once(
-            &reopened,
-            &BlockWriter::new(reopened.clone()),
-            &ObjectStoreCompactionIndexSink::new(reopened.clone()),
-            policy,
-            DEFAULT_BLOCK_READ_MAX,
-            &mut deferred,
-        )
-        .await
-        .unwrap();
-    }
+    compact_twice(&reopened, policy, &mut deferred).await;
     drop(reopened);
     let reopened: Arc<dyn ObjectStore> =
         Arc::new(LocalFileSystem::new_with_prefix(&objects).unwrap());
-    let manifests = list_compaction_manifests(&reopened).await.unwrap();
-    let cold = MetricBlockStore::from_compaction_manifests(
-        BlockStore::new(reopened.clone(), base.clone()),
-        Some(BlockStore::new(reopened, base)),
-        &manifests,
+    let engine = PromqlEngine::new(
+        Arc::new(manifest_cold_store(&reopened, &base).await),
+        EngineOpts::default(),
     );
-    let engine = PromqlEngine::new(Arc::new(cold), EngineOpts::default());
     for (query, expected_value) in [
         ("recorded_float", 2.0),
         ("histogram_count(recorded_hist)", 5.0),

@@ -1,6 +1,6 @@
 use super::{
-    JsonPath, JsonPathPart, ParseError, decode_quoted_escape, is_json_path_field_name_char,
-    template_parse_error,
+    JsonPath, JsonPathPart, ParseError, QuotedBodyError, is_json_path_field_name_char,
+    read_quoted_body, template_parse_error,
 };
 
 pub(crate) struct JsonPathParser<'a> {
@@ -83,22 +83,12 @@ impl<'a> JsonPathParser<'a> {
 
     pub(crate) fn parse_bracket_string(&mut self) -> Result<String, ParseError> {
         self.pos = self.pos.saturating_add('"'.len_utf8());
-        let mut out = String::new();
-        while let Some(ch) = self.peek() {
-            self.pos = self.pos.saturating_add(ch.len_utf8());
-            match ch {
-                '"' => return Ok(out),
-                '\\' => {
-                    let Some(escaped) = self.peek() else {
-                        return Err(template_parse_error("expected escaped json path character"));
-                    };
-                    self.pos = self.pos.saturating_add(escaped.len_utf8());
-                    out.push(decode_quoted_escape(escaped));
-                }
-                _ => out.push(ch),
-            }
-        }
-        Err(template_parse_error("expected closing json path string"))
+        read_quoted_body(self.input, &mut self.pos).map_err(|error| {
+            template_parse_error(match error {
+                QuotedBodyError::DanglingEscape => "expected escaped json path character",
+                QuotedBodyError::Unterminated => "expected closing json path string",
+            })
+        })
     }
 
     pub(crate) fn peek(&self) -> Option<char> {

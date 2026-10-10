@@ -162,7 +162,7 @@ pub use label_selection::LabelSelection;
 pub use label_selection_matcher::LabelSelectionMatcher;
 pub use label_selection_set::LabelSelectionSet;
 use parse_decimal_exponent::parse_decimal_exponent;
-use parse_decimal_sample_literal::parse_decimal_sample_literal;
+pub use parse_decimal_sample_literal::parse_decimal_sample_literal;
 use parse_raw_sample_literal::parse_raw_sample_literal;
 pub use unwrap_conversion::UnwrapConversion;
 pub use unwrap_expression::UnwrapExpression;

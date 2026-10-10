@@ -17,6 +17,6 @@ pub(crate) async fn series(
         },
         Err(error) => error.into_response(),
     };
-    state.record_query("series", resp.status().is_success(), start);
+    state.record_query("series", resp.status(), start);
     resp
 }

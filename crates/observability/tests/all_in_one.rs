@@ -10,25 +10,28 @@
 //! Neither passes this suite, because it pushes at the ingest route and reads
 //! back at the query route, against a real broker, in one process.
 
-use std::{
-    collections::BTreeMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+#[path = "support/parquet_files.rs"]
+mod parquet_files;
+#[path = "support/wal_broker.rs"]
+mod wal_broker;
+
+use std::time::{Duration, Instant};
 
 use assert2::{assert, check};
 use krabka_blockstore::{BlockKey, TimeRange, read_log_block_from_object_store};
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle, authorizer::SimpleAclAuthorizer};
-use krabka_client_admin::{
-    AclEntry, AclOperation, AdminClient, CreateTopicSpec, PatternType, PermissionType, ResourceType,
-};
+use krabka_broker::BrokerHandle;
 use krabka_observability::{
     CancellationToken, QuerierIndexSource, Role, ServiceConfig, build_service_dependencies,
     serve_all_service_listener, wal_consumer_metrics::WalConsumerMetrics,
 };
-use krabka_units::{days, secs};
+use krabka_units::days;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 use serde_json::{Value, json};
+
+use self::{
+    parquet_files::parquet_files_under,
+    wal_broker::{WalBroker, start_wal_broker},
+};
 
 const TENANT: &str = "tenant-a";
 const INDEX_PREFIX: &str = "observability/logs";
@@ -159,16 +162,12 @@ struct AllInOne {
 
 impl AllInOne {
     async fn start() -> Self {
-        let broker_dir = tempfile::tempdir().expect("broker tempdir");
-        let mut broker_config = BrokerConfig::for_tests(broker_dir.path().to_path_buf());
-        broker_config.authorizer = Arc::new(SimpleAclAuthorizer::new(
-            std::iter::once("ANONYMOUS".to_owned()).collect(),
-        ));
-        let broker = Broker::start(broker_config).await.expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
-        let wal_topic = ServiceConfig::default().wal_topic;
-        create_wal_topic(&bootstrap, &wal_topic).await;
-        grant_tenant_wal_access_for_test(&bootstrap, &wal_topic, TENANT).await;
+        let WalBroker {
+            handle: broker,
+            dir: broker_dir,
+            bootstrap,
+            wal_topic,
+        } = start_wal_broker(TENANT).await;
 
         let object_dir = tempfile::tempdir().expect("object store tempdir");
         let data_root = tempfile::tempdir().expect("data root");
@@ -347,22 +346,7 @@ async fn drained_lines(root: &std::path::Path) -> Vec<String> {
 /// The block keys under `prefix`, rebuilt from the layout
 /// [`BlockKey::object_key`] writes.
 fn block_keys(prefix: &std::path::Path) -> Vec<BlockKey> {
-    fn walk(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, found);
-            } else if path.extension().is_some_and(|ext| ext == "parquet") {
-                found.push(path);
-            }
-        }
-    }
-
-    let mut files = Vec::new();
-    walk(prefix, &mut files);
+    let mut files = parquet_files_under(prefix);
     files.sort();
     files
         .iter()
@@ -408,51 +392,4 @@ fn late_push_body() -> Value {
             "values": [["30", "api stopping"]],
         }],
     })
-}
-
-/// Grants `tenant` every operation on the WAL topic.
-///
-/// The pinned in-process broker runs an authorizer and answers `DescribeAcls`
-/// with the ACLs it holds, so the logs path reads its ACLs as configured. With
-/// no ACL at all it would refuse every tenant, as Kafka's authorizer does. A
-/// broker that answers `SECURITY_DISABLED` instead allows every tenant.
-async fn grant_tenant_wal_access_for_test(bootstrap: &str, wal_topic: &str, tenant: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    let outcomes = admin
-        .create_acls(&[AclEntry {
-            resource_type: ResourceType::Topic,
-            resource_name: wal_topic.to_string(),
-            pattern_type: PatternType::Literal,
-            principal: format!("User:{tenant}"),
-            host: "*".to_string(),
-            operation: AclOperation::All,
-            permission_type: PermissionType::Allow,
-        }])
-        .await
-        .expect("create the tenant's WAL topic ACL");
-    assert!(
-        outcomes.iter().all(|outcome| outcome.error.is_none()),
-        "{outcomes:?}"
-    );
-}
-
-async fn create_wal_topic(bootstrap: &str, wal_topic: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: wal_topic.to_string(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(secs(10)),
-        )
-        .await
-        .expect("create the logs WAL topic");
 }

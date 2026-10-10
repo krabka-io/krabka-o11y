@@ -1,4 +1,4 @@
-use super::{ComparisonOp, Field, Result, aggregate_filter_sql, selector};
+use super::{ComparisonOp, Field, GroupJoinSql, Result, aggregate_filter_sql, group_join_sql};
 
 pub(crate) fn grouped_aggregate_sql(
     spanset_sql: &str,
@@ -8,16 +8,10 @@ pub(crate) fn grouped_aggregate_sql(
     let Some((expr, op, value)) = filter else {
         return Ok(format!("SELECT * FROM ({spanset_sql}) AS q"));
     };
-    let group_cols = by
-        .iter()
-        .map(|field| selector::ident(&selector::field_to_column(field)))
-        .collect::<Vec<_>>();
-    let group_exprs = group_cols.join(", ");
-    let join_pred = group_cols
-        .iter()
-        .map(|col| format!("matched.{col} = passing.{col}"))
-        .collect::<Vec<_>>()
-        .join(" AND ");
+    let GroupJoinSql {
+        group_exprs,
+        join_pred,
+    } = group_join_sql(by);
     let pred = aggregate_filter_sql(&expr, op, value)?;
     Ok(format!(
         "WITH matched AS ({spanset_sql}), \

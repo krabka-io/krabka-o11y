@@ -66,35 +66,18 @@ mod orch_tests {
     use std::sync::Arc;
 
     use assert2::check;
-    use krabka_units::{ByteSize, bytes, convert::ByteSizeExt as _, millis};
+    use krabka_blockstore::TimeRange;
+    use krabka_units::{bytes, millis};
 
     use super::*;
     use crate::frontend::{
         backend::{MockQuerier, SearchPartial},
-        job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
+        job::{BlockMetaInfo, MockCatalog},
         wire::{Metrics, SpanJson, SpanSetJson, TraceJson},
     };
 
     fn tenant_t1() -> TenantId {
         TenantId::new("t1").unwrap()
-    }
-
-    fn block(id: &str, start: i64, end: i64, rgs: &[u64]) -> BlockMetaInfo {
-        let row_groups = rgs
-            .iter()
-            .enumerate()
-            .map(|(i, &b)| RowGroupInfo {
-                index: u32::try_from(i).unwrap(),
-                compressed: ByteSize::from_bytes(b),
-            })
-            .collect();
-        BlockMetaInfo {
-            block_id: id.to_string(),
-            start_ns: start,
-            end_ns: end,
-            size: ByteSize::from_bytes(rgs.iter().sum()),
-            row_groups,
-        }
     }
 
     fn one_trace(tid: &str, start: u64) -> SearchPartial {
@@ -126,13 +109,33 @@ mod orch_tests {
         }
     }
 
+    // Blocks `b1` over [0, 100) and `b2` over [100, 200), one 500-byte row
+    // group each.
+    fn two_small_cold_blocks() -> MockCatalog {
+        MockCatalog::new(vec![
+            BlockMetaInfo::with_row_groups(
+                "b1",
+                TimeRange {
+                    start_ns: 0,
+                    end_ns: 100,
+                },
+                &[500],
+            ),
+            BlockMetaInfo::with_row_groups(
+                "b2",
+                TimeRange {
+                    start_ns: 100,
+                    end_ns: 200,
+                },
+                &[500],
+            ),
+        ])
+    }
+
     #[tokio::test]
     async fn search_plans_jobs_fans_and_merges() {
         // Two small cold blocks + a hot window => 1 Live + 2 block jobs = 3.
-        let catalog = MockCatalog::new(vec![
-            block("b1", 0, 100, &[500]),
-            block("b2", 100, 200, &[500]),
-        ]);
+        let catalog = two_small_cold_blocks();
         let backend = MockQuerier::new();
         backend.stub_search(one_trace("01", 50));
         backend.stub_search(one_trace("02", 150));
@@ -179,7 +182,14 @@ mod orch_tests {
 
     #[tokio::test]
     async fn search_honors_limit() {
-        let catalog = MockCatalog::new(vec![block("b1", 0, 100, &[500])]);
+        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+            "b1",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 100,
+            },
+            &[500],
+        )]);
         let backend = MockQuerier::new();
         backend.stub_search(SearchPartial {
             traces: vec![
@@ -209,7 +219,14 @@ mod orch_tests {
 
     #[tokio::test]
     async fn trace_by_id_fans_one_job_per_ready_querier() {
-        let catalog = MockCatalog::new(vec![block("b1", 0, 100, &[500])]);
+        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+            "b1",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 100,
+            },
+            &[500],
+        )]);
         let backend = MockQuerier::new();
         let cfg = FrontendConfig {
             max_concurrency: 1,
@@ -246,7 +263,14 @@ mod orch_tests {
     /// so it goes to exactly one.
     #[tokio::test]
     async fn a_live_shard_reaches_every_querier_and_a_block_reaches_one() {
-        let catalog = MockCatalog::new(vec![block("b1", 0, 100, &[500])]);
+        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+            "b1",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 100,
+            },
+            &[500],
+        )]);
         let backend = MockQuerier::new();
         let cfg = FrontendConfig {
             hot_frontier_ns: 0,
@@ -281,10 +305,7 @@ mod orch_tests {
     /// fraction as a whole.
     #[tokio::test]
     async fn an_unready_querier_costs_no_blocks_and_is_named_in_the_warnings() {
-        let catalog = MockCatalog::new(vec![
-            block("b1", 0, 100, &[500]),
-            block("b2", 100, 200, &[500]),
-        ]);
+        let catalog = two_small_cold_blocks();
         let backend = MockQuerier::new();
         let cfg = FrontendConfig {
             hot_frontier_ns: 0,
@@ -321,7 +342,14 @@ mod orch_tests {
     /// with no queriers in it is the completest form of a silently lost answer.
     #[tokio::test]
     async fn a_pool_with_nobody_ready_fails_instead_of_answering_empty() {
-        let catalog = MockCatalog::new(vec![block("b1", 0, 100, &[500])]);
+        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+            "b1",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 100,
+            },
+            &[500],
+        )]);
         let backend = MockQuerier::new();
         let membership = MembershipView::empty();
         membership.publish(vec![QuerierMember {
@@ -400,7 +428,14 @@ mod orch_tests {
     /// slice of the hot tier, and nothing else can supply it.
     #[tokio::test]
     async fn a_pool_that_changes_mid_query_is_reported_rather_than_ignored() {
-        let catalog = MockCatalog::new(vec![block("b1", 0, 100, &[500])]);
+        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+            "b1",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 100,
+            },
+            &[500],
+        )]);
         let membership = MembershipView::fixed(["q1:3200"]);
         let backend = RefreshingQuerier {
             view: membership.clone(),
@@ -464,7 +499,17 @@ mod orch_tests {
             FrontendConfig::default(),
             MembershipView::fixed(["q1:3200"]),
         );
-        let err = qf.tag_names(&tenant_t1(), None, 0, 300).await.unwrap_err();
+        let err = qf
+            .tag_names(
+                &tenant_t1(),
+                None,
+                TimeRange {
+                    start_ns: 0,
+                    end_ns: 300,
+                },
+            )
+            .await
+            .unwrap_err();
         assert2::assert!(matches!(err, BackendError::Transport(_)));
     }
 
@@ -478,7 +523,14 @@ mod orch_tests {
             MembershipView::fixed(["q1:3200"]),
         );
         let err = qf
-            .tag_values(&tenant_t1(), "span.name", 0, 300)
+            .tag_values(
+                &tenant_t1(),
+                "span.name",
+                TimeRange {
+                    start_ns: 0,
+                    end_ns: 300,
+                },
+            )
             .await
             .unwrap_err();
         assert2::assert!(matches!(err, BackendError::Transport(_)));

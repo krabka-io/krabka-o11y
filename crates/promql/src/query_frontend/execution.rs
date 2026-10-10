@@ -22,9 +22,11 @@ mod execute_planned_range_queries;
 mod execute_range_query_frontend;
 mod promql_engine;
 mod range_query_executor;
+mod summed_range_partials;
 
 use execute_avg_range_query_frontend::execute_avg_range_query_frontend;
 use execute_moment_range_query_frontend::execute_moment_range_query_frontend;
 pub(super) use execute_planned_range_queries::execute_planned_range_queries;
 pub use execute_range_query_frontend::execute_range_query_frontend;
 pub use range_query_executor::RangeQueryExecutor;
+use summed_range_partials::FrontendRangeRun;

@@ -6,26 +6,28 @@ use super::*;
 /// the value, so the `NaN` series takes the position its labels give it.
 #[tokio::test]
 pub(crate) async fn instant_sort_functions_place_nan_last() {
-    let mut store = InMemoryMetricStore::new();
-    for (instance, zone, value) in [
-        ("api-b", "us-west-2b", 3.0),
-        ("api-a", "us-east-1a", 1.0),
-        ("api-c", "us-east-1a", 2.0),
-        ("api-n", "us-east-1a", f64::NAN),
-    ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                ("__name__", "queue_depth"),
-                ("instance", instance),
-                ("zone", zone),
-            ]),
-            10_000,
-            value,
-        );
-    }
-
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let engine = zoned_queue_depth_engine(&[
+        ZonedQueueDepth {
+            instance: "api-b",
+            zone: "us-west-2b",
+            depth: 3.0,
+        },
+        ZonedQueueDepth {
+            instance: "api-a",
+            zone: "us-east-1a",
+            depth: 1.0,
+        },
+        ZonedQueueDepth {
+            instance: "api-c",
+            zone: "us-east-1a",
+            depth: 2.0,
+        },
+        ZonedQueueDepth {
+            instance: "api-n",
+            zone: "us-east-1a",
+            depth: f64::NAN,
+        },
+    ]);
     for (query, expected_instances) in [
         ("sort(queue_depth)", ["api-a", "api-c", "api-b", "api-n"]),
         (
@@ -41,13 +43,7 @@ pub(crate) async fn instant_sort_functions_place_nan_last() {
             ["api-b", "api-n", "api-c", "api-a"],
         ),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
-            .await
-            .unwrap();
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(&engine, query, 10_000).await;
         let instances = samples
             .iter()
             .map(|sample| sample.labels.get("instance").unwrap())

@@ -1,46 +1,17 @@
 use super::{
     AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
-    RulerAlertState, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupState,
-    RulerGroupStateRecord, RulerShard, RulerStateSink, TenantId,
-    evaluate_and_persist_ruler_rule_set_with_report, filter_ruler_rule_set_for_shard_due_for_eval,
+    RulerAlertState, RulerEvaluationReport, RulerGroupState, RulerGroupStateRecord, RulerShard,
+    RulerStateSink, TenantId, evaluate_and_persist_ruler_rule_set_with_report,
+    filter_ruler_rule_set_for_shard_due_for_eval,
 };
 
-/// Evaluates this shard's due ruler rule groups for one tenant and persists state.
+/// Evaluates this shard's due ruler rule groups for one tenant, persists
+/// state, and retains per-rule and per-group status.
+///
+/// The report's `evaluation` field is the group evaluation alone.
 ///
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub async fn evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval<S, W, A, R>(
-    engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
-    alert_state: &mut RulerAlertState,
-    tenant: &TenantId,
-    rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
-    schedule: (&mut RulerGroupState, RulerShard, i64),
-) -> Result<RulerGroupEvaluation, PromqlError>
-where
-    S: MetricStore,
-    W: RecordingRuleWalSink,
-    A: AlertmanagerSink,
-    R: RulerStateSink,
-{
-    Ok(
-        evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
-            engine,
-            sinks,
-            alert_state,
-            tenant,
-            rules,
-            schedule,
-        )
-        .await?
-        .evaluation,
-    )
-}
-
-/// Scheduled variant that retains per-rule and per-group status.
-///
-/// # Errors
-/// Returns an error when metric input is malformed or a limit is exceeded.
 pub async fn evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report<S, W, A, R>(
     engine: &PromqlEngine<S>,
     sinks: (&W, &A, &R),

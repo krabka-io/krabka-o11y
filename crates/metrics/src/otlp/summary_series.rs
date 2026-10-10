@@ -1,5 +1,5 @@
 use super::{
-    DecodedSeries, KeyValue, Metric, Summary, TranslationStrategy, metric_metadata,
+    DecodedSeries, KeyValue, Metric, PointFamily, Summary, TranslationStrategy, metric_metadata,
     summary_point_series, translated_metric_name,
 };
 
@@ -14,11 +14,13 @@ pub(crate) fn summary_series(
     let mut out = Vec::new();
     for point in &summary.data_points {
         out.extend(summary_point_series(
-            &name,
             point,
-            resource_attributes,
-            Some(metadata.clone()),
-            strategy,
+            &PointFamily {
+                name: &name,
+                resource_attributes,
+                metadata: Some(&metadata),
+                strategy,
+            },
         ));
     }
     out

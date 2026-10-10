@@ -20,8 +20,9 @@ use krabka_observability::{RoleKind, StagedDrain};
 use krabka_profiles::all::DRAIN_ORDER;
 use krabka_units::secs;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_roles_stop_one_at_a_time_in_the_order_the_pipeline_needs() {
+/// The roles staged in `DRAIN_ORDER`, each recording its name in the returned
+/// list when its own token fires.
+fn recording_drain() -> (StagedDrain, Arc<Mutex<Vec<&'static str>>>) {
     let stopped: Arc<Mutex<Vec<&'static str>>> = Arc::default();
     let mut drain = StagedDrain::new(secs(10));
     for role in DRAIN_ORDER {
@@ -34,6 +35,12 @@ async fn the_roles_stop_one_at_a_time_in_the_order_the_pipeline_needs() {
                 .push(role.as_str());
         });
     }
+    (drain, stopped)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_roles_stop_one_at_a_time_in_the_order_the_pipeline_needs() {
+    let (drain, stopped) = recording_drain();
     let registered = drain.order();
 
     let overran = drain.drain().await;
@@ -50,18 +57,7 @@ async fn the_roles_stop_one_at_a_time_in_the_order_the_pipeline_needs() {
 /// message that says what was broken.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_distributor_stops_before_the_block_builder_and_the_compactor_stops_last() {
-    let stopped: Arc<Mutex<Vec<&'static str>>> = Arc::default();
-    let mut drain = StagedDrain::new(secs(10));
-    for role in DRAIN_ORDER {
-        let stopped = Arc::clone(&stopped);
-        drain.stage(role.as_str(), move |token| async move {
-            token.cancelled().await;
-            stopped
-                .lock()
-                .expect("the recorded stop order")
-                .push(role.as_str());
-        });
-    }
+    let (drain, stopped) = recording_drain();
 
     drain.drain().await;
     let observed = stopped.lock().expect("the recorded stop order").clone();

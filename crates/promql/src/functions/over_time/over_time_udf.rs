@@ -1,7 +1,7 @@
 use super::{
-    Arc, Array, ArrayRef, ColumnarValue, DataFusionError, DataType, DfResult, Float64Builder,
-    Int64Array, OverTimeFamily, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature,
-    Volatility, decode_range_column, scalar_f64,
+    Arc, ArrayRef, ColumnarValue, DataFusionError, DataType, DfResult, Float64Builder,
+    OverTimeFamily, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
+    WindowColumns, scalar_f64,
 };
 
 /// A `ScalarUDFImpl` over `RangeManipulate`'s windowed columns.
@@ -84,45 +84,12 @@ impl ScalarUDFImpl for OverTimeUdf {
             (f64::NAN, 0)
         };
 
-        // eval_timestamp column (Int64): range_end_ms per step.
-        let eval_ts = args.args[base].clone().into_array(rows)?;
-        let eval_ts = eval_ts
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .ok_or_else(|| {
-                DataFusionError::Execution(format!(
-                    "{name}: `eval_timestamp` must be Int64, got {:?}",
-                    eval_ts.data_type()
-                ))
-            })?;
-
-        // The windowed timestamp and value RangeArrays.
-        let timestamp_range = args.args[base + 1].clone().into_array(rows)?;
-        let timestamp_range = decode_range_column(&timestamp_range, "timestamp_range", name)?;
-        let value_range = args.args[base + 2].clone().into_array(rows)?;
-        let value_range = decode_range_column(&value_range, "value_range", name)?;
-
-        if timestamp_range.len() != rows || value_range.len() != rows || eval_ts.len() != rows {
-            return Err(DataFusionError::Execution(format!(
-                "{name}: row-count mismatch (eval_ts={}, timestamp_range={}, value_range={}, rows={rows})",
-                eval_ts.len(),
-                timestamp_range.len(),
-                value_range.len()
-            )));
-        }
+        let windows = WindowColumns::decode(&args.args[base..], rows, name)?;
+        windows.check_rows(rows, name)?;
 
         let mut builder = Float64Builder::with_capacity(rows);
         for row in 0..rows {
-            let timestamps = timestamp_range.timestamp_slice(row).ok_or_else(|| {
-                DataFusionError::Execution(format!(
-                    "{name}: `timestamp_range` cell {row} is not Int64"
-                ))
-            })?;
-            let values = value_range.value_slice(row).ok_or_else(|| {
-                DataFusionError::Execution(format!(
-                    "{name}: `value_range` cell {row} is not Float64"
-                ))
-            })?;
+            let (timestamps, values) = windows.window(row, name)?;
             match self.family.eval_window(timestamps, values, phi) {
                 // A genuinely-computed reduction (including a legitimately-NaN
                 // result, e.g. a quantile over a NaN sample) is kept as a non-null

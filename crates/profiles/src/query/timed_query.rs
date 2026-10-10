@@ -1,3 +1,5 @@
+use krabka_observability::service_metrics::{QueryRequest, RequestOutcome};
+
 use super::*;
 
 /// Times `fut`, a Connect handler body, and records the outcome on `route`.
@@ -11,6 +13,10 @@ pub(crate) async fn timed_query<T>(
 ) -> Result<T, ConnectError> {
     let start = std::time::Instant::now();
     let result = fut.await;
-    metrics.record_query(route, result.is_ok(), start.elapsed().as_time());
+    metrics.record_query(QueryRequest {
+        route,
+        outcome: RequestOutcome::from_result(&result),
+        elapsed: start.elapsed().as_time(),
+    });
     result
 }

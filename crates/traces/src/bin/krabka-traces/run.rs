@@ -7,9 +7,10 @@ use krabka_observability::{
 use tokio::net::TcpListener;
 
 use super::{
-    CancellationToken, Cli, OtlpConfig, ProcessSecurity, ServiceMetrics, SharedObjectStore,
-    SocketAddr, Target, require_role_topics, run_all, run_block_builder, run_compactor,
-    run_distributor, run_live_store, run_metrics_generator, run_querier, run_query_frontend,
+    CancellationToken, Cli, DistributorRole, ListeningRole, OtlpConfig, PrimaryListen,
+    ProcessSecurity, ServiceMetrics, SharedObjectStore, SocketAddr, Target, require_role_topics,
+    run_all, run_block_builder, run_compactor, run_distributor, run_live_store,
+    run_metrics_generator, run_querier, run_query_frontend,
 };
 
 pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -108,7 +109,15 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
             let object_store = SharedObjectStore::new();
             match cli.target {
                 Target::Distributor => {
-                    run_distributor(cli, metrics, readiness, shutdown, true, &security).await?;
+                    run_distributor(DistributorRole {
+                        cli,
+                        metrics,
+                        readiness,
+                        shutdown,
+                        primary_listen: PrimaryListen::Serve,
+                        security: &security,
+                    })
+                    .await?;
                 }
                 Target::BlockBuilder => {
                     run_block_builder(cli, metrics, readiness, shutdown, &object_store, &security)
@@ -116,18 +125,28 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
                 }
                 Target::LiveStore => {
                     let listener = TcpListener::bind(cli.listen.parse::<SocketAddr>()?).await?;
-                    run_live_store(cli, metrics, readiness, shutdown, listener, &security).await?;
-                }
-                Target::Querier => {
-                    let listener = TcpListener::bind(cli.listen.parse::<SocketAddr>()?).await?;
-                    run_querier(
+                    run_live_store(ListeningRole {
                         cli,
                         metrics,
                         readiness,
                         shutdown,
                         listener,
+                        security: &security,
+                    })
+                    .await?;
+                }
+                Target::Querier => {
+                    let listener = TcpListener::bind(cli.listen.parse::<SocketAddr>()?).await?;
+                    run_querier(
+                        ListeningRole {
+                            cli,
+                            metrics,
+                            readiness,
+                            shutdown,
+                            listener,
+                            security: &security,
+                        },
                         &object_store,
-                        &security,
                     )
                     .await?;
                 }

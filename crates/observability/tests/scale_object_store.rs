@@ -43,10 +43,12 @@
 //! BUILD.bazel keeps `bazel test //...` from building or running it. It runs on
 //! a schedule and nowhere else.
 
+#[path = "support/minio_store.rs"]
+mod minio_store;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
-    time::Duration,
 };
 
 use assert2::assert;
@@ -56,134 +58,28 @@ use datafusion::arrow::{
     record_batch::RecordBatch,
 };
 use krabka_blockstore::{
-    AttrValue, BlockMeta, BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, Index, LabelMatcher, Labels,
-    MatchOp, ShardedTraceBloom, SpanAttr, SpanKind, SpanNode, SpanRow, StatusCode, SummaryColumns,
-    TraceBlockStats, TraceIndex, assign_nested_set, encode_span_rows, read_block, span_block_decl,
-    span_block_schema,
+    AttrValue, BlockMeta, BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, CycleSpans, Index,
+    LabelMatcher, Labels, MatchOp, ShardedTraceBloom, SpanAttr, SpanKind, SpanNode, SpanRow,
+    StatusCode, SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set, encode_span_rows,
+    read_block, span_block_decl, span_block_schema,
 };
 use krabka_units::prelude::*;
-use object_store::{
-    ObjectStore, ObjectStoreExt as _, aws::AmazonS3Builder, path::Path as ObjectPath,
-};
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{ContainerPort, WaitFor},
-    runners::AsyncRunner as _,
-};
+use object_store::{ObjectStore, ObjectStoreExt as _, path::Path as ObjectPath};
+
+use self::minio_store::start_minio;
 
 /// The tenant every test here writes under.
 const TENANT: &str = "scale";
 
-/// The bucket the container is started with.
-const BUCKET: &str = "krabka";
-
+/// The `MinIO` root user, and its password.
 const MINIO_USER: &str = "krabkascale";
-const MINIO_PASSWORD: &str = "krabkascale";
-const MINIO_API_PORT: u16 = 9000;
 
 /// A block covers two hours, as Prometheus cuts them.
 const BLOCK_SPAN_MS: i64 = 2 * 60 * 60 * 1_000;
 
-/// Starting a container and waiting for its API is not the thing under test, so
-/// it gets a bound of its own rather than the suite's.
-const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
-
 // ---------------------------------------------------------------------------
-// The container, and the store over it.
+// The store.
 // ---------------------------------------------------------------------------
-
-/// A running `MinIO`, and an `ObjectStore` pointed at its bucket.
-///
-/// The container is returned alongside the store because testcontainers stops
-/// it when the handle drops, and a store outliving its container is a test that
-/// fails for a reason that has nothing to do with the code.
-struct Minio {
-    _container: testcontainers::ContainerAsync<GenericImage>,
-    store: Arc<dyn ObjectStore>,
-}
-
-/// The repository and tag of the MinIO image the build loaded into the daemon.
-///
-/// # Panics
-///
-/// Panics when `KRABKA_MINIO_IMAGE_REF` is unset or holds no tag. The build
-/// sets it for `bazel test --config=scale`; under cargo, set it to the
-/// `minio` reference in `//bazel/images/images.bzl` after loading that image.
-fn minio_image() -> (String, String) {
-    let reference = std::env::var("KRABKA_MINIO_IMAGE_REF").expect(
-        "KRABKA_MINIO_IMAGE_REF is unset. This suite runs under `bazel test --config=scale`, \
-         which loads the pinned image and sets this. To run it under cargo, set it to the \
-         `minio` reference in //bazel/images/images.bzl.",
-    );
-    let (repository, tag) = reference
-        .rsplit_once(':')
-        .expect("the MinIO image reference carries a tag");
-    (repository.to_string(), tag.to_string())
-}
-
-async fn start_minio() -> Minio {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagree
-    // testcontainers pulls the image over the network instead of using the
-    // pinned bytes. The whole reference comes from the build, repository
-    // included: the image is assembled from a package lock rather than pulled
-    // from a registry, so no registry name belongs in this file.
-    let (repository, tag) = minio_image();
-
-    // The bucket is a directory under the data root, made before MinIO reads
-    // it. MinIO has no "create this bucket at startup" switch, `object_store`
-    // has no bucket-creation call, and creating one over the API needs a
-    // SigV4-signed `PUT /<bucket>` that nothing in this dependency set can
-    // build. Overriding the entrypoint is the one step that needs no extra
-    // tool in the image and no extra crate in the manifest.
-    let container = tokio::time::timeout(
-        CONTAINER_START_TIMEOUT,
-        GenericImage::new(repository, tag)
-            .with_exposed_port(ContainerPort::Tcp(MINIO_API_PORT))
-            // MinIO writes its whole banner to stderr, the `API:` line
-            // included. Waiting on stdout waits for a stream that stays empty,
-            // and testcontainers reports that as `WaitContainer(StartupTimeout)`
-            // -- which reads like a container that failed to start, while the
-            // container is up and serving.
-            .with_wait_for(WaitFor::message_on_stderr("API:"))
-            .with_entrypoint("/bin/sh")
-            .with_env_var("MINIO_ROOT_USER", MINIO_USER)
-            .with_env_var("MINIO_ROOT_PASSWORD", MINIO_PASSWORD)
-            .with_cmd([
-                "-c",
-                &format!("mkdir -p /data/{BUCKET} && exec /usr/bin/minio server /data"),
-            ])
-            .start(),
-    )
-    .await
-    .expect("MinIO started inside its timeout")
-    .expect("MinIO started");
-
-    let port = container
-        .get_host_port_ipv4(MINIO_API_PORT)
-        .await
-        .expect("the API port is mapped");
-
-    let store = AmazonS3Builder::new()
-        .with_endpoint(format!("http://127.0.0.1:{port}"))
-        .with_bucket_name(BUCKET)
-        .with_access_key_id(MINIO_USER)
-        .with_secret_access_key(MINIO_PASSWORD)
-        .with_region("us-east-1")
-        // MinIO speaks S3 over plain HTTP here, and the default rejects that.
-        .with_allow_http(true)
-        // Path style, because `http://127.0.0.1:port/krabka/...` has no
-        // hostname to put a bucket in front of.
-        .with_virtual_hosted_style_request(false)
-        .build()
-        .expect("the S3 store is configured");
-
-    Minio {
-        _container: container,
-        store: Arc::new(store),
-    }
-}
 
 /// How many objects the store holds under `prefix`.
 async fn object_count(store: &Arc<dyn ObjectStore>, prefix: &str) -> usize {
@@ -260,7 +156,7 @@ fn trace_rows(trace_id: [u8; 16], spans: usize, start_nano: i64) -> Vec<SpanRow>
             parent_span_id: (index > 0).then(|| span_id(0)),
         })
         .collect();
-    let nested = assign_nested_set(&nodes);
+    let nested = assign_nested_set(&nodes, CycleSpans::AssignIntervals);
 
     nodes
         .iter()
@@ -327,7 +223,7 @@ async fn ten_thousand_series_over_twelve_blocks_prune_to_one() {
     const BLOCKS: usize = 12;
     const SAMPLES: usize = 8;
 
-    let minio = start_minio().await;
+    let minio = start_minio(MINIO_USER).await;
     let writer = BlockWriter::new(Arc::clone(&minio.store));
     let mut index = Index::new();
 
@@ -396,7 +292,7 @@ async fn one_million_spans_locate_by_trace_id_without_reading_every_block() {
     const TRACES_PER_BLOCK: usize = 5_000;
     const SPANS_PER_TRACE: usize = 20;
 
-    let minio = start_minio().await;
+    let minio = start_minio(MINIO_USER).await;
     let writer = BlockWriter::new(Arc::clone(&minio.store));
     let mut index = TraceIndex::new();
     let mut written = 0_usize;
@@ -489,7 +385,7 @@ async fn compaction_over_twenty_four_blocks_keeps_every_row() {
     const BLOCKS: usize = 24;
     const SAMPLES: usize = 8;
 
-    let minio = start_minio().await;
+    let minio = start_minio(MINIO_USER).await;
     let writer = BlockWriter::new(Arc::clone(&minio.store));
     let mut index = Index::new();
 

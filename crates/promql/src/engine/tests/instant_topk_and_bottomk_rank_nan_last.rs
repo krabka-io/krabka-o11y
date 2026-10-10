@@ -37,13 +37,7 @@ pub(crate) async fn instant_topk_and_bottomk_rank_nan_last() {
             vec![("a", Some(1.0)), ("c", Some(2.0)), ("n", None)],
         ),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
-            .await
-            .unwrap();
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(&engine, query, 10_000).await;
         let selected = samples
             .iter()
             .map(|sample| {

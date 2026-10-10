@@ -8,11 +8,8 @@ use krabka_blockstore::{
     IndexSnapshotRetain, ObjectStoreAccess, PromotedSpanAttr, TENANT_HEADER, TenantId,
     TenantPolicy, TraceIndex,
 };
-use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerFetchMaxBytes};
-use krabka_client_core::{
-    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
-    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-};
+use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_client_core::{ClientSecurity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY};
 use krabka_client_producer::Producer;
 use krabka_observability::{
     ConfigFileArgs, argv_with_config_file,
@@ -24,7 +21,7 @@ use krabka_observability::{
     wal_client_security::WalClientSecurityArgs,
 };
 use krabka_telemetry::OtlpConfig;
-use krabka_traceql::{EngineOpts, TraceqlEngine};
+use krabka_traceql::{EngineOpts, TagCatalog, TraceqlEngine};
 use krabka_traces::{
     Limits, LiveStore, TRACES_WAL_TOPIC, blockbuilder,
     compactor::{
@@ -69,7 +66,6 @@ mod tests {
     };
     use clap::{CommandFactory as _, Parser};
     use http_body_util::BodyExt;
-    use krabka_broker::{Broker, BrokerConfig};
     use krabka_observability::{
         RoleReadiness,
         topic_contract::{TRACES_TOPICS, TopicSettings, provision_topics},
@@ -77,7 +73,7 @@ mod tests {
     use krabka_units::{hours, minutes, secs};
     use tower::ServiceExt;
 
-    use super::*;
+    use super::{in_process_broker::InProcessBroker, *};
 
     // The live-store routes read their principal from the request extensions,
     // where the authentication layer puts it. The tests serve the router
@@ -585,42 +581,13 @@ mod tests {
     #[test]
     fn index_snapshot_policy_defaults_and_rejects_invalid_values() {
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
-        assert_eq!(
-            cli.index_snapshot_max,
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
-        );
-        assert_eq!(
-            cli.index_snapshot_retain.into_value(),
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
+        check!(cli.index_snapshot_max == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX);
+        check!(
+            cli.index_snapshot_retain.into_value()
+                == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
         );
 
-        for flag in ["--index-snapshot-max", "--index-snapshot-retain"] {
-            for invalid in ["0", "not-a-number", "-1", "18446744073709551616"] {
-                assert!(
-                    Cli::try_parse_from([
-                        "krabka-traces",
-                        "--target",
-                        "block-builder",
-                        flag,
-                        invalid,
-                    ])
-                    .is_err(),
-                    "{flag} should reject {invalid:?}"
-                );
-            }
-        }
-        for invalid in ["1.5B", "18446744073709551616B"] {
-            assert!(
-                Cli::try_parse_from([
-                    "krabka-traces",
-                    "--target",
-                    "block-builder",
-                    "--index-snapshot-max",
-                    invalid,
-                ])
-                .is_err()
-            );
-        }
+        index_snapshot_flags::assert_rejects_invalid_index_snapshot_policy::<Cli>("krabka-traces");
     }
 
     #[test]
@@ -791,27 +758,10 @@ mod tests {
     #[test]
     fn wal_fetch_limits_preserve_defaults_and_reject_invalid_values() {
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
-        assert_eq!(cli.wal_fetch_max.bytes_i32(), 2_097_152);
-        assert_eq!(cli.wal_fetch_partition_max.bytes_i32(), 262_144);
+        check!(cli.wal_fetch_max.bytes_i32() == 2_097_152);
+        check!(cli.wal_fetch_partition_max.bytes_i32() == 262_144);
 
-        for (flag, invalid) in [
-            ("--wal-fetch-max", "0"),
-            ("--wal-fetch-max", "not-a-number"),
-            ("--wal-fetch-max", "-1B"),
-            ("--wal-fetch-max", "1.5B"),
-            ("--wal-fetch-max", "2147483648B"),
-            ("--wal-fetch-partition-max", "0"),
-            ("--wal-fetch-partition-max", "not-a-number"),
-            ("--wal-fetch-partition-max", "-1B"),
-            ("--wal-fetch-partition-max", "1.5B"),
-            ("--wal-fetch-partition-max", "2147483648B"),
-        ] {
-            assert!(
-                Cli::try_parse_from(["krabka-traces", "--target", "block-builder", flag, invalid,])
-                    .is_err(),
-                "{flag} should reject {invalid:?}"
-            );
-        }
+        wal_fetch_limit_flags::assert_rejects_invalid_wal_fetch_limits::<Cli>("krabka-traces");
     }
 
     #[test]
@@ -1181,12 +1131,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn remote_live_source_reads_batches_from_live_store_router() {
+    // Serve a live-store router holding one `tenant-a` span on an ephemeral
+    // port.
+    async fn serve_live_store_with_span(
+        trace_id: [u8; 16],
+        span_id: [u8; 8],
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
         let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
         store.write().await.ingest(krabka_traces::SpanRecord {
             tenant: "tenant-a".into(),
-            span: test_span([8; 16], [4; 8]),
+            span: test_span(trace_id, span_id),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
         let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
@@ -1195,6 +1149,24 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
+        (addr, server)
+    }
+
+    fn remote_live_source(
+        addr: std::net::SocketAddr,
+        index: TraceIndex,
+    ) -> trace_querier::live::RemoteLiveSource {
+        trace_querier::live::RemoteLiveSource::new(
+            Url::parse(&format!("http://{addr}")).unwrap(),
+            Arc::new(ArcSwap::from_pointee(index)),
+            &InternalClient::default(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn remote_live_source_reads_batches_from_live_store_router() {
+        let (addr, server) = serve_live_store_with_span([8; 16], [4; 8]).await;
         let mut index = TraceIndex::new();
         index.add_trace_block(
             "tenant-a",
@@ -1209,12 +1181,7 @@ mod tests {
                 level: BlockLevel::INGESTED,
             },
         );
-        let source = trace_querier::live::RemoteLiveSource::new(
-            Url::parse(&format!("http://{addr}")).unwrap(),
-            Arc::new(ArcSwap::from_pointee(index)),
-            &InternalClient::default(),
-        )
-        .unwrap();
+        let source = remote_live_source(addr, index);
 
         let batches = source.span_batches("tenant-a", 1_000, 2_000).await.unwrap();
 
@@ -1231,24 +1198,8 @@ mod tests {
 
     #[tokio::test]
     async fn remote_live_source_reads_trace_by_id_from_live_store_router() {
-        let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
-        store.write().await.ingest(krabka_traces::SpanRecord {
-            tenant: "tenant-a".into(),
-            span: test_span([9; 16], [5; 8]),
-        });
-        let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
-        let source = trace_querier::live::RemoteLiveSource::new(
-            Url::parse(&format!("http://{addr}")).unwrap(),
-            Arc::new(ArcSwap::from_pointee(TraceIndex::new())),
-            &InternalClient::default(),
-        )
-        .unwrap();
+        let (addr, server) = serve_live_store_with_span([9; 16], [5; 8]).await;
+        let source = remote_live_source(addr, TraceIndex::new());
 
         let trace = source
             .trace_spans("tenant-a", &[9; 16])
@@ -1265,24 +1216,8 @@ mod tests {
 
     #[tokio::test]
     async fn remote_live_source_reads_tags_and_values_from_live_store_router() {
-        let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
-        store.write().await.ingest(krabka_traces::SpanRecord {
-            tenant: "tenant-a".into(),
-            span: test_span([11; 16], [7; 8]),
-        });
-        let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
-        let source = trace_querier::live::RemoteLiveSource::new(
-            Url::parse(&format!("http://{addr}")).unwrap(),
-            Arc::new(ArcSwap::from_pointee(TraceIndex::new())),
-            &InternalClient::default(),
-        )
-        .unwrap();
+        let (addr, server) = serve_live_store_with_span([11; 16], [7; 8]).await;
+        let source = remote_live_source(addr, TraceIndex::new());
 
         let tags = source
             .tag_names(
@@ -2352,11 +2287,8 @@ overrides:
     /// three that never reach a broker must be untouched by the same fault.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_missing_wal_topic_stops_the_roles_that_use_it_and_no_others() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
+        let broker = InProcessBroker::start().await;
+        let bootstrap = broker.bootstrap.clone();
 
         // The querier appears twice: it tails the WAL only with an embedded
         // live store, and reaches no broker without one.
@@ -2435,6 +2367,23 @@ mod all_in_one_serves_ingest_and_query;
 #[cfg(test)]
 mod the_compactor_runs_under_supervision;
 
+/// A bare in-process broker, shared with the other signal binary's tests.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/in_process_broker.rs"]
+mod in_process_broker;
+
+/// The invalid WAL fetch limits, shared with the other signal binary that
+/// parses them.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/wal_fetch_limit_flags.rs"]
+mod wal_fetch_limit_flags;
+
+/// The invalid index snapshot policy values, shared with the other signal
+/// binary that parses them.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/index_snapshot_flags.rs"]
+mod index_snapshot_flags;
+
 mod all_role_context;
 mod all_role_stage;
 mod all_role_stages;
@@ -2451,12 +2400,14 @@ mod cli;
 mod compaction_loop;
 mod compaction_policy_from_cli;
 mod configured_object_store;
+mod distributor_role;
 mod engine_opts_from_cli;
 mod f64_from_usize;
 mod frontend_config_from_cli;
 mod indexed_live_source;
 mod ingest_rate_from_cli;
 mod limits_from_cli;
+mod listening_role;
 mod live_i64_param;
 mod live_span_batches;
 mod load_traces_limits_overrides_config;
@@ -2464,19 +2415,12 @@ mod log_role_outcome;
 mod max_trace_size;
 mod metrics_flags;
 mod now_unix_nanos;
-mod parse_client_dispatch_queue_capacity;
-mod parse_client_frame_max;
-mod parse_consumer_fetch_size;
-mod parse_min_two_usize;
 mod parse_non_negative_time_or_secs;
 mod parse_non_negative_whole_byte_size_or_bytes;
 mod parse_positive_time_or_millis;
 mod parse_positive_time_or_nanos;
 mod parse_positive_time_or_nanos_f64;
 mod parse_positive_time_or_secs;
-mod parse_positive_u32;
-mod parse_positive_usize;
-mod parse_positive_whole_byte_size;
 mod parse_promoted_attr;
 mod parse_querier_addrs;
 mod parse_scan_concat_max;
@@ -2497,6 +2441,7 @@ mod run_live_store;
 mod run_metrics_generator;
 mod run_querier;
 mod run_query_frontend;
+mod serve_role_router;
 mod shared_object_store;
 mod target;
 mod u64_limit_from_usize;
@@ -2523,12 +2468,18 @@ use cli::Cli;
 use compaction_loop::compaction_loop;
 use compaction_policy_from_cli::compaction_policy_from_cli;
 use configured_object_store::ConfiguredObjectStore;
+use distributor_role::{DistributorRole, PrimaryListen};
 use engine_opts_from_cli::engine_opts_from_cli;
 use f64_from_usize::f64_from_usize;
 use frontend_config_from_cli::frontend_config_from_cli;
 use indexed_live_source::IndexedLiveSource;
 use ingest_rate_from_cli::ingest_rate_from_cli;
+use krabka_observability::cli_value_parsers::{
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    parse_min_two_usize, parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
+};
 use limits_from_cli::limits_from_cli;
+use listening_role::ListeningRole;
 use live_i64_param::live_i64_param;
 use live_span_batches::live_span_batches;
 use load_traces_limits_overrides_config::load_traces_limits_overrides_config;
@@ -2536,19 +2487,12 @@ use log_role_outcome::log_role_outcome;
 use max_trace_size::max_trace_size;
 use metrics_flags::MetricsFlags;
 use now_unix_nanos::now_unix_nanos;
-use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
-use parse_client_frame_max::parse_client_frame_max;
-use parse_consumer_fetch_size::parse_consumer_fetch_size;
-use parse_min_two_usize::parse_min_two_usize;
 use parse_non_negative_time_or_secs::parse_non_negative_time_or_secs;
 use parse_non_negative_whole_byte_size_or_bytes::parse_non_negative_whole_byte_size_or_bytes;
 use parse_positive_time_or_millis::parse_positive_time_or_millis;
 use parse_positive_time_or_nanos::parse_positive_time_or_nanos;
 use parse_positive_time_or_nanos_f64::parse_positive_time_or_nanos_f64;
 use parse_positive_time_or_secs::parse_positive_time_or_secs;
-use parse_positive_u32::parse_positive_u32;
-use parse_positive_usize::parse_positive_usize;
-use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
 use parse_promoted_attr::parse_promoted_attr;
 use parse_querier_addrs::parse_querier_addrs;
 use parse_scan_concat_max::parse_scan_concat_max;
@@ -2569,6 +2513,7 @@ use run_live_store::run_live_store;
 use run_metrics_generator::run_metrics_generator;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
+use serve_role_router::{RoleServer, serve_role_router};
 use shared_object_store::SharedObjectStore;
 use target::Target;
 use u64_limit_from_usize::u64_limit_from_usize;

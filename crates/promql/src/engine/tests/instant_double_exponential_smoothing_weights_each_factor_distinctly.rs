@@ -27,14 +27,14 @@ pub(crate) async fn instant_double_exponential_smoothing_weights_each_factor_dis
         // Two samples are the minimum the fold accepts.
         ("double_exponential_smoothing(pair[2m], 0.3, 0.4)", 2.0),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 180_000)
-            .await
-            .unwrap_or_else(|error| panic!("{query}: {error}"));
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected a vector for {query}");
-        };
-        assert2::assert!(samples.len() == 1, "{query}");
-        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+        assert_lone_value_at(
+            &engine,
+            LoneValueQuery {
+                query,
+                time_ms: 180_000,
+                want,
+            },
+        )
+        .await;
     }
 }

@@ -15,14 +15,7 @@ pub(crate) async fn smoothed_delta_uses_the_observed_right_boundary() {
         ("start between samples at 6s", 126_000, 54.0),
         ("start between samples at 10s", 130_000, 50.0),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), "delta(smoothed(m[2m]))", eval_ms)
-            .await
-            .unwrap();
-
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected a vector for {case}");
-        };
+        let samples = instant_vector(&engine, "delta(smoothed(m[2m]))", eval_ms).await;
         assert2::assert!(samples.len() == 1, "{case}");
         assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{case}");
     }

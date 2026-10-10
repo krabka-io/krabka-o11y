@@ -1,4 +1,4 @@
-use super::{BTreeMap, Value, hex_string, proto_any_value, proto_value_to_json};
+use super::{BTreeMap, Value, encode_lower_hex, proto_any_value, proto_value_to_json};
 
 pub(crate) fn proto_any_value_to_string(value: &proto_any_value::Value) -> String {
     match value {
@@ -6,7 +6,7 @@ pub(crate) fn proto_any_value_to_string(value: &proto_any_value::Value) -> Strin
         proto_any_value::Value::BoolValue(value) => value.to_string(),
         proto_any_value::Value::IntValue(value) => value.to_string(),
         proto_any_value::Value::DoubleValue(value) => value.to_string(),
-        proto_any_value::Value::BytesValue(value) => hex_string(value),
+        proto_any_value::Value::BytesValue(value) => encode_lower_hex(value),
         proto_any_value::Value::ArrayValue(value) => serde_json::to_string(
             &value
                 .values

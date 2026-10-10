@@ -1,10 +1,10 @@
 use krabka_logql::{LogqlExpr, parse_logql_expr};
 
 use crate::{
-    Bytes, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
-    MetricVectorGroupModifier, MetricVectorMatching, decode_form_component,
+    Bytes, ComparisonResult, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
+    MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, decode_form_component,
     format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
-    format_metric_label_replace_query, format_metric_query,
+    format_metric_and_vector_operands, format_metric_label_replace_query, format_metric_query,
     format_metric_scalar_arithmetic_expression, format_metric_scalar_arithmetic_operator,
     format_metric_scalar_comparison_expression, format_metric_scalar_comparison_operator,
     format_metric_vector_comparison_expression, format_metric_vector_set_expression,
@@ -41,6 +41,7 @@ mod format_metric_vector_matching_text;
 mod formatted_metric_vector_matching;
 mod label_join_format_query_error;
 mod logql_expression_contains_label_join;
+mod merge_posted_query_params;
 mod parse_format_query_param;
 mod post_query_params;
 mod post_query_params_body_first;
@@ -59,7 +60,9 @@ pub(crate) use format_label_replace_metric_binary_set::format_label_replace_metr
 pub(crate) use format_logql_query::format_logql_query;
 pub(crate) use format_metric_binary_arithmetic_query::format_metric_binary_arithmetic_query;
 pub(crate) use format_metric_binary_comparison_query::format_metric_binary_comparison_query;
-pub(crate) use format_metric_binary_expression::format_metric_binary_expression;
+pub(crate) use format_metric_binary_expression::{
+    MetricBinaryExpressionText, format_metric_binary_expression,
+};
 pub(crate) use format_metric_binary_set_operator::format_metric_binary_set_operator;
 pub(crate) use format_metric_binary_set_query::format_metric_binary_set_query;
 pub(crate) use format_metric_vector_arithmetic_expression::format_metric_vector_arithmetic_expression;
@@ -71,9 +74,12 @@ pub(crate) use format_metric_vector_matching_text::format_metric_vector_matching
 pub(crate) use formatted_metric_vector_matching::FormattedMetricVectorMatching;
 pub(crate) use label_join_format_query_error::label_join_format_query_error;
 use logql_expression_contains_label_join::logql_expression_contains_label_join;
+use merge_posted_query_params::{PostedQueryParamsOrder, merge_posted_query_params};
 pub(crate) use parse_format_query_param::parse_format_query_param;
 pub(crate) use post_query_params::post_query_params;
-pub(crate) use post_query_params_body_first::post_query_params_body_first;
+pub(crate) use post_query_params_body_first::{
+    parse_posted_series_params, post_query_params_body_first,
+};
 pub(crate) use split_leading_vector_binary_modifiers::split_leading_vector_binary_modifiers;
 pub(crate) use split_leading_vector_group_modifier::split_leading_vector_group_modifier;
 pub(crate) use split_leading_vector_matching_modifier::split_leading_vector_matching_modifier;

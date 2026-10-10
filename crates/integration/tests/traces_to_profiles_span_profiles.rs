@@ -45,12 +45,15 @@ use krabka_profiles::{
     cold_store::ColdProfileStore,
     limits::Limits,
     query::{QuerierState, router},
-    wal::{WalFunction, WalLocation, WalMapping, WalSymbolSet},
 };
 use krabka_units::{Time, convert::TimeExt as _};
 use object_store::{ObjectStore, memory::InMemory};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
+
+mod one_frame_profile;
+
+use self::one_frame_profile::one_frame_symbols;
 
 const TENANT: &str = "tenant-a";
 const SERVICE: &str = "api";
@@ -118,31 +121,7 @@ fn profile_record(span_ids: [u64; 2]) -> ProfileRecord {
                 trace_id: Some(TRACE_ID.to_vec()),
             })
             .collect(),
-        symbols: WalSymbolSet {
-            strings: vec![String::new(), FRAME.to_string()],
-            functions: vec![WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![WalLocation {
-                address: 0x1000,
-                mapping_id: 0,
-                lines: vec![(0, 10)],
-            }],
-            mappings: vec![WalMapping {
-                memory_start: 0,
-                memory_limit: 0,
-                file_offset: 0,
-                filename: 0,
-                build_id: 0,
-                has_functions: true.into(),
-                has_filenames: false.into(),
-                has_line_numbers: false.into(),
-                has_inline_frames: false.into(),
-            }],
-        },
+        symbols: one_frame_symbols(FRAME),
     }
 }
 

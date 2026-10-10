@@ -1,6 +1,6 @@
 use super::{
-    AppState, Extension, HeaderMap, Path, Principal, Response, SpanStore, State, Uri,
-    trace_by_id_v1_inner,
+    Path, QuerierRequest, Response, SpanStore, TraceByIdRequest, TraceEncoding, trace_by_id_inner,
+    trace_protobuf, wants_json,
 };
 
 /// Tempo v1 trace-by-id, at `/api/traces/{id}`.
@@ -10,17 +10,35 @@ use super::{
 /// handler therefore defaults to OTLP `TracesData` protobuf, which is Tempo's
 /// v1 default. It falls back to the wrapped JSON for humans.
 pub(crate) async fn trace_by_id_v1<S>(
-    State(state): State<AppState<S>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    request: QuerierRequest<S>,
     Path(trace_id): Path<String>,
-    uri: Uri,
 ) -> Response
 where
     S: SpanStore + 'static,
 {
+    let QuerierRequest {
+        state,
+        principal,
+        headers,
+        uri,
+    } = request;
     let start = std::time::Instant::now();
-    let resp = trace_by_id_v1_inner(&state, &principal, headers, trace_id, uri).await;
-    state.record_query("trace_by_id", resp.status().is_success(), start);
+    let encoding = if wants_json(&headers) {
+        TraceEncoding::Json
+    } else {
+        TraceEncoding::Protobuf(trace_protobuf)
+    };
+    let resp = trace_by_id_inner(
+        &state,
+        TraceByIdRequest {
+            principal: &principal,
+            headers,
+            trace_id,
+            uri,
+            encoding,
+        },
+    )
+    .await;
+    state.record_query("trace_by_id", resp.status(), start);
     resp
 }

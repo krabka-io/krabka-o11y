@@ -1,0 +1,1 @@
+variants(sum by(token_extracted)(count_over_time({app="ignored"}[1m]))) of ({app="api"} | drop token [1m])

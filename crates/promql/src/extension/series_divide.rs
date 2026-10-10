@@ -22,18 +22,16 @@ mod tests {
     };
     use assert2::check;
     use datafusion::{
-        catalog::MemTable,
-        common::{plan_err, tree_node::TreeNodeRecursion},
         datasource::memory::MemorySourceConfig,
         logical_expr::{Extension, UserDefinedLogicalNodeCore, col},
-        physical_plan::{
-            ChildrenPropertiesMode, ReplaceChildrenOptions, collect,
-            display::DisplayableExecutionPlan,
-        },
+        physical_plan::{collect, display::DisplayableExecutionPlan},
         prelude::SessionContext,
     };
 
     use super::*;
+    use crate::extension::test_support::{
+        check_single_child_exec, checked_rewrite, logical_leaf, physical_leaf,
+    };
 
     fn input_batch() -> RecordBatch {
         let job = StringArray::from(vec!["a", "a", "b"]);
@@ -45,28 +43,9 @@ mod tests {
         RecordBatch::try_new(schema, vec![Arc::new(job), Arc::new(ts)]).unwrap()
     }
 
-    async fn logical_input() -> LogicalPlan {
-        let batch = input_batch();
-        let schema = batch.schema();
-        let ctx = SessionContext::new();
-        let table = MemTable::try_new(schema, vec![vec![batch]]).unwrap();
-        ctx.register_table("leaf", Arc::new(table)).unwrap();
-        ctx.table("leaf")
-            .await
-            .unwrap()
-            .into_optimized_plan()
-            .unwrap()
-    }
-
-    fn physical_input() -> Arc<dyn ExecutionPlan> {
-        let batch = input_batch();
-        let schema = batch.schema();
-        MemorySourceConfig::try_new_exec(&[vec![batch]], schema, None).unwrap()
-    }
-
     #[tokio::test]
     async fn logical_node_reports_identity_explain_and_rejects_bad_rewrites() {
-        let input = logical_input().await;
+        let input = logical_leaf(input_batch()).await;
         let node = SeriesDivide {
             tag_columns: vec!["job".to_string()],
             input: input.clone(),
@@ -84,14 +63,7 @@ mod tests {
             tag_columns: vec!["job".to_string()],
             input: input.clone(),
         };
-        check!(
-            node.with_exprs_and_inputs(vec![col("job")], vec![input.clone()])
-                .is_err()
-        );
-        check!(node.with_exprs_and_inputs(vec![], vec![]).is_err());
-        let rewritten = node
-            .with_exprs_and_inputs(vec![], vec![input.clone()])
-            .expect("valid rewrite");
+        let rewritten = checked_rewrite(&node, &input, col("job"));
         assert2::assert!(
             rewritten
                 == SeriesDivide {
@@ -103,8 +75,8 @@ mod tests {
 
     #[test]
     fn physical_node_reports_identity_display_ordering_and_rejects_bad_children() {
-        let input = physical_input();
-        let exec = Arc::new(SeriesDivideExec::new(
+        let input = physical_leaf(vec![input_batch()]);
+        let exec: Arc<dyn ExecutionPlan> = Arc::new(SeriesDivideExec::new(
             vec!["job".to_string()],
             Arc::clone(&input),
         ));
@@ -117,27 +89,7 @@ mod tests {
         check!(display.starts_with("PromSeriesDivideExec: tags=[\"job\"]"));
         check!(display.contains("DataSourceExec: partitions=1"));
         check!(exec.maintains_input_order() == vec![true]);
-        // The plan owns no expression, so a visitor that fails must never run.
-        let walk = exec.apply_expressions(&mut |_| plan_err!("visited an expression"));
-        check!(let Ok(TreeNodeRecursion::Continue) = walk);
-        check!(
-            Arc::clone(&exec)
-                .replace_children(
-                    vec![],
-                    ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute)
-                )
-                .is_err()
-        );
-        check!(
-            Arc::clone(&exec)
-                .replace_children(
-                    vec![input],
-                    ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute)
-                )
-                .expect("valid child rewrite")
-                .name()
-                == "SeriesDivideExec"
-        );
+        check_single_child_exec(&exec, input, "SeriesDivideExec");
     }
 
     #[tokio::test]

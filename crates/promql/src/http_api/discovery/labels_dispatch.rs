@@ -1,51 +1,40 @@
 use super::{
-    ApiError, Arc, BTreeMap, DiscoveryParams, HeaderMap, IntoResponse, MetricStore, Principal,
-    PrometheusApiState, Response, apply_limit, authorized_tenant_from_headers, discovery_matchers,
-    discovery_window, enforce_query_range_limit, enforce_selected_series_limit,
-    success_data_response,
+    ApiError, Arc, BTreeMap, DiscoveryParams, MetricStore, PrometheusApiState, Rejection,
+    RequestAuth, Response, discovery_response, discovery_scope, limit_discovery_results,
 };
 
 pub(crate) async fn labels_dispatch<S: MetricStore>(
     state: &Arc<PrometheusApiState<S>>,
-    headers: &HeaderMap,
-    principal: &Principal,
+    auth: RequestAuth<'_>,
     params: DiscoveryParams,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(headers, principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
-    };
-    let window = match discovery_window(&params) {
-        Ok(window) => window,
-        Err(error) => return error.into_response(),
-    };
-    let matcher_sets = match discovery_matchers(&params) {
-        Ok(matcher_sets) => matcher_sets,
-        Err(error) => return error.into_response(),
-    };
-    if let Err(error) = enforce_query_range_limit(state, &tenant, window.start_ms, window.end_ms) {
-        return error.into_response();
-    }
+    discovery_response(matched_label_names(state, auth, &params).await)
+}
 
+/// The distinct label names of the series that the request's selectors match.
+async fn matched_label_names<S: MetricStore>(
+    state: &Arc<PrometheusApiState<S>>,
+    auth: RequestAuth<'_>,
+    params: &DiscoveryParams,
+) -> Result<Vec<String>, Rejection> {
+    let scope = discovery_scope(state, auth, params)?;
     let mut names = BTreeMap::new();
-    for matchers in matcher_sets {
-        match state
+    for matchers in &scope.matcher_sets {
+        let label_names = state
             .store
-            .label_names(tenant.as_str(), &matchers, window.start_ms, window.end_ms)
+            .label_names(
+                scope.tenant.as_str(),
+                matchers,
+                scope.start_ms,
+                scope.end_ms,
+            )
             .await
-        {
-            Ok(label_names) => {
-                for name in label_names {
-                    names.insert(name.clone(), name);
-                }
-            }
-            Err(error) => return ApiError::from(error).into_response(),
+            .map_err(|error| Rejection::of(ApiError::from(error)))?;
+        for name in label_names {
+            names.insert(name.clone(), name);
         }
     }
     let mut names = names.into_values().collect::<Vec<_>>();
-    if let Err(error) = enforce_selected_series_limit(state, &tenant, names.len()) {
-        return error.into_response();
-    }
-    apply_limit(&mut names, params.limit);
-    success_data_response(names)
+    limit_discovery_results(state, scope.limits(params), &mut names)?;
+    Ok(names)
 }

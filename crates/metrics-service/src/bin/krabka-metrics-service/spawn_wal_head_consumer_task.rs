@@ -1,13 +1,24 @@
 use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 
 use super::{
-    Future, ReadinessGate, Shutdown, Time, WalHead, WalHeadConsumerCommit, WalHeadConsumerPoll,
-    run_wal_head_consumer_loop,
+    Future, ReadinessGate, RoleReadiness, Shutdown, Time, WalHead, WalHeadConsumerCommit,
+    WalHeadConsumerPoll, run_wal_head_consumer_loop,
 };
 
 pub(crate) struct WalHeadConsumerRecovery {
     pub(crate) metrics: Option<WalConsumerMetrics>,
     pub(crate) catch_up_gate: Option<ReadinessGate>,
+}
+
+impl WalHeadConsumerRecovery {
+    /// The recovery reporting of a serving role: consumer metrics, and a
+    /// `wal-catch-up` gate on the role's readiness.
+    pub(crate) fn for_serving_role(metrics: WalConsumerMetrics, readiness: &RoleReadiness) -> Self {
+        Self {
+            metrics: Some(metrics),
+            catch_up_gate: Some(readiness.gate("wal-catch-up")),
+        }
+    }
 }
 
 /// Runs the WAL head consumer, and reports through `wal_head` whether the

@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats, push_ivarint,
-    push_uvarint,
+    BTreeMap, TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats, push_dictionary_id,
+    push_ivarint, push_len, push_string, push_uvarint,
 };
 
 /// Encodes one tenant's trace-block records as a shard payload.
@@ -58,15 +58,15 @@ pub(crate) fn encode_trace_shard(tenant: &str, blocks: &[TraceBlockStats]) -> Ve
 
         push_len(&mut out, block.tag_names.len());
         for tag in &block.tag_names {
-            push_id(&mut out, &dictionary, tag);
+            push_dictionary_id(&mut out, &dictionary, tag);
         }
 
         push_len(&mut out, block.tag_values.len());
         for (tag, values) in &block.tag_values {
-            push_id(&mut out, &dictionary, tag);
+            push_dictionary_id(&mut out, &dictionary, tag);
             push_len(&mut out, values.len());
             for value in values {
-                push_id(&mut out, &dictionary, value);
+                push_dictionary_id(&mut out, &dictionary, value);
             }
         }
 
@@ -82,24 +82,4 @@ pub(crate) fn encode_trace_shard(tenant: &str, blocks: &[TraceBlockStats]) -> Ve
     }
 
     out
-}
-
-fn push_len(out: &mut Vec<u8>, len: usize) {
-    push_uvarint(
-        out,
-        u64::try_from(len).expect("a length in memory fits a u64"),
-    );
-}
-
-fn push_string(out: &mut Vec<u8>, text: &str) {
-    push_len(out, text.len());
-    out.extend_from_slice(text.as_bytes());
-}
-
-fn push_id(out: &mut Vec<u8>, dictionary: &BTreeMap<String, usize>, text: &str) {
-    let id = dictionary
-        .get(text)
-        .copied()
-        .expect("every tag name and value was put in the dictionary");
-    push_len(out, id);
 }

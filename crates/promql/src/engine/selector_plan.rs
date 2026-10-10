@@ -2,18 +2,21 @@ use krabka_units::prelude::*;
 use promql_parser::parser::{MatrixSelector, VectorSelector};
 
 use super::{
-    InstantShape, OuterRangeFn, PlannedInstant, PromqlEngine, RangeEval,
-    annotations::emit_metric_might_not_be_counter_info, apply_outer_range_fn,
-    apply_selector_time_modifier, current_at_modifier_bounds, label_matcher_sets,
+    InstantShape, OuterRangeFn, PlannedInstant, PromqlEngine, RangeEval, RangeWindow,
+    annotations::{TypeAndUnitLabels, emit_metric_might_not_be_counter_info},
+    apply_outer_range_fn, apply_selector_time_modifier, current_at_modifier_bounds,
+    label_matcher_sets,
+    matrix_selector_at::MatrixSelectorAt,
     selector_duration,
+    store_scans::{LabeledSeriesScan, StaleMarkers},
 };
 use crate::{
     error::Result,
     functions::OverTimeFamily,
     planner::{
-        StepGrid,
+        LabeledSeries, RangeWindowGrid, StepGrid,
         leaf::{InstantSelectorPlan, plan_instant_vector_selector},
-        over_time_range::{OverTimeRangePlan, plan_over_time_range_selector},
+        over_time_range::{OverTimeFold, OverTimeRangePlan, plan_over_time_range_selector},
         rate_range::{RateRangePlan, RateUdfKind, plan_rate_range_selector},
     },
     store::MetricStore,
@@ -63,8 +66,14 @@ impl<S: MetricStore> PromqlEngine<S> {
         let mut samples = match latest {
             Some(samples) => samples,
             None => {
-                self.labeled_series_sets(tenant, &matcher_sets, start_ms, eval_time_ms, false)
-                    .await?
+                self.labeled_series_sets(LabeledSeriesScan {
+                    tenant,
+                    matcher_sets: &matcher_sets,
+                    after_ms: start_ms,
+                    through_ms: eval_time_ms,
+                    stale_markers: StaleMarkers::Keep,
+                })
+                .await?
             }
         };
         // This plan evaluates one instant. Earlier samples cannot affect its
@@ -158,39 +167,21 @@ impl<S: MetricStore> PromqlEngine<S> {
     pub(super) async fn plan_rate_range(
         &self,
         tenant: &str,
-        selector: &MatrixSelector,
-        time_ms: i64,
+        at: MatrixSelectorAt<'_>,
         kind: RateUdfKind,
     ) -> Result<PlannedInstant> {
         // Inside a range query this leaf is planned once over the whole step
         // grid; see `plan_instant_selector`.
-        if let Some(samples) = self
-            .grid_rate_vector(tenant, selector, time_ms, kind)
-            .await?
-        {
+        if let Some(samples) = self.grid_rate_vector(tenant, at, kind).await? {
             return Ok(PlannedInstant::Precomputed(samples));
         }
-        let range = selector_duration(selector.range)?;
-        let eval_end_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.vs.at.as_ref(),
-            selector.vs.offset.as_ref(),
-            None,
-        )?;
-        let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
-        let matcher_sets = label_matcher_sets(&selector.vs);
-        // Stale-NaN markers are dropped over the exact range window, matching
-        // `eval_matrix_selector`; genuine NaN is carried through (the operator
-        // chain does not filter NaN), as the interpreter does.
-        let samples = self
-            .labeled_series_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms, true)
-            .await?;
+        let MatrixRangeScan { series, window } = self.scan_matrix_range(tenant, at).await?;
 
         if matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
-            for series in samples.iter().filter(|series| series.samples.len() >= 2) {
+            for series in series.iter().filter(|series| series.samples.len() >= 2) {
                 emit_metric_might_not_be_counter_info(
                     &series.labels,
-                    self.opts.enable_type_and_unit_labels,
+                    TypeAndUnitLabels::from_engine_opts(&self.opts),
                 );
             }
         }
@@ -199,13 +190,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             ctx,
             plan,
             labels_by_fp,
-        } = plan_rate_range_selector(
-            samples,
-            StepGrid::instant(eval_end_ms, range.millis_i64()),
-            range,
-            kind,
-        )
-        .await?;
+        } = plan_rate_range_selector(series, window, kind).await?;
         Ok(PlannedInstant::operator(
             ctx,
             plan,
@@ -220,52 +205,26 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// This plan shares the rate path's window semantics. The window is exactly
     /// `(eval_time - range, eval_time]`, left-open and right-closed, with no 5m
     /// lookback, and it matches the interpreter's `over_time_sample_from_series`.
-    /// This method passes the `phi` quantile literal through for
+    /// This method passes the `over_time.phi` quantile literal through for
     /// `quantile_over_time` and ignores it otherwise.
     pub(super) async fn plan_over_time_range(
         &self,
         tenant: &str,
-        selector: &MatrixSelector,
-        time_ms: i64,
-        family: OverTimeFamily,
-        phi: f64,
+        at: MatrixSelectorAt<'_>,
+        over_time: OverTimeFold,
     ) -> Result<PlannedInstant> {
         // Inside a range query this leaf is planned once over the whole step
         // grid; see `plan_instant_selector`.
-        if let Some(samples) = self
-            .grid_over_time_vector(tenant, selector, time_ms, family, phi)
-            .await?
-        {
+        if let Some(samples) = self.grid_over_time_vector(tenant, at, over_time).await? {
             return Ok(PlannedInstant::Precomputed(samples));
         }
-        let range = selector_duration(selector.range)?;
-        let eval_end_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.vs.at.as_ref(),
-            selector.vs.offset.as_ref(),
-            None,
-        )?;
-        let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
-        let matcher_sets = label_matcher_sets(&selector.vs);
-        // Stale-NaN markers are dropped over the exact range window, matching
-        // `eval_matrix_selector`; genuine NaN is carried through, as the
-        // interpreter does.
-        let samples = self
-            .labeled_series_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms, true)
-            .await?;
+        let MatrixRangeScan { series, window } = self.scan_matrix_range(tenant, at).await?;
 
         let OverTimeRangePlan {
             ctx,
             plan,
             labels_by_fp,
-        } = plan_over_time_range_selector(
-            samples,
-            StepGrid::instant(eval_end_ms, range.millis_i64()),
-            range,
-            family,
-            phi,
-        )
-        .await?;
+        } = plan_over_time_range_selector(series, window, over_time).await?;
         Ok(PlannedInstant::operator(
             ctx,
             plan,
@@ -273,9 +232,9 @@ impl<S: MetricStore> PromqlEngine<S> {
             InstantShape::OverTimeProjection {
                 // Only `last_over_time` preserves the metric name; every other
                 // family drops it (`OverTimeFn::preserves_metric_name`).
-                preserve_metric_name: matches!(family, OverTimeFamily::Last),
+                preserve_metric_name: matches!(over_time.family, OverTimeFamily::Last),
             },
-            !matches!(family, OverTimeFamily::Last),
+            !matches!(over_time.family, OverTimeFamily::Last),
         ))
     }
 
@@ -321,14 +280,64 @@ impl<S: MetricStore> PromqlEngine<S> {
             .eval_matrix_selector(tenant, selector, time_ms, time_ms, None)
             .await?;
         let range = RangeEval {
-            enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
             series,
-            end_ms,
-            range,
-            modifier: None,
+            window: RangeWindow {
+                end_ms,
+                range,
+                modifier: None,
+                type_and_unit_labels: TypeAndUnitLabels::from_engine_opts(&self.opts),
+            },
         };
         Ok(PlannedInstant::Precomputed(apply_outer_range_fn(
             range, outer, time_ms,
         )))
+    }
+}
+
+/// The series a matrix selector reads over one instant's range window.
+struct MatrixRangeScan {
+    /// The matched series, stale markers dropped.
+    series: Vec<LabeledSeries>,
+    /// The single-step window the series were scanned over.
+    window: RangeWindowGrid,
+}
+
+impl<S: MetricStore> PromqlEngine<S> {
+    /// Scans a matrix selector over exactly `(eval_time - range, eval_time]`.
+    ///
+    /// Stale-NaN markers are dropped over the exact range window, matching
+    /// `eval_matrix_selector`; genuine NaN is carried through (the operator
+    /// chain does not filter NaN), as the interpreter does.
+    async fn scan_matrix_range(
+        &self,
+        tenant: &str,
+        at: MatrixSelectorAt<'_>,
+    ) -> Result<MatrixRangeScan> {
+        let MatrixSelectorAt { selector, time_ms } = at;
+        let range = selector_duration(selector.range)?;
+        let eval_end_ms = apply_selector_time_modifier(
+            time_ms,
+            selector.vs.at.as_ref(),
+            selector.vs.offset.as_ref(),
+            None,
+        )?;
+        let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
+        let matcher_sets = label_matcher_sets(&selector.vs);
+        let series = self
+            .labeled_series_sets(LabeledSeriesScan {
+                tenant,
+                matcher_sets: &matcher_sets,
+                after_ms: range_start_ms,
+                through_ms: eval_end_ms,
+                stale_markers: StaleMarkers::Drop,
+            })
+            .await?;
+        Ok(MatrixRangeScan {
+            series,
+            window: RangeWindowGrid {
+                grid: StepGrid::instant(eval_end_ms, range.millis_i64()),
+                range,
+            },
+        })
     }
 }

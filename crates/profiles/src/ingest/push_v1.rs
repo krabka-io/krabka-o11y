@@ -37,25 +37,7 @@ mod tests {
     #[test]
     fn decode_push_gunzips_and_parses_pprof() {
         let pprof_bytes = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
-        let req = pb::push::v1::PushRequest {
-            series: vec![pb::push::v1::RawProfileSeries {
-                labels: vec![
-                    pb::types::v1::LabelPair {
-                        name: "__name__".into(),
-                        value: "process_cpu".into(),
-                    },
-                    pb::types::v1::LabelPair {
-                        name: "service_name".into(),
-                        value: "api".into(),
-                    },
-                ],
-                samples: vec![pb::push::v1::RawSample {
-                    raw_profile: gzip(&pprof_bytes),
-                    id: "s1".into(),
-                }],
-                annotations: Vec::new(),
-            }],
-        };
+        let req = crate::wire::test_fixtures::push_request_cpu(gzip(&pprof_bytes), "s1");
 
         let out = decode_push(&req, mebibytes(1)).unwrap();
 
@@ -130,25 +112,7 @@ mod tests {
     #[test]
     fn decode_push_promotes_sample_id_to_profile_id_label() {
         let pprof_bytes = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
-        let req = pb::push::v1::PushRequest {
-            series: vec![pb::push::v1::RawProfileSeries {
-                labels: vec![
-                    pb::types::v1::LabelPair {
-                        name: "__name__".into(),
-                        value: "process_cpu".into(),
-                    },
-                    pb::types::v1::LabelPair {
-                        name: "service_name".into(),
-                        value: "api".into(),
-                    },
-                ],
-                samples: vec![pb::push::v1::RawSample {
-                    raw_profile: gzip(&pprof_bytes),
-                    id: "profile-a".into(),
-                }],
-                annotations: Vec::new(),
-            }],
-        };
+        let req = crate::wire::test_fixtures::push_request_cpu(gzip(&pprof_bytes), "profile-a");
 
         let out = decode_push(&req, mebibytes(1)).unwrap();
 

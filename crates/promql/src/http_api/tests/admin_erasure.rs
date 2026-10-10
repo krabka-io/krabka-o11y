@@ -31,6 +31,27 @@ impl RangeQueryCache for UnusableCache {
     }
 }
 
+/// An API state over an empty metric store, and the in-memory object store it
+/// persists erasure requests to.
+struct ErasureFixture {
+    state: Arc<PrometheusApiState<InMemoryMetricStore>>,
+    erasure_store: Arc<dyn object_store::ObjectStore>,
+}
+
+impl ErasureFixture {
+    fn over_empty_store() -> Self {
+        let erasure_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        let state = Arc::new(
+            PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
+                .with_erasure_store(Arc::clone(&erasure_store)),
+        );
+        Self {
+            state,
+            erasure_store,
+        }
+    }
+}
+
 #[tokio::test]
 async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
     let mut metric_store = InMemoryMetricStore::new();
@@ -101,11 +122,10 @@ async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
 
 #[tokio::test]
 async fn delete_series_validates_every_selector_before_persisting() {
-    let erasure_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
-            .with_erasure_store(Arc::clone(&erasure_store)),
-    );
+    let ErasureFixture {
+        state,
+        erasure_store,
+    } = ErasureFixture::over_empty_store();
     let response = prometheus_router(state)
         .oneshot(
             axum::http::Request::post("/api/v1/admin/tsdb/delete_series")
@@ -151,11 +171,10 @@ async fn delete_series_requires_an_admin_principal() {
     }
     .load()
     .unwrap();
-    let erasure_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
-            .with_erasure_store(Arc::clone(&erasure_store)),
-    );
+    let ErasureFixture {
+        state,
+        erasure_store,
+    } = ErasureFixture::over_empty_store();
     let app = authenticate_requests(super::super::prometheus_router(state), &security);
     let response = app
         .oneshot(

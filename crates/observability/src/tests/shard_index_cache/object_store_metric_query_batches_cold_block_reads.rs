@@ -7,37 +7,13 @@ use super::*;
 /// `max_active_gets` would stay at one however many blocks the query planned.
 #[tokio::test]
 pub(crate) async fn object_store_metric_query_batches_cold_block_reads() {
-    let store = RecordingObjectStore::new().with_get_delay(Duration::from_millis(25));
-    let prefix = ObjectPath::from("observability/logs");
+    let FourColdApiBlocks {
+        store,
+        prefix,
+        label_index,
+        block_index,
+    } = FourColdApiBlocks::write().await;
     let tenant = "tenant-a";
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series(tenant, krabka_blockstore::labels([("app", "api")]));
-    let mut block_index = BlockIndex::default();
-
-    for block_id in 0_i64..4 {
-        let start_ns = block_id * 10;
-        let end_ns = start_ns + 9;
-        let block = write_log_block_to_object_store(
-            &store,
-            &prefix,
-            &BlockKey::new(
-                tenant,
-                0,
-                start_ns,
-                end_ns,
-                TimeRange::new(start_ns, end_ns).unwrap(),
-            ),
-            vec![LogRow::new(
-                api,
-                end_ns,
-                format!("api error {block_id}"),
-                BTreeMap::new(),
-            )],
-        )
-        .await
-        .unwrap();
-        block_index.insert(block);
-    }
 
     let query = parse_metric_query(r#"count_over_time({app="api"} |= "error" [40ns])"#).unwrap();
     let plan = plan_stream_query(

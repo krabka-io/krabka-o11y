@@ -1,18 +1,11 @@
-use super::{
-    AppState, Extension, HeaderMap, Principal, Response, SpanStore, State, Uri, search_inner,
-};
+use super::{QuerierRequest, Response, SpanStore, search_inner};
 
-pub(crate) async fn search<S>(
-    State(state): State<AppState<S>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response
+pub(crate) async fn search<S>(request: QuerierRequest<S>) -> Response
 where
     S: SpanStore + 'static,
 {
     let start = std::time::Instant::now();
-    let resp = search_inner(&state, &principal, headers, uri).await;
-    state.record_query("search", resp.status().is_success(), start);
+    let resp = search_inner(&request).await;
+    request.state.record_query("search", resp.status(), start);
     resp
 }

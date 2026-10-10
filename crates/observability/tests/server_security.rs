@@ -8,8 +8,6 @@
 
 use std::{
     collections::BTreeSet,
-    fmt::Write as _,
-    future::IntoFuture as _,
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -31,7 +29,7 @@ use krabka_observability::{
     server_security::{
         AuthFailureReason, AuthMethod, ClientIdentity, GrpcAuthenticationLayer, PeerAddr,
         Principal, SecurityEventSink, SecurityEvents, ServerListener, ServerSecurity,
-        ServerSecurityArgs, TenantGrant, grpc_incoming, serve_router,
+        ServerSecurityArgs, TenantGrant, grpc_incoming,
     },
 };
 use opentelemetry_proto::tonic::collector::logs::v1::{
@@ -39,13 +37,23 @@ use opentelemetry_proto::tonic::collector::logs::v1::{
     logs_service_client::LogsServiceClient,
     logs_service_server::{LogsService, LogsServiceServer},
 };
-use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose,
-};
-use sha2::{Digest, Sha256};
+use rcgen::{CertifiedIssuer, ExtendedKeyUsagePurpose, KeyPair};
 use tempfile::TempDir;
 use tokio::{io::AsyncReadExt as _, net::TcpListener};
+
+#[path = "support/recorded_security_events.rs"]
+mod recorded_security_events;
+#[path = "support/secure_router.rs"]
+mod secure_router;
+#[path = "support/server_security_pki.rs"]
+mod server_security_pki;
+#[path = "support/token_sha256.rs"]
+mod token_sha256;
+
+use recorded_security_events::{RecordedEvents, tenant};
+use secure_router::{SecureRouter, serve_secure_router};
+use server_security_pki::{Leaf, Pem, authority};
+use token_sha256::sha256_hex;
 
 const GRAFANA_TOKEN: &str = "grafana-7c1f0e9a4b2d8e6f3a5c7b9d1e0f2a4c";
 const OPS_TOKEN: &str = "ops-2b4d6f8a0c1e3a5b7c9d0e2f4a6b8c0d";
@@ -65,28 +73,10 @@ fn load(flags: &[String]) -> ServerSecurity {
         .expect("the flags load")
 }
 
-fn sha256_hex(token: &str) -> String {
-    Sha256::digest(token.as_bytes())
-        .iter()
-        .fold(String::new(), |mut hex, byte| {
-            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-            hex
-        })
-}
-
-fn tenant(id: &str) -> TenantId {
-    TenantId::new(id).expect("a valid tenant id")
-}
-
 /// A CA, a server certificate signed by it, and a directory of PEM files.
 struct Pki {
     dir: TempDir,
     authority: CertifiedIssuer<'static, KeyPair>,
-}
-
-struct Pem {
-    certificate: String,
-    key: String,
 }
 
 impl Pki {
@@ -104,24 +94,19 @@ impl Pki {
     }
 
     fn client(&self, common_name: &str, names: &[&str]) -> Pem {
-        leaf(
-            &self.authority,
+        Leaf {
             common_name,
             names,
-            ExtendedKeyUsagePurpose::ClientAuth,
-        )
+            usage: ExtendedKeyUsagePurpose::ClientAuth,
+        }
+        .signed_by(&self.authority)
     }
 
     /// The TLS flags for a server certificate signed by this CA, which also
     /// trusts this CA for client certificates unless `client_auth` is
     /// `NoClientCert`.
     fn server_flags(&self, client_auth: &str, handshake_timeout: &str) -> Vec<String> {
-        let server = leaf(
-            &self.authority,
-            "server",
-            &["localhost", "127.0.0.1"],
-            ExtendedKeyUsagePurpose::ServerAuth,
-        );
+        let server = Leaf::LOCAL_SERVER.signed_by(&self.authority);
         let mut flags = vec![
             "--server-tls-cert-path".to_owned(),
             self.write("server.pem", server.certificate),
@@ -152,41 +137,6 @@ impl Pki {
             builder = builder.identity(identity);
         }
         builder.build().expect("the client builds")
-    }
-}
-
-fn authority(common_name: &str) -> CertifiedIssuer<'static, KeyPair> {
-    let mut params = CertificateParams::new(Vec::<String>::new()).expect("valid parameters");
-    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    params
-        .distinguished_name
-        .push(DnType::CommonName, common_name);
-    CertifiedIssuer::self_signed(params, KeyPair::generate().expect("a key")).expect("a CA")
-}
-
-fn leaf(
-    authority: &CertifiedIssuer<'static, KeyPair>,
-    common_name: &str,
-    names: &[&str],
-    usage: ExtendedKeyUsagePurpose,
-) -> Pem {
-    let mut params = CertificateParams::new(
-        names
-            .iter()
-            .map(|name| (*name).to_owned())
-            .collect::<Vec<_>>(),
-    )
-    .expect("valid parameters");
-    params
-        .distinguished_name
-        .push(DnType::CommonName, common_name);
-    params.extended_key_usages = vec![usage];
-    let key = KeyPair::generate().expect("a key");
-    let certificate = params.signed_by(&key, authority).expect("a signed leaf");
-    Pem {
-        certificate: certificate.pem(),
-        key: key.serialize_pem(),
     }
 }
 
@@ -233,39 +183,8 @@ async fn serve(security: &ServerSecurity) -> Server {
         .route("/ready", get(record).post(record))
         .route("/metrics", get(record))
         .with_state(seen.clone());
-    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
-    let listener = ServerListener::bind(tcp, security).expect("the listener binds");
-    let addr = listener.local_addr();
-    let stop = CancellationToken::new();
-    tokio::spawn(
-        serve_router(listener, router, security)
-            .with_graceful_shutdown(stop.clone().cancelled_owned())
-            .into_future(),
-    );
+    let SecureRouter { addr, stop } = serve_secure_router(router, security).await;
     Server { addr, seen, stop }
-}
-
-/// Every event, as text, so a test can compare whole sequences and search
-/// them for credential bytes.
-#[derive(Default)]
-struct RecordedEvents(Mutex<Vec<String>>);
-
-impl RecordedEvents {
-    fn take(&self) -> Vec<String> {
-        std::mem::take(
-            &mut *self
-                .0
-                .lock()
-                .expect("no test panics while holding the lock"),
-        )
-    }
-
-    fn push(&self, event: String) {
-        self.0
-            .lock()
-            .expect("no test panics while holding the lock")
-            .push(event);
-    }
 }
 
 impl SecurityEvents for RecordedEvents {
@@ -290,11 +209,11 @@ impl SecurityEvents for RecordedEvents {
     }
 
     fn tenant_denied(&self, principal: &str, _method: AuthMethod, tenant: &TenantId) {
-        self.push(format!("tenant denied {principal} {tenant}"));
+        self.push_tenant_denied(principal, tenant);
     }
 
     fn admin_denied(&self, principal: &str, _method: AuthMethod) {
-        self.push(format!("admin denied {principal}"));
+        self.push_admin_denied(principal);
     }
 }
 
@@ -411,12 +330,12 @@ async fn require_and_verify_client_cert_serves_only_a_certificate_from_the_clien
     ))
     .await;
     let trusted = pki.client("grafana", &["grafana.internal"]);
-    let foreign = leaf(
-        &authority("another ca"),
-        "grafana",
-        &["grafana.internal"],
-        ExtendedKeyUsagePurpose::ClientAuth,
-    );
+    let foreign = Leaf {
+        common_name: "grafana",
+        names: &["grafana.internal"],
+        usage: ExtendedKeyUsagePurpose::ClientAuth,
+    }
+    .signed_by(&authority("another ca"));
     let url = format!("https://{}/whoami", server.addr);
 
     let without_certificate = pki.https_client(None).get(&url).send().await;
@@ -552,16 +471,42 @@ async fn dropping_a_tls_listener_stops_its_accept_task_and_closes_the_socket() {
     assert!(closed);
 }
 
+// The `/whoami` server with the credentials file loaded, asking for client
+// certificates as `client_auth` says, and recording its security events.
+struct WhoamiServer {
+    events: Arc<RecordedEvents>,
+    sink: SecurityEventSink,
+    server: Server,
+    url: String,
+}
+
+impl WhoamiServer {
+    async fn start(pki: &Pki, client_auth: &str) -> Self {
+        let events = Arc::new(RecordedEvents::default());
+        let mut flags = pki.server_flags(client_auth, "10s");
+        flags.extend(credentials_flags(pki));
+        let security = load(&flags).with_security_events(events.clone());
+        let sink = SecurityEventSink::new(events.clone());
+        let server = serve(&security).await;
+        let url = format!("https://{}/whoami", server.addr);
+        Self {
+            events,
+            sink,
+            server,
+            url,
+        }
+    }
+}
+
 #[tokio::test]
 async fn each_credential_kind_reaches_the_handler_as_its_principal() {
     let pki = Pki::new();
-    let events = Arc::new(RecordedEvents::default());
-    let mut flags = pki.server_flags("RequestClientCert", "10s");
-    flags.extend(credentials_flags(&pki));
-    let security = load(&flags).with_security_events(events.clone());
-    let sink = SecurityEventSink::new(events.clone());
-    let server = serve(&security).await;
-    let url = format!("https://{}/whoami", server.addr);
+    let WhoamiServer {
+        events,
+        sink,
+        server,
+        url,
+    } = WhoamiServer::start(&pki, "RequestClientCert").await;
     let ops_certificate = pki.client("ops", &[]);
 
     let bearer = pki
@@ -853,13 +798,9 @@ async fn the_grpc_layer_reads_the_verified_client_certificate_over_tls() {
 #[tokio::test]
 async fn the_internal_client_is_served_with_its_identity_and_refused_without_it() {
     let pki = Pki::new();
-    let events = Arc::new(RecordedEvents::default());
-    let mut flags = pki.server_flags("RequireAndVerifyClientCert", "10s");
-    flags.extend(credentials_flags(&pki));
-    let security = load(&flags).with_security_events(events.clone());
-    let sink = SecurityEventSink::new(events.clone());
-    let server = serve(&security).await;
-    let url = format!("https://{}/whoami", server.addr);
+    let WhoamiServer {
+        sink, server, url, ..
+    } = WhoamiServer::start(&pki, "RequireAndVerifyClientCert").await;
 
     let ops_certificate = pki.client("ops", &[]);
     let certificate = pki.write("internal.pem", &ops_certificate.certificate);

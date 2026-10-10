@@ -12,29 +12,17 @@ use std::{
 };
 
 use assert2::check;
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
+use axum::{body::Body, http::StatusCode};
 use base64::Engine as _;
 use generated_differential::{CompareOp, TypedConstructor, TypedExpr};
-use http_body_util::BodyExt as _;
-use krabka_traceql::{
-    AttrValue as TraceqlAttrValue, EngineOpts, EventRef, InMemorySpanStore, InputSpan, LinkRef,
-    TraceqlEngine,
-};
+use krabka_traceql::{AttrValue as TraceqlAttrValue, EngineOpts, TraceqlEngine};
 use krabka_traces::{
-    AttrValue, Span, SpanRecord, TracesError,
-    distributor::{self, DistributorState, WalSink},
+    AttrValue,
+    distributor::{self, DistributorState},
     metricsgen::{
         EdgeStore, MetricsGenConfig, RecordOutcome, Series, SeriesSample,
-        SpanKind as MetricsSpanKind, SpanRecord as MetricsSpanRecord,
-        StatusCode as MetricsStatusCode,
+        SpanKind as MetricsSpanKind, StatusCode as MetricsStatusCode,
     },
-};
-use krabka_units::{
-    ByteSize, Time,
-    convert::{ByteSizeExt as _, TimeExt as _},
 };
 use opentelemetry_proto::tonic::{
     common::v1::{
@@ -52,10 +40,30 @@ use testcontainers::{
     core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
-use tower::ServiceExt as _;
+
+mod container_url;
+mod ingest_capture;
+mod metrics_span;
+mod search_json;
+mod span_store;
+
+use self::{
+    container_url::mapped_base_url,
+    ingest_capture::{CapturingSink, DoorPush, push_to_door, serve_until_shutdown, string_kv},
+    metrics_span::MetricsSpan,
+    search_json::search_contains_span_id_hex,
+    span_store::{span_store_from_records, traceql_attr},
+};
 
 #[path = "../../metrics-service/tests/support/generated_differential.rs"]
 mod generated_differential;
+#[path = "../../metrics-service/tests/support/pinned_grafana_image.rs"]
+mod pinned_grafana_image;
+#[path = "../../observability/tests/support/rejection_responses.rs"]
+mod rejection_responses;
+
+use pinned_grafana_image::pinned_grafana_image;
+use rejection_responses::{ImplementationAnswer, record_rejection_response};
 
 const TENANT: &str = "tenant-a";
 const TRACE_ID_HEX: &str = "01010101010101010101010101010101";
@@ -106,22 +114,6 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 /// pull thus holds the test process open until the CI job wall stops it, and
 /// the job log then names no test as the cause.
 const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
-
-#[derive(Clone, Default)]
-struct CapturingSink {
-    records: Arc<Mutex<Vec<SpanRecord>>>,
-}
-
-#[async_trait::async_trait]
-impl WalSink for CapturingSink {
-    async fn append(&self, rec: SpanRecord) -> Result<(), TracesError> {
-        self.records
-            .lock()
-            .map_err(|_| TracesError::Wal("capturing sink lock poisoned".into()))?
-            .push(rec);
-        Ok(())
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum QueryCaseKind {
@@ -184,10 +176,7 @@ fn differential_search_corpus_covers_selector_structural_and_pipeline_queries() 
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/tempo image"]
 async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
     let client = reqwest::Client::new();
-    let tempo = start_tempo().await?;
-    let tempo_query = mapped_base_url(&tempo, TEMPO_HTTP_PORT).await?;
-    let tempo_otlp = mapped_base_url(&tempo, TEMPO_OTLP_PORT).await?;
-    wait_for_http_ok(&client, &tempo_query, &["/ready", "/status"]).await?;
+    let (_tempo, tempo_query, tempo_otlp) = start_ready_tempo(&client).await?;
 
     let query_range = "start=0&end=1";
     let mut fixture = TracesData::decode(sample_otlp_body().as_slice())?;
@@ -284,7 +273,7 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
             vec![],
         ),
     ] {
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(query);
         let upstream_url =
             format!("{tempo_query}/api/search?q={encoded}&{query_range}&limit=100&spss=100");
         let upstream = if expected_ids.is_empty() {
@@ -330,7 +319,13 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
         );
     }
 
-    compare_generated_trace_queries(&client, &tempo_query, &krabka.base_url, query_range).await?;
+    compare_generated_trace_queries(QueryTargets {
+        client: &client,
+        oracle: &tempo_query,
+        candidate: &krabka.base_url,
+        query_range,
+    })
+    .await?;
 
     let tempo_tags = get_json(
         &client,
@@ -367,12 +362,7 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
     Ok(())
 }
 
-async fn compare_generated_trace_queries(
-    client: &reqwest::Client,
-    tempo_query: &str,
-    krabka_query: &str,
-    query_range: &str,
-) -> TestResult {
+async fn compare_generated_trace_queries(targets: QueryTargets<'_>) -> TestResult {
     let generated_output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
         || std::env::temp_dir().join(format!("krabka-trace-generated-{}", std::process::id())),
         std::path::PathBuf::from,
@@ -423,16 +413,7 @@ async fn compare_generated_trace_queries(
             )),
         ],
         &generated_output,
-        |expression| {
-            compare_generated_trace_selector(
-                client,
-                tempo_query,
-                krabka_query,
-                query_range,
-                expression,
-                &expected_checkout,
-            )
-        },
+        |expression| compare_generated_trace_selector(targets, expression, &expected_checkout),
     )
     .await?;
 
@@ -461,16 +442,7 @@ async fn compare_generated_trace_queries(
             TypedConstructor::Paren,
         ],
         &generated_output,
-        |expression| {
-            compare_generated_trace_selector(
-                client,
-                tempo_query,
-                krabka_query,
-                query_range,
-                expression,
-                &expected_field_match,
-            )
-        },
+        |expression| compare_generated_trace_selector(targets, expression, &expected_field_match),
     )
     .await?;
 
@@ -486,13 +458,12 @@ async fn compare_generated_trace_queries(
         &generated_output,
         |expression| {
             compare_generated_trace_rejection(
-                client,
-                tempo_query,
-                krabka_query,
-                query_range,
+                targets,
                 expression,
-                &generated_output,
-                &rejection_responses,
+                RejectionEvidence {
+                    output: &generated_output,
+                    observations: &rejection_responses,
+                },
             )
         },
     )
@@ -505,20 +476,9 @@ async fn compare_generated_trace_queries(
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/tempo image"]
 async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult {
     let client = reqwest::Client::new();
-    let tempo = start_tempo().await?;
-    let tempo_query = mapped_base_url(&tempo, TEMPO_HTTP_PORT).await?;
-    let tempo_otlp = mapped_base_url(&tempo, TEMPO_OTLP_PORT).await?;
-    wait_for_http_ok(&client, &tempo_query, &["/ready", "/status"]).await?;
+    let (_tempo, tempo_query, tempo_otlp) = start_ready_tempo(&client).await?;
 
-    let trace_start_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs()
-        .saturating_sub(180)
-        / 30
-        * 30;
-    let query_start = trace_start_secs.saturating_sub(60);
-    let query_end = trace_start_secs + 120;
-    let query_range = format!("start={query_start}&end={query_end}");
+    let (trace_start_secs, query_range) = metrics_window()?;
     let otlp_body = reservoir_otlp_body_at(trace_start_secs * 1_000_000_000);
     let krabka = start_krabka_pair(&otlp_body).await?;
 
@@ -547,49 +507,21 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     )
     .await?;
     assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
-    let pipeline_result = compare_live_pipeline_hints(
-        &client,
-        &tempo_query,
-        &krabka.base_url,
-        &query_range,
-        trace_start_secs,
-    )
-    .await;
-    let instant_result =
-        compare_live_instant_bounds(&client, &tempo_query, &krabka.base_url, trace_start_secs)
-            .await;
-    let numeric_result =
-        compare_live_numeric_metrics(&client, &tempo_query, &krabka.base_url, &query_range).await;
-    let exemplar_result = compare_live_singleton_exemplar(
-        &client,
-        &tempo_query,
-        &krabka.base_url,
-        &query_range,
-        trace_start_secs,
-    )
-    .await;
-    let arithmetic_result =
-        compare_live_field_arithmetic(&client, &tempo_query, &krabka.base_url, &query_range).await;
-    let supported_result =
-        compare_live_supported_scopes(&client, &tempo_query, &krabka.base_url, &query_range).await;
-    let output_result = compare_live_expression_outputs(
-        &client,
-        &tempo_query,
-        &krabka.base_url,
-        &query_range,
-        trace_start_secs,
-    )
-    .await;
-    let retrieval_result =
-        compare_live_retrieval_shapes(&client, &tempo_query, &krabka.base_url, &query_range).await;
-    let reservoir_result = compare_live_exemplar_reservoir(
-        &client,
-        &tempo_query,
-        &krabka.base_url,
-        &query_range,
-        trace_start_secs,
-    )
-    .await;
+    let targets = QueryTargets {
+        client: &client,
+        oracle: &tempo_query,
+        candidate: &krabka.base_url,
+        query_range: &query_range,
+    };
+    let pipeline_result = compare_live_pipeline_hints(targets, trace_start_secs).await;
+    let instant_result = compare_live_instant_bounds(targets, trace_start_secs).await;
+    let numeric_result = compare_live_numeric_metrics(targets).await;
+    let exemplar_result = compare_live_singleton_exemplar(targets, trace_start_secs).await;
+    let arithmetic_result = compare_live_field_arithmetic(targets).await;
+    let supported_result = compare_live_supported_scopes(targets).await;
+    let output_result = compare_live_expression_outputs(targets, trace_start_secs).await;
+    let retrieval_result = compare_live_retrieval_shapes(targets).await;
+    let reservoir_result = compare_live_exemplar_reservoir(targets, trace_start_secs).await;
     pipeline_result?;
     instant_result?;
     numeric_result?;
@@ -603,12 +535,37 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     Ok(())
 }
 
-async fn compare_live_instant_bounds(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    anchor: u64,
-) -> TestResult {
+/// The pinned Tempo (`oracle`) and Krabka (`candidate`) query APIs that a
+/// live comparison sends the same request to, the client it sends with, and
+/// the `start=...&end=...` window it asks over.
+#[derive(Clone, Copy)]
+struct QueryTargets<'a> {
+    client: &'a reqwest::Client,
+    oracle: &'a str,
+    candidate: &'a str,
+    query_range: &'a str,
+}
+
+/// Where a live comparison records each case's evidence and each failure.
+struct ComparisonLedger<'a> {
+    cases: &'a mut Vec<JsonValue>,
+    failures: &'a mut Vec<String>,
+}
+
+/// Where a generated rejection case archives the responses it observed: the
+/// output directory, and the ledger shared by every case of the run.
+struct RejectionEvidence<'a> {
+    output: &'a std::path::Path,
+    observations: &'a Mutex<Vec<JsonValue>>,
+}
+
+async fn compare_live_instant_bounds(targets: QueryTargets<'_>, anchor: u64) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        ..
+    } = targets;
     let end = anchor + 90;
     let rows = [
         ("default-since", format!("end={end}")),
@@ -633,7 +590,7 @@ async fn compare_live_instant_bounds(
         let query = format!(
             "{{ resource.service.name = \"checkout\" }} | {operation}() with(exemplars=false)"
         );
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(&query);
         // Three independently constructed checkout spans lie inside two-minute
         // windows. Tempo retains its default zero count for the empty short window.
         let value = if id == "rate" { 3.0 / 120.0 } else { 3.0 };
@@ -651,9 +608,7 @@ async fn compare_live_instant_bounds(
             let before = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
             let response = get_json(client, &format!("{base}{suffix}"), tenant).await;
             let after = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            let body = response
-                .as_ref()
-                .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+            let body = json_or_error(&response);
             let result = response.and_then(|body| {
                 let series = body.get("series").map_or(Ok(&[][..]), |value| {
                     value
@@ -702,12 +657,10 @@ async fn compare_live_instant_bounds(
             "status":if matched {"matched"}else{"mismatch"}}),
         );
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-instant-bounds-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"planned":10,"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-instant-bounds-conformance.json",
+        &json!({"planned":10,"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -715,13 +668,13 @@ async fn compare_live_instant_bounds(
     }
 }
 
-async fn compare_live_pipeline_hints(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    range: &str,
-    anchor: u64,
-) -> TestResult {
+async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range: range,
+    } = targets;
     let timestamp = |offset: i64| -> TestResult<i64> {
         Ok(i64::try_from(anchor)?
             .checked_add(offset)
@@ -800,16 +753,12 @@ async fn compare_live_pipeline_hints(
         ),
     ] {
         let query = format!("{selector} | {pipeline} with({hints})");
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
-        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
-        let upstream_result = get_json(client, &format!("{oracle}{suffix}"), None).await;
-        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
-        let upstream = upstream_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
-        let actual = actual_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let OracleAndCandidate {
+            upstream: upstream_result,
+            actual: actual_result,
+        } = query_range_from_both(targets, &query).await;
+        let upstream = json_or_error(&upstream_result);
+        let actual = json_or_error(&actual_result);
         let result = upstream_result.and_then(|upstream| {
             actual_result.and_then(|actual| {
                 metric_series_match(&expected, &upstream)?;
@@ -823,12 +772,12 @@ async fn compare_live_pipeline_hints(
         cases.push(json!({"stableid":format!("tempo-live-pipeline-{id}"), "query":query,"request":{"range":range,"step":"30s"},"expected_outcome":"query-result","comparison_kind":"exact-whole-series","independent_expected":expected,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
     compare_live_sampled_pipelines(
-        client,
-        oracle,
-        candidate,
-        range,
+        targets,
         anchor,
-        (&mut cases, &mut failures),
+        ComparisonLedger {
+            cases: &mut cases,
+            failures: &mut failures,
+        },
     )
     .await?;
     for (id, expression) in [
@@ -846,7 +795,7 @@ async fn compare_live_pipeline_hints(
         ),
     ] {
         let query = format!("{selector} | {expression}");
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
         let mut responses = Vec::new();
         let mut rejected = true;
@@ -877,14 +826,10 @@ async fn compare_live_pipeline_hints(
         }
         cases.push(json!({"stableid":format!("tempo-live-pipeline-{id}"),"query":query,"request":{"range":range,"step":"30s"},"expected_outcome":"query-rejection","classification":"paired-expected-error","independent_expected":{"outcome":"query-rejection","http_status":400},"oracle":{"status":responses[0]["http_status"],"error_code":if responses[0]["query_rejection"] == json!(true){"query-rejection"}else{"unclassified-error"}},"candidate":{"status":responses[1]["http_status"],"error_code":if responses[1]["query_rejection"] == json!(true){"query-rejection"}else{"unclassified-error"}},"upstream_normalized":responses[0]["canonical"],"krabka_normalized":responses[1]["canonical"],"responses":responses,"status":if rejected{"matched"}else{"mismatch"}}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-pipeline-hint-conformance.json"),
-            serde_json::to_vec_pretty(
-                &json!({"planned":15,"upstream_source":{"repository":"grafana/tempo","version":"3.0.3","revision":"1900ed7bb5cad1a3edc285783d7d4ac4278337dc"},"cases":cases}),
-            )?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-pipeline-hint-conformance.json",
+        &json!({"planned":15,"upstream_source":{"repository":"grafana/tempo","version":"3.0.3","revision":"1900ed7bb5cad1a3edc285783d7d4ac4278337dc"},"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -945,13 +890,14 @@ fn check_sampled_pipeline_ledger(response: &JsonValue, allowed: &[JsonValue]) ->
 }
 
 async fn compare_live_sampled_pipelines(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    range: &str,
+    targets: QueryTargets<'_>,
     anchor: u64,
-    (cases, failures): (&mut Vec<JsonValue>, &mut Vec<String>),
+    ledger: ComparisonLedger<'_>,
 ) -> TestResult {
+    let QueryTargets {
+        query_range: range, ..
+    } = targets;
+    let ComparisonLedger { cases, failures } = ledger;
     for (id, expression, traces, average) in [
         (
             "fractional-span-sampling",
@@ -977,16 +923,12 @@ async fn compare_live_sampled_pipelines(
         } else {
             sampled_pipeline_expectations(anchor, traces)?
         };
-        let encoded: String = url::form_urlencoded::byte_serialize(expression.as_bytes()).collect();
-        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
-        let upstream_result = get_json(client, &format!("{oracle}{suffix}"), None).await;
-        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
-        let upstream = upstream_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
-        let actual = actual_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let OracleAndCandidate {
+            upstream: upstream_result,
+            actual: actual_result,
+        } = query_range_from_both(targets, expression).await;
+        let upstream = json_or_error(&upstream_result);
+        let actual = json_or_error(&actual_result);
         let result = upstream_result.and_then(|upstream| {
             actual_result.and_then(|actual| {
                 check_sampled_pipeline_ledger(&upstream, &allowed)?;
@@ -1051,20 +993,17 @@ fn sampled_average_domain_rejects_value_scaling_and_missing_mandatory_bucket() {
     assert2::assert!(check_sampled_pipeline_ledger(&missing, &allowed).is_err());
 }
 
-async fn compare_live_retrieval_shapes(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
-) -> TestResult {
+async fn compare_live_retrieval_shapes(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     let upstream_result = get_trace_by_id_until_found(client, oracle, None, query_range).await;
     let actual_result = get_trace_by_id(client, candidate, Some(TENANT), query_range).await;
-    let upstream = upstream_result
-        .as_ref()
-        .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
-    let actual = actual_result
-        .as_ref()
-        .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+    let upstream = json_or_error(&upstream_result);
+    let actual = json_or_error(&actual_result);
     let upstream_protobuf = get_retrieval_protobuf(client, oracle, None, query_range).await;
     let actual_protobuf =
         get_retrieval_protobuf(client, candidate, Some(TENANT), query_range).await;
@@ -1118,12 +1057,10 @@ async fn compare_live_retrieval_shapes(
         }
         cases.push(json!({"stableid":format!("tempo-live-retrieval-shape-{id}"),"request":{"path":format!("/api/v2/traces/{TRACE_ID_HEX}"),"range":query_range,"formats":["v2-json","v1-protobuf"]},"independent_expected":{"trace_id":TRACE_ID_HEX,"span_id":"0202020202020202","attribute_key":key,"locations":["span","event","link"],"value":expected},"upstream":upstream,"krabka":actual,"v1_protobuf":{"upstream":upstream_v1,"krabka":actual_v1,"upstream_artifact":"tempo-retrieval-upstream.pb","krabka_artifact":"tempo-retrieval-krabka.pb"},"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error:Box<dyn std::error::Error + Send + Sync>|error.to_string())}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-retrieval-shape-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"planned":12,"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-retrieval-shape-conformance.json",
+        &json!({"planned":12,"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1287,12 +1224,13 @@ fn retrieval_expected_values() -> Vec<(&'static str, JsonValue)> {
     ]
 }
 
-async fn compare_live_numeric_metrics(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
-) -> TestResult {
+async fn compare_live_numeric_metrics(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
     for (stableid, operation) in [
@@ -1306,16 +1244,14 @@ async fn compare_live_numeric_metrics(
         let query = format!(
             r#"{{ resource.service.name = "checkout" }} | {operation} with(exemplars=false)"#
         );
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
         let upstream =
             get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None)
                 .await?;
         let candidate_result =
             get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
-        let actual = candidate_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let actual = json_or_error(&candidate_result);
         let result = metric_series_match(&upstream, &actual);
         if let Err(error) = &result {
             failures.push(format!("{stableid}: {error}"));
@@ -1326,12 +1262,10 @@ async fn compare_live_numeric_metrics(
             "upstream":upstream,"krabka":actual,"status":if result.is_ok() {"matched"} else {"mismatch"},
             "error":result.err().map(|error|error.to_string())}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-numeric-metric-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-numeric-metric-conformance.json",
+        &json!({"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1339,52 +1273,46 @@ async fn compare_live_numeric_metrics(
     }
 }
 
-async fn compare_live_field_arithmetic(
+/// A set of checkout span searches to run against Tempo and Krabka.
+struct CheckoutSpanSearches<'a> {
+    oracle: &'a str,
+    candidate: &'a str,
+    query_range: &'a str,
+    /// Prefixes each case's stable id in the artifact.
+    case_prefix: &'a str,
+    /// The file name the cases are written to.
+    artifact: &'a str,
+    /// Each case's stable id, its predicate, and the span IDs it must select.
+    search_cases: Vec<(&'a str, &'a str, Vec<&'a str>)>,
+}
+
+// Search Tempo and Krabka for the checkout spans each case's predicate
+// selects, write every case to `artifact` among the undeclared test outputs,
+// and fail when either side does not return exactly the expected span IDs.
+async fn compare_checkout_span_searches(
     client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
+    searches: CheckoutSpanSearches<'_>,
 ) -> TestResult {
+    let CheckoutSpanSearches {
+        oracle,
+        candidate,
+        query_range,
+        case_prefix,
+        artifact,
+        search_cases,
+    } = searches;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
-    // The existing checkout fixture has three positive durations, attached to
-    // independently assigned IDs 2 (GET), 3 (SELECT), and 4 (charge). Name
-    // predicates provide excluded witnesses for each arithmetic expression.
-    for (stableid, predicate, expected_span_ids) in [
-        (
-            "multiply-duration",
-            "duration * 2 > duration && name != \"GET /checkout\"",
-            vec![CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-        ),
-        (
-            "divide-duration",
-            "duration / 2 < duration && name = \"SELECT cart\"",
-            vec![CHILD_SPAN_ID_HEX],
-        ),
-        (
-            "add-duration",
-            "duration + duration >= duration && name != \"charge card\"",
-            vec!["0202020202020202", CHILD_SPAN_ID_HEX],
-        ),
-        (
-            "negate-duration",
-            "-duration < 0s && name = \"charge card\"",
-            vec![ERROR_SPAN_ID_HEX],
-        ),
-    ] {
+    for (stableid, predicate, expected_span_ids) in search_cases {
         let query = format!("{{ resource.service.name = \"checkout\" && {predicate} }}");
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(&query);
         let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
         let upstream_result =
             get_json_until_non_empty_traces(client, &format!("{oracle}{suffix}"), None).await;
         let candidate_result =
             get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
-        let upstream = upstream_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
-        let actual = candidate_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let upstream = json_or_error(&upstream_result);
+        let actual = json_or_error(&candidate_result);
         let expected_count = expected_span_ids.len();
         let expected = BTreeMap::from([(
             TRACE_ID_HEX.to_owned(),
@@ -1406,7 +1334,7 @@ async fn compare_live_field_arithmetic(
             failures.push(format!("{stableid}: {error}"));
         }
         cases.push(
-            json!({"stableid":format!("tempo-live-arithmetic-{stableid}"),"query":query,
+            json!({"stableid":format!("{case_prefix}-{stableid}"),"query":query,
             "request":{"range":query_range,"limit":10,"spss":10},
             "independent_expected":{"span_ids_by_trace":expected,"span_count":expected_count},
             "upstream":upstream,"krabka":actual,
@@ -1414,12 +1342,7 @@ async fn compare_live_field_arithmetic(
             "error":result.err().map(|error|error.to_string())}),
         );
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-field-arithmetic-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(artifact, &json!({"cases":cases}))?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1427,13 +1350,58 @@ async fn compare_live_field_arithmetic(
     }
 }
 
-async fn compare_live_expression_outputs(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
-    anchor: u64,
-) -> TestResult {
+async fn compare_live_field_arithmetic(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
+    // The existing checkout fixture has three positive durations, attached to
+    // independently assigned IDs 2 (GET), 3 (SELECT), and 4 (charge). Name
+    // predicates provide excluded witnesses for each arithmetic expression.
+    compare_checkout_span_searches(
+        client,
+        CheckoutSpanSearches {
+            oracle,
+            candidate,
+            query_range,
+            case_prefix: "tempo-live-arithmetic",
+            artifact: "tempo-field-arithmetic-conformance.json",
+            search_cases: vec![
+                (
+                    "multiply-duration",
+                    "duration * 2 > duration && name != \"GET /checkout\"",
+                    vec![CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "divide-duration",
+                    "duration / 2 < duration && name = \"SELECT cart\"",
+                    vec![CHILD_SPAN_ID_HEX],
+                ),
+                (
+                    "add-duration",
+                    "duration + duration >= duration && name != \"charge card\"",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+                ),
+                (
+                    "negate-duration",
+                    "-duration < 0s && name = \"charge card\"",
+                    vec![ERROR_SPAN_ID_HEX],
+                ),
+            ],
+        },
+    )
+    .await
+}
+
+async fn compare_live_expression_outputs(targets: QueryTargets<'_>, anchor: u64) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     let checkout = "{ resource.service.name = \"checkout\" }";
     let all_ids = ["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX];
     let set = |ids: &[&str], attributes: JsonValue| json!({"span_ids":ids,"matched":ids.len(),"attributes":attributes});
@@ -1501,17 +1469,13 @@ async fn compare_live_expression_outputs(
         ),
     ] {
         let query = format!("{checkout} | {expression}");
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(&query);
         let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
         let upstream_result =
             get_json_until_non_empty_traces(client, &format!("{oracle}{suffix}"), None).await;
         let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
-        let upstream = upstream_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
-        let actual = actual_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let upstream = json_or_error(&upstream_result);
+        let actual = json_or_error(&actual_result);
         let expected = canonical_spanset_ledger(&expected)?;
         let result = upstream_result.and_then(|upstream| {
             actual_result.and_then(|actual| {
@@ -1532,20 +1496,18 @@ async fn compare_live_expression_outputs(
         cases.push(json!({"stableid":format!("tempo-live-output-{id}"),"query":query,"request":{"range":query_range,"limit":10,"spss":10},"independent_expected":{"span_sets":expected},"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
     compare_live_metric_label_outputs(
-        client,
-        oracle,
-        candidate,
-        query_range,
+        targets,
         anchor,
-        (&mut cases, &mut failures),
+        ComparisonLedger {
+            cases: &mut cases,
+            failures: &mut failures,
+        },
     )
     .await?;
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-expression-output-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-expression-output-conformance.json",
+        &json!({"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1554,14 +1516,17 @@ async fn compare_live_expression_outputs(
 }
 
 async fn compare_live_metric_label_outputs(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     anchor: u64,
-    output: (&mut Vec<JsonValue>, &mut Vec<String>),
+    ledger: ComparisonLedger<'_>,
 ) -> TestResult {
-    let (cases, failures) = output;
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
+    let ComparisonLedger { cases, failures } = ledger;
     let checkout = "{ resource.service.name = \"checkout\" }";
     for (id, field) in [
         ("bare-name-label", "name"),
@@ -1577,28 +1542,17 @@ async fn compare_live_metric_label_outputs(
             checkout
         };
         if field == "span.numbers" {
-            record_array_metric_frontend_observation(
-                client,
-                oracle,
-                candidate,
-                query_range,
-                anchor,
-            )
-            .await?;
+            record_array_metric_frontend_observation(targets, anchor).await?;
         }
         let query = format!("{selector} | count_over_time() by({field}) with(exemplars=false)");
         let label_key = if field == "span:name" { "name" } else { field };
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
         let upstream_result =
             get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None).await;
         let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
-        let upstream = upstream_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
-        let actual = actual_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let upstream = json_or_error(&upstream_result);
+        let actual = json_or_error(&actual_result);
         let expected_values = if field == "span.numbers" {
             json!([{"stringValue":"nil"}])
         } else {
@@ -1669,12 +1623,10 @@ fn array_metric_frontend_expectation(anchor: u64) -> TestResult<JsonValue> {
 }
 
 async fn record_array_metric_frontend_observation(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     anchor: u64,
 ) -> TestResult {
+    let QueryTargets { query_range, .. } = targets;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
     // Three source spans occupy two buckets: root 500ms, children 150ms/140ms.
@@ -1695,16 +1647,14 @@ async fn record_array_metric_frontend_observation(
         let query = format!(
             "{{ resource.service.name = \"checkout\" }} | {metric} by(span.numbers){stages} with(exemplars=false)"
         );
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
-        let upstream_result = get_json(client, &format!("{oracle}{suffix}"), None).await;
-        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
-        let upstream = upstream_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
-        let actual = actual_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let OracleAndCandidate {
+            upstream: upstream_result,
+            actual: actual_result,
+        } = get_json_from_both(targets, &suffix).await;
+        let upstream = json_or_error(&upstream_result);
+        let actual = json_or_error(&actual_result);
         let mut expected = array_metric_frontend_expectation(anchor)?;
         let samples = expected["series"][0]["samples"].as_array_mut().unwrap();
         // Count fills the complete grid; other reducers omit empty buckets.
@@ -1727,14 +1677,10 @@ async fn record_array_metric_frontend_observation(
         }
         cases.push(json!({"stableid":format!("tempo-array-frontend-{id}"),"query":query,"request":{"range":query_range,"step":"30s"},"independent_expected":expected,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-array-metric-frontend-conformance.json"),
-            serde_json::to_vec_pretty(
-                &json!({"planned":6,"cases":cases,"note":"Tempo 3.0.3 StaticFromAnyValue omits ArrayValue in metric frontend decoding. Raw arrays remain present in trace retrieval and span grouping. These public reducer witnesses do not establish distinct array metric labels."}),
-            )?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-array-metric-frontend-conformance.json",
+        &json!({"planned":6,"cases":cases,"note":"Tempo 3.0.3 StaticFromAnyValue omits ArrayValue in metric frontend decoding. Raw arrays remain present in trace retrieval and span grouping. These public reducer witnesses do not establish distinct array metric labels."}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1805,145 +1751,105 @@ fn spanset_output_ledger_rejects_wrong_groups_attributes_and_counts() {
     }
 }
 
-async fn compare_live_supported_scopes(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
-) -> TestResult {
-    let mut cases = Vec::new();
-    let mut failures = Vec::new();
-    for (stableid, predicate, expected_span_ids) in [
-        (
-            "event-arithmetic-types",
-            "event.cost + 1 = span.limit",
-            vec!["0202020202020202"],
-        ),
-        (
-            "event-field-comparison",
-            "event.peer = name",
-            vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-        ),
-        (
-            "instrumentation-event-composition",
-            "instrumentation.cost + event.cost > span.limit",
-            vec!["0202020202020202", CHILD_SPAN_ID_HEX],
-        ),
-        (
-            "instrumentation-intrinsic",
-            "instrumentation:name = instrumentation.peer",
-            vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-        ),
-        (
-            "event-time-intrinsic",
-            "event:timeSinceStart * 2 < duration && event:name = name",
-            vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-        ),
-        (
-            "link-arithmetic",
-            "link.cost * 2 = span.limit + 1",
-            vec!["0202020202020202"],
-        ),
-        (
-            "id-intrinsic-composition",
-            "span:id = link:spanID && trace:id = link:traceID",
-            vec!["0202020202020202", CHILD_SPAN_ID_HEX],
-        ),
-        (
-            "trace-child-intrinsic",
-            "trace:duration >= duration && span:childCount + 1 > 2",
-            vec!["0202020202020202"],
-        ),
-        (
-            "trace-root-intrinsic",
-            "trace:rootName = name",
-            vec!["0202020202020202"],
-        ),
-        (
-            "integer-power-outside-range",
-            "span.exponent ^ span.base < 0",
-            vec!["0202020202020202", ERROR_SPAN_ID_HEX],
-        ),
-        (
-            "array-scalar-ordering",
-            "span.numbers > span.limit",
-            vec!["0202020202020202", ERROR_SPAN_ID_HEX],
-        ),
-        (
-            "scalar-array-ordering",
-            "span.limit < span.numbers && name != \"GET /checkout\"",
-            vec![ERROR_SPAN_ID_HEX],
-        ),
-    ] {
-        let query = format!("{{ resource.service.name = \"checkout\" && {predicate} }}");
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
-        let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
-        let upstream_result =
-            get_json_until_non_empty_traces(client, &format!("{oracle}{suffix}"), None).await;
-        let candidate_result =
-            get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
-        let upstream = upstream_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
-        let actual = candidate_result
-            .as_ref()
-            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
-        let expected_count = expected_span_ids.len();
-        let expected = BTreeMap::from([(
-            TRACE_ID_HEX.to_owned(),
-            expected_span_ids.into_iter().map(str::to_owned).collect(),
-        )]);
-        let result = upstream_result.and_then(|upstream| {
-            candidate_result.and_then(|actual| {
-                let upstream_ids = search_identities(&upstream)?;
-                let actual_ids = search_identities(&actual)?;
-                if upstream_ids != expected || actual_ids != expected {
-                    return Err(format!(
-                        "{query}: expected {expected:?}, upstream {upstream_ids:?}, Krabka {actual_ids:?}"
-                    ).into());
-                }
-                Ok(())
-            })
-        });
-        if let Err(error) = &result {
-            failures.push(format!("{stableid}: {error}"));
-        }
-        cases.push(
-            json!({"stableid":format!("tempo-live-supported-{stableid}"),"query":query,
-            "request":{"range":query_range,"limit":10,"spss":10},
-            "independent_expected":{"span_ids_by_trace":expected,"span_count":expected_count},
-            "upstream":upstream,"krabka":actual,
-            "status":if result.is_ok(){"matched"}else{"mismatch"},
-            "error":result.err().map(|error|error.to_string())}),
-        );
-    }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-supported-scopes-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
-        )?;
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; ").into())
-    }
+async fn compare_live_supported_scopes(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
+    compare_checkout_span_searches(
+        client,
+        CheckoutSpanSearches {
+            oracle,
+            candidate,
+            query_range,
+            case_prefix: "tempo-live-supported",
+            artifact: "tempo-supported-scopes-conformance.json",
+            search_cases: vec![
+                (
+                    "event-arithmetic-types",
+                    "event.cost + 1 = span.limit",
+                    vec!["0202020202020202"],
+                ),
+                (
+                    "event-field-comparison",
+                    "event.peer = name",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "instrumentation-event-composition",
+                    "instrumentation.cost + event.cost > span.limit",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+                ),
+                (
+                    "instrumentation-intrinsic",
+                    "instrumentation:name = instrumentation.peer",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "event-time-intrinsic",
+                    "event:timeSinceStart * 2 < duration && event:name = name",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "link-arithmetic",
+                    "link.cost * 2 = span.limit + 1",
+                    vec!["0202020202020202"],
+                ),
+                (
+                    "id-intrinsic-composition",
+                    "span:id = link:spanID && trace:id = link:traceID",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+                ),
+                (
+                    "trace-child-intrinsic",
+                    "trace:duration >= duration && span:childCount + 1 > 2",
+                    vec!["0202020202020202"],
+                ),
+                (
+                    "trace-root-intrinsic",
+                    "trace:rootName = name",
+                    vec!["0202020202020202"],
+                ),
+                (
+                    "integer-power-outside-range",
+                    "span.exponent ^ span.base < 0",
+                    vec!["0202020202020202", ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "array-scalar-ordering",
+                    "span.numbers > span.limit",
+                    vec!["0202020202020202", ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "scalar-array-ordering",
+                    "span.limit < span.numbers && name != \"GET /checkout\"",
+                    vec![ERROR_SPAN_ID_HEX],
+                ),
+            ],
+        },
+    )
+    .await
 }
 
 async fn compare_live_exemplar_reservoir(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    range: &str,
+    targets: QueryTargets<'_>,
     anchor_secs: u64,
 ) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range: range,
+    } = targets;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
     for (stableid, grouping) in [("ungrouped", ""), ("grouped", " by(span.lane)")] {
         let query = format!(
             "{{ resource.service.name = \"reservoir\" && span:id != \"\" }} | count_over_time(){grouping}"
         );
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s&exemplars=100");
         let upstream =
             get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None)
@@ -1975,12 +1881,10 @@ async fn compare_live_exemplar_reservoir(
                 "valid_choices":(0_u8..6).map(|index|json!({"trace_id":format!("{:02x}",0xa1+index/2).repeat(16),"span_id":format!("{:02x}",0xb1+index).repeat(8),"span_start_ms":anchor_secs*1000+5000+u64::from(index),"timestamp_ms":(anchor_secs+15)*1000})).collect::<Vec<_>>()},
             "upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-exemplar-reservoir-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-exemplar-reservoir-conformance.json",
+        &json!({"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -2153,18 +2057,21 @@ fn reservoir_contract_rejects_duplicate_trace_foreign_span_and_payload_corruptio
 }
 
 async fn compare_live_singleton_exemplar(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     trace_start_secs: u64,
 ) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range,
+    } = targets;
     // Tempo uses reservoir sampling within a trace. This selector contains one
     // matching span, so identity is independent of RNG. The aligned 30s metric
     // fetch uses Tempo's pre-rounded 15s start column, whose right endpoint is
     // 15s after this fixture's epoch-aligned anchor.
     let query = r#"{ name = "SELECT cart" } | count_over_time()"#;
-    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let encoded = url_encoded(query);
     let suffix =
         format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s&exemplars=100");
     let upstream =
@@ -2212,20 +2119,9 @@ async fn real_tempo_and_krabka_accept_query_param_alias() -> TestResult {
     // existing tests all send `q=`, so they could not catch this — this leg
     // mirrors the live datasource exactly.
     let client = reqwest::Client::new();
-    let tempo = start_tempo().await?;
-    let tempo_query = mapped_base_url(&tempo, TEMPO_HTTP_PORT).await?;
-    let tempo_otlp = mapped_base_url(&tempo, TEMPO_OTLP_PORT).await?;
-    wait_for_http_ok(&client, &tempo_query, &["/ready", "/status"]).await?;
+    let (_tempo, tempo_query, tempo_otlp) = start_ready_tempo(&client).await?;
 
-    let trace_start_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs()
-        .saturating_sub(180)
-        / 30
-        * 30;
-    let query_start = trace_start_secs.saturating_sub(60);
-    let query_end = trace_start_secs + 120;
-    let query_range = format!("start={query_start}&end={query_end}");
+    let (trace_start_secs, query_range) = metrics_window()?;
     let otlp_body = sample_otlp_body_at(trace_start_secs * 1_000_000_000);
     let krabka = start_krabka_pair(&otlp_body).await?;
 
@@ -2271,20 +2167,9 @@ async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
     // previously emitted the scope-stripped key (`service.name`), which left the
     // breakdown blank even though the data and totals were correct.
     let client = reqwest::Client::new();
-    let tempo = start_tempo().await?;
-    let tempo_query = mapped_base_url(&tempo, TEMPO_HTTP_PORT).await?;
-    let tempo_otlp = mapped_base_url(&tempo, TEMPO_OTLP_PORT).await?;
-    wait_for_http_ok(&client, &tempo_query, &["/ready", "/status"]).await?;
+    let (_tempo, tempo_query, tempo_otlp) = start_ready_tempo(&client).await?;
 
-    let trace_start_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs()
-        .saturating_sub(180)
-        / 30
-        * 30;
-    let query_start = trace_start_secs.saturating_sub(60);
-    let query_end = trace_start_secs + 120;
-    let query_range = format!("start={query_start}&end={query_end}");
+    let (trace_start_secs, query_range) = metrics_window()?;
     let otlp_body = typed_grouping_otlp_body_at(trace_start_secs * 1_000_000_000);
     let krabka = start_krabka_pair(&otlp_body).await?;
 
@@ -2328,7 +2213,13 @@ async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
         assert2::assert!(krabka_keys == tempo_keys);
         assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
     }
-    compare_live_typed_groups(&client, &tempo_query, &krabka.base_url, &query_range).await?;
+    compare_live_typed_groups(QueryTargets {
+        client: &client,
+        oracle: &tempo_query,
+        candidate: &krabka.base_url,
+        query_range: &query_range,
+    })
+    .await?;
     krabka.shutdown();
     Ok(())
 }
@@ -2408,25 +2299,7 @@ async fn grafana_accepts_tempo_datasource_pointing_at_krabka() -> TestResult {
             "httpHeaderValue1": TENANT
         }
     });
-    let _created: JsonValue = client
-        .post(format!("{grafana_base}/api/datasources"))
-        .basic_auth("admin", Some("admin"))
-        .json(&payload)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let fetched: JsonValue = client
-        .get(format!(
-            "{grafana_base}/api/datasources/uid/{GRAFANA_TEMPO_DATASOURCE_UID}"
-        ))
-        .basic_auth("admin", Some("admin"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let fetched = create_and_fetch_datasource(&client, &grafana_base, &payload).await?;
 
     assert2::assert!(fetched.get("type").and_then(JsonValue::as_str) == Some("tempo"));
     assert2::assert!(
@@ -2556,23 +2429,7 @@ async fn grafana_service_graph_prometheus_datasource_and_series() -> TestResult 
             "httpHeaderValue1": TENANT
         }
     });
-    let _created: JsonValue = client
-        .post(format!("{grafana_base}/api/datasources"))
-        .basic_auth("admin", Some("admin"))
-        .json(&payload)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let fetched: JsonValue = client
-        .get(format!("{grafana_base}/api/datasources/uid/{prom_uid}"))
-        .basic_auth("admin", Some("admin"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let fetched = create_and_fetch_datasource(&client, &grafana_base, &payload).await?;
     assert2::assert!(fetched.get("type").and_then(JsonValue::as_str) == Some("prometheus"));
 
     // (2) Krabka-side production: the real metrics-generator EdgeStore pairs the
@@ -2616,51 +2473,27 @@ async fn grafana_service_graph_prometheus_datasource_and_series() -> TestResult 
 /// `GET /checkout` → `SELECT cart` models.
 fn service_graph_series_for_seed_edge() -> Vec<Series> {
     let mut store = EdgeStore::new(&MetricsGenConfig::default());
-    let client = metrics_span(
-        "checkout-frontend",
-        [0xA; 8],
-        [0; 8],
-        MetricsSpanKind::Client,
-        MetricsStatusCode::Ok,
-        10_000_000,
-    );
-    let server = metrics_span(
-        "cart-backend",
-        [0xB; 8],
-        [0xA; 8],
-        MetricsSpanKind::Server,
-        MetricsStatusCode::Ok,
-        8_000_000,
-    );
+    let client = MetricsSpan {
+        service: "checkout-frontend",
+        span_id: [0xA; 8],
+        parent: [0; 8],
+        kind: MetricsSpanKind::Client,
+        status: MetricsStatusCode::Ok,
+        duration_ns: 10_000_000,
+    }
+    .record();
+    let server = MetricsSpan {
+        service: "cart-backend",
+        span_id: [0xB; 8],
+        parent: [0xA; 8],
+        kind: MetricsSpanKind::Server,
+        status: MetricsStatusCode::Ok,
+        duration_ns: 8_000_000,
+    }
+    .record();
     assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
     assert2::assert!(store.record_span(&server, 1) == RecordOutcome::Completed);
     store.drain(1_000)
-}
-
-fn metrics_span(
-    service: &str,
-    span_id: [u8; 8],
-    parent: [u8; 8],
-    kind: MetricsSpanKind,
-    status: MetricsStatusCode,
-    duration_ns: i64,
-) -> MetricsSpanRecord {
-    MetricsSpanRecord {
-        tenant: TENANT.into(),
-        trace_id: [0x11; 16],
-        span_id,
-        parent_span_id: parent,
-        name: "op".into(),
-        kind,
-        start_ns: 0,
-        duration_ns,
-        status,
-        status_message: String::new(),
-        service_name: service.into(),
-        attributes: vec![],
-        resource_attributes: vec![],
-        size: ByteSize::from_bytes(0),
-    }
 }
 
 struct KrabkaPair {
@@ -2690,24 +2523,19 @@ async fn start_krabka_pair_on(
 ) -> TestResult<KrabkaPair> {
     let sink = CapturingSink::default();
     let distributor_state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
-    let resp = authenticated(distributor::router(distributor_state))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/traces")
-                .header("content-type", "application/x-protobuf")
-                .header("x-scope-orgid", TENANT)
-                .body(Body::from(otlp_body.to_vec()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::OK);
-    let _ = resp.into_body().collect().await?;
+    push_to_door(
+        authenticated(distributor::router(distributor_state)),
+        DoorPush {
+            uri: "/v1/traces",
+            content_type: "application/x-protobuf",
+            tenant: TENANT,
+            body: Body::from(otlp_body.to_vec()),
+            expected_status: StatusCode::OK,
+        },
+    )
+    .await?;
 
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
+    let records = sink.snapshot()?;
     let store = Arc::new(TraceqlEngine::new(
         Arc::new(span_store_from_records(&records)),
         EngineOpts {
@@ -2719,14 +2547,7 @@ async fn start_krabka_pair_on(
     let listener = tokio::net::TcpListener::bind(format!("{bind_host}:0")).await?;
     let addr = listener.local_addr()?;
     let port = addr.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, app);
 
     Ok(KrabkaPair {
         base_url: format!("http://127.0.0.1:{port}"),
@@ -2735,121 +2556,45 @@ async fn start_krabka_pair_on(
     })
 }
 
-fn span_store_from_records(records: &[SpanRecord]) -> InMemorySpanStore {
-    let mut grouped: BTreeMap<(String, [u8; 16]), Vec<Span>> = BTreeMap::new();
-    for record in records {
-        grouped
-            .entry((record.tenant.clone(), record.span.trace_id))
-            .or_default()
-            .push(record.span.clone());
-    }
-
-    let mut store = InMemorySpanStore::new();
-    for ((tenant, _), spans) in grouped {
-        let root = spans
-            .iter()
-            .find(|span| span.parent_span_id.is_none())
-            .unwrap_or(&spans[0]);
-        let root_service = resource_attr(root, "service.name")
-            .unwrap_or("unknown")
-            .to_string();
-        let root_name = root.name.clone();
-        store.push_trace(
-            &tenant,
-            &root_service,
-            &root_name,
-            spans.into_iter().map(input_span).collect(),
-        );
-    }
-    store
+// Start Tempo and wait until it is ready, returning the container with its
+// query and OTLP base URLs.
+async fn start_ready_tempo(
+    client: &reqwest::Client,
+) -> TestResult<(testcontainers::ContainerAsync<GenericImage>, String, String)> {
+    let tempo = start_tempo().await?;
+    let tempo_query = mapped_base_url(&tempo, TEMPO_HTTP_PORT).await?;
+    let tempo_otlp = mapped_base_url(&tempo, TEMPO_OTLP_PORT).await?;
+    wait_for_http_ok(client, &tempo_query, &["/ready", "/status"]).await?;
+    Ok((tempo, tempo_query, tempo_otlp))
 }
 
-fn input_span(span: Span) -> InputSpan {
-    let mut attrs = span.resource_attrs;
-    attrs.extend(span.span_attrs);
-    InputSpan {
-        trace_id: span.trace_id,
-        span_id: span.span_id,
-        parent_span_id: span.parent_span_id,
-        name: span.name,
-        kind: span.kind.as_i32(),
-        start_unix_nano: span.start_ns,
-        duration: Time::from_nanos(span.duration_ns),
-        status_code: span.status.as_i32(),
-        status_message: span.status_message,
-        instrumentation_name: span.instrumentation_scope,
-        instrumentation_version: span.instrumentation_version,
-        attrs: attrs
-            .into_iter()
-            .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
-            .collect(),
-        events: span
-            .events
-            .into_iter()
-            .map(|event| EventRef {
-                name: event.name,
-                time_since_start: Time::from_nanos(event.time_unix_nano - span.start_ns),
-                attributes: event
-                    .attrs
-                    .into_iter()
-                    .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
-                    .collect(),
-            })
-            .collect(),
-        links: span
-            .links
-            .into_iter()
-            .map(|link| LinkRef {
-                trace_id: link.trace_id,
-                span_id: link.span_id,
-                attributes: link
-                    .attrs
-                    .into_iter()
-                    .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
-                    .collect(),
-            })
-            .collect(),
-    }
+// A trace start three minutes back, aligned to 30s, and the `start`/`end`
+// query range that covers it with a minute before and two after.
+fn metrics_window() -> TestResult<(u64, String)> {
+    let trace_start_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_secs()
+        .saturating_sub(180)
+        / 30
+        * 30;
+    let query_start = trace_start_secs.saturating_sub(60);
+    let query_end = trace_start_secs + 120;
+    Ok((
+        trace_start_secs,
+        format!("start={query_start}&end={query_end}"),
+    ))
 }
 
-fn traceql_attr(value: AttrValue) -> Option<TraceqlAttrValue> {
-    if let AttrValue::Array(values) = &value
-        && values.iter().any(|element| {
-            matches!(
-                element,
-                AttrValue::Array(_) | AttrValue::Bytes(_) | AttrValue::Unsupported(_)
-            ) || values.first().is_some_and(|first| {
-                std::mem::discriminant(first) != std::mem::discriminant(element)
-            })
-        })
-    {
-        return Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()));
-    }
-    match value {
-        AttrValue::Unsupported(value) => Some(TraceqlAttrValue::Unsupported(value)),
-        AttrValue::Array(values) => Some(TraceqlAttrValue::Array(
-            values
-                .into_iter()
-                .map(traceql_attr)
-                .collect::<Option<Vec<_>>>()?,
-        )),
-        AttrValue::Str(value) => Some(TraceqlAttrValue::Str(value)),
-        AttrValue::Int(value) => Some(TraceqlAttrValue::Int(value)),
-        AttrValue::Double(value) => Some(TraceqlAttrValue::Float(value)),
-        AttrValue::Bool(value) => Some(TraceqlAttrValue::Bool(value)),
-        value @ AttrValue::Bytes(_) => {
-            Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()))
-        }
-    }
+// A result's JSON, or an `error` object naming why there is none, so a
+// mismatch report shows both sides either way.
+fn json_or_error(result: &TestResult<JsonValue>) -> JsonValue {
+    result
+        .as_ref()
+        .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone)
 }
 
-fn resource_attr<'a>(span: &'a Span, key: &str) -> Option<&'a str> {
-    span.resource_attrs
-        .iter()
-        .find_map(|attr| match &attr.value {
-            AttrValue::Str(value) if attr.key == key => Some(value.as_str()),
-            _ => None,
-        })
+fn url_encoded(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 async fn start_tempo() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
@@ -2881,15 +2626,9 @@ async fn start_tempo() -> TestResult<testcontainers::ContainerAsync<GenericImage
 }
 
 async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // Set by //bazel/defs.bzl; see the note above.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     let container = tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+        pinned_grafana_image()
             .with_exposed_port(GRAFANA_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::seconds(5))
             .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
@@ -2918,14 +2657,6 @@ async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericIma
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     Err(format!("timed out waiting for Grafana datasource plugins at {base}").into())
-}
-
-async fn mapped_base_url(
-    container: &testcontainers::ContainerAsync<GenericImage>,
-    port: u16,
-) -> TestResult<String> {
-    let mapped = container.get_host_port_ipv4(port).await?;
-    Ok(format!("http://127.0.0.1:{mapped}"))
 }
 
 async fn wait_for_http_ok(client: &reqwest::Client, base: &str, paths: &[&str]) -> TestResult {
@@ -2979,15 +2710,18 @@ async fn get_trace_by_id(
 }
 
 async fn compare_generated_trace_selector(
-    client: &reqwest::Client,
-    oracle_base: &str,
-    krabka_base: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     expression: String,
     expected: &BTreeMap<String, Vec<String>>,
 ) -> TestResult<Option<String>> {
+    let QueryTargets {
+        client,
+        oracle: oracle_base,
+        candidate: krabka_base,
+        query_range,
+    } = targets;
     let query = format!("{{ {expression} }}");
-    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let encoded = url_encoded(&query);
     let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
     // Return transport/protocol failures so the generator can archive them.
     let upstream: JsonValue = client
@@ -3016,16 +2750,22 @@ async fn compare_generated_trace_selector(
 }
 
 async fn compare_generated_trace_rejection(
-    client: &reqwest::Client,
-    oracle_base: &str,
-    krabka_base: &str,
-    query_range: &str,
+    targets: QueryTargets<'_>,
     expression: String,
-    output: &std::path::Path,
-    observations: &Mutex<Vec<JsonValue>>,
+    evidence: RejectionEvidence<'_>,
 ) -> TestResult<Option<String>> {
+    let QueryTargets {
+        client,
+        oracle: oracle_base,
+        candidate: krabka_base,
+        query_range,
+    } = targets;
+    let RejectionEvidence {
+        output,
+        observations,
+    } = evidence;
     let query = format!("{{ {expression} }}");
-    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let encoded = url_encoded(&query);
     let mut responses = Vec::with_capacity(2);
     let mut rejected = true;
     for (implementation, base, tenant) in [
@@ -3037,14 +2777,15 @@ async fn compare_generated_trace_rejection(
             request = request.header("x-scope-orgid", tenant);
         }
         let response = request.send().await?;
-        let status = response.status().as_u16();
-        let body = response.text().await?;
-        let classification = traceql_query_rejection_kind(status, &body);
-        rejected &= classification.is_some();
-        responses.push(
-            json!({"implementation": implementation, "http_status": status,
-            "classification": classification, "body": body}),
-        );
+        rejected &= record_rejection_response(
+            &mut responses,
+            ImplementationAnswer {
+                implementation,
+                response,
+            },
+            traceql_query_rejection_kind,
+        )
+        .await?;
     }
     let mut observations = observations
         .lock()
@@ -3110,6 +2851,65 @@ fn traceql_rejection_comparator_rejects_success_and_unrelated_failures() {
     check!(traceql_query_rejection_kind(400, r#"{"traces":[],"message":"parse error"}"#).is_none());
 }
 
+/// What the oracle and the candidate each answered to one request.
+struct OracleAndCandidate {
+    upstream: TestResult<JsonValue>,
+    actual: TestResult<JsonValue>,
+}
+
+/// GETs the 30-second-step `query_range` of `query`, over the targets' query
+/// window, from both the oracle and the candidate.
+async fn query_range_from_both(targets: QueryTargets<'_>, query: &str) -> OracleAndCandidate {
+    let encoded = url_encoded(query);
+    let range = targets.query_range;
+    let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
+    get_json_from_both(targets, &suffix).await
+}
+
+/// GETs `suffix` from the oracle without a tenant, and from the candidate as
+/// [`TENANT`].
+async fn get_json_from_both(targets: QueryTargets<'_>, suffix: &str) -> OracleAndCandidate {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        ..
+    } = targets;
+    OracleAndCandidate {
+        upstream: get_json(client, &format!("{oracle}{suffix}"), None).await,
+        actual: get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await,
+    }
+}
+
+/// Creates a Grafana datasource from `payload`, then reads it back by its
+/// `uid`, as Grafana stored it.
+async fn create_and_fetch_datasource(
+    client: &reqwest::Client,
+    grafana_base: &str,
+    payload: &JsonValue,
+) -> TestResult<JsonValue> {
+    let uid = payload["uid"]
+        .as_str()
+        .ok_or("datasource payload has a uid")?;
+    let _created: JsonValue = client
+        .post(format!("{grafana_base}/api/datasources"))
+        .basic_auth("admin", Some("admin"))
+        .json(payload)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(client
+        .get(format!("{grafana_base}/api/datasources/uid/{uid}"))
+        .basic_auth("admin", Some("admin"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
 async fn get_json(
     client: &reqwest::Client,
     url: &str,
@@ -3145,20 +2945,20 @@ async fn get_json_until_non_empty_traces(
     url: &str,
     tenant: Option<&str>,
 ) -> TestResult<JsonValue> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut last = JsonValue::Null;
-    while Instant::now() < deadline {
-        let json = get_json(client, url, tenant).await?;
-        if json["traces"]
-            .as_array()
-            .is_some_and(|traces| !traces.is_empty())
-        {
-            return Ok(json);
-        }
-        last = json;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    Err(format!("timed out waiting for non-empty traces from {url}: {last}").into())
+    get_json_until(
+        client,
+        PollTarget {
+            url,
+            tenant,
+            waiting_for: "non-empty traces",
+        },
+        |json| {
+            json["traces"]
+                .as_array()
+                .is_some_and(|traces| !traces.is_empty())
+        },
+    )
+    .await
 }
 
 async fn get_json_until_positive_metric_total(
@@ -3166,17 +2966,48 @@ async fn get_json_until_positive_metric_total(
     url: &str,
     tenant: Option<&str>,
 ) -> TestResult<JsonValue> {
+    get_json_until(
+        client,
+        PollTarget {
+            url,
+            tenant,
+            waiting_for: "positive metric total",
+        },
+        |json| metric_points_total(json) > 0.0,
+    )
+    .await
+}
+
+/// One JSON endpoint to poll, and what the poll waits for, as the timeout
+/// error names it.
+struct PollTarget<'a> {
+    url: &'a str,
+    tenant: Option<&'a str>,
+    waiting_for: &'static str,
+}
+
+/// Polls `target` every 500 ms for up to 30 s until `ready` accepts its JSON.
+async fn get_json_until(
+    client: &reqwest::Client,
+    target: PollTarget<'_>,
+    ready: impl Fn(&JsonValue) -> bool,
+) -> TestResult<JsonValue> {
+    let PollTarget {
+        url,
+        tenant,
+        waiting_for,
+    } = target;
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut last = JsonValue::Null;
     while Instant::now() < deadline {
         let json = get_json(client, url, tenant).await?;
-        if metric_points_total(&json) > 0.0 {
+        if ready(&json) {
             return Ok(json);
         }
         last = json;
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    Err(format!("timed out waiting for positive metric total from {url}: {last}").into())
+    Err(format!("timed out waiting for {waiting_for} from {url}: {last}").into())
 }
 
 /// Real Tempo has ingestion latency. A freshly pushed trace is not immediately
@@ -3297,14 +3128,7 @@ fn search_identities(response: &JsonValue) -> TestResult<BTreeMap<String, Vec<St
 }
 
 fn assert_search_contains_span_id(search: &JsonValue, span_id: &str) {
-    let found = search["traces"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|trace| trace["spanSets"].as_array().into_iter().flatten())
-        .flat_map(|span_set| span_set["spans"].as_array().into_iter().flatten())
-        .any(|span| span["spanID"].as_str() == Some(span_id));
-    assert2::assert!(found);
+    assert2::assert!(search_contains_span_id_hex(search, span_id));
 }
 
 fn assert_search_empty(search: &JsonValue) {
@@ -3927,7 +3751,7 @@ fn retrieval_otlp_attributes() -> Vec<OtlpKeyValue> {
 #[test]
 fn retrieval_shape_ledger_rejects_type_collapse_order_and_nonfinite_corruption() {
     assert2::assert!(
-        traceql_attr(AttrValue::Bytes(vec![0, 255]))
+        traceql_attr(&AttrValue::Bytes(vec![0, 255]))
             == Some(TraceqlAttrValue::Unsupported(
                 r#"{"bytesValue":"AP8="}"#.into()
             ))
@@ -4038,14 +3862,16 @@ fn scalar_kv(key: &str, value: Value) -> OtlpKeyValue {
     }
 }
 
-fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
-    OtlpKeyValue {
-        key: key.into(),
-        value: Some(AnyValue {
-            value: Some(Value::StringValue(value.into())),
-        }),
-        ..OtlpKeyValue::default()
+/// Writes `report` as pretty JSON to `file_name` among Bazel's undeclared
+/// test outputs, when the run has that directory.
+fn write_conformance_report(file_name: &str, report: &JsonValue) -> TestResult {
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join(file_name),
+            serde_json::to_vec_pretty(report)?,
+        )?;
     }
+    Ok(())
 }
 
 // The routers read the principal from the request extensions, where the
@@ -4111,12 +3937,13 @@ fn typed_grouping_otlp_body_at(start_ns: u64) -> Vec<u8> {
     data.encode_to_vec()
 }
 
-async fn compare_live_typed_groups(
-    client: &reqwest::Client,
-    oracle: &str,
-    candidate: &str,
-    range: &str,
-) -> TestResult {
+async fn compare_live_typed_groups(targets: QueryTargets<'_>) -> TestResult {
+    let QueryTargets {
+        client,
+        oracle,
+        candidate,
+        query_range: range,
+    } = targets;
     let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
         || std::env::temp_dir().join("krabka-tempo-typed-groups"),
         std::path::PathBuf::from,
@@ -4134,7 +3961,7 @@ async fn compare_live_typed_groups(
         let query = format!(
             "{{ resource.service.name = \"typed\" }} | count_over_time() by ({grouping}) with(exemplars=false)"
         );
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
         let upstream =
             get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None)

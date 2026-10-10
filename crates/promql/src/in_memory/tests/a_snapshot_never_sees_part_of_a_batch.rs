@@ -34,21 +34,12 @@ pub(crate) async fn a_snapshot_never_sees_part_of_a_batch() {
 
     let after = head.snapshot();
 
-    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
-    let count = async |store: &InMemoryMetricStore| {
-        let scan = store
-            .scan("t", &matchers, i64::MIN, i64::MAX)
-            .await
-            .unwrap();
-        let table = scan.float_table.clone().unwrap();
-        count_rows(&scan, &table).await
-    };
-
     // The pre-batch snapshot is frozen at the one record it captured.
-    assert2::assert!(count(&before).await == 1);
+    assert2::assert!(count_up_float_rows(&before).await == 1);
     // The post-batch snapshot has both of the batch's records, not one.
-    assert2::assert!(count(&after).await == 3);
+    assert2::assert!(count_up_float_rows(&after).await == 3);
     // And the live head agrees with the snapshot taken from it.
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
     let live = head.scan("t", &matchers, i64::MIN, i64::MAX).await.unwrap();
     let table = live.float_table.clone().unwrap();
     assert2::assert!(count_rows(&live, &table).await == 3);

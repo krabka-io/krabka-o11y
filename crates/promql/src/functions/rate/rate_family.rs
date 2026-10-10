@@ -1,4 +1,4 @@
-use super::{InstantKind, RangeKind, Time, TimeExt, extrapolated_rate, instant_delta};
+use super::{InstantKind, RangeKind, RateWindow, extrapolated_rate, instant_delta};
 
 /// Which rate-family function a [`RateUdf`] evaluates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -28,42 +28,15 @@ impl RateFamily {
 
     /// Evaluates one window and returns `None` where Prometheus has no value.
     ///
-    /// `eval_ts` is `range_end_ms`. `range` is the selector width.
-    pub(crate) fn eval_window(
-        self,
-        timestamps: &[i64],
-        values: &[f64],
-        eval_ts: i64,
-        range: Time,
-    ) -> Option<f64> {
-        let range_ms = range.millis_i64();
+    /// `window.bounds.range_end_ms` is the eval timestamp, and `window.range`
+    /// is the selector width.
+    pub(crate) fn eval_window(self, window: RateWindow<'_>) -> Option<f64> {
         match self {
-            Self::Rate => extrapolated_rate(
-                timestamps,
-                values,
-                eval_ts - range_ms,
-                eval_ts,
-                range,
-                RangeKind::Rate,
-            ),
-            Self::Increase => extrapolated_rate(
-                timestamps,
-                values,
-                eval_ts - range_ms,
-                eval_ts,
-                range,
-                RangeKind::Increase,
-            ),
-            Self::Delta => extrapolated_rate(
-                timestamps,
-                values,
-                eval_ts - range_ms,
-                eval_ts,
-                range,
-                RangeKind::Delta,
-            ),
-            Self::Irate => instant_delta(timestamps, values, InstantKind::Irate),
-            Self::Idelta => instant_delta(timestamps, values, InstantKind::Idelta),
+            Self::Rate => extrapolated_rate(window, RangeKind::Rate),
+            Self::Increase => extrapolated_rate(window, RangeKind::Increase),
+            Self::Delta => extrapolated_rate(window, RangeKind::Delta),
+            Self::Irate => instant_delta(window.timestamps, window.values, InstantKind::Irate),
+            Self::Idelta => instant_delta(window.timestamps, window.values, InstantKind::Idelta),
         }
     }
 }

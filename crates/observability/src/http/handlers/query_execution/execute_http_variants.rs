@@ -6,29 +6,47 @@ use krabka_logql::{
 };
 
 use super::{
-    apply_grouped_metric_selection, apply_nested_vector_aggregation, execute_federated_metric_query,
+    HttpQueryScope, apply_grouped_metric_selection, apply_nested_vector_aggregation,
+    execute_federated_metric_query,
 };
 use crate::{
-    HttpQueryError, LogqlExpr, QuerierState, QueryKind, TimeRange, Value, add_loki_query_stats,
+    HttpQueryError, LogqlExpr, QuerierState, QueryKind, Value, add_loki_query_stats,
     http::params_format::aggregation_formatting::apply_approx_metric_selection,
     json, merge_loki_query_stats, metric_scan_range,
     querier::{
         aggregate::sample_windows::absent_metric_labels,
-        metric_eval::scalar_samples::execute_http_metric_query_with_scan_range,
+        metric_eval::scalar_samples::{HttpMetricQuery, execute_http_metric_query},
     },
 };
+
+/// The parts of one `variants(...) of (...)` expression.
+#[derive(Clone, Copy)]
+pub(crate) struct VariantsDefinition<'a> {
+    pub(crate) variants: &'a [LogqlExpr],
+    pub(crate) stream: &'a StreamQuery,
+    pub(crate) range_ns: DurationNanos,
+    pub(crate) offset_ns: OffsetNanos,
+}
 
 // Boundaries and extractor composition follow Loki 3.7.7's
 // DefaultEvaluator.NewVariantsStepEvaluator and MultiVariantExpr.extractor.
 pub(crate) async fn execute_http_variants(
-    state: &QuerierState,
-    tenant: &str,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
-    definition: (&[LogqlExpr], &StreamQuery, DurationNanos, OffsetNanos),
+    scope: HttpQueryScope<'_>,
+    definition: VariantsDefinition<'_>,
 ) -> Result<Value, HttpQueryError> {
-    let (variants, stream, range_ns, offset_ns) = definition;
+    let HttpQueryScope {
+        state,
+        tenant,
+        time_range,
+        step,
+        kind,
+    } = scope;
+    let VariantsDefinition {
+        variants,
+        stream,
+        range_ns,
+        offset_ns,
+    } = definition;
     if !state.limits.enable_multi_variant_queries {
         return Err(HttpQueryError::VariantsDisabled);
     }
@@ -62,20 +80,17 @@ pub(crate) async fn execute_http_variants(
         common_query.range_ns = range_ns;
         common_query.offset_ns = offset_ns;
         let scan_range = metric_scan_range(&common_query, time_range)?;
+        let metric_query = HttpMetricQuery {
+            time_range,
+            step,
+            kind,
+            query,
+            common_scan_range: Some(scan_range),
+        };
         let mut value = if state.federated_metric_tenants.is_some() {
-            execute_federated_metric_query(state, time_range, step, kind, query, Some(scan_range))
-                .await?
+            execute_federated_metric_query(state, metric_query).await?
         } else {
-            execute_http_metric_query_with_scan_range(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                query,
-                Some(scan_range),
-            )
-            .await?
+            execute_http_metric_query(state, tenant, metric_query).await?
         };
         let variant = index.to_string();
         if let Some(rows) = value["data"]["result"].as_array_mut() {

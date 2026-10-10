@@ -24,6 +24,17 @@ filegroup(
 
 crate_library(
     name = "metrics",
+    # The compactor's unit tests reach the flaky object store, and the
+    # hooked store it wraps, with `#[path]` from //crates/blockstore.
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/bin/**"],
+    ) + [
+        "//crates/blockstore:tests/support/flaky_put_store.rs",
+        "//crates/blockstore:tests/support/hooked_store.rs",
+    ],
+    # `build.rs` reaches the shared `protoc` lookup with `#[path]`.
+    build_script_compile_data = ["//tools/build_support:protoc_path.rs"],
     # `build.rs` generates prost types from these.
     build_script_data = glob(["proto/**"]),
 )

@@ -58,12 +58,7 @@ async fn http_querier_search_job_sends_scan_params_and_parses() {
         .with_state(seen.clone());
 
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(
-        Duration::from_secs(5),
-        krabka_traces::frontend::QuerierScheme::Http,
-        &krabka_observability::server_security::InternalClient::default(),
-    )
-    .unwrap();
+    let backend = plain_http_querier();
 
     let out = backend
         .search_job(&SearchJobRequest {
@@ -115,12 +110,7 @@ async fn http_querier_live_shard_sends_no_scan_params() {
         )
         .with_state(seen.clone());
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(
-        Duration::from_secs(5),
-        krabka_traces::frontend::QuerierScheme::Http,
-        &krabka_observability::server_security::InternalClient::default(),
-    )
-    .unwrap();
+    let backend = plain_http_querier();
 
     backend
         .search_job(&SearchJobRequest {
@@ -148,21 +138,10 @@ async fn http_querier_by_id_404_is_empty_partial() {
         get(|| async { (axum::http::StatusCode::NOT_FOUND, "trace not found") }),
     );
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(
-        Duration::from_secs(5),
-        krabka_traces::frontend::QuerierScheme::Http,
-        &krabka_observability::server_security::InternalClient::default(),
-    )
-    .unwrap();
+    let backend = plain_http_querier();
 
     let out = backend
-        .trace_by_id_job(&TraceByIdJobRequest {
-            tenant: TenantId::new("t1").unwrap(),
-            trace_id: [9; 16],
-            start_ns: 0,
-            end_ns: 1,
-            querier: addr.to_string(),
-        })
+        .trace_by_id_job(&trace_by_id_request(addr, [9; 16]))
         .await
         .unwrap();
 
@@ -190,21 +169,10 @@ async fn http_querier_by_id_parses_v2_envelope() {
         }),
     );
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(
-        Duration::from_secs(5),
-        krabka_traces::frontend::QuerierScheme::Http,
-        &krabka_observability::server_security::InternalClient::default(),
-    )
-    .unwrap();
+    let backend = plain_http_querier();
 
     let out = backend
-        .trace_by_id_job(&TraceByIdJobRequest {
-            tenant: TenantId::new("t1").unwrap(),
-            trace_id: [10; 16],
-            start_ns: 0,
-            end_ns: 1,
-            querier: addr.to_string(),
-        })
+        .trace_by_id_job(&trace_by_id_request(addr, [10; 16]))
         .await
         .unwrap();
 
@@ -228,12 +196,7 @@ async fn http_querier_tag_values_encodes_tag_path_segment() {
             )
             .with_state(seen.clone());
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(
-        Duration::from_secs(5),
-        krabka_traces::frontend::QuerierScheme::Http,
-        &krabka_observability::server_security::InternalClient::default(),
-    )
-    .unwrap();
+    let backend = plain_http_querier();
 
     // `#` interpolated raw would start a URL fragment and truncate the path
     // (the stub's `{tag}/values` route would never match). Path-segment
@@ -252,6 +215,29 @@ async fn http_querier_tag_values_encodes_tag_path_segment() {
 
     let log = seen.lock().unwrap();
     assert2::assert!(log.as_slice() == ["a#b"]);
+}
+
+/// A `t1` trace-by-id job for `trace_id` over `[0, 1)` ns, sent to the
+/// querier at `addr`.
+fn trace_by_id_request(addr: SocketAddr, trace_id: [u8; 16]) -> TraceByIdJobRequest {
+    TraceByIdJobRequest {
+        tenant: TenantId::new("t1").unwrap(),
+        trace_id,
+        start_ns: 0,
+        end_ns: 1,
+        querier: addr.to_string(),
+    }
+}
+
+/// An HTTP querier backend with a five-second timeout and the default
+/// internal client.
+fn plain_http_querier() -> HttpQuerier {
+    HttpQuerier::new(
+        Duration::from_secs(5),
+        krabka_traces::frontend::QuerierScheme::Http,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap()
 }
 
 async fn spawn(app: Router) -> SocketAddr {

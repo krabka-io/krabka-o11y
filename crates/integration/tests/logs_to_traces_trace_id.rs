@@ -28,16 +28,13 @@ use krabka_observability::{InMemoryWalSink, QuerierState, distributor_router, lo
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+// The trace this log line belongs to, written into the push body as hex.
+use crate::correlated_span::{SPAN_ID, TRACE_ID};
+
+mod correlated_span;
+
 const TENANT: &str = "tenant-a";
 const LINE: &str = "order 4711 failed: upstream timeout";
-
-/// The trace this log line belongs to. It is written into the push body as hex,
-/// the way an OpenTelemetry-instrumented emitter writes it, and it has to
-/// survive back out as the same 16 bytes `krabka-traces` keys a trace on.
-const TRACE_ID: [u8; 16] = [
-    0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36,
-];
-const SPAN_ID: [u8; 8] = [0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7];
 
 /// Now, in nanoseconds. The distributor rejects samples older than its
 /// `reject_old_samples_max_age`, so the line has to be recent rather than at a

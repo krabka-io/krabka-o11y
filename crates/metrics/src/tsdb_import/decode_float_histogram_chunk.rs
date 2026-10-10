@@ -1,6 +1,6 @@
 use super::{
-    BitReader, ChunkError, HistogramLayout, NativeHistogram, ResetHint, STALE_NAN_BITS, XorState,
-    counter_reset_hint, stale_histogram,
+    BitReader, ChunkError, HistogramChunkState, HistogramLayout, NativeHistogram, ResetHint,
+    STALE_NAN_BITS, XorState, decode_histogram_samples, stale_histogram,
 };
 
 /// Decodes a Prometheus float native-histogram chunk.
@@ -9,34 +9,10 @@ use super::{
 /// stores the count, the zero count, the sum and every bucket as a Gorilla XOR
 /// against the same value in the sample before, each with its own state.
 pub fn decode_float_histogram_chunk(
-    data: &[u8],
+    chunk: &[u8],
     max_buckets: u64,
 ) -> Result<Vec<(i64, NativeHistogram)>, ChunkError> {
-    let (header, body) = data.split_at_checked(3).ok_or(ChunkError::Truncated)?;
-    let total = u16::from_be_bytes([header[0], header[1]]);
-    let reset_header = header[2];
-    if total == 0 {
-        return Ok(Vec::new());
-    }
-    let mut reader = BitReader::new(body);
-    let layout = HistogramLayout::read(&mut reader, max_buckets)?;
-    let mut state = FloatState::new(&layout);
-    let mut samples = Vec::with_capacity(usize::from(total));
-    for index in 0..total {
-        let is_stale = if index == 0 {
-            state.read_first(&mut reader)?;
-            false
-        } else {
-            state.read_next(&mut reader)?
-        };
-        let histogram = if is_stale {
-            stale_histogram(true)
-        } else {
-            state.histogram(&layout, counter_reset_hint(reset_header, index))
-        };
-        samples.push((state.timestamp, histogram));
-    }
-    Ok(samples)
+    decode_histogram_samples::<FloatState>(chunk, max_buckets)
 }
 
 struct FloatState {
@@ -48,7 +24,15 @@ struct FloatState {
     negative: Vec<(f64, XorState)>,
 }
 
-impl FloatState {
+impl HistogramChunkState for FloatState {
+    fn stale_marker() -> NativeHistogram {
+        stale_histogram(true)
+    }
+
+    fn timestamp(&self) -> i64 {
+        self.timestamp
+    }
+
     fn new(layout: &HistogramLayout) -> Self {
         Self {
             timestamp: 0,
@@ -92,8 +76,12 @@ impl FloatState {
         Ok(false)
     }
 
-    fn histogram(&self, layout: &HistogramLayout, reset_hint: ResetHint) -> NativeHistogram {
-        NativeHistogram {
+    fn histogram(
+        &self,
+        layout: &HistogramLayout,
+        reset_hint: ResetHint,
+    ) -> Result<NativeHistogram, ChunkError> {
+        Ok(NativeHistogram {
             schema: layout.schema,
             is_float: true,
             reset_hint,
@@ -107,6 +95,6 @@ impl FloatState {
             negative_counts: self.negative.iter().map(|(value, _)| *value).collect(),
             custom_values: layout.custom_values.clone(),
             start_timestamp_ms: None,
-        }
+        })
     }
 }

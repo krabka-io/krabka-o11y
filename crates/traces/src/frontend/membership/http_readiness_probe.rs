@@ -2,6 +2,7 @@ use super::{
     BackendError, Duration, InternalClient, QuerierHealth, QuerierScheme, ReadinessProbe,
     async_trait,
 };
+use crate::frontend::http_backend::internal_http_client;
 
 /// Reads a querier's `/ready`, the endpoint every Krabka role already serves.
 ///
@@ -30,10 +31,7 @@ impl HttpReadinessProbe {
         scheme: QuerierScheme,
         internal_client: &InternalClient,
     ) -> Result<Self, BackendError> {
-        let http = internal_client
-            .apply(reqwest::Client::builder().timeout(timeout))
-            .build()
-            .map_err(|e| BackendError::Transport(e.to_string()))?;
+        let http = internal_http_client(timeout, internal_client)?;
         Ok(Self { http, scheme })
     }
 }

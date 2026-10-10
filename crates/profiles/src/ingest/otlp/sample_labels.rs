@@ -1,4 +1,5 @@
-use super::{ProfilesError, attribute_label, intern_string, pb};
+use super::{ProfilesError, attribute_label, pb};
+use crate::ingest::intern_profile_string;
 
 pub(crate) fn sample_labels(
     sample: &pb::otlp_profiles::Sample,
@@ -8,8 +9,8 @@ pub(crate) fn sample_labels(
     let mut labels = Vec::new();
     for attr_idx in &sample.attribute_indices {
         let (name, value) = attribute_label(*attr_idx, dict)?;
-        let key = intern_string(strings, &name);
-        let value_idx = intern_string(strings, &value);
+        let key = intern_profile_string(strings, &name);
+        let value_idx = intern_profile_string(strings, &value);
         labels.push(krabka_pprof::proto::Label {
             key,
             str: value_idx,

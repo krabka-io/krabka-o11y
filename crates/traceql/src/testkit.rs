@@ -97,7 +97,15 @@ query: { .svc = "x" }
 
     #[test]
     fn span_helper_offsets_start_time_by_span_id() {
-        let span = span(9, 2, Some(1), "child", 123, vec![]);
+        let span = SpanFixture {
+            trace: 9,
+            id: 2,
+            parent: Some(1),
+            name: "child",
+            duration_nanos: 123,
+            ..SpanFixture::default()
+        }
+        .input_span();
 
         assert!(
             span == InputSpan {
@@ -253,7 +261,13 @@ query: { .svc = "x" }
         use crate::{in_memory::InMemorySpanStore, result::EventRef};
 
         let with_event = |id: u8, event: &str| {
-            let mut input = super::span(1, id, None, "root", 100, vec![]);
+            let mut input = SpanFixture {
+                id,
+                name: "root",
+                duration_nanos: 100,
+                ..SpanFixture::default()
+            }
+            .input_span();
             input.events = vec![EventRef {
                 time_since_start: Time::from_nanos(1),
                 name: event.to_string(),
@@ -535,30 +549,32 @@ mod parse_cases;
 mod parse_field;
 mod parse_u8_list;
 mod report;
+mod root_span_columns;
 mod run_case;
 mod run_corpus_dir;
 mod run_corpus_file;
 mod run_metrics_case;
 mod run_search_case;
 mod run_trace_by_id_case;
-mod span;
+pub(crate) mod span;
 mod span_ids;
 mod trace_ids;
 
 use case::Case;
 pub use case_result::CaseResult;
-use engine::engine;
+pub use engine::engine;
 use file_name::file_name;
 use parse_cases::parse_cases;
 use parse_field::parse_field;
 use parse_u8_list::parse_u8_list;
 pub use report::Report;
+pub use root_span_columns::{RootSpanRow, root_span_columns};
 use run_case::run_case;
 pub use run_corpus_dir::run_corpus_dir;
-pub use run_corpus_file::run_corpus_file;
+pub use run_corpus_file::{run_and_print_corpus_file, run_corpus_file};
 use run_metrics_case::run_metrics_case;
 use run_search_case::run_search_case;
 use run_trace_by_id_case::run_trace_by_id_case;
-use span::span;
+use span::SpanFixture;
 use span_ids::span_ids;
 use trace_ids::trace_ids;

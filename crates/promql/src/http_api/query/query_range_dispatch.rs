@@ -1,10 +1,12 @@
+use krabka_observability::service_metrics::RequestOutcome;
+
 use super::{
-    AnnotatedQueryResult, ApiError, Arc, ERASURE_REQUEST_PREFIX, FrontendRangeRequest, HeaderMap,
-    IntoResponse, MetricStore, Principal, PrometheusApiState, QueryRequestTiming,
-    QueryResponseStats, RangeQueryParams, Response, StdDurationExt, TimeExt, apply_result_limit,
-    authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
-    duration_param, enforce_query_range_limit, execute_range_query_frontend, has_erasure_requests,
-    success_response, success_response_with_stats, timestamp_ms, validate_timestamp_range,
+    AnnotatedQueryResult, ApiError, Arc, ERASURE_REQUEST_PREFIX, EvaluatedQuery,
+    FrontendRangeRequest, HeaderMap, IntoResponse, MetricStore, PerStepSampleStats, Principal,
+    PrometheusApiState, QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, StepGrid,
+    TimeExt, authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
+    duration_param, enforce_query_range_limit, evaluated_query_response,
+    execute_range_query_frontend, has_erasure_requests, timestamp_ms, validate_timestamp_range,
 };
 
 pub(crate) async fn query_range_dispatch<S: MetricStore>(
@@ -96,42 +98,35 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
         }
     };
     let (result, samples) = if stats_requested {
-        let (result, samples) = collect_query_sample_stats(
-            per_step_stats,
-            start_ms,
-            end_ms,
-            step.millis_i64(),
-            evaluate,
-        )
-        .await;
+        let per_step = if per_step_stats {
+            PerStepSampleStats::Include(StepGrid {
+                start: start_ms,
+                end: end_ms,
+                step: step.millis_i64(),
+            })
+        } else {
+            PerStepSampleStats::Omit
+        };
+        let (result, samples) = collect_query_sample_stats(per_step, evaluate).await;
         (result, Some(samples))
     } else {
         (evaluate.await, None)
     };
     let evaluation = eval_started.elapsed();
-    state.record_eval("range", result.is_ok(), evaluation.as_time());
+    state.record_eval(
+        "range",
+        RequestOutcome::from_result(&result),
+        evaluation.as_time(),
+    );
 
-    match result {
-        Ok(AnnotatedQueryResult {
-            mut result,
-            annotations,
-        }) => {
-            apply_result_limit(&mut result, params.limit);
-            match samples {
-                Some(samples) => success_response_with_stats(
-                    result,
-                    QueryResponseStats::new(
-                        samples,
-                        preparation,
-                        evaluation,
-                        timing.queue,
-                        timing.started.elapsed(),
-                    ),
-                    &annotations,
-                ),
-                None => success_response(result, &annotations),
-            }
-        }
-        Err(error) => ApiError::from(error).into_response(),
-    }
+    evaluated_query_response(
+        EvaluatedQuery {
+            outcome: result,
+            samples,
+            preparation,
+            evaluation,
+        },
+        params.limit,
+        timing,
+    )
 }

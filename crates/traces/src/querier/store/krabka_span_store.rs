@@ -308,7 +308,10 @@ impl SpanStore for KrabkaSpanStore {
         self.trace_by_id_inner(tenant, trace_id, start_ns, end_ns)
             .await
     }
+}
 
+#[async_trait::async_trait]
+impl TagCatalog for KrabkaSpanStore {
     async fn tag_names(
         &self,
         tenant: &str,
@@ -416,21 +419,25 @@ impl SpanStore for KrabkaSpanStore {
             let batches = collect_table(&scan.ctx, &scan.span_table).await?;
             return intrinsic_values_from_batches(tag, &batches);
         }
-        let mut values = self
-            .cold_attribute_tag_values(tenant, tag, &index_tag, start_ns, end_ns)
+        let values = self
+            .cold_attribute_tag_values(
+                tenant,
+                RequestedTag {
+                    tag,
+                    index_tag: &index_tag,
+                },
+                TimeRange { start_ns, end_ns },
+            )
             .await?;
-        if let Some(live) = &self.live {
-            values.extend(
-                live.tag_values(tenant, tag, start_ns, end_ns)
-                    .await?
-                    .into_iter()
-                    .map(|value| (value.type_, value.value)),
-            );
-        }
-        Ok(values
-            .into_iter()
-            .map(|(type_, value)| TypedValue { type_, value })
-            .collect())
+        self.with_live_tag_values(
+            values,
+            TagValuesLookup {
+                tenant,
+                tag,
+                range: TimeRange { start_ns, end_ns },
+            },
+        )
+        .await
     }
 }
 
@@ -459,13 +466,17 @@ impl KrabkaSpanStore {
     pub(crate) async fn cold_attribute_tag_values(
         &self,
         tenant: &str,
-        tag: &str,
-        index_tag: &str,
-        start_ns: i64,
-        end_ns: i64,
+        requested: RequestedTag<'_>,
+        range: TimeRange,
     ) -> Result<BTreeSet<(String, String)>, TraceqlError> {
         let trace_index = self.trace_index.load();
-        let keys = trace_index.prune_blocks_by_tag(tenant, index_tag, None, start_ns, end_ns);
+        let keys = trace_index.prune_blocks_by_tag(
+            tenant,
+            requested.index_tag,
+            None,
+            range.start_ns,
+            range.end_ns,
+        );
         let (ctx, table) = self
             .blocks
             .scan_block_keys(&keys, span_block_schema())
@@ -474,7 +485,7 @@ impl KrabkaSpanStore {
         let batches = collect_table(&ctx, &table).await?;
         let mut values = BTreeSet::new();
         for batch in &batches {
-            collect_attribute_tag_values(batch, tag, index_tag, &mut values)?;
+            collect_attribute_tag_values(batch, requested, &mut values)?;
         }
         Ok(values)
     }
@@ -487,17 +498,39 @@ impl KrabkaSpanStore {
         end_ns: i64,
     ) -> Result<Vec<TypedValue>, TraceqlError> {
         let trace_index = self.trace_index.load();
-        let mut values: BTreeSet<(String, String)> = trace_index
+        let values: BTreeSet<(String, String)> = trace_index
             .tag_values(tenant, tag, start_ns, end_ns)
             .into_iter()
             .map(|value| ("string".to_string(), value))
             .collect();
+        self.with_live_tag_values(
+            values,
+            TagValuesLookup {
+                tenant,
+                tag,
+                range: TimeRange { start_ns, end_ns },
+            },
+        )
+        .await
+    }
+    /// Adds the live tier's values for `lookup` to `values`, and types the
+    /// union.
+    async fn with_live_tag_values(
+        &self,
+        mut values: BTreeSet<(String, String)>,
+        lookup: TagValuesLookup<'_>,
+    ) -> Result<Vec<TypedValue>, TraceqlError> {
         if let Some(live) = &self.live {
             values.extend(
-                live.tag_values(tenant, tag, start_ns, end_ns)
-                    .await?
-                    .into_iter()
-                    .map(|value| (value.type_, value.value)),
+                live.tag_values(
+                    lookup.tenant,
+                    lookup.tag,
+                    lookup.range.start_ns,
+                    lookup.range.end_ns,
+                )
+                .await?
+                .into_iter()
+                .map(|value| (value.type_, value.value)),
             );
         }
         Ok(values
@@ -505,6 +538,14 @@ impl KrabkaSpanStore {
             .map(|(type_, value)| TypedValue { type_, value })
             .collect())
     }
+}
+
+/// One tag whose values a tenant asks for over a time window.
+#[derive(Clone, Copy)]
+struct TagValuesLookup<'a> {
+    tenant: &'a str,
+    tag: &'a str,
+    range: TimeRange,
 }
 
 fn missing_object<'a>(mut error: &'a (dyn std::error::Error + 'static)) -> Option<&'a str> {

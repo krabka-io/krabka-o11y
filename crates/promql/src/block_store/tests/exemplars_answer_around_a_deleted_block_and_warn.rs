@@ -21,15 +21,14 @@ pub(crate) async fn exemplars_answer_around_a_deleted_block_and_warn() {
         MetricBlockKind::Exemplars,
         "metrics/exemplars/0001.parquet",
         exemplar_schema(),
-        exemplar_batch(
-            deleted_series.fingerprint(),
-            10_100,
-            1.0,
-            "aaa",
-            "bbb",
-            "kind",
-            "slow",
-        ),
+        exemplar_batch(ExemplarRow {
+            fingerprint: deleted_series.fingerprint(),
+            timestamp_ms: 10_100,
+            value: 1.0,
+            trace_id: Some("aaa".to_string()),
+            span_id: Some("bbb".to_string()),
+            labels: vec![("kind".to_string(), "slow".to_string())],
+        }),
         &deleted_series,
     )
     .await;
@@ -38,15 +37,14 @@ pub(crate) async fn exemplars_answer_around_a_deleted_block_and_warn() {
         MetricBlockKind::Exemplars,
         "metrics/exemplars/0002.parquet",
         exemplar_schema(),
-        exemplar_batch(
-            kept_series.fingerprint(),
-            10_500,
-            7.0,
-            "ccc",
-            "ddd",
-            "kind",
-            "slow",
-        ),
+        exemplar_batch(ExemplarRow {
+            fingerprint: kept_series.fingerprint(),
+            timestamp_ms: 10_500,
+            value: 7.0,
+            trace_id: Some("ccc".to_string()),
+            span_id: Some("ddd".to_string()),
+            labels: vec![("kind".to_string(), "slow".to_string())],
+        }),
         &kept_series,
     )
     .await;

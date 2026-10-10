@@ -19,6 +19,14 @@ impl std::fmt::Display for AlertmanagerDeliveryError {
     }
 }
 
+/// The generator URL of an alert: `template` with `{alertname}` filled in,
+/// or empty when no template is configured.
+pub(crate) fn generator_url_for(template: Option<&str>, alert_name: &str) -> String {
+    template.map_or_else(String::new, |template| {
+        template.replace("{alertname}", &encode_url_component(alert_name))
+    })
+}
+
 pub(crate) fn encode_url_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -32,11 +40,28 @@ pub(crate) fn encode_url_component(value: &str) -> String {
     encoded
 }
 
+/// The external labels and generator URL template an Alertmanager sink
+/// stamps on the alerts it sends and exposes to rule templates.
+#[derive(Clone)]
+pub(crate) struct AlertTemplateDefaults {
+    pub(crate) external_labels: BTreeMap<String, String>,
+    pub(crate) generator_url_template: Option<String>,
+}
+
+impl AlertTemplateDefaults {
+    pub(crate) fn external_labels(&self) -> krabka_blockstore::Labels {
+        krabka_blockstore::Labels::from_pairs(self.external_labels.clone())
+    }
+
+    pub(crate) fn external_url(&self, alert_name: &str) -> String {
+        generator_url_for(self.generator_url_template.as_deref(), alert_name)
+    }
+}
+
 pub struct AlertmanagerHttpSink {
     pub(crate) client: reqwest::Client,
     pub(crate) endpoints: Vec<String>,
-    pub(crate) external_labels: BTreeMap<String, String>,
-    pub(crate) generator_url_template: Option<String>,
+    pub(crate) alert_templates: AlertTemplateDefaults,
     pub(crate) max_attempts: usize,
     pub(crate) retry_delay: Duration,
     pub(crate) request_timeout: Duration,
@@ -67,8 +92,10 @@ impl AlertmanagerHttpSink {
         Self {
             client: reqwest::Client::new(),
             endpoints,
-            external_labels,
-            generator_url_template,
+            alert_templates: AlertTemplateDefaults {
+                external_labels,
+                generator_url_template,
+            },
             max_attempts: max_attempts.max(1),
             retry_delay,
             request_timeout,
@@ -77,14 +104,14 @@ impl AlertmanagerHttpSink {
 
     fn enrich(&self, alerts: &mut [krabka_promql::AlertmanagerAlert]) {
         for alert in alerts {
-            for (name, value) in &self.external_labels {
+            for (name, value) in &self.alert_templates.external_labels {
                 alert
                     .labels
                     .entry(name.clone())
                     .or_insert_with(|| value.clone());
             }
             if alert.generator_url.is_empty()
-                && let Some(template) = &self.generator_url_template
+                && let Some(template) = &self.alert_templates.generator_url_template
             {
                 let alert_name = alert.labels.get("alertname").map_or("", String::as_str);
                 let alert_name = encode_url_component(alert_name);
@@ -147,36 +174,53 @@ impl AlertmanagerHttpSink {
     }
 }
 
-#[async_trait::async_trait]
-impl AlertmanagerSink for AlertmanagerHttpSink {
-    fn template_external_labels(&self) -> krabka_blockstore::Labels {
-        krabka_blockstore::Labels::from_pairs(self.external_labels.clone())
-    }
-
-    fn template_external_url(&self, alert_name: &str) -> String {
-        self.generator_url_template
-            .as_ref()
-            .map_or_else(String::new, |template| {
-                template.replace("{alertname}", &encode_url_component(alert_name))
-            })
-    }
-
-    async fn dispatch_alerts(
+impl AlertmanagerHttpSink {
+    async fn dispatch_batch(
         &self,
+        tenant: Option<&str>,
         alerts: Vec<krabka_promql::AlertmanagerAlert>,
     ) -> Result<(), RulerWalError> {
-        self.deliver(None, alerts)
-            .await
-            .map_err(|error| RulerWalError::Append(error.to_string()))
-    }
-
-    async fn dispatch_alerts_for_tenant(
-        &self,
-        tenant: &krabka_blockstore::TenantId,
-        alerts: Vec<krabka_promql::AlertmanagerAlert>,
-    ) -> Result<(), RulerWalError> {
-        self.deliver(Some(tenant.as_str()), alerts)
+        self.deliver(tenant, alerts)
             .await
             .map_err(|error| RulerWalError::Append(error.to_string()))
     }
 }
+
+/// Implements [`AlertmanagerSink`] for a sink type that has an
+/// `alert_templates: AlertTemplateDefaults` field and an inherent
+/// `async fn dispatch_batch(&self, Option<&str>, Vec<AlertmanagerAlert>)`.
+///
+/// A blanket impl over a local helper trait is not possible because
+/// `AlertmanagerSink` is foreign to this crate.
+macro_rules! impl_alertmanager_sink {
+    ($sink:ty) => {
+        #[async_trait::async_trait]
+        impl AlertmanagerSink for $sink {
+            fn template_external_labels(&self) -> krabka_blockstore::Labels {
+                self.alert_templates.external_labels()
+            }
+
+            fn template_external_url(&self, alert_name: &str) -> String {
+                self.alert_templates.external_url(alert_name)
+            }
+
+            async fn dispatch_alerts(
+                &self,
+                alerts: Vec<krabka_promql::AlertmanagerAlert>,
+            ) -> Result<(), RulerWalError> {
+                self.dispatch_batch(None, alerts).await
+            }
+
+            async fn dispatch_alerts_for_tenant(
+                &self,
+                tenant: &krabka_blockstore::TenantId,
+                alerts: Vec<krabka_promql::AlertmanagerAlert>,
+            ) -> Result<(), RulerWalError> {
+                self.dispatch_batch(Some(tenant.as_str()), alerts).await
+            }
+        }
+    };
+}
+pub(crate) use impl_alertmanager_sink;
+
+impl_alertmanager_sink!(AlertmanagerHttpSink);

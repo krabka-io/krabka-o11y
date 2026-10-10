@@ -60,23 +60,7 @@ impl Tree {
         self.nodes[current].total += value;
         for frame in frames.iter().rev() {
             let name = &frame.function;
-            let child = if let Some(child) = self.nodes[current].child_by_name.get(name) {
-                *child
-            } else {
-                let idx = self.nodes.len();
-                self.nodes.push(Node {
-                    name: name.clone(),
-                    total: 0,
-                    self_: 0,
-                    children: Vec::new(),
-                    child_by_name: HashMap::new(),
-                });
-                let pos = sorted_child_position(&self.nodes[current].children, &self.nodes, name);
-                self.nodes[current].children.insert(pos, idx);
-                self.nodes[current].child_by_name.insert(name.clone(), idx);
-                idx
-            };
-            current = child;
+            current = self.child_named(current, name);
             self.nodes[current].total += value;
         }
         self.nodes[current].self_ += value;
@@ -91,24 +75,31 @@ impl Tree {
         self.nodes[target].self_ += other.nodes[source].self_;
         for source_child in &other.nodes[source].children {
             let name = &other.nodes[*source_child].name;
-            let target_child = if let Some(child) = self.nodes[target].child_by_name.get(name) {
-                *child
-            } else {
-                let idx = self.nodes.len();
-                self.nodes.push(Node {
-                    name: name.clone(),
-                    total: 0,
-                    self_: 0,
-                    children: Vec::new(),
-                    child_by_name: HashMap::new(),
-                });
-                let pos = sorted_child_position(&self.nodes[target].children, &self.nodes, name);
-                self.nodes[target].children.insert(pos, idx);
-                self.nodes[target].child_by_name.insert(name.clone(), idx);
-                idx
-            };
+            let target_child = self.child_named(target, name);
             self.merge_node(target_child, other, *source_child);
         }
+    }
+
+    // The index of `parent`'s child called `name`, adding an empty child in
+    // name order when there is none yet.
+    fn child_named(&mut self, parent: usize, name: &str) -> usize {
+        if let Some(child) = self.nodes[parent].child_by_name.get(name) {
+            return *child;
+        }
+        let idx = self.nodes.len();
+        self.nodes.push(Node {
+            name: name.to_owned(),
+            total: 0,
+            self_: 0,
+            children: Vec::new(),
+            child_by_name: HashMap::new(),
+        });
+        let pos = sorted_child_position(&self.nodes[parent].children, &self.nodes, name);
+        self.nodes[parent].children.insert(pos, idx);
+        self.nodes[parent]
+            .child_by_name
+            .insert(name.to_owned(), idx);
+        idx
     }
 
     #[must_use]

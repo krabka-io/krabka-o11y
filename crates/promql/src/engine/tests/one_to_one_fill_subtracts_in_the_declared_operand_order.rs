@@ -22,14 +22,7 @@ pub(crate) async fn one_to_one_fill_subtracts_in_the_declared_operand_order() {
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "a - on (job) fill(0) b", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "a - on (job) fill(0) b", 10_000).await;
     let values = samples
         .iter()
         .map(|sample| {

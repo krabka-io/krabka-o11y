@@ -62,17 +62,19 @@ fn empty_pipeline_preserves_complete_metadata_fields_and_matches_original_stream
         ("__error__".into(), String::new()),
         ("__error_details__".into(), "metadata-details".into()),
     ]);
-    let expected_fields = BTreeMap::from([
-        ("app".into(), "api".into()),
-        ("app_extracted".into(), "shadow".into()),
-        ("collision".into(), "stream".into()),
-        ("collision_extracted".into(), "metadata".into()),
-        ("collision_extracted_extracted".into(), "direct".into()),
-        ("empty".into(), "metadata-empty".into()),
-        ("only_metadata".into(), "present".into()),
-        ("__error__".into(), String::new()),
-        ("__error_details__".into(), "metadata-details".into()),
-    ]);
+    // Metadata fields carry over; a stream label keeps its name and pushes a
+    // colliding metadata field to an `_extracted` suffix.
+    let mut expected_fields = metadata.clone();
+    expected_fields.extend(
+        [
+            ("app", "api"),
+            ("app_extracted", "shadow"),
+            ("collision", "stream"),
+            ("collision_extracted", "metadata"),
+            ("collision_extracted_extracted", "direct"),
+        ]
+        .map(|(name, field)| (name.to_owned(), field.to_owned())),
+    );
     let line = "raw \0\u{1b}[31m\n東京";
     for (selector, matches) in [
         (r#"{app="api"}"#, true),
@@ -170,7 +172,7 @@ fn parses_decolorize_stage() {
 #[test]
 fn query_evaluator_applies_decolorize_before_later_line_filters() {
     let query = parse_query(r#"{app="api"} | decolorize |= "status=500" !~ `\x1b\[`"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
     let evaluation = query
         .evaluate_with_fields(
             &labels,
@@ -184,7 +186,7 @@ fn query_evaluator_applies_decolorize_before_later_line_filters() {
 
 #[test]
 fn query_evaluator_applies_pattern_line_filters() {
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
     let line = r#"ts=2024-04-05T08:40:13Z caller=http.go:194 level=debug traceID=abc msg="POST /push.v1.PusherService/Push (200) 12ms""#;
     let query = parse_query(
         r#"{app="api"} |> `<_> caller=http.go:194 level=debug <_> msg="POST /push.v1.PusherService/Push <_>`"#,
@@ -221,7 +223,7 @@ fn query_evaluator_ignores_logql_comments_outside_strings() {
         "#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, "status=500 msg=\"error # literal\""));
     check!(!query.matches(&labels, "status=500 msg=\"error\""));
@@ -290,10 +292,7 @@ fn pipeline_stage_public_bool_helpers_reflect_stage_behavior() {
 fn query_evaluator_treats_empty_compatible_regex_matcher_as_matching_absent_label() {
     let query = parse_query(r#"{app="api", env=~".*"}"#).unwrap();
 
-    check!(query.matches(
-        &BTreeMap::from([("app".to_string(), "api".to_string())]),
-        "api line"
-    ));
+    check!(query.matches(&app_api_labels(), "api line"));
     check!(query.matches(
         &BTreeMap::from([
             ("app".to_string(), "api".to_string()),
@@ -331,10 +330,7 @@ fn query_evaluator_applies_negative_regex_label_matchers_to_present_labels() {
 fn query_evaluator_anchors_regex_label_matchers() {
     let query = parse_query(r#"{app=~"api|worker"}"#).unwrap();
 
-    check!(query.matches(
-        &BTreeMap::from([("app".to_string(), "api".to_string())]),
-        "api line"
-    ));
+    check!(query.matches(&app_api_labels(), "api line"));
     check!(query.matches(
         &BTreeMap::from([("app".to_string(), "worker".to_string())]),
         "worker line"
@@ -417,7 +413,7 @@ fn parses_json_parser_stage_and_numeric_field_filter() {
 #[test]
 fn query_evaluator_applies_json_parser_stage_and_field_filter() {
     let query = parse_query(r#"{app="api"} | json | status >= 500"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r#"{"status":500,"message":"boom"}"#));
     check!(!query.matches(&labels, r#"{"status":200,"message":"ok"}"#));
@@ -426,7 +422,7 @@ fn query_evaluator_applies_json_parser_stage_and_field_filter() {
 
 #[test]
 fn query_evaluator_exposes_json_parser_error_fields() {
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let query = parse_query(r#"{app="api"} | json | __error__ = "JSONParserErr""#).unwrap();
     check!(query.matches(&labels, "not json"));
@@ -477,7 +473,7 @@ fn query_evaluator_selected_json_extracts_paths_and_arrays() {
         r#"{app="api"} | json first_server="servers[0]", ua="request.headers[\"User-Agent\"]" | ua = "Agent/1""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(
@@ -516,7 +512,7 @@ fn query_evaluator_applies_unpack_parser_and_replaced_line_filters() {
         r#"{app="api"} | unpack |= "original log message" != "container" | pod = "pod-3223f""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(
         &labels,
@@ -552,7 +548,7 @@ fn query_evaluator_applies_line_format_before_later_line_filters() {
         r#"{app="api"} | logfmt | line_format `{{.msg}} {{.status}}` |= "api error 500" != "status=""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r#"status=500 msg="api error""#));
     check!(!query.matches(&labels, r#"status=200 msg="api error""#));
@@ -564,7 +560,7 @@ fn query_evaluator_line_format_can_reference_current_line() {
         r#"{app="api"} | logfmt | line_format `{{__line__}} method={{.method}}` |= "raw method=GET""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r"raw method=GET"));
     check!(!query.matches(&labels, r"raw method=POST"));
@@ -576,7 +572,7 @@ fn query_evaluator_line_format_can_reference_current_timestamp() {
         r#"{app="api"} | line_format `{{ __timestamp__ | unixEpochNanos }} {{ __timestamp__ | unixEpochMillis }} {{ __timestamp__ | unixEpoch }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields_at(&labels, "raw", &BTreeMap::new(), 1_234_567_890)
@@ -590,7 +586,7 @@ fn query_evaluator_line_format_exposes_line_and_timestamp_aliases() {
     let query =
         parse_query(r#"{app="api"} | line_format `{{ line }} {{ timestamp | unixEpochNanos }}`"#)
             .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields_at(&labels, "raw line", &BTreeMap::new(), 1_234_567_890)
@@ -605,7 +601,7 @@ fn query_evaluator_matches_with_fields_at_uses_timestamped_pipeline_result() {
         r#"{app="api"} | line_format `{{ __timestamp__ | unixEpochMillis }}` |= "1234""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches_with_fields_at(&labels, "raw", &BTreeMap::new(), 1_234_000_000));
     check!(!query.matches_with_fields_at(&labels, "raw", &BTreeMap::new(), 9_999_000_000));
@@ -617,7 +613,7 @@ fn query_evaluator_line_format_formats_current_timestamp_with_date_helper() {
         r#"{app="api"} | line_format `{{ __timestamp__ | date "2006-01-02T15:04:05.00Z-07:00" }} {{ __timestamp__ | date "2006-01-02" }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields_at(&labels, "raw", &BTreeMap::new(), 1_234_567_890)
@@ -632,7 +628,7 @@ fn query_evaluator_line_format_converts_epoch_strings_with_unix_to_time_helper()
         r#"{app="api"} | logfmt | line_format `{{ .day | unixToTime | date "2006-01-02" }} {{ .seconds | unixToTime | date "2006-01-02T15:04:05" }} {{ .millis | unixToTime | unixEpoch }} {{ .micros | unixToTime | unixEpochMillis }} {{ .nanos | unixToTime | unixEpochNanos }}` |= "2023-01-16 2023-03-23T13:13:35 1679577215 1679577215000 1679577215000000000""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(
         &labels,
@@ -650,7 +646,7 @@ fn query_evaluator_line_format_parses_dates_with_to_date_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ .day | toDate "2006-01-02" | unixEpoch }} {{ .stamp | toDateInZone "2006-01-02T15:04:05.999999999Z" "UTC" | unixEpochNanos }} {{ .day | toDateInZone "2006-01-02" "America/New_York" | unixEpoch }} {{ .bad | toDateInZone "2006-01-02" "UTC" | unixEpoch }}` |= "1635811200 1635867930123456789 1635825600 -62135596800""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(
         &labels,
@@ -668,7 +664,7 @@ fn query_evaluator_line_format_exposes_now_template_helper() {
         r#"{app="api"} | line_format `{{ now | unixEpochNanos }} {{ now | unixEpochMillis }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
     let before = current_unix_epoch_nanos();
 
     let evaluation = query
@@ -688,71 +684,30 @@ fn query_evaluator_line_format_exposes_now_template_helper() {
 
 #[test]
 fn query_evaluator_line_format_ranges_over_from_json_arrays() {
-    let query = parse_query(
+    check_matches_only_rate_30_queries(
         r#"{app="api"} | json queries="queries" | line_format `{{ range $q := fromJson .queries }}{{ $q.query }}={{ $q.duration }};{{ end }}` |= "rate=30;sum=15;""#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    check!(query.matches(
-        &labels,
-        r#"{"queries":[{"query":"rate","duration":30},{"query":"sum","duration":15}]}"#
-    ));
-    check!(!query.matches(
-        &labels,
-        r#"{"queries":[{"query":"rate","duration":20},{"query":"sum","duration":15}]}"#
-    ));
+    );
 }
 
 #[test]
 fn query_evaluator_line_format_ranges_with_current_dot_over_from_json_arrays() {
-    let query = parse_query(
+    check_matches_only_rate_30_queries(
         r#"{app="api"} | json queries="queries" | line_format `{{ range fromJson .queries }}{{ .query }}={{ .duration }};{{ end }}` |= "rate=30;sum=15;""#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    check!(query.matches(
-        &labels,
-        r#"{"queries":[{"query":"rate","duration":30},{"query":"sum","duration":15}]}"#
-    ));
-    check!(!query.matches(
-        &labels,
-        r#"{"queries":[{"query":"rate","duration":20},{"query":"sum","duration":15}]}"#
-    ));
+    );
 }
 
 #[test]
 fn query_evaluator_line_format_ranges_can_reference_root_fields() {
-    let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ range fromJson "[{\"method\":\"POST\"}]" }}inner={{ .method }} root={{ $.method }}{{ end }}`"#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    let output = query
-        .evaluate_with_fields(&labels, r#"method=GET msg="request ok""#, &BTreeMap::new())
-        .unwrap();
+    let output = ApiLine { query: r#"{app="api"} | logfmt | line_format `{{ range fromJson "[{\"method\":\"POST\"}]" }}inner={{ .method }} root={{ $.method }}{{ end }}`"#, line: r#"method=GET msg="request ok""# }.evaluate();
 
     check!(output.line == "inner=POST root=GET");
 }
 
 #[test]
 fn query_evaluator_line_format_ranges_with_index_and_value_variables() {
-    let query = parse_query(
+    check_matches_only_rate_30_queries(
         r#"{app="api"} | json queries="queries" | line_format `{{ range $i, $q := fromJson .queries }}{{ $i }}:{{ $q.query }}={{ $q.duration }};{{ end }}` |= "0:rate=30;1:sum=15;""#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    check!(query.matches(
-        &labels,
-        r#"{"queries":[{"query":"rate","duration":30},{"query":"sum","duration":15}]}"#
-    ));
-    check!(!query.matches(
-        &labels,
-        r#"{"queries":[{"query":"rate","duration":20},{"query":"sum","duration":15}]}"#
-    ));
+    );
 }
 
 #[test]
@@ -761,7 +716,7 @@ fn query_evaluator_line_format_ranges_over_from_json_objects() {
         r#"{app="api"} | json durations="durations" | line_format `{{ range $name, $duration := fromJson .durations }}{{ $name }}={{ $duration }};{{ end }}` |= "rate=30;sum=15;""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r#"{"durations":{"rate":30,"sum":15}}"#));
     check!(!query.matches(&labels, r#"{"durations":{"rate":20,"sum":15}}"#));
@@ -773,7 +728,7 @@ fn query_evaluator_line_format_uses_range_else_for_empty_from_json_arrays() {
         r#"{app="api"} | json queries="queries" | line_format `{{ range $q := fromJson .queries }}{{ $q.query }};{{ else }}none{{ end }}` |= "none""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r#"{"queries":[]}"#));
     check!(!query.matches(&labels, r#"{"queries":[{"query":"rate","duration":30}]}"#));
@@ -797,7 +752,7 @@ fn query_evaluator_line_format_applies_go_template_index_and_slice_helpers() {
         r#"{app="api"} | json payload="payload" | line_format `{{ index (fromJson .payload) "servers" 1 "name" }}|{{ index (fromJson .payload) "status" }}|{{ slice "abcdef" 1 4 }}|{{ slice (index (fromJson .payload) "servers") 0 1 }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let result = query
         .evaluate_with_fields(
@@ -816,7 +771,7 @@ fn query_evaluator_line_format_applies_integer_math_template_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ add 3 2 5 }} {{ sub 5 2 }} {{ mul 5 2 3 }} {{ div 10 2 }} {{ mod 10 3 }} {{ max 1 2 3 }} {{ min 1 2 3 }} {{ .count | int | add 2 }} {{ .bad | int }}` |= "10 3 30 5 1 3 1 10 0""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r"count=8 bad=soon"));
     check!(!query.matches(&labels, r"count=7 bad=soon"));
@@ -828,7 +783,7 @@ fn query_evaluator_line_format_applies_float_math_template_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ addf 3.5 2 5 }} {{ subf 5.5 2 1.5 }} {{ mulf 5.5 2 2.5 }} {{ divf 10 2 4 }} {{ maxf 1 2.5 3 }} {{ minf 1.5 2.5 3 }} {{ ceil 123.001 }} {{ floor 123.9999 }} {{ round 123.555555 3 }} {{ .ratio | float64 | addf 1.25 }} {{ .bad | float64 }}` |= "10.5 2 27.5 1.25 3 1.5 124 123 123.556 4.75 0""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r"ratio=3.5 bad=soon"));
     check!(!query.matches(&labels, r"ratio=2.5 bad=soon"));
@@ -840,7 +795,7 @@ fn query_evaluator_line_format_applies_template_string_pipelines() {
         r#"{app="api"} | logfmt | line_format `{{ .path | replace "/" "_" | upper | trunc 6 }} {{ __line__ | lower }}` |= "_CHECK status=500 path=/checkout msg=api_error""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r"status=500 path=/checkout msg=API_ERROR"));
     check!(!query.matches(&labels, r"status=500 path=/health msg=API_ERROR"));
@@ -859,7 +814,7 @@ fn query_evaluator_line_format_applies_additional_template_string_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ .raw | trim | trimPrefix "/" | trimSuffix "/" | title }} {{ .raw | trimAll " /" }} {{ .path | substr 1 10 }} {{ .path | substr 5 -1 }} {{ .path | substr -1 4 }} {{ .query | urlencode }} {{ .encoded | urldecode }}` |= "Checkout checkout api/items items /api a%3D1+b%3Dtwo a=1 b=two""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(
         &labels,
@@ -877,7 +832,7 @@ fn query_evaluator_line_format_applies_base64_template_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ .raw | b64enc }} {{ .encoded | b64dec }} {{ .invalid | b64dec }}` |= "aGVsbG8= hello ""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(
         &labels,
@@ -895,7 +850,7 @@ fn query_evaluator_line_format_applies_measurement_template_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ .latency | duration }} {{ .latency | duration_seconds }} {{ .size | bytes }}` |= "90 90 1.572864e+06""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r"latency=1m30s size=1.5MiB"));
     check!(!query.matches(&labels, r"latency=250ms size=1.5MiB"));
@@ -907,7 +862,7 @@ fn query_evaluator_line_format_applies_printf_template_helper() {
         r#"{app="api"} | logfmt | line_format `{{ printf "The IP address was %s" .remote_addr }}|{{ printf "%-5.5s" .request_method }}|{{ printf "%15.15s" .client_host }}|{{ .route | printf "[%s]" }}` |= "The IP address was 192.168.1.1|GET  |long-example.in|[/checkout]""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(
         &labels,
@@ -925,7 +880,7 @@ fn query_evaluator_line_format_applies_go_template_print_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ print "status=" 500 " method=" .method }}|{{ println "status" 500 }}|{{ urlquery "a=1 b=two&x=/api" }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let result = query
         .evaluate_with_fields(&labels, r"method=GET", &BTreeMap::new())
@@ -957,7 +912,7 @@ fn query_evaluator_line_format_applies_go_template_escape_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ html .html }}|{{ js .script }}|{{ "<x>" | html }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let result = query
         .evaluate_with_fields(
@@ -979,7 +934,7 @@ fn query_evaluator_line_format_applies_logical_template_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ contains "timeout" .msg }} {{ .path | hasPrefix "/api" }} {{ .path | hasSuffix "items" }} {{ .method | eq "GET" }}` |= "true true true true""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(
         &labels,
@@ -998,7 +953,7 @@ fn query_evaluator_line_format_applies_ne_template_helper() {
         r#"{app="api"} | logfmt | line_format `{{ ne .method "POST" }} {{ .status | ne "500" }}` |= "true true""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r"method=GET status=200"));
     check!(!query.matches(&labels, r"method=POST status=200"));
@@ -1011,7 +966,7 @@ fn query_evaluator_line_format_applies_ordering_template_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ if gt (int .status) 499 }}server{{ else }}ok{{ end }} {{ ge (int .status) 500 }} {{ lt 2 10 }} {{ le (int .status) 500 }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let server = query
         .evaluate_with_fields(&labels, r"status=500", &BTreeMap::new())
@@ -1029,7 +984,7 @@ fn query_evaluator_line_format_applies_len_template_helper() {
     let query =
         parse_query(r#"{app="api"} | logfmt | line_format `len={{ len .msg }}` |= "len=15""#)
             .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r#"msg="template helper""#));
     check!(!query.matches(&labels, r#"msg="tiny""#));
@@ -1041,7 +996,7 @@ fn query_evaluator_line_format_applies_conditional_template_blocks() {
         r#"{app="api"} | logfmt | line_format `{{ if contains "timeout" .msg }}timeout{{ else if eq "GET" .method }}read{{ else }}other{{ end }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let timeout = query
         .evaluate_with_fields(
@@ -1064,18 +1019,17 @@ fn query_evaluator_line_format_applies_conditional_template_blocks() {
 
 #[test]
 fn query_evaluator_line_format_applies_if_template_variable_declarations() {
-    let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ if $method := .method }}method={{ $method }}{{ else }}missing={{ $method }}{{ end }}`"#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    let present = query
-        .evaluate_with_fields(&labels, r#"method=GET msg="request ok""#, &BTreeMap::new())
-        .unwrap();
-    let absent = query
-        .evaluate_with_fields(&labels, r#"msg="request ok""#, &BTreeMap::new())
-        .unwrap();
+    let query = r#"{app="api"} | logfmt | line_format `{{ if $method := .method }}method={{ $method }}{{ else }}missing={{ $method }}{{ end }}`"#;
+    let present = ApiLine {
+        query,
+        line: r#"method=GET msg="request ok""#,
+    }
+    .evaluate();
+    let absent = ApiLine {
+        query,
+        line: r#"msg="request ok""#,
+    }
+    .evaluate();
 
     check!(present.line == "method=GET");
     check!(absent.line == "missing=");
@@ -1087,7 +1041,7 @@ fn query_evaluator_line_format_applies_json_template_truthiness() {
         r#"{app="api"} | line_format `{{ if fromJson "[]" }}array{{ else }}empty-array{{ end }}|{{ if fromJson "{}" }}object{{ else }}empty-object{{ end }}|{{ if fromJson "null" }}null{{ else }}empty-null{{ end }}|{{ if fromJson "false" }}bool{{ else }}empty-bool{{ end }}|{{ if fromJson "0" }}number{{ else }}empty-number{{ end }}|{{ with fromJson "{\"method\":\"GET\"}" }}{{ .method }}{{ else }}missing{{ end }}|{{ not (fromJson "[]") }}|{{ or (fromJson "[]") (fromJson "{\"x\":1}") }}|{{ and (fromJson "{\"x\":1}") (fromJson "0") }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let result = query
         .evaluate_with_fields(&labels, "raw", &BTreeMap::new())
@@ -1114,18 +1068,17 @@ fn query_evaluator_line_format_applies_integer_and_json_scalar_truthiness() {
 
 #[test]
 fn query_evaluator_line_format_applies_with_template_blocks() {
-    let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ with .method }}method={{ . }}{{ else }}missing{{ end }}`"#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    let present = query
-        .evaluate_with_fields(&labels, r#"method=GET msg="request ok""#, &BTreeMap::new())
-        .unwrap();
-    let absent = query
-        .evaluate_with_fields(&labels, r#"msg="request ok""#, &BTreeMap::new())
-        .unwrap();
+    let query = r#"{app="api"} | logfmt | line_format `{{ with .method }}method={{ . }}{{ else }}missing{{ end }}`"#;
+    let present = ApiLine {
+        query,
+        line: r#"method=GET msg="request ok""#,
+    }
+    .evaluate();
+    let absent = ApiLine {
+        query,
+        line: r#"msg="request ok""#,
+    }
+    .evaluate();
 
     check!(present.line == "method=GET");
     check!(absent.line == "missing");
@@ -1133,33 +1086,24 @@ fn query_evaluator_line_format_applies_with_template_blocks() {
 
 #[test]
 fn query_evaluator_line_format_with_can_reference_root_fields() {
-    let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ with fromJson "{\"method\":\"POST\"}" }}inner={{ .method }} root={{ $.method }}{{ end }}`"#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    let output = query
-        .evaluate_with_fields(&labels, r#"method=GET msg="request ok""#, &BTreeMap::new())
-        .unwrap();
+    let output = ApiLine { query: r#"{app="api"} | logfmt | line_format `{{ with fromJson "{\"method\":\"POST\"}" }}inner={{ .method }} root={{ $.method }}{{ end }}`"#, line: r#"method=GET msg="request ok""# }.evaluate();
 
     check!(output.line == "inner=POST root=GET");
 }
 
 #[test]
 fn query_evaluator_line_format_applies_with_template_variable_declarations() {
-    let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ with $method := .method }}dot={{ . }} var={{ $method }}{{ else }}missing={{ $method }}{{ end }}`"#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    let present = query
-        .evaluate_with_fields(&labels, r#"method=GET msg="request ok""#, &BTreeMap::new())
-        .unwrap();
-    let absent = query
-        .evaluate_with_fields(&labels, r#"msg="request ok""#, &BTreeMap::new())
-        .unwrap();
+    let query = r#"{app="api"} | logfmt | line_format `{{ with $method := .method }}dot={{ . }} var={{ $method }}{{ else }}missing={{ $method }}{{ end }}`"#;
+    let present = ApiLine {
+        query,
+        line: r#"method=GET msg="request ok""#,
+    }
+    .evaluate();
+    let absent = ApiLine {
+        query,
+        line: r#"msg="request ok""#,
+    }
+    .evaluate();
 
     check!(present.line == "dot=GET var=GET");
     check!(absent.line == "missing=");
@@ -1171,7 +1115,7 @@ fn query_evaluator_line_format_applies_else_with_template_blocks() {
         r#"{app="api"} | line_format `{{ with .missing }}primary={{ . }}{{ else with fromJson "{\"fallback\":\"worker\"}" }}fallback={{ .fallback }}{{ else }}none{{ end }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let output = query
         .evaluate_with_fields(&labels, "raw", &BTreeMap::new())
@@ -1186,7 +1130,7 @@ fn query_evaluator_line_format_applies_template_variable_assignments() {
         r#"{app="api"} | logfmt | line_format `{{ $method := .method }}{{ $status := .status }}{{ $method }} {{ $status | printf "status=%s" }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let output = query
         .evaluate_with_fields(&labels, r"method=GET status=500", &BTreeMap::new())
@@ -1201,7 +1145,7 @@ fn query_evaluator_line_format_reassigns_template_variables() {
         r#"{app="api"} | logfmt | line_format `{{ $status := .status }}{{ $status = printf "status=%s" $status }}{{ $status }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let output = query
         .evaluate_with_fields(&labels, r"status=500", &BTreeMap::new())
@@ -1221,7 +1165,7 @@ fn query_evaluator_line_format_preserves_bare_values_ending_with_parenthesis() {
 fn query_evaluator_line_format_applies_template_trim_markers() {
     let query =
         parse_query(r#"{app="api"} | logfmt | line_format `left {{- .method -}} right`"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let output = query
         .evaluate_with_fields(&labels, r#"method=GET msg="request ok""#, &BTreeMap::new())
@@ -1261,7 +1205,7 @@ fn query_evaluator_line_format_ignores_template_comments() {
         r#"{app="api"} | logfmt | line_format `before{{/* hidden */}}after {{ .method }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let output = query
         .evaluate_with_fields(&labels, r#"method=GET msg="request ok""#, &BTreeMap::new())
@@ -1314,7 +1258,7 @@ fn query_evaluator_line_format_applies_boolean_template_combinators() {
         r#"{app="api"} | logfmt | line_format `{{ if and (contains "timeout" .msg) (hasPrefix "/api" .path) }}route-timeout{{ else if or (eq "POST" .method) (not (hasSuffix "ok" .msg)) }}attention{{ else }}other{{ end }}`"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let route_timeout = query
         .evaluate_with_fields(
@@ -1345,7 +1289,7 @@ fn query_evaluator_line_format_applies_spacing_template_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ alignLeft 5 .short }}|{{ alignLeft 5 .long }}|{{ alignRight 5 .short }}|{{ alignRight 5 .long }}|{{ repeat 3 .mark }}|{{ .multi | indent 2 }}|{{ .multi | nindent 2 }}` |= "hi   |hello|   hi|world|xxx|  alpha\n  beta|\n  alpha\n  beta""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(
         &labels,
@@ -1363,7 +1307,7 @@ fn query_evaluator_line_format_applies_regex_template_helpers() {
         r#"{app="api"} | logfmt | line_format `{{ count "o" .word }}|{{ .word | count "o" }}|{{ regexReplaceAll "(f)(o+)" .word "${1}a" }}|{{ .word | regexReplaceAllLiteral "(f)(o+)" "${1}a" }}` |= "2|2|fa|${1}a""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r"word=foo"));
     check!(!query.matches(&labels, r"word=bar"));
@@ -1471,7 +1415,7 @@ fn query_evaluator_label_format_applies_template_default_and_upper() {
         r#"{app="api"} | logfmt | label_format method=`{{ .method | default "get" | upper }}` | method = "GET""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let missing_method = query
         .evaluate_with_fields(&labels, r"status=500 path=/checkout", &BTreeMap::new())
@@ -1521,7 +1465,7 @@ fn query_evaluator_parameterized_logfmt_extracts_only_requested_fields() {
         r#"{app="api"} | logfmt host, fwd_ip="fwd" | host = "grafana.net" | fwd_ip = "124.133.124.161""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(
@@ -1539,16 +1483,11 @@ fn query_evaluator_parameterized_logfmt_extracts_only_requested_fields() {
 
 #[test]
 fn query_evaluator_parameterized_logfmt_keeps_missing_requested_fields_as_empty() {
-    let query = parse_query(r#"{app="api"} | logfmt status, message="msg""#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    let evaluation = query
-        .evaluate_with_fields(
-            &labels,
-            r#"duration=25ms msg="api typed parser ok""#,
-            &BTreeMap::new(),
-        )
-        .unwrap();
+    let evaluation = ApiLine {
+        query: r#"{app="api"} | logfmt status, message="msg""#,
+        line: r#"duration=25ms msg="api typed parser ok""#,
+    }
+    .evaluate();
 
     check!(evaluation.fields.get("status") == Some(&String::new()));
     check!(evaluation.fields.get("message") == Some(&"api typed parser ok".to_string()));
@@ -1556,16 +1495,11 @@ fn query_evaluator_parameterized_logfmt_keeps_missing_requested_fields_as_empty(
 
 #[test]
 fn query_evaluator_numeric_field_filter_keeps_invalid_present_values_as_label_filter_errors() {
-    let query = parse_query(r#"{app="api"} | logfmt status | status >= 500"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    let evaluation = query
-        .evaluate_with_fields(
-            &labels,
-            r#"duration=25ms msg="api typed parser ok""#,
-            &BTreeMap::new(),
-        )
-        .unwrap();
+    let evaluation = ApiLine {
+        query: r#"{app="api"} | logfmt status | status >= 500"#,
+        line: r#"duration=25ms msg="api typed parser ok""#,
+    }
+    .evaluate();
 
     check!(evaluation.fields.get("status") == Some(&String::new()));
     check!(evaluation.fields.get("__error__") == Some(&"LabelFilterErr".to_string()));
@@ -1580,7 +1514,7 @@ fn query_evaluator_logfmt_keep_empty_keeps_standalone_keys() {
     let query =
         parse_query(r#"{app="api"} | logfmt --keep-empty | empty = "" | host = "grafana.net""#)
             .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, r"host=grafana.net empty", &BTreeMap::new())
@@ -1593,7 +1527,7 @@ fn query_evaluator_logfmt_keep_empty_keeps_standalone_keys() {
 #[test]
 fn query_evaluator_logfmt_skips_leading_whitespace() {
     let query = parse_query(r#"{app="api"} | logfmt | status = "204""#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, " \tstatus=204", &BTreeMap::new())
@@ -1605,7 +1539,7 @@ fn query_evaluator_logfmt_skips_leading_whitespace() {
 #[test]
 fn query_evaluator_logfmt_non_strict_skips_malformed_tokens() {
     let query = parse_query(r#"{app="api"} | logfmt | status = "204" | __error__ = """#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, r"=broken status=204", &BTreeMap::new())
@@ -1618,7 +1552,7 @@ fn query_evaluator_logfmt_non_strict_skips_malformed_tokens() {
 #[test]
 fn query_evaluator_logfmt_decodes_quoted_value_escapes() {
     let query = parse_query(r#"{app="api"} | logfmt | msg = "hello \"api\"""#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, r#"msg="hello \"api\"""#, &BTreeMap::new())
@@ -1630,7 +1564,7 @@ fn query_evaluator_logfmt_decodes_quoted_value_escapes() {
 #[test]
 fn query_evaluator_field_filter_matches_missing_string_label_as_empty() {
     let query = parse_query(r#"{app="api"} | logfmt | empty = """#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, r"host=grafana.net", &BTreeMap::new())
@@ -1651,7 +1585,7 @@ fn query_evaluator_field_filter_matches_missing_string_label_as_empty() {
 fn query_evaluator_logfmt_strict_marks_malformed_tokens_as_errors() {
     let query =
         parse_query(r#"{app="api"} | logfmt --strict | __error__ = "LogfmtParserErr""#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, "host=grafana.net =broken", &BTreeMap::new())
@@ -1664,7 +1598,7 @@ fn query_evaluator_logfmt_strict_marks_malformed_tokens_as_errors() {
 #[test]
 fn query_evaluator_logfmt_strict_ignores_standalone_keys_without_keep_empty() {
     let query = parse_query(r#"{app="api"} | logfmt --strict | __error__ = """#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(
@@ -1683,7 +1617,7 @@ fn query_evaluator_logfmt_strict_ignores_standalone_keys_without_keep_empty() {
 #[test]
 fn query_evaluator_logfmt_sanitizes_ansi_prefixed_field_names() {
     let query = parse_query(r#"{app="api"} | logfmt"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(
@@ -1699,21 +1633,13 @@ fn query_evaluator_logfmt_sanitizes_ansi_prefixed_field_names() {
 
 #[test]
 fn query_evaluator_logfmt_sanitizes_field_names_without_losing_valid_characters() {
-    let query = parse_query(r#"{app="api"} | logfmt"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let evaluation = ApiLine {
+        query: r#"{app="api"} | logfmt"#,
+        line: "trace.id=abc span:id=def already_ok=ghi 9lives=cat a--b=two",
+    }
+    .evaluate();
 
-    let evaluation = query
-        .evaluate_with_fields(
-            &labels,
-            "trace.id=abc span:id=def already_ok=ghi 9lives=cat a--b=two",
-            &BTreeMap::new(),
-        )
-        .unwrap();
-
-    check!(evaluation.fields.get("trace_id") == Some(&"abc".to_string()));
-    check!(evaluation.fields.get("span:id") == Some(&"def".to_string()));
-    check!(evaluation.fields.get("already_ok") == Some(&"ghi".to_string()));
-    check!(evaluation.fields.get("_9lives") == Some(&"cat".to_string()));
+    check_sanitized_field_names(&evaluation);
     check!(evaluation.fields.get("a_b") == Some(&"two".to_string()));
 }
 
@@ -1721,7 +1647,7 @@ fn query_evaluator_logfmt_sanitizes_field_names_without_losing_valid_characters(
 fn query_evaluator_logfmt_strict_reports_loki_syntax_error_details() {
     let query =
         parse_query(r#"{app="api"} | logfmt --strict | __error__ = "LogfmtParserErr""#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, r#"status=500 msg="unterminated"#, &BTreeMap::new())
@@ -1737,7 +1663,7 @@ fn query_evaluator_logfmt_strict_reports_loki_syntax_error_details() {
 #[test]
 fn query_evaluator_logfmt_non_strict_keep_empty_skips_malformed_quoted_values() {
     let query = parse_query(r#"{app="api"} | logfmt --keep-empty | __error__ = """#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, r#"status=500 msg="unterminated"#, &BTreeMap::new())
@@ -1808,7 +1734,7 @@ fn query_evaluator_applies_drop_and_keep_to_later_filters_and_labels() {
 #[test]
 fn query_evaluator_accepts_decimal_unwrap_samples() {
     let query = parse_query(r#"{app="api"} | logfmt | unwrap cost | __error__ = """#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, "cost=1.5", &BTreeMap::new())
@@ -1822,7 +1748,7 @@ fn query_evaluator_accepts_decimal_unwrap_samples() {
 #[test]
 fn query_evaluator_accepts_signed_decimal_unwrap_samples() {
     let query = parse_query(r#"{app="api"} | logfmt | unwrap cost | __error__ = """#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let positive = query
         .evaluate_with_fields(&labels, "cost=+1.5", &BTreeMap::new())
@@ -1842,7 +1768,7 @@ fn query_evaluator_accepts_signed_decimal_unwrap_samples() {
 #[test]
 fn query_evaluator_rejects_repeated_sample_signs() {
     let query = parse_query(r#"{app="api"} | logfmt | unwrap cost"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, "cost=++1.5", &BTreeMap::new())
@@ -1863,7 +1789,7 @@ fn query_evaluator_rejects_repeated_sample_signs() {
 #[test]
 fn query_evaluator_accepts_scientific_unwrap_samples() {
     let query = parse_query(r#"{app="api"} | logfmt | unwrap cost | __error__ = """#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, "cost=-2.5e-1", &BTreeMap::new())
@@ -1879,7 +1805,7 @@ fn query_evaluator_flattens_nested_json_fields() {
     let query =
         parse_query(r#"{app="api"} | json | request_method = "GET" | response_status >= 500"#)
             .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(
         &labels,
@@ -1901,7 +1827,7 @@ fn query_evaluator_sanitizes_json_field_names_and_skips_arrays() {
         r#"{app="api"} | json | request_headers_User_Agent = "curl/7.68.0" | servers = "ignored""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(!query.matches(
         &labels,
@@ -1918,21 +1844,9 @@ fn query_evaluator_sanitizes_json_field_names_and_skips_arrays() {
 
 #[test]
 fn query_evaluator_json_parser_exposes_sanitized_scalar_fields_only() {
-    let query = parse_query(r#"{app="api"} | json"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let evaluation = ApiLine { query: r#"{app="api"} | json"#, line: r#"{"trace.id":"abc","span:id":"def","already_ok":"ghi","9lives":"cat","servers":["10.0.0.1"]}"# }.evaluate();
 
-    let evaluation = query
-        .evaluate_with_fields(
-            &labels,
-            r#"{"trace.id":"abc","span:id":"def","already_ok":"ghi","9lives":"cat","servers":["10.0.0.1"]}"#,
-            &BTreeMap::new(),
-        )
-        .unwrap();
-
-    check!(evaluation.fields.get("trace_id") == Some(&"abc".to_string()));
-    check!(evaluation.fields.get("span:id") == Some(&"def".to_string()));
-    check!(evaluation.fields.get("already_ok") == Some(&"ghi".to_string()));
-    check!(evaluation.fields.get("_9lives") == Some(&"cat".to_string()));
+    check_sanitized_field_names(&evaluation);
     check!(!evaluation.fields.contains_key("servers"));
 }
 
@@ -1976,16 +1890,9 @@ fn pattern_regexp_and_line_format_accessors_return_source_text() {
 
 #[test]
 fn query_evaluator_applies_pattern_parser_stage_and_field_filter() {
-    let query = parse_query(
+    check_matches_only_post_500(
         r#"{app="api"} | pattern `<method> <path> (<status>) <duration>` | method = "POST" | status >= 500"#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    check!(query.matches(&labels, "POST /api/prom/query_range (500) 1.5s"));
-    check!(!query.matches(&labels, "GET /api/prom/query_range (500) 1.5s"));
-    check!(!query.matches(&labels, "POST /api/prom/query_range (200) 1.5s"));
-    check!(!query.matches(&labels, "not a matching line"));
+    );
 }
 
 #[test]
@@ -1994,7 +1901,7 @@ fn query_evaluator_pattern_parser_captures_after_leading_literals() {
         r#"{app="api"} | pattern `prefix method=<method> status=<status>` | method = "POST" | status = "500""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let evaluation = query
         .evaluate_with_fields(&labels, "prefix method=POST status=500", &BTreeMap::new())
@@ -2024,7 +1931,7 @@ fn query_evaluator_accepts_the_remainder_for_the_final_pattern_capture() {
     let query =
         parse_query(r#"{app="api"} | pattern `<method> <path>` | __error__ = "PatternParserErr""#)
             .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(!query.matches(&labels, "too-few"));
     check!(!query.matches(&labels, "GET /ready"));
@@ -2061,16 +1968,9 @@ fn parses_regexp_parser_stage_and_field_filter() {
 
 #[test]
 fn query_evaluator_applies_regexp_parser_stage_and_field_filter() {
-    let query = parse_query(
+    check_matches_only_post_500(
         r#"{app="api"} | regexp `(?P<method>\w+) (?P<path>[\w/]+) \((?P<status>\d+)\) (?P<duration>.*)` | method = "POST" | status >= 500"#,
-    )
-    .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
-
-    check!(query.matches(&labels, "POST /api/prom/query_range (500) 1.5s"));
-    check!(!query.matches(&labels, "GET /api/prom/query_range (500) 1.5s"));
-    check!(!query.matches(&labels, "POST /api/prom/query_range (200) 1.5s"));
-    check!(!query.matches(&labels, "not a matching line"));
+    );
 }
 
 #[test]
@@ -2104,7 +2004,7 @@ fn query_evaluator_exposes_regexp_parser_error_fields() {
     let query =
         parse_query(r#"{app="api"} | regexp `(?P<method>\w+) (?P<path>[\w/]+)` | __error__ = "RegexpParserErr""#)
             .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, "too-few"));
     check!(!query.matches(&labels, "GET /ready"));
@@ -2165,7 +2065,7 @@ fn parses_backtick_string_field_filters() {
 fn query_evaluator_applies_backtick_string_field_filters() {
     let query =
         parse_query(r#"{app="api"} | logfmt | msg = `api error` | path =~ `/api/.+`"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r#"msg="api error" path=/api/search"#));
     check!(!query.matches(&labels, r#"msg="api ok" path=/api/search"#));
@@ -2175,7 +2075,7 @@ fn query_evaluator_applies_backtick_string_field_filters() {
 #[test]
 fn query_evaluator_applies_ip_line_filters_to_complete_ip_tokens() {
     let query = parse_query(r#"{app="api"} |= ip("192.168.4.0/24")"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, "client=192.168.4.20 status=200"));
     check!(!query.matches(&labels, "client=192.168.5.20 status=200"));
@@ -2191,7 +2091,7 @@ fn query_evaluator_applies_ip_label_filters() {
     let query =
         parse_query(r#"{app="api"} | logfmt | remote_addr = ip("192.168.4.5-192.168.4.20")"#)
             .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, "remote_addr=192.168.4.12"));
     check!(!query.matches(&labels, "remote_addr=192.168.4.21"));
@@ -2228,7 +2128,7 @@ fn parses_regex_field_filters() {
 #[test]
 fn query_evaluator_applies_logfmt_parser_stage_and_field_filters() {
     let query = parse_query(r#"{app="api"} | logfmt | status >= 500 | msg = "api error""#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, r#"status=500 msg="api error" trace=abc"#));
     check!(!query.matches(&labels, r#"status=200 msg="api ok" trace=abc"#));
@@ -2246,7 +2146,7 @@ fn parses_duration_and_bytes_field_filters() {
 fn query_evaluator_applies_duration_and_bytes_field_filters() {
     let query =
         parse_query(r#"{app="api"} | logfmt | duration >= 20ms | bytes_consumed > 20MB"#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, "duration=25ms bytes_consumed=21MB"));
     check!(!query.matches(&labels, "duration=10ms bytes_consumed=21MB"));
@@ -2257,7 +2157,7 @@ fn query_evaluator_applies_duration_and_bytes_field_filters() {
 #[test]
 fn query_evaluator_applies_and_or_field_filter_chains() {
     let query = parse_query(r#"{app="api"} | logfmt | status >= 500 or level = "warn""#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, "status=500 level=info"));
     check!(query.matches(&labels, "status=200 level=warn"));
@@ -2277,7 +2177,7 @@ fn query_evaluator_applies_parenthesized_field_filter_chains() {
         r#"{app="api"} | logfmt | duration >= 20ms or (method = "GET" and size <= 20KB)"#,
     )
     .unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, "duration=10ms method=GET size=10KB"));
     check!(query.matches(&labels, "duration=25ms method=POST size=40KB"));
@@ -2293,7 +2193,7 @@ fn query_evaluator_applies_parenthesized_field_filter_chains() {
 
 #[test]
 fn query_evaluator_treats_comma_and_adjacent_field_filters_as_and() {
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let query =
         parse_query(r#"{app="api"} | logfmt | status >= 500, path !~ "/health.*""#).unwrap();
@@ -2309,7 +2209,7 @@ fn query_evaluator_treats_comma_and_adjacent_field_filters_as_and() {
 
 #[test]
 fn query_evaluator_skips_unterminated_logfmt_quoted_field() {
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     let query = parse_query(r#"{app="api"} | logfmt | msg = "unterminated""#).unwrap();
     check!(!query.matches(&labels, r#"status=500 msg="unterminated"#));
@@ -2322,7 +2222,7 @@ fn query_evaluator_skips_unterminated_logfmt_quoted_field() {
 fn query_evaluator_applies_regex_field_filters() {
     let query =
         parse_query(r#"{app="api"} | logfmt | method=~"GET|POST" | path!~"/health.*""#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
 
     check!(query.matches(&labels, "method=GET path=/checkout"));
     check!(query.matches(&labels, "method=POST path=/checkout"));
@@ -2625,10 +2525,8 @@ fn parses_metric_binary_arithmetic_query() {
     .unwrap();
 
     check!(query.op == krabka_logql::MetricScalarArithmeticOp::Divide);
-    check!(query.left.aggregation == RangeAggregation::CountOverTime);
-    check!(query.left.range_ns == DurationNanos(30_000_000_000));
-    check!(query.right.aggregation == RangeAggregation::CountOverTime);
-    check!(query.right.range_ns == DurationNanos(30_000_000_000));
+    check_count_over_time_30s(&query.left);
+    check_count_over_time_30s(&query.right);
 }
 
 #[test]
@@ -2749,10 +2647,8 @@ fn parses_metric_binary_comparison_query() {
 
     check!(query.op == ComparisonOp::Greater);
     check!(query.bool_modifier);
-    check!(query.left.aggregation == RangeAggregation::CountOverTime);
-    check!(query.left.range_ns == DurationNanos(30_000_000_000));
-    check!(query.right.aggregation == RangeAggregation::CountOverTime);
-    check!(query.right.range_ns == DurationNanos(30_000_000_000));
+    check_count_over_time_30s(&query.left);
+    check_count_over_time_30s(&query.right);
 }
 
 #[test]
@@ -2763,10 +2659,8 @@ fn parses_metric_binary_set_query() {
     .unwrap();
 
     check!(query.op == krabka_logql::MetricBinarySetOp::And);
-    check!(query.left.aggregation == RangeAggregation::CountOverTime);
-    check!(query.left.range_ns == DurationNanos(30_000_000_000));
-    check!(query.right.aggregation == RangeAggregation::CountOverTime);
-    check!(query.right.range_ns == DurationNanos(30_000_000_000));
+    check_count_over_time_30s(&query.left);
+    check_count_over_time_30s(&query.right);
 }
 
 #[test]
@@ -2838,96 +2732,81 @@ fn parses_bytes_rate_metric_query() {
 }
 
 #[test]
-fn parses_sum_over_time_unwrap_metric_query() {
-    let query = parse_metric_query(
-        r#"sum_over_time({app="api"} | logfmt | unwrap cost | __error__ = "" [30s])"#,
-    )
-    .unwrap();
+fn parses_sum_over_time_unwrap_metric_queries() {
+    struct UnwrapCase {
+        query: &'static str,
+        unwrap: UnwrapExpression,
+    }
 
-    check!(
-        query
-            == MetricQuery {
-                aggregation: RangeAggregation::SumOverTime,
-                vector_aggregation: None,
-                range_grouping: None,
-                stream: StreamQuery {
-                    matchers: vec![LabelMatcher::new("app", MatchOp::Equal, "api").unwrap()],
-                    pipeline: vec![
-                        PipelineStage::Parser(ParserStage::Logfmt),
-                        PipelineStage::Unwrap(UnwrapExpression::new("cost").unwrap()),
-                        PipelineStage::FieldFilter(FieldFilter::new(
-                            "__error__",
-                            ComparisonOp::Equal,
-                            FieldValue::String(String::new())
-                        )),
-                    ],
+    let cases = [
+        UnwrapCase {
+            query: r#"sum_over_time({app="api"} | logfmt | unwrap cost | __error__ = "" [30s])"#,
+            unwrap: UnwrapExpression::new("cost").unwrap(),
+        },
+        UnwrapCase {
+            query: r#"sum_over_time({app="api"} | logfmt | unwrap bytes(size) | __error__ = "" [30s])"#,
+            unwrap: UnwrapExpression::bytes("size").unwrap(),
+        },
+    ];
+
+    for case in cases {
+        let query = parse_metric_query(case.query).unwrap();
+
+        check!(
+            query
+                == MetricQuery {
+                    aggregation: RangeAggregation::SumOverTime,
+                    vector_aggregation: None,
+                    range_grouping: None,
+                    stream: StreamQuery {
+                        matchers: vec![LabelMatcher::new("app", MatchOp::Equal, "api").unwrap()],
+                        pipeline: vec![
+                            PipelineStage::Parser(ParserStage::Logfmt),
+                            PipelineStage::Unwrap(case.unwrap),
+                            PipelineStage::FieldFilter(FieldFilter::new(
+                                "__error__",
+                                ComparisonOp::Equal,
+                                FieldValue::String(String::new())
+                            )),
+                        ],
+                    },
+                    range_ns: DurationNanos(30_000_000_000),
+                    offset_ns: OffsetNanos(0),
                 },
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
-    );
+            "{}",
+            case.query
+        );
+    }
 }
 
 #[test]
-fn parses_sum_over_time_unwrap_bytes_metric_query() {
-    let query = parse_metric_query(
-        r#"sum_over_time({app="api"} | logfmt | unwrap bytes(size) | __error__ = "" [30s])"#,
-    )
-    .unwrap();
+fn parses_sum_over_time_unwrap_duration_conversion_metric_queries() {
+    let expected = MetricQuery {
+        aggregation: RangeAggregation::SumOverTime,
+        vector_aggregation: None,
+        range_grouping: None,
+        stream: StreamQuery {
+            matchers: vec![LabelMatcher::new("app", MatchOp::Equal, "api").unwrap()],
+            pipeline: vec![
+                PipelineStage::Parser(ParserStage::Logfmt),
+                PipelineStage::Unwrap(UnwrapExpression::duration("latency").unwrap()),
+                PipelineStage::FieldFilter(FieldFilter::new(
+                    "__error__",
+                    ComparisonOp::Equal,
+                    FieldValue::String(String::new()),
+                )),
+            ],
+        },
+        range_ns: DurationNanos(30_000_000_000),
+        offset_ns: OffsetNanos(0),
+    };
 
-    check!(
-        query
-            == MetricQuery {
-                aggregation: RangeAggregation::SumOverTime,
-                vector_aggregation: None,
-                range_grouping: None,
-                stream: StreamQuery {
-                    matchers: vec![LabelMatcher::new("app", MatchOp::Equal, "api").unwrap()],
-                    pipeline: vec![
-                        PipelineStage::Parser(ParserStage::Logfmt),
-                        PipelineStage::Unwrap(UnwrapExpression::bytes("size").unwrap()),
-                        PipelineStage::FieldFilter(FieldFilter::new(
-                            "__error__",
-                            ComparisonOp::Equal,
-                            FieldValue::String(String::new())
-                        )),
-                    ],
-                },
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
-    );
-}
-
-#[test]
-fn parses_sum_over_time_unwrap_duration_metric_query() {
-    let query = parse_metric_query(
+    for source in [
         r#"sum_over_time({app="api"} | logfmt | unwrap duration(latency) | __error__ = "" [30s])"#,
-    )
-    .unwrap();
-
-    check!(
-        query
-            == MetricQuery {
-                aggregation: RangeAggregation::SumOverTime,
-                vector_aggregation: None,
-                range_grouping: None,
-                stream: StreamQuery {
-                    matchers: vec![LabelMatcher::new("app", MatchOp::Equal, "api").unwrap()],
-                    pipeline: vec![
-                        PipelineStage::Parser(ParserStage::Logfmt),
-                        PipelineStage::Unwrap(UnwrapExpression::duration("latency").unwrap()),
-                        PipelineStage::FieldFilter(FieldFilter::new(
-                            "__error__",
-                            ComparisonOp::Equal,
-                            FieldValue::String(String::new())
-                        )),
-                    ],
-                },
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
-    );
+        r#"sum_over_time({app="api"} | logfmt | unwrap duration_seconds(latency) | __error__ = "" [30s])"#,
+    ] {
+        check!(parse_metric_query(source).unwrap() == expected, "{source}");
+    }
 }
 
 #[test]
@@ -2954,37 +2833,6 @@ fn parses_distinct_labels() {
                 PipelineStage::Parser(ParserStage::Logfmt),
                 PipelineStage::Distinct(vec!["method".into(), "status".into()]),
             ]
-    );
-}
-
-#[test]
-fn parses_sum_over_time_unwrap_duration_seconds_metric_query() {
-    let query = parse_metric_query(
-        r#"sum_over_time({app="api"} | logfmt | unwrap duration_seconds(latency) | __error__ = "" [30s])"#,
-    )
-    .unwrap();
-
-    check!(
-        query
-            == MetricQuery {
-                aggregation: RangeAggregation::SumOverTime,
-                vector_aggregation: None,
-                range_grouping: None,
-                stream: StreamQuery {
-                    matchers: vec![LabelMatcher::new("app", MatchOp::Equal, "api").unwrap()],
-                    pipeline: vec![
-                        PipelineStage::Parser(ParserStage::Logfmt),
-                        PipelineStage::Unwrap(UnwrapExpression::duration("latency").unwrap()),
-                        PipelineStage::FieldFilter(FieldFilter::new(
-                            "__error__",
-                            ComparisonOp::Equal,
-                            FieldValue::String(String::new())
-                        )),
-                    ],
-                },
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
     );
 }
 
@@ -3223,25 +3071,30 @@ fn parses_compound_prometheus_duration_metric_query() {
 }
 
 #[test]
-fn parses_metric_query_with_range_offset() {
-    let query =
-        parse_metric_query(r#"count_over_time({app="api"} |= "error" [10s] offset 5m)"#).unwrap();
+fn parses_metric_query_with_positive_and_negative_range_offsets() {
+    for (text, offset_ns) in [
+        (
+            r#"count_over_time({app="api"} |= "error" [10s] offset 5m)"#,
+            OffsetNanos(300_000_000_000),
+        ),
+        (
+            r#"count_over_time({app="api"} |= "error" [10s] offset -5m)"#,
+            OffsetNanos(-300_000_000_000),
+        ),
+    ] {
+        let query = parse_metric_query(text).unwrap();
 
-    check!(query.aggregation == RangeAggregation::CountOverTime);
-    check!(query.stream == parse_query(r#"{app="api"} |= "error""#).unwrap());
-    check!(query.range_ns == DurationNanos(10_000_000_000));
-    check!(query.offset_ns == OffsetNanos(300_000_000_000));
-}
-
-#[test]
-fn parses_metric_query_with_negative_range_offset() {
-    let query =
-        parse_metric_query(r#"count_over_time({app="api"} |= "error" [10s] offset -5m)"#).unwrap();
-
-    check!(query.aggregation == RangeAggregation::CountOverTime);
-    check!(query.stream == parse_query(r#"{app="api"} |= "error""#).unwrap());
-    check!(query.range_ns == DurationNanos(10_000_000_000));
-    check!(query.offset_ns == OffsetNanos(-300_000_000_000));
+        check!(
+            query.aggregation == RangeAggregation::CountOverTime,
+            "{text}"
+        );
+        check!(
+            query.stream == parse_query(r#"{app="api"} |= "error""#).unwrap(),
+            "{text}"
+        );
+        check!(query.range_ns == DurationNanos(10_000_000_000), "{text}");
+        check!(query.offset_ns == offset_ns, "{text}");
+    }
 }
 
 #[test]
@@ -3291,51 +3144,28 @@ fn parses_and_rejects_field_value_literal_boundaries() {
 }
 
 #[test]
-fn parses_vector_aggregation_metric_query() {
-    let query =
-        parse_metric_query(r#"sum by (env, status) (rate({app="api"} |= "error" [5m]))"#).unwrap();
+fn parses_vector_aggregation_metric_query_with_leading_or_trailing_grouping() {
+    let expected = MetricQuery {
+        aggregation: RangeAggregation::Rate,
+        vector_aggregation: Some(VectorAggregation {
+            op: VectorAggregationOp::Sum,
+            grouping: Some(VectorGrouping::By(vec![
+                "env".to_string(),
+                "status".to_string(),
+            ])),
+        }),
+        range_grouping: None,
+        stream: parse_query(r#"{app="api"} |= "error""#).unwrap(),
+        range_ns: DurationNanos(300_000_000_000),
+        offset_ns: OffsetNanos(0),
+    };
 
-    check!(
-        query
-            == MetricQuery {
-                aggregation: RangeAggregation::Rate,
-                vector_aggregation: Some(VectorAggregation {
-                    op: VectorAggregationOp::Sum,
-                    grouping: Some(VectorGrouping::By(vec![
-                        "env".to_string(),
-                        "status".to_string(),
-                    ])),
-                }),
-                range_grouping: None,
-                stream: parse_query(r#"{app="api"} |= "error""#).unwrap(),
-                range_ns: DurationNanos(300_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
-    );
-}
-
-#[test]
-fn parses_vector_aggregation_metric_query_with_trailing_grouping() {
-    let query =
-        parse_metric_query(r#"sum(rate({app="api"} |= "error" [5m])) by (env, status)"#).unwrap();
-
-    check!(
-        query
-            == MetricQuery {
-                aggregation: RangeAggregation::Rate,
-                vector_aggregation: Some(VectorAggregation {
-                    op: VectorAggregationOp::Sum,
-                    grouping: Some(VectorGrouping::By(vec![
-                        "env".to_string(),
-                        "status".to_string(),
-                    ])),
-                }),
-                range_grouping: None,
-                stream: parse_query(r#"{app="api"} |= "error""#).unwrap(),
-                range_ns: DurationNanos(300_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
-    );
+    for source in [
+        r#"sum by (env, status) (rate({app="api"} |= "error" [5m]))"#,
+        r#"sum(rate({app="api"} |= "error" [5m])) by (env, status)"#,
+    ] {
+        check!(parse_metric_query(source).unwrap() == expected, "{source}");
+    }
 }
 
 #[test]
@@ -3411,17 +3241,10 @@ fn parses_count_values_vector_aggregation_metric_query() {
 
     check!(
         query
-            == MetricQuery {
-                aggregation: RangeAggregation::CountOverTime,
-                vector_aggregation: Some(VectorAggregation {
-                    op: VectorAggregationOp::CountValues("events".to_string()),
-                    grouping: Some(VectorGrouping::By(vec!["env".to_string()])),
-                }),
-                range_grouping: None,
-                stream: parse_query(r#"{app="api"}"#).unwrap(),
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
+            == api_count_over_time_30s(VectorAggregation {
+                op: VectorAggregationOp::CountValues("events".to_string()),
+                grouping: Some(VectorGrouping::By(vec!["env".to_string()])),
+            })
     );
 }
 
@@ -3432,17 +3255,10 @@ fn parses_topk_vector_aggregation_metric_query() {
 
     check!(
         query
-            == MetricQuery {
-                aggregation: RangeAggregation::CountOverTime,
-                vector_aggregation: Some(VectorAggregation {
-                    op: VectorAggregationOp::TopK(2),
-                    grouping: Some(VectorGrouping::By(vec!["env".to_string()])),
-                }),
-                range_grouping: None,
-                stream: parse_query(r#"{app="api"}"#).unwrap(),
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
+            == api_count_over_time_30s(VectorAggregation {
+                op: VectorAggregationOp::TopK(2),
+                grouping: Some(VectorGrouping::By(vec!["env".to_string()])),
+            })
     );
 }
 
@@ -3658,7 +3474,7 @@ fn template_logic_preserves_types_and_operand_values() {
 
 #[test]
 fn template_runtime_errors_keep_input_and_can_be_filtered() {
-    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let labels = app_api_labels();
     for action in [
         r#"regexReplaceAll "[" __line__ "x""#,
         r#"count "[" __line__"#,
@@ -3808,10 +3624,7 @@ fn template_definitions_reset_dot_root_and_variable_scope() {
     let query =
         parse_query(r#"{app="api"} | line_format `{{ template "missing" . }}` | __error__ = """#)
             .unwrap();
-    check!(!query.matches(
-        &BTreeMap::from([("app".to_string(), "api".to_string())]),
-        "raw"
-    ));
+    check!(!query.matches(&app_api_labels(), "raw"));
     check!(LineFormat::new(r#"{{ define "a" }}x{{ end }}{{ define "a" }}y{{ end }}"#).is_err());
     check!(LineFormat::new(r#"{{ if true }}{{ define "a" }}x{{ end }}{{ end }}"#).is_err());
     let format = LineFormat::new(r#"{{ define "a" }} {{ end }}{{ define "a" }}x{{ end }}{{ define "a" }}{{/* empty */}}{{ end }}{{ template "a" }}"#).unwrap();
@@ -3913,13 +3726,7 @@ fn typed_time_functions_compose_layouts_zones_printf_and_wrapping_epochs() {
         check!(result.line == expected);
         check!(!result.fields.contains_key("__error__"));
     }
-    let query = parse_query(r#"{app="api"} | line_format `{{ unixToTime "soon" | date "2006" }}`"#)
-        .unwrap();
-    let result = query
-        .evaluate_with_fields(&labels, "original", &BTreeMap::new())
-        .unwrap();
-    check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
-    check!(result.line == "original");
+    check_line_format_fails_at_runtime(r#"{{ unixToTime "soon" | date "2006" }}"#);
 }
 
 #[test]
@@ -4013,12 +3820,7 @@ fn go_numeric_constants_keep_float_complex_and_execution_overflow_semantics() {
         "{{printf \"%v\" 18446744073709551615}}",
         "{{lt 2i 3i}}",
     ] {
-        let query = parse_query(&format!(r#"{{app="api"}} | line_format `{template}`"#)).unwrap();
-        let result = query
-            .evaluate_with_fields(&labels, "original", &BTreeMap::new())
-            .unwrap();
-        check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
-        check!(result.line == "original");
+        check_line_format_fails_at_runtime(template);
     }
 }
 
@@ -4331,4 +4133,84 @@ fn json_parser_preserves_physical_key_order_duplicate_keys_and_numeric_text() {
                 ("flag".into(), "true".into()),
             ])
     );
+}
+
+/// Checks that a `count_over_time` side of a binary query spans 30 seconds.
+fn check_count_over_time_30s(side: &MetricQuery) {
+    check!(side.aggregation == RangeAggregation::CountOverTime);
+    check!(side.range_ns == DurationNanos(30_000_000_000));
+}
+
+/// The `count_over_time({app="api"} [30s])` query under `vector_aggregation`.
+fn api_count_over_time_30s(vector_aggregation: VectorAggregation) -> MetricQuery {
+    MetricQuery {
+        aggregation: RangeAggregation::CountOverTime,
+        vector_aggregation: Some(vector_aggregation),
+        range_grouping: None,
+        stream: parse_query(r#"{app="api"}"#).unwrap(),
+        range_ns: DurationNanos(30_000_000_000),
+        offset_ns: OffsetNanos(0),
+    }
+}
+
+/// Checks that a `line_format` template parses but fails when rendered,
+/// which keeps the original line and sets `__error__`.
+fn check_line_format_fails_at_runtime(template: &str) {
+    let result = ApiLine {
+        query: &format!(r#"{{app="api"}} | line_format `{template}`"#),
+        line: "original",
+    }
+    .evaluate();
+    check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
+    check!(result.line == "original");
+}
+
+fn app_api_labels() -> BTreeMap<String, String> {
+    BTreeMap::from([("app".to_string(), "api".to_string())])
+}
+
+/// A log line of the `{app="api"}` stream, and the query to evaluate on it.
+struct ApiLine<'a> {
+    query: &'a str,
+    line: &'a str,
+}
+
+impl ApiLine<'_> {
+    fn evaluate(&self) -> PipelineEvaluation {
+        parse_query(self.query)
+            .unwrap()
+            .evaluate_with_fields(&app_api_labels(), self.line, &BTreeMap::new())
+            .unwrap()
+    }
+}
+
+fn check_matches_only_rate_30_queries(query: &str) {
+    let query = parse_query(query).unwrap();
+    let labels = app_api_labels();
+
+    check!(query.matches(
+        &labels,
+        r#"{"queries":[{"query":"rate","duration":30},{"query":"sum","duration":15}]}"#
+    ));
+    check!(!query.matches(
+        &labels,
+        r#"{"queries":[{"query":"rate","duration":20},{"query":"sum","duration":15}]}"#
+    ));
+}
+
+fn check_matches_only_post_500(query: &str) {
+    let query = parse_query(query).unwrap();
+    let labels = app_api_labels();
+
+    check!(query.matches(&labels, "POST /api/prom/query_range (500) 1.5s"));
+    check!(!query.matches(&labels, "GET /api/prom/query_range (500) 1.5s"));
+    check!(!query.matches(&labels, "POST /api/prom/query_range (200) 1.5s"));
+    check!(!query.matches(&labels, "not a matching line"));
+}
+
+fn check_sanitized_field_names(evaluation: &PipelineEvaluation) {
+    check!(evaluation.fields.get("trace_id") == Some(&"abc".to_string()));
+    check!(evaluation.fields.get("span:id") == Some(&"def".to_string()));
+    check!(evaluation.fields.get("already_ok") == Some(&"ghi".to_string()));
+    check!(evaluation.fields.get("_9lives") == Some(&"cat".to_string()));
 }

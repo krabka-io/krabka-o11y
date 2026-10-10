@@ -90,33 +90,10 @@ pub(crate) async fn info_planner_path_matches_interpreter() {
     ];
 
     for query in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(600_000))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
+        let (via_operators, via_interpreter) =
+            planned_and_interpreted(&engine, query, 600_000).await;
 
-        // Operator path: the recursive planner must claim this query.
-        let plan = engine
-            .plan_instant_expr("t", &expr, 600_000)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = engine
-            .assemble_planned_instant(plan, 600_000)
-            .await
-            .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-
-        // Interpreter path: evaluate the same expression directly.
-        let via_interpreter = engine
-            .eval_instant_expr("t", &expr, 600_000)
-            .await
-            .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-
-        let normalize = |result: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut samples) = result else {
-                panic!("expected vector for `{query}`");
-            };
-            samples.sort_by_key(|sample| sample.labels.fingerprint());
-            samples
-        };
+        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
 
         let interpreter = normalize(via_interpreter);
         let operators = normalize(via_operators);

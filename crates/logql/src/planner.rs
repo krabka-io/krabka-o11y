@@ -2,13 +2,12 @@ use std::collections::BTreeSet;
 
 use krabka_blockstore::{
     BlockDescriptor, LabelIndex, LabelPredicate, LogBlockIndex as BlockIndex,
-    LogBlockStoreError as BlockStoreError, LogMatchOp as BlockMatchOp,
-    LogSeriesFingerprint as SeriesFingerprint, TimeRange,
+    LogBlockStoreError as BlockStoreError, LogSeriesFingerprint as SeriesFingerprint, TimeRange,
 };
 use thiserror::Error;
 use tracing::field::Empty;
 
-use crate::{LabelMatcher, MatchOp, StreamQuery};
+use crate::{LabelMatcher, StreamQuery};
 
 mod label_predicate;
 mod plan_error;

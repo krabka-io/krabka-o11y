@@ -1,67 +1,52 @@
-use datafusion::{common::tree_node::TreeNodeRecursion, physical_expr::PhysicalExpr};
+use std::{fmt, sync::Arc};
 
-use super::{
-    Arc, ArrayRef, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan,
-    Float64Array, Int64Array, PlanProperties, RecordBatch, RecordBatchStreamAdapter,
-    SendableRecordBatchStream, StreamExt, TaskContext, UInt32Array, fmt, take,
+use arrow::{array::Float64Array, record_batch::RecordBatch};
+use datafusion::{
+    common::{DataFusionError, Result as DfResult},
+    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
 };
 
+use super::{NanSamples, SeriesNormalizeSettings};
+use crate::extension::{RowSelection, TimeColumn, take_rows_with_timestamps};
+
 /// Physical node that normalizes single-series batches.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SeriesNormalizeExec {
-    pub(crate) offset_ms: i64,
-    pub(crate) time_index: String,
-    pub(crate) need_filter_out_nan: bool,
+    pub(crate) settings: SeriesNormalizeSettings,
     pub(crate) input: Arc<dyn ExecutionPlan>,
     pub(crate) properties: Arc<PlanProperties>,
 }
 
 impl SeriesNormalizeExec {
     #[must_use]
-    pub fn new(
-        offset_ms: i64,
-        time_index: String,
-        need_filter_out_nan: bool,
-        input: Arc<dyn ExecutionPlan>,
-    ) -> Self {
+    pub fn new(settings: SeriesNormalizeSettings, input: Arc<dyn ExecutionPlan>) -> Self {
         let properties = Arc::clone(input.properties());
         Self {
-            offset_ms,
-            time_index,
-            need_filter_out_nan,
+            settings,
             input,
             properties,
         }
     }
 
     pub(crate) fn normalize_batch(&self, batch: &RecordBatch) -> DfResult<RecordBatch> {
-        let time_column_index = batch
-            .schema()
-            .index_of(&self.time_index)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
-        let timestamps = batch
-            .column(time_column_index)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .ok_or_else(|| {
-                DataFusionError::Execution(format!(
-                    "SeriesNormalize time column `{}` must be Int64",
-                    self.time_index
-                ))
-            })?;
+        let (time_column_index, timestamps) = TimeColumn {
+            node: "SeriesNormalize",
+            name: &self.settings.time_index,
+        }
+        .find(batch)?;
         let values = batch
             .column_by_name("value")
             .and_then(|column| column.as_any().downcast_ref::<Float64Array>());
 
         let mut rows = (0..batch.num_rows())
             .filter(|&row| {
-                !self.need_filter_out_nan
+                self.settings.nan_samples == NanSamples::Keep
                     || values.is_none_or(|value_array| !value_array.value(row).is_nan())
             })
             .map(|row| {
                 timestamps
                     .value(row)
-                    .checked_add(self.offset_ms)
+                    .checked_add(self.settings.offset_ms)
                     .map(|ts| (row, ts))
                     .ok_or_else(|| {
                         DataFusionError::Execution(format!(
@@ -72,26 +57,19 @@ impl SeriesNormalizeExec {
             .collect::<DfResult<Vec<_>>>()?;
         rows.sort_by_key(|&(row, ts)| (ts, row));
 
-        let take_indices = UInt32Array::from_iter_values(
-            rows.iter()
-                .map(|&(row, _)| u32::try_from(row))
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|error| DataFusionError::Execution(error.to_string()))?,
-        );
-        let mut columns = Vec::with_capacity(batch.num_columns());
-        for (index, column) in batch.columns().iter().enumerate() {
-            if index == time_column_index {
-                columns.push(
-                    Arc::new(Int64Array::from_iter_values(rows.iter().map(|&(_, ts)| ts)))
-                        as ArrayRef,
-                );
-            } else {
-                columns.push(take(column.as_ref(), &take_indices, None)?);
-            }
-        }
-
-        RecordBatch::try_new(batch.schema(), columns)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))
+        let take_rows = rows
+            .iter()
+            .map(|&(row, _)| u32::try_from(row))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+        take_rows_with_timestamps(
+            batch,
+            time_column_index,
+            RowSelection {
+                rows: take_rows,
+                timestamps: rows.iter().map(|&(_, ts)| ts).collect(),
+            },
+        )
     }
 }
 
@@ -100,7 +78,9 @@ impl DisplayAs for SeriesNormalizeExec {
         write!(
             f,
             "PromSeriesNormalizeExec: time={}, offset_ms={}, filter_nan={}",
-            self.time_index, self.offset_ms, self.need_filter_out_nan
+            self.settings.time_index,
+            self.settings.offset_ms,
+            self.settings.nan_samples == NanSamples::Drop
         )
     }
 }
@@ -110,57 +90,7 @@ impl ExecutionPlan for SeriesNormalizeExec {
         "SeriesNormalizeExec"
     }
 
-    fn properties(&self) -> &Arc<PlanProperties> {
-        &self.properties
-    }
+    single_input_exec_plumbing!();
 
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![&self.input]
-    }
-
-    fn maintains_input_order(&self) -> Vec<bool> {
-        vec![false]
-    }
-
-    fn apply_expressions(
-        &self,
-        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DfResult<TreeNodeRecursion>,
-    ) -> DfResult<TreeNodeRecursion> {
-        Ok(TreeNodeRecursion::Continue)
-    }
-
-    fn with_new_children(
-        self: Arc<Self>,
-        mut children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> DfResult<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "SeriesNormalizeExec expects one child".to_string(),
-            ));
-        }
-        Ok(Arc::new(Self::new(
-            self.offset_ms,
-            self.time_index.clone(),
-            self.need_filter_out_nan,
-            children.swap_remove(0),
-        )))
-    }
-
-    fn execute(
-        &self,
-        partition: usize,
-        context: Arc<TaskContext>,
-    ) -> DfResult<SendableRecordBatchStream> {
-        let input = self.input.execute(partition, context)?;
-        let schema = self.schema();
-        let this = Self {
-            offset_ms: self.offset_ms,
-            time_index: self.time_index.clone(),
-            need_filter_out_nan: self.need_filter_out_nan,
-            input: Arc::clone(&self.input),
-            properties: Arc::clone(&self.properties),
-        };
-        let stream = input.map(move |batch| batch.and_then(|batch| this.normalize_batch(&batch)));
-        Ok(Box::pin(RecordBatchStreamAdapter::new(schema, stream)))
-    }
+    settings_batch_exec_methods!(normalize_batch);
 }

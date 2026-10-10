@@ -38,6 +38,29 @@ async fn spawn(app: axum::Router) -> std::net::SocketAddr {
     addr
 }
 
+// Serve a frontend over `backend` and `catalog`, with every block cold and
+// one ready querier, on an ephemeral port.
+async fn serve_frontend(backend: MockQuerier, catalog: MockCatalog) -> std::net::SocketAddr {
+    let cfg = FrontendConfig {
+        hot_frontier_ns: i64::MAX,
+        ..FrontendConfig::default()
+    };
+    let qf = Arc::new(QueryFrontend::new(
+        Arc::new(backend),
+        Arc::new(catalog),
+        cfg,
+        MembershipView::fixed(["q1:3200"]),
+    ));
+    spawn(router_with_backend(qf, RoleReadiness::new())).await
+}
+
+fn one_completed_job() -> Metrics {
+    Metrics {
+        completed_jobs: 1,
+        ..Metrics::default()
+    }
+}
+
 #[tokio::test]
 async fn server_round_trips_search_and_echo() {
     let catalog = MockCatalog::new(vec![block("b1")]);
@@ -55,22 +78,9 @@ async fn server_round_trips_search_and_echo() {
                 attributes: Vec::new(),
             }],
         }],
-        metrics: Metrics {
-            completed_jobs: 1,
-            ..Metrics::default()
-        },
+        metrics: one_completed_job(),
     });
-    let cfg = FrontendConfig {
-        hot_frontier_ns: i64::MAX,
-        ..FrontendConfig::default()
-    };
-    let qf = Arc::new(QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["q1:3200"]),
-    ));
-    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
+    let addr = serve_frontend(backend, catalog).await;
     let client = reqwest::Client::new();
 
     let echo = client
@@ -150,22 +160,9 @@ async fn server_by_id_returns_v2_envelope() {
             status: "COMPLETE".to_string(),
             message: String::new(),
         },
-        metrics: Metrics {
-            completed_jobs: 1,
-            ..Metrics::default()
-        },
+        metrics: one_completed_job(),
     });
-    let cfg = FrontendConfig {
-        hot_frontier_ns: i64::MAX,
-        ..FrontendConfig::default()
-    };
-    let qf = Arc::new(QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["q1:3200"]),
-    ));
-    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
+    let addr = serve_frontend(backend, catalog).await;
     let client = reqwest::Client::new();
 
     let resp = client
@@ -275,17 +272,7 @@ async fn server_v1_trace_formats_preserve_nonfinite_scalar_array_and_opaque_attr
 async fn server_by_id_404_when_missing() {
     let catalog = MockCatalog::new(vec![block("b1")]);
     let backend = MockQuerier::new();
-    let cfg = FrontendConfig {
-        hot_frontier_ns: i64::MAX,
-        ..FrontendConfig::default()
-    };
-    let qf = Arc::new(QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["q1:3200"]),
-    ));
-    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
+    let addr = serve_frontend(backend, catalog).await;
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("http://{addr}/api/v2/traces/{}", "0a".repeat(16)))
@@ -304,22 +291,9 @@ async fn server_tags_round_trip() {
             scope: krabka_traceql::TagScope::Span,
             tags: vec!["http.method".to_string()],
         }],
-        metrics: Metrics {
-            completed_jobs: 1,
-            ..Metrics::default()
-        },
+        metrics: one_completed_job(),
     });
-    let cfg = FrontendConfig {
-        hot_frontier_ns: i64::MAX,
-        ..FrontendConfig::default()
-    };
-    let qf = Arc::new(QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["q1:3200"]),
-    ));
-    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
+    let addr = serve_frontend(backend, catalog).await;
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("http://{addr}/api/v2/search/tags?start=0&end=100"))

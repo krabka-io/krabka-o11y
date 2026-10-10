@@ -1,5 +1,6 @@
 use super::{
-    ComparisonOp, Field, RankDirection, RankLimit, Result, aggregate_filter_sql, selector,
+    ComparisonOp, Field, GroupJoinSql, RankDirection, RankLimit, Result, aggregate_filter_sql,
+    group_join_sql,
 };
 
 pub(crate) fn grouped_rank_sql(
@@ -10,16 +11,10 @@ pub(crate) fn grouped_rank_sql(
     pre_filter: Option<(ComparisonOp, f64)>,
     post_filter: Option<(ComparisonOp, f64)>,
 ) -> Result<String> {
-    let group_cols = by
-        .iter()
-        .map(|field| selector::ident(&selector::field_to_column(field)))
-        .collect::<Vec<_>>();
-    let group_exprs = group_cols.join(", ");
-    let join_pred = group_cols
-        .iter()
-        .map(|col| format!("matched.{col} = passing.{col}"))
-        .collect::<Vec<_>>()
-        .join(" AND ");
+    let GroupJoinSql {
+        group_exprs,
+        join_pred,
+    } = group_join_sql(by);
     let direction = match rank.direction {
         RankDirection::Top => "DESC",
         RankDirection::Bottom => "ASC",

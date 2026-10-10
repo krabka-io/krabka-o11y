@@ -2,8 +2,8 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 
 use super::{
     ApiError, Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
-    RawQuery, Response, RuleRenderOptions, RuleTypeFilter, State, authorized_tenant_from_headers,
-    json, parse_rules_params, prometheus_rule_groups_json, success_data_response,
+    RawQuery, RequestAuth, Response, RuleRenderOptions, RuleTypeFilter, State, json,
+    parse_rules_params, prometheus_rule_groups_json, success_data_response, tenant_ruler_rules,
 };
 
 pub(crate) async fn rules<S: MetricStore>(
@@ -16,13 +16,15 @@ pub(crate) async fn rules<S: MetricStore>(
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
-    };
-    let rules = match state.ruler_rules.read() {
-        Ok(rules) => rules.get(&tenant).cloned().unwrap_or_default(),
-        Err(_) => return ApiError::internal("ruler rules lock poisoned").into_response(),
+    let (tenant, rules) = match tenant_ruler_rules(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+    ) {
+        Ok(tenant_rules) => tenant_rules,
+        Err(rejection) => return rejection.into_response(),
     };
     let groups = match prometheus_rule_groups_json(
         &state,

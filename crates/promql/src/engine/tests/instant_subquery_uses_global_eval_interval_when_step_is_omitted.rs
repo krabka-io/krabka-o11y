@@ -2,15 +2,12 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_subquery_uses_global_eval_interval_when_step_is_omitted() {
-    let mut store = InMemoryMetricStore::new();
-    for (ts_ms, value) in [(0_i64, 1.0), (30_000, 2.0), (60_000, 3.0), (90_000, 4.0)] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "queue_depth"), ("job", "api")]),
-            ts_ms,
-            value,
-        );
-    }
+    let store = SeriesFixture::new(labels(&[("__name__", "queue_depth"), ("job", "api")]))
+        .at(0_i64, 1.0)
+        .at(30_000, 2.0)
+        .at(60_000, 3.0)
+        .at(90_000, 4.0)
+        .store();
 
     let engine = PromqlEngine::new(
         Arc::new(store),

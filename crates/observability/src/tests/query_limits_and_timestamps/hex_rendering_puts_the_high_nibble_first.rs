@@ -1,11 +1,11 @@
 use super::*;
 
-/// `hex_string` renders bytes as lower-case hex, high nibble first. The
+/// `encode_lower_hex` renders bytes as lower-case hex, high nibble first. The
 /// byte 0xAB is the case that matters: with a symmetric byte like 0xAA a
 /// swapped nibble order is invisible.
 #[test]
 pub(crate) fn hex_rendering_puts_the_high_nibble_first() {
-    let hex = super::super::prelude::hex_string;
+    let hex = super::super::prelude::encode_lower_hex;
 
     check!(hex(&[0xAB]) == "ab", "high nibble first");
     check!(hex(&[0x0F]) == "0f", "a leading zero is kept");

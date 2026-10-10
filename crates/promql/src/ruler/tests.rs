@@ -30,6 +30,7 @@ mod recording_rule_group_append_runs_recording_rules_and_skips_alerts;
 mod recording_rule_merges_rule_level_labels_into_every_series;
 mod recording_ruler_state_sink;
 mod recording_sink;
+mod rule_fixtures;
 mod ruler_alert_state_replays_compacted_records_before_evaluation;
 mod ruler_failure_isolation_and_alert_series;
 mod ruler_group_state_replays_compacted_last_eval_records;
@@ -45,3 +46,8 @@ use labels::labels;
 use recording_alertmanager_sink::RecordingAlertmanagerSink;
 use recording_ruler_state_sink::RecordingRulerStateSink;
 use recording_sink::RecordingSink;
+use rule_fixtures::{
+    GroupLastEval, IntervalGroup, UpRuleSinks, UpSample, assert_up_rules_fired_at_six_minutes,
+    group_state, instance_up_alert, interval_rule_set, job_up_current_record, mixed_rule_group,
+    namespaced_rule_set, staggered_group_state, up_api_engine, up_samples_engine,
+};

@@ -81,29 +81,10 @@ pub(crate) async fn execute_stacktrace_query<S: ProfileStore>(
                 ..Default::default()
             }
         }
-        format if format == pb::querier::v1::ProfileFormat::Dot as i32 => {
-            state
-                .validate_query_range(tenant, req.start, req.end)
-                .map_err(connect_error)?;
-            let bytes = state
-                .engine
-                .select_merge_profile_with_selectors(
-                    (tenant.as_str(), &req.profile_type_id, &label_selector),
-                    (req.start, req.end),
-                    state.effective_max_nodes(tenant, max_nodes),
-                    &stack_trace_call_sites,
-                    sample_selector,
-                )
-                .await
-                .map_err(connect_error)?;
-            let profile = pb::google::v1::Profile::decode(bytes.as_slice())
-                .map_err(|error| connect_error(ProfileError::Decode(error.to_string())))?;
-            pb::querier::v1::SelectMergeStacktracesResponse {
-                dot: pprof_dot(&profile).map_err(connect_error)?,
-                ..Default::default()
-            }
-        }
-        format if format == pb::querier::v1::ProfileFormat::Pprof as i32 => {
+        format
+            if format == pb::querier::v1::ProfileFormat::Dot as i32
+                || format == pb::querier::v1::ProfileFormat::Pprof as i32 =>
+        {
             state
                 .validate_query_range(tenant, req.start, req.end)
                 .map_err(connect_error)?;
@@ -119,13 +100,20 @@ pub(crate) async fn execute_stacktrace_query<S: ProfileStore>(
                 .await
                 .map_err(connect_error)?;
             let mut profile = pb::google::v1::Profile::decode(bytes.as_slice())
-                .map_err(|err| connect_error(ProfileError::Decode(err.to_string())))?;
-            apply_go_pgo(&mut profile, req.stack_trace_selector.as_ref());
-            pb::querier::v1::SelectMergeStacktracesResponse {
-                pprof: Some(pb::querier::v1::PprofProfile {
-                    profile: Some(profile),
-                }),
-                ..Default::default()
+                .map_err(|error| connect_error(ProfileError::Decode(error.to_string())))?;
+            if format == pb::querier::v1::ProfileFormat::Dot as i32 {
+                pb::querier::v1::SelectMergeStacktracesResponse {
+                    dot: pprof_dot(&profile).map_err(connect_error)?,
+                    ..Default::default()
+                }
+            } else {
+                apply_go_pgo(&mut profile, req.stack_trace_selector.as_ref());
+                pb::querier::v1::SelectMergeStacktracesResponse {
+                    pprof: Some(pb::querier::v1::PprofProfile {
+                        profile: Some(profile),
+                    }),
+                    ..Default::default()
+                }
             }
         }
         _ => {

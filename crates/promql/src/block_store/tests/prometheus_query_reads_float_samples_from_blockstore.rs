@@ -24,23 +24,5 @@ pub(crate) async fn prometheus_query_reads_float_samples_from_blockstore() {
         .add_series("tenant-a", fp, &series_labels);
     block_store.index_mut().add_block(&block_meta);
 
-    let store = MetricBlockStore::new(block_store);
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "up", 1_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected instant vector");
-    };
-    assert2::assert!(
-        samples
-            == vec![InstantSample {
-                labels: series_labels.into(),
-                ts_ms: 1_000,
-                value: SampleValue::Float(1.0),
-                drop_name: false,
-            }]
-    );
+    assert_up_is_one(MetricBlockStore::new(block_store), series_labels).await;
 }

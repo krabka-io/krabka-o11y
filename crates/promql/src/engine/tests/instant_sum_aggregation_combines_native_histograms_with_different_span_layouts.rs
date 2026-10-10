@@ -16,41 +16,10 @@ pub(crate) async fn instant_sum_aggregation_combines_native_histograms_with_diff
     }];
     right.positive_counts = vec![2.0];
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            ("__name__", "request_duration_seconds"),
-            ("job", "api"),
-            ("instance", "a"),
-        ]),
-        10_000,
-        left,
-    );
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            ("__name__", "request_duration_seconds"),
-            ("job", "api"),
-            ("instance", "b"),
-        ]),
-        10_000,
-        right,
-    );
+    let store = instance_histogram_store(InstanceHistograms { a: left, b: right });
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "sum by (job) (request_duration_seconds)",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "sum by (job) (request_duration_seconds)", 10_000).await;
     assert2::assert!(samples.len() == 1);
     let SampleValue::Histogram(histogram) = &samples[0].value else {
         panic!("expected histogram");

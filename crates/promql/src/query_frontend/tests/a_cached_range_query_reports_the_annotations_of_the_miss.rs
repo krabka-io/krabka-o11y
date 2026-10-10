@@ -2,18 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn a_cached_range_query_reports_the_annotations_of_the_miss() {
-    let request = FrontendRangeRequest {
-        tenant: tenant_id("tenant-a"),
-        query: "up".into(),
-        start_ms: 0,
-        end_ms: 360_000,
-        step: millis(60_000),
-        admission_limits: krabka_query_frontend::AdmissionLimits::default(),
-        opts: QueryFrontendOptions {
-            split_interval: millis(120_000),
-            shard_count: 1,
-        },
-    };
+    let request = split_up_request();
     let cache = QueryFrontendCache::default();
     let executor = WarningExecutor::default();
 

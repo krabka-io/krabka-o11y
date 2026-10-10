@@ -1,6 +1,6 @@
 use super::{
     Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState, RawQuery,
-    Response, State, instant_query_params_from_form, query_inner,
+    RequestAuth, Response, State, instant_query_params_from_form, query_inner,
 };
 
 pub(crate) async fn query<S: MetricStore>(
@@ -14,5 +14,13 @@ pub(crate) async fn query<S: MetricStore>(
             Ok(params) => params,
             Err(error) => return error.into_response(),
         };
-    query_inner(state, headers, principal, params).await
+    query_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        params,
+    )
+    .await
 }

@@ -16,6 +16,6 @@ pub(crate) async fn index_shards(
             Ok(value) => json_response(StatusCode::OK, &value),
             Err(error) => error.into_response(),
         };
-    state.record_query("index_shards", response.status().is_success(), start);
+    state.record_query("index_shards", response.status(), start);
     response
 }

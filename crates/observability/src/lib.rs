@@ -42,9 +42,12 @@ use self::querier::metric_eval::{
 };
 
 pub mod audit;
+pub mod cli_value_parsers;
 pub mod compaction_metrics;
+pub mod compaction_schedule;
 pub mod recovery_cut;
 pub mod server_security;
+pub mod service_metrics;
 pub mod topic_contract;
 pub mod wal_client_security;
 pub mod wal_consumer_metrics;
@@ -73,8 +76,7 @@ use clap::{
 use datafusion::{
     arrow::{
         array::{
-            ArrayRef, Float64Array, Int64Array, MapArray, StringArray, TimestampNanosecondArray,
-            UInt64Array,
+            ArrayRef, Float64Array, MapArray, StringArray, TimestampNanosecondArray,
             builder::{MapBuilder, StringBuilder},
         },
         datatypes::{DataType, Field, Schema, TimeUnit},
@@ -92,7 +94,7 @@ use krabka_blockstore::{
     read_log_block_from_object_store, read_log_index_manifest,
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
-    read_tenant_log_index_shard_ranges_from_object_store,
+    read_tenant_log_index_shard_ranges_or_empty_from_object_store,
     read_tenant_log_index_shards_from_object_store, register_log_blocks,
     register_log_blocks_from_object_store, series_fingerprint, transient_object_store_error,
     write_log_block, write_log_block_to_object_store, write_log_index_manifest,
@@ -296,16 +298,15 @@ pub(crate) use self::{
         loki_normalization::{
             is_loki_json_content_type, is_loki_label_name, is_protobuf_content_type,
             loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,
-            normalize_otlp_logs, truncate_loki_line, validate_loki_label_limits,
-            validate_loki_line_size,
+            normalize_otlp_logs, validate_loki_label_limits, validate_loki_line_size,
         },
         otlp_normalization::{
             discover_detected_level_label, discover_service_name_label,
             loki_missing_proto_timestamp_error, loki_proto_label_pairs_to_labels,
             loki_proto_timestamp_ns, loki_stale_sample_label_set, normalize_otlp_proto_logs,
-            normalize_otlp_proto_logs_for_tenant, otlp_attributes_to_labels,
-            otlp_log_record_structured_metadata, otlp_timestamp_ns, otlp_value_to_string,
-            rfc3339_seconds, validate_ingest_timestamp_ns, validate_loki_timestamp_window,
+            normalize_otlp_proto_logs_for_tenant, otlp_log_record_structured_metadata,
+            otlp_timestamp_ns, otlp_value_to_string, rfc3339_seconds, validate_ingest_timestamp_ns,
+            validate_loki_timestamp_window,
         },
         router::{
             ALL_OPS, BLOCK_BUILDER_OPS, DISTRIBUTOR_OPS, LokiProtoLabelPair, LokiProtoPushRequest,
@@ -314,8 +315,8 @@ pub(crate) use self::{
             distributor_router_with_sink, with_role_ops_routes,
         },
         value_conversion::{
-            hex_string, metadata_value_to_string, otlp_value_to_json, parse_structured_metadata,
-            proto_value_to_string,
+            encode_lower_hex, metadata_value_to_string, otlp_value_to_json,
+            parse_structured_metadata, proto_value_to_string,
         },
     },
     error::query_errors::{
@@ -336,9 +337,9 @@ pub(crate) use self::{
             query_execution::{execute_http_query_for_tenant, execute_http_query_for_tenant_inner},
             request_types::{
                 DetectedFieldStats, DetectedFieldType, DetectedFieldsParams, DetectedLabelsParams,
-                PatternsParams, QueryParams, SeriesParams, VolumeAggregateBy, VolumeKind,
-                VolumeParams, api_prom_query, api_prom_query_post, api_prom_query_range,
-                api_prom_query_range_post, build_info, detected_field_values,
+                PatternsParams, PostedQueryRequest, QueryParams, SeriesParams, VolumeAggregateBy,
+                VolumeKind, VolumeParams, api_prom_query, api_prom_query_post,
+                api_prom_query_range, api_prom_query_range_post, build_info, detected_field_values,
                 detected_field_values_post, detected_fields, detected_fields_post, detected_labels,
                 detected_labels_post, format_query, format_query_post, label_names,
                 label_names_post, patterns, patterns_post, query, query_post, query_range,
@@ -353,28 +354,29 @@ pub(crate) use self::{
                 parse_volume_params, split_query_param_pairs, validate_loki_tail_delay_for,
             },
             value_decoding::{
-                LOKI_DEFAULT_QUERY_RANGE, LOKI_DEFAULT_TAIL_LIMIT,
+                DecodedQueryPair, LOKI_DEFAULT_QUERY_RANGE, LOKI_DEFAULT_TAIL_LIMIT,
                 LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS, LOKI_MAX_TAIL_DELAY,
                 LOKI_METADATA_DEFAULT_INDEX_RANGE, LokiDirection, QueryKind, authorized_tenant,
-                authorized_tenants, current_unix_time_ns, decode_form_component, loki_direction,
-                optional_start_end_range, parse_decimal_seconds_timestamp, parse_usize_query_param,
-                start_or_since, time_range,
+                authorized_tenants, current_unix_time_ns, decode_form_component, decode_query_pair,
+                loki_direction, optional_start_end_range, parse_decimal_seconds_timestamp,
+                parse_usize_query_param, start_or_since, time_range,
             },
         },
         params_format::{
             aggregation_formatting::{
-                FormattedVectorBinaryModifiers, format_loki_duration_ns,
+                FormattedVectorBinaryModifiers, VectorComparisonText,
+                format_label_replace_arguments, format_loki_duration_ns,
                 format_loki_offset_duration_ns, format_quantile, format_range_aggregation_name,
                 format_scalar_vector_expression, format_vector_aggregation_query,
-                format_vector_function_text, format_vector_grouping,
+                format_vector_comparison_text, format_vector_function_text, format_vector_grouping,
                 format_vector_label_replace_function, parse_logql_string_argument,
                 split_logql_function_arguments,
             },
             metric_formatting::{
-                format_label_replace_metric_scalar_expression,
+                OperandTexts, format_label_replace_metric_scalar_expression,
                 format_label_replace_metric_vector_expression, format_logql_quoted_string,
-                format_metric_label_replace_query, format_metric_query,
-                format_metric_scalar_arithmetic_expression,
+                format_metric_and_vector_operands, format_metric_label_replace_query,
+                format_metric_query, format_metric_scalar_arithmetic_expression,
                 format_metric_scalar_arithmetic_operator,
                 format_metric_scalar_comparison_expression,
                 format_metric_scalar_comparison_operator,
@@ -385,8 +387,9 @@ pub(crate) use self::{
             },
             request_formatting::{
                 execute_format_query, form_body_query, format_metric_vector_arithmetic_expression,
-                format_metric_vector_binary_expression, post_query_params,
-                post_query_params_body_first, split_leading_vector_binary_modifiers,
+                format_metric_vector_binary_expression, parse_posted_series_params,
+                post_query_params, post_query_params_body_first,
+                split_leading_vector_binary_modifiers,
             },
             stream_formatting::{
                 format_stream_query, parse_formatted_vector_function,
@@ -427,14 +430,14 @@ pub(crate) use self::{
     querier::{
         aggregate::{
             metric_values::{
-                MetricSampleState, VectorAggregationState, append_matching_log_row, eval_times,
-                format_metric_value, rate_metric_value,
+                MetricSampleState, VectorAggregationState, append_matching_log_row,
+                checked_eval_times, eval_times, format_metric_value, rate_metric_value,
             },
             record_matching::{
                 QueryRow, append_matching_hot_log_record, append_matching_hot_metric_record,
-                append_matching_metric_row, apply_distinct_to_streams, is_deleted_log_entry,
-                matching_loki_stream_entry, parse_decimal_sample_literal,
-                parse_metric_sample_value, sort_loki_stream_values, structured_metadata_value,
+                append_matching_metric_row, apply_distinct_to_streams, for_each_query_row,
+                is_deleted_log_entry, matching_loki_stream_entry, parse_decimal_sample_literal,
+                parse_metric_sample_value, sort_loki_stream_values,
             },
             sample_windows::{
                 FormattedMetricSeries, METRIC_DECIMAL_SCALE, MetricSamples, MetricValue,
@@ -444,7 +447,9 @@ pub(crate) use self::{
         },
         analytics::{
             detected_fields::{
-                collect_detected_fields, execute_index_volume_query, sample_time_bucket,
+                AnalyticsQuery, PlannedRead, RangeEnd, VolumeRangeLimit, collect_detected_fields,
+                execute_index_volume_query, plan_analytics_query, reads_planned_row,
+                sample_time_bucket,
             },
             index_patterns::{
                 execute_detected_field_values_query, execute_detected_fields_query,
@@ -453,24 +458,25 @@ pub(crate) use self::{
         },
         blocks::read_planned_log_block,
         metadata::{
-            execute_api_prom_label_names_query, execute_api_prom_series_query,
+            LabelValuesRequest, execute_api_prom_label_names_query, execute_api_prom_series_query,
             execute_label_names_query, execute_label_values_query, execute_series_query,
             parse_series_params, series_data,
         },
         metric_eval::{
             binary_arithmetic::{
-                apply_metric_binary_arithmetic_to_sample,
+                MetricBinaryOperator, VectorComparison, apply_metric_binary_arithmetic_to_sample,
                 apply_metric_binary_arithmetic_to_series_with_left_operand,
-                apply_metric_binary_comparison_to_loki_result, matching_metric_binary_sample,
-                metric_binary_sample_timestamps_match,
+                apply_metric_binary_comparison_to_loki_result, apply_metric_binary_to_series,
+                matching_metric_binary_sample, metric_binary_sample_timestamps_match,
             },
             binary_sets::{
-                apply_metric_binary_set_to_loki_result, apply_metric_selection,
-                apply_scalar_arithmetic_to_loki_result, apply_scalar_comparison_to_loki_result,
-                default_metric_range_step, execute_http_metric_range_query,
-                include_metric_group_labels, metric_scalar_arithmetic_value,
-                metric_scalar_comparison_matches, metric_series_labels,
-                metric_vector_group_modifier, metric_vector_matching_key,
+                ComparisonResult, MetricComparison, ScalarArithmetic, ScalarComparison,
+                ScalarLiteral, ScalarOperands, ScalarSide, apply_metric_binary_set_to_loki_result,
+                apply_metric_selection, apply_scalar_arithmetic_to_loki_result,
+                apply_scalar_comparison_to_loki_result, default_metric_range_step,
+                execute_http_metric_range_query, include_metric_group_labels,
+                metric_scalar_arithmetic_value, metric_scalar_comparison_matches,
+                metric_series_labels, metric_vector_group_modifier, metric_vector_matching_key,
             },
             expression_parser::ScalarComparisonOp,
             expressions::{
@@ -479,30 +485,32 @@ pub(crate) use self::{
                 strip_outer_parenthesized_expression,
             },
             http_queries::{
-                execute_http_metric_instant_query, execute_http_stream_query,
-                validate_loki_interval,
+                HttpStreamQuery, LokiStreamOptions, execute_http_metric_instant_query,
+                execute_http_stream_query, validate_loki_interval,
             },
             result_transforms::{
-                apply_metric_binary_arithmetic_to_loki_result, metric_query_uses_approx_topk,
-                metric_query_uses_count_values, retain_metric_binary_on_labels,
-                sort_loki_vector_result,
+                SampleOrder, VectorArithmetic, apply_metric_binary_arithmetic_to_loki_result,
+                metric_query_uses_approx_topk, metric_query_uses_count_values,
+                retain_metric_binary_on_labels, sort_loki_vector_result,
             },
             scalar_samples::{
-                ScalarSample, execute_http_metric_query, gcd_signed, parse_scalar_sample,
-                resolved_range_step, validate_loki_query_range_resolution,
-                validate_loki_range_query_range_limit, validate_loki_volume_query_range_limit,
-                validate_query_entries_limit, validate_query_range_limit,
-                validate_query_string_bytes_limit,
+                HttpMetricQuery, Rational, ScalarSample, decimal_scaled_numerator,
+                execute_http_metric_query, gcd_signed, impl_rational_division_ops,
+                parse_scalar_sample, rational_to_f64, resolved_range_step,
+                validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
+                validate_loki_volume_query_range_limit, validate_query_entries_limit,
+                validate_query_range_limit, validate_query_string_bytes_limit,
             },
             validation::{
-                VectorScalarExpressionParser, apply_label_join_fields,
+                LabelReplaceArguments, VectorScalarExpressionParser, apply_label_join_fields,
                 apply_label_replace_to_loki_result, reject_signed_vector_function_literal,
                 scalar_vector_plain_parse_error,
             },
         },
         scan::{
             metric_scans::{
-                append_matching_log_batches, collect_object_store_metric_log_batches,
+                HotTailMetricSamples, append_matching_log_batches,
+                collect_object_store_metric_log_batches,
                 execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes,
                 execute_metric_query_range_with_deletes,
                 execute_metric_query_range_with_hot_tail_frontier_and_deletes,

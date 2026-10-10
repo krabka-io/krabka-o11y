@@ -17,6 +17,38 @@ use super::prelude::{
 #[path = "../../tests/support/experimental_queries.rs"]
 mod fixture;
 
+/// A `GET` of `uri`, sent as `tenant`.
+struct TenantGet<'a> {
+    uri: String,
+    tenant: &'a str,
+}
+
+/// What the router answered a [`TenantGet`] with.
+struct RouterReply {
+    status: u16,
+    body: axum::body::Bytes,
+}
+
+impl TenantGet<'_> {
+    async fn send(self, router: &Router) -> RouterReply {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(self.uri)
+                    .header("X-Scope-OrgID", self.tenant)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        RouterReply {
+            status: response.status().as_u16(),
+            body: to_bytes(response.into_body(), 1_000_000).await.unwrap(),
+        }
+    }
+}
+
 #[test]
 fn experimental_flags_are_default_disabled_and_tenant_lists_replace_inherited_lists() {
     let defaults = ServiceConfig::default();
@@ -91,19 +123,14 @@ async fn public_experimental_queries_follow_independent_input_and_output_ledgers
             params.append_pair("time", &(base + 40_000_000_000).to_string());
         }
         let path = if case.range { "query_range" } else { "query" };
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/{path}?{}", params.finish()))
-                    .header("X-Scope-OrgID", case.tenant)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = response.status().as_u16();
-        let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+        let response = TenantGet {
+            uri: format!("/loki/api/v1/{path}?{}", params.finish()),
+            tenant: case.tenant,
+        }
+        .send(&router)
+        .await;
+        let status = response.status;
+        let bytes = response.body;
         assert!(
             status == case.expected_status,
             "{}: {}",
@@ -168,18 +195,13 @@ async fn variants_reject_invalid_and_nested_grammar_on_public_http() {
             .append_pair("query", query)
             .append_pair("time", &(base + 40_000_000_000).to_string())
             .finish();
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/query?{encoded}"))
-                    .header("X-Scope-OrgID", "experimental")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert!(response.status().as_u16() == 400);
+        let response = TenantGet {
+            uri: format!("/loki/api/v1/query?{encoded}"),
+            tenant: "experimental",
+        }
+        .send(&router)
+        .await;
+        assert!(response.status == 400);
     }
 }
 
@@ -205,19 +227,14 @@ async fn experimental_queries_are_rejected_by_default_on_public_http() {
         let params = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("query", query)
             .finish();
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/query?{params}"))
-                    .header("X-Scope-OrgID", "unlisted")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert!(response.status().as_u16() == status);
-        let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+        let response = TenantGet {
+            uri: format!("/loki/api/v1/query?{params}"),
+            tenant: "unlisted",
+        }
+        .send(&router)
+        .await;
+        assert!(response.status == status);
+        let bytes = response.body;
         assert!(String::from_utf8(bytes.to_vec()).unwrap().trim_end() == expected);
     }
 }
@@ -239,19 +256,14 @@ async fn unlabelled_approximation_rejects_before_flags_or_query_kind() {
                 .append_pair("end", &(base + 41_000_000_000).to_string())
                 .append_pair("step", "1")
                 .finish();
-            let response = router
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .uri(format!("/loki/api/v1/{path}?{params}"))
-                        .header("X-Scope-OrgID", tenant)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert!(response.status().as_u16() == 400);
-            let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+            let response = TenantGet {
+                uri: format!("/loki/api/v1/{path}?{params}"),
+                tenant,
+            }
+            .send(&router)
+            .await;
+            assert!(response.status == 400);
+            let bytes = response.body;
             assert!(
                 String::from_utf8(bytes.to_vec()).unwrap().trim_end()
                     == fixture::UNLABELLED_APPROX_ERROR
@@ -306,19 +318,14 @@ async fn common_variant_metadata_is_reentered_before_filtering_and_grouping() {
             .append_pair("query", query)
             .append_pair("time", &(base + 40_000_000_000).to_string())
             .finish();
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/loki/api/v1/query?{params}"))
-                    .header("X-Scope-OrgID", "metadata")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = response.status().as_u16();
-        let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+        let response = TenantGet {
+            uri: format!("/loki/api/v1/query?{params}"),
+            tenant: "metadata",
+        }
+        .send(&router)
+        .await;
+        let status = response.status;
+        let bytes = response.body;
         assert!(
             status == 200,
             "{query}: {}",

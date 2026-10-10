@@ -36,11 +36,15 @@ mod tests {
         let values = [0.0, 1.0, 2.0, 3.0, 4.0];
         // range_end = 300_000, range = 300_000 (5m) => range_start = 0.
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            300_000,
-            millis(300_000),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 300_000,
+                },
+                range: millis(300_000),
+            },
             RangeKind::Rate,
         )
         .unwrap();
@@ -56,11 +60,15 @@ mod tests {
         let values = [1.0, 2.0, 1.0];
         // range_end = 120_000, range = 120_000 (2m) => range_start = 0.
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            120_000,
-            millis(120_000),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 120_000,
+                },
+                range: millis(120_000),
+            },
             RangeKind::Increase,
         )
         .unwrap();
@@ -77,11 +85,15 @@ mod tests {
         let values = [4.0, 3.0];
         // range_end = 60_000, range = 60_000 (1m) => range_start = 0.
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            60_000,
-            millis(60_000),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 60_000,
+                },
+                range: millis(60_000),
+            },
             RangeKind::Delta,
         )
         .unwrap();
@@ -96,11 +108,15 @@ mod tests {
         let timestamps = [11_050_i64, 21_050];
         let values = [2.0, 12.0];
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            21_050,
-            millis(21_050),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 21_050,
+                },
+                range: millis(21_050),
+            },
             RangeKind::Delta,
         )
         .unwrap();
@@ -114,11 +130,15 @@ mod tests {
         let timestamps = [5_000_i64, 15_000];
         let values = [1.0, 4.0];
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            15_000,
-            millis(15_000),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 15_000,
+                },
+                range: millis(15_000),
+            },
             RangeKind::Increase,
         )
         .unwrap();
@@ -132,12 +152,16 @@ mod tests {
         let values = [1.0];
         assert2::assert!(
             extrapolated_rate(
-                &timestamps,
-                &values,
-                0,
-                60_000,
-                millis(60_000),
-                RangeKind::Rate
+                RateWindow {
+                    timestamps: &timestamps,
+                    values: &values,
+                    bounds: WindowBounds {
+                        range_start_ms: 0,
+                        range_end_ms: 60_000,
+                    },
+                    range: millis(60_000),
+                },
+                RangeKind::Rate,
             )
             .is_none()
         );
@@ -151,12 +175,16 @@ mod tests {
         let values = [1.0];
         assert2::assert!(
             extrapolated_rate(
-                &timestamps,
-                &values,
-                0,
-                60_000,
-                millis(60_000),
-                RangeKind::Rate
+                RateWindow {
+                    timestamps: &timestamps,
+                    values: &values,
+                    bounds: WindowBounds {
+                        range_start_ms: 0,
+                        range_end_ms: 60_000,
+                    },
+                    range: millis(60_000),
+                },
+                RangeKind::Rate,
             )
             .is_none()
         );
@@ -170,12 +198,16 @@ mod tests {
         let values = [1.0, 2.0];
         assert2::assert!(
             extrapolated_rate(
-                &timestamps,
-                &values,
-                0,
-                60_000,
-                millis(60_000),
-                RangeKind::Rate
+                RateWindow {
+                    timestamps: &timestamps,
+                    values: &values,
+                    bounds: WindowBounds {
+                        range_start_ms: 0,
+                        range_end_ms: 60_000,
+                    },
+                    range: millis(60_000),
+                },
+                RangeKind::Rate,
             )
             .is_none()
         );
@@ -238,6 +270,10 @@ pub use instant_kind::InstantKind;
 pub use range_kind::RangeKind;
 
 mod extrapolated_rate_with_starts;
+mod rate_window;
 mod start_timestamp_reset;
+mod window_spacing;
 pub(crate) use extrapolated_rate_with_starts::extrapolated_rate_with_starts;
+pub(crate) use rate_window::RateWindow;
 pub(crate) use start_timestamp_reset::start_timestamp_reset;
+pub(crate) use window_spacing::{WindowBounds, WindowSpacing, window_spacing};

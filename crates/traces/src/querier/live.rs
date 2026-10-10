@@ -9,8 +9,8 @@ use arrow::{
 use krabka_blockstore::TENANT_HEADER;
 use krabka_observability::server_security::InternalClient;
 use krabka_traceql::{
-    AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagScope, TraceSpans, TraceqlError,
-    TypedValue,
+    AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagCatalog, TagScope, TraceSpans,
+    TraceqlError, TypedValue,
 };
 use krabka_units::{Time, convert::TimeExt as _};
 use opentelemetry_proto::tonic::{
@@ -24,6 +24,25 @@ use super::store::SharedTraceIndex;
 
 #[cfg(test)]
 mod tests {
+
+    // Serve `app` on an ephemeral port, and point a live source at it.
+    async fn serve_remote_live_source(app: axum::Router) -> RemoteLiveSource {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let addr = listener.local_addr().expect("the port is bound");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("the server runs");
+        });
+        RemoteLiveSource::new(
+            Url::parse(&format!("http://{addr}/")).expect("a valid url"),
+            Arc::new(arc_swap::ArcSwap::from_pointee(
+                krabka_blockstore::TraceIndex::new(),
+            )),
+            &InternalClient::default(),
+        )
+        .expect("the client builds")
+    }
 
     /// The remaining remote reads -- span batches, tag names and tag values --
     /// each collapse to an empty result, and each shares one failure path
@@ -134,22 +153,7 @@ mod tests {
                     ))
                 }),
             );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("a free port");
-        let addr = listener.local_addr().expect("the port is bound");
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("the server runs");
-        });
-
-        let source = RemoteLiveSource::new(
-            Url::parse(&format!("http://{addr}/")).expect("a valid url"),
-            Arc::new(arc_swap::ArcSwap::from_pointee(
-                krabka_blockstore::TraceIndex::new(),
-            )),
-            &InternalClient::default(),
-        )
-        .expect("the client builds");
+        let source = serve_remote_live_source(app).await;
 
         // Span batches come back as sent, not as an empty tier.
         check!(
@@ -257,22 +261,7 @@ mod tests {
                 }
             }),
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("a free port");
-        let addr = listener.local_addr().expect("the port is bound");
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("the server runs");
-        });
-
-        let source = RemoteLiveSource::new(
-            Url::parse(&format!("http://{addr}/")).expect("a valid url"),
-            Arc::new(arc_swap::ArcSwap::from_pointee(
-                krabka_blockstore::TraceIndex::new(),
-            )),
-            &InternalClient::default(),
-        )
-        .expect("the client builds");
+        let source = serve_remote_live_source(app).await;
 
         // Present: the trace comes back, and it is the one that was asked for.
         let trace = source
@@ -646,6 +635,13 @@ mod tests {
             Ok(self.trace.clone())
         }
 
+        fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
+            self.frontiers.get(tenant).copied().unwrap_or_default()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TagCatalog for FakeLiveSource {
         async fn tag_names(
             &self,
             _tenant: &str,
@@ -664,10 +660,6 @@ mod tests {
             _end_ns: i64,
         ) -> Result<Vec<TypedValue>> {
             Ok(self.values.clone())
-        }
-
-        fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
-            self.frontiers.get(tenant).copied().unwrap_or_default()
         }
     }
 
@@ -757,8 +749,6 @@ mod ns_floor_seconds;
 mod remote_live_source;
 mod result;
 mod scoped_tags_from_json;
-mod tag_scope_from_name;
-mod tag_scope_name;
 mod time_from_nanos_u64;
 mod trace_spans_from_otlp;
 mod typed_values_from_json;
@@ -777,8 +767,9 @@ use ns_floor_seconds::ns_floor_seconds;
 pub use remote_live_source::RemoteLiveSource;
 pub use result::Result;
 use scoped_tags_from_json::scoped_tags_from_json;
-use tag_scope_from_name::tag_scope_from_name;
-use tag_scope_name::tag_scope_name;
 use time_from_nanos_u64::time_from_nanos_u64;
 use trace_spans_from_otlp::trace_spans_from_otlp;
 use typed_values_from_json::typed_values_from_json;
+
+use super::tag_scope_from_name;
+use crate::querier::http::tag_scope_name;

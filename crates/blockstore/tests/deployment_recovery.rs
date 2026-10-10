@@ -76,14 +76,9 @@ async fn put(store: &Arc<dyn ObjectStore>, path: &str, bytes: &[u8]) {
 }
 
 async fn paths(store: &Arc<dyn ObjectStore>) -> Vec<String> {
-    let mut paths = futures::TryStreamExt::try_collect::<Vec<_>>(store.list(None))
+    krabka_blockstore::sorted_object_paths(store.as_ref())
         .await
         .expect("list")
-        .into_iter()
-        .map(|meta| meta.location.to_string())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
 }
 
 fn sha256(bytes: &[u8]) -> String {

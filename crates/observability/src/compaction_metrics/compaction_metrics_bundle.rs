@@ -128,6 +128,22 @@ impl CompactionMetrics {
         self.duration.observe(elapsed.secs_f64());
     }
 
+    /// Runs one compaction pass and records it with
+    /// [`record_run`](Self::record_run), whichever way it ends.
+    ///
+    /// # Errors
+    ///
+    /// Returns the pass's own error, after recording it as a failed run.
+    pub async fn time_run<Pass, Output, PassError>(&self, pass: Pass) -> Result<Output, PassError>
+    where
+        Pass: Future<Output = Result<Output, PassError>>,
+    {
+        let started = std::time::Instant::now();
+        let outcome = pass.await;
+        self.record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
+        outcome
+    }
+
     /// Records the `blocks` a pass wrote.
     ///
     /// Call this once per pass with the total, not once per block. A zero

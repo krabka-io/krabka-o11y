@@ -107,46 +107,10 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
     ];
 
     for (query, time_ms) in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
+        let ((via_operators, operator_annotations), (via_interpreter, interpreter_annotations)) =
+            annotated_planned_and_interpreted(&engine, query, time_ms).await;
 
-        // The recursive planner must claim this query (the `Precomputed` path),
-        // and its annotations must match the interpreter's. Scope an annotation
-        // sink around each path so emitted warnings/infos are captured.
-        let (via_operators, operator_annotations) = super::super::ANNOTATIONS
-            .scope(std::cell::RefCell::new(crate::Annotations::new()), async {
-                let plan = engine
-                    .plan_instant_expr("t", &expr, time_ms)
-                    .await
-                    .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-                    .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-                let result = engine
-                    .assemble_planned_instant(plan, time_ms)
-                    .await
-                    .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-                let annotations = super::super::ANNOTATIONS.with(|sink| sink.borrow().clone());
-                (result, annotations)
-            })
-            .await;
-
-        let (via_interpreter, interpreter_annotations) = super::super::ANNOTATIONS
-            .scope(std::cell::RefCell::new(crate::Annotations::new()), async {
-                let result = engine
-                    .eval_instant_expr("t", &expr, time_ms)
-                    .await
-                    .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-                let annotations = super::super::ANNOTATIONS.with(|sink| sink.borrow().clone());
-                (result, annotations)
-            })
-            .await;
-
-        let normalize = |result: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut samples) = result else {
-                panic!("expected vector for `{query}`");
-            };
-            samples.sort_by_key(|sample| sample.labels.fingerprint());
-            samples
-        };
+        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
 
         let via_interpreter = normalize(via_interpreter);
         let via_operators = normalize(via_operators);

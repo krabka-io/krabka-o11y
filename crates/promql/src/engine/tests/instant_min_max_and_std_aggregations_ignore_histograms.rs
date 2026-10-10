@@ -41,17 +41,14 @@ pub(crate) async fn instant_min_max_and_std_aggregations_ignore_histograms() {
         ("stddev by (job) (mixed_metric)", 2.0),
         ("stdvar by (job) (mixed_metric)", 4.0),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
-            .await
-            .unwrap();
-
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
-        assert2::assert!(samples.len() == 1);
-        assert2::assert!(samples[0].labels.get("__name__") == None);
-        assert2::assert!(samples[0].labels.get("job") == Some("api"));
-        assert2::assert!(approx_eq(float_value(&samples[0].value), expected));
+        let samples = instant_vector(&engine, query, 10_000).await;
+        assert_one_unnamed_float(
+            &samples,
+            ExpectedLabel {
+                name: "job",
+                label_value: "api",
+            },
+            expected,
+        );
     }
 }

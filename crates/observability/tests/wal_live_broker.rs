@@ -45,7 +45,7 @@ use krabka_observability::{
 };
 use krabka_units::{millis, secs};
 use serde_json::{Value, json};
-use support::{expected_loki_mixed_stats_with, test_service_config};
+use support::{LokiStatsCounts, test_service_config};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest as _};
@@ -253,7 +253,7 @@ async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted
                     },
                     "values": [["20000000000", "api live tail error"]],
                 }],
-                "stats": expected_loki_mixed_stats_with(0, 0, 1, 0),
+                "stats": LokiStatsCounts { store_bytes: 0, store_lines: 0, ingester_lines: 1, chunks: 0 }.expected_stats(),
             },
         })
     );

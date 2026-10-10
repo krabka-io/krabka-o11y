@@ -1,7 +1,7 @@
 use super::{
     Bytes, ProducerHeader, ProducerRecord, WalLogRecord, WalSinkError, series_fingerprint,
 };
-use crate::persisted_format::{PERSISTED_FORMAT_HEADER, PERSISTED_FORMAT_VERSION};
+use crate::wal_produce::wal_record_headers;
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.
@@ -19,21 +19,10 @@ pub fn build_kafka_wal_record(
             key: "krabka-tenant".to_string(),
             value: Some(Bytes::from(record.tenant.clone())),
         },
-        ProducerHeader {
-            key: PERSISTED_FORMAT_HEADER.to_string(),
-            value: Some(Bytes::from_static(PERSISTED_FORMAT_VERSION)),
-        },
     ];
-    // Inject the current span's W3C trace context (`traceparent`/`tracestate`)
-    // so the compactor can stitch its consume/compaction span onto the ingest
-    // trace. Additive: the record body is unchanged, and this is a no-op when
-    // there is no active/sampled span.
-    for (key, value) in krabka_telemetry::propagation::current_trace_headers() {
-        headers.push(ProducerHeader {
-            key,
-            value: Some(Bytes::from(value.into_bytes())),
-        });
-    }
+    // The format version, then the current span's W3C trace context, so the
+    // compactor can stitch its consume/compaction span onto the ingest trace.
+    headers.extend(wal_record_headers());
     Ok(ProducerRecord {
         topic: topic.into(),
         partition: None,

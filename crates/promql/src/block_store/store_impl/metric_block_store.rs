@@ -2,10 +2,10 @@ use super::{
     BTreeMap, BTreeSet, EXEMPLAR_TABLE, ExemplarScan, FLOAT_TABLE, HISTOGRAM_TABLE, LabelMatcher,
     LabelNameCardinality, LabelValueCardinality, Labels, METADATA_TABLE, MetadataRecord,
     MetadataScan, MetricBlockStore, MetricStore, Result, ScanResult, ScanTableRequest,
-    SeriesFingerprint, SessionContext, TsdbBlock, TsdbHeadStats, TsdbStats, blockstore_error,
-    datafusion_error, exemplar_schema, exemplars_from_batch, float_sample_schema,
-    metadata_from_batch, metadata_schema, missing_block_warnings, named_stats,
-    native_histogram_schema,
+    SeriesFingerprint, SeriesRef, SessionContext, TsdbBlock, TsdbHeadStats, TsdbStats,
+    blockstore_error, datafusion_error, exemplar_schema, exemplars_from_batch, float_sample_schema,
+    label_name_cardinality, label_value_cardinality, metadata_from_batch, metadata_schema,
+    missing_block_warnings, native_histogram_schema, tsdb_stats,
 };
 
 impl MetricBlockStore {
@@ -399,57 +399,17 @@ impl MetricStore for MetricBlockStore {
     }
 
     async fn cardinality_label_names(&self, tenant: &str) -> Result<Vec<LabelNameCardinality>> {
-        let mut by_name = BTreeMap::<String, BTreeSet<SeriesFingerprint>>::new();
-        for (fp, labels) in self.matching_series_by_fp(tenant, &[])? {
-            for (name, _) in labels.iter() {
-                by_name.entry(name.clone()).or_default().insert(fp);
-            }
-        }
-        let mut cardinality = by_name
-            .into_iter()
-            .map(|(name, fingerprints)| LabelNameCardinality {
-                name,
-                series_count: fingerprints.len(),
-            })
-            .collect::<Vec<_>>();
-        cardinality.sort_by(|left, right| {
-            right
-                .series_count
-                .cmp(&left.series_count)
-                .then_with(|| left.name.cmp(&right.name))
-        });
-        Ok(cardinality)
+        let series = self.matching_series_by_fp(tenant, &[])?;
+        Ok(label_name_cardinality(
+            series.iter().map(|(&fp, labels)| SeriesRef { fp, labels }),
+        ))
     }
 
     async fn cardinality_label_values(&self, tenant: &str) -> Result<Vec<LabelValueCardinality>> {
-        let mut by_value =
-            BTreeMap::<(String, crate::PromqlString), BTreeSet<SeriesFingerprint>>::new();
-        for (fp, labels) in self.matching_series_by_fp(tenant, &[])? {
-            for (name, value) in labels.iter() {
-                by_value
-                    .entry((name.clone(), value.clone()))
-                    .or_default()
-                    .insert(fp);
-            }
-        }
-        let mut cardinality = by_value
-            .into_iter()
-            .map(
-                |((label_name, label_value), fingerprints)| LabelValueCardinality {
-                    label_name,
-                    label_value: label_value.as_str().to_owned(),
-                    series_count: fingerprints.len(),
-                },
-            )
-            .collect::<Vec<_>>();
-        cardinality.sort_by(|left, right| {
-            right
-                .series_count
-                .cmp(&left.series_count)
-                .then_with(|| left.label_name.cmp(&right.label_name))
-                .then_with(|| left.label_value.cmp(&right.label_value))
-        });
-        Ok(cardinality)
+        let series = self.matching_series_by_fp(tenant, &[])?;
+        Ok(label_value_cardinality(
+            series.iter().map(|(&fp, labels)| SeriesRef { fp, labels }),
+        ))
     }
 
     async fn cardinality_active_series(&self, tenant: &str) -> Result<Vec<Labels>> {
@@ -458,42 +418,17 @@ impl MetricStore for MetricBlockStore {
 
     async fn tsdb_stats(&self, tenant: &str) -> Result<TsdbStats> {
         let series = self.matching_series(tenant, &[])?;
-        let mut by_metric = BTreeMap::<String, usize>::new();
-        let mut label_values_by_name = BTreeMap::<String, BTreeSet<String>>::new();
-        let mut memory_by_name = BTreeMap::<String, usize>::new();
-        let mut by_label_pair = BTreeMap::<String, usize>::new();
-        for labels in &series {
-            if let Some(metric) = labels.get("__name__") {
-                *by_metric.entry(metric.to_string()).or_default() += 1;
-            }
-            for (name, value) in labels.iter() {
-                label_values_by_name
-                    .entry(name.clone())
-                    .or_default()
-                    .insert(value.as_str().to_owned());
-                *memory_by_name.entry(name.clone()).or_default() += name.len() + value.len();
-                *by_label_pair.entry(format!("{name}={value}")).or_default() += 1;
-            }
-        }
-
-        Ok(TsdbStats {
-            head_stats: TsdbHeadStats {
-                num_series: series.len(),
+        let num_series = series.len();
+        Ok(tsdb_stats(
+            &series,
+            TsdbHeadStats {
+                num_series,
                 num_samples: 0,
-                num_chunks: series.len(),
+                num_chunks: num_series,
                 min_time: 0,
                 max_time: 0,
             },
-            series_count_by_metric_name: named_stats(by_metric),
-            label_value_count_by_label_name: named_stats(
-                label_values_by_name
-                    .into_iter()
-                    .map(|(name, values)| (name, values.len()))
-                    .collect(),
-            ),
-            memory_in_bytes_by_label_name: named_stats(memory_by_name),
-            series_count_by_label_value_pair: named_stats(by_label_pair),
-        })
+        ))
     }
 
     async fn tsdb_blocks(&self, tenant: &str) -> Result<Vec<TsdbBlock>> {

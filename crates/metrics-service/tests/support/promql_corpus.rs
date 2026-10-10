@@ -41,8 +41,8 @@ use std::{
 };
 
 use assert2::assert;
-use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint, wire::pb};
-use krabka_promql::{SampleSpec, Statement, parse_test_file};
+use krabka_metrics::{BucketSpan, NativeHistogram, wire::pb};
+use krabka_promql::{SampleSpec, Statement, parse_test_file, remote_read_reset_hint};
 use krabka_units::convert::TimeExt;
 use prost::Message;
 use serde_json::Value;
@@ -588,57 +588,9 @@ pub fn has_literal_at_modifier(expr: &str) -> bool {
 
 /// Splits `metric{label="value",…}` into label pairs, `__name__` included.
 fn metric_to_labels(metric: &str) -> Vec<(String, String)> {
-    let Some(open) = metric.find('{') else {
-        return vec![("__name__".to_string(), metric.to_string())];
-    };
-    let mut labels = Vec::new();
-    let name = &metric[..open];
-    if !name.is_empty() {
-        labels.push(("__name__".to_string(), name.to_string()));
-    }
-    let inside = metric[open + 1..].strip_suffix('}').unwrap_or_default();
-    for pair in split_label_pairs(inside) {
-        if let Some((key, value)) = pair.split_once('=') {
-            labels.push((key.trim().to_string(), unquote_label_value(value.trim())));
-        }
-    }
-    labels.sort_by(|left, right| left.0.cmp(&right.0));
-    labels
-}
-
-fn split_label_pairs(inside: &str) -> Vec<&str> {
-    let mut pairs = Vec::new();
-    let mut start = 0;
-    let mut in_quotes = false;
-    let mut escaped = false;
-    for (index, ch) in inside.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match ch {
-            '\\' if in_quotes => escaped = true,
-            '"' => in_quotes = !in_quotes,
-            ',' if !in_quotes => {
-                pairs.push(inside[start..index].trim());
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    if start < inside.len() {
-        pairs.push(inside[start..].trim());
-    }
-    pairs
-}
-
-fn unquote_label_value(value: &str) -> String {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value)
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
+    krabka_promql::testkit::metric_to_labels(metric)
+        .into_iter()
+        .collect()
 }
 
 /// The widest time span one `remote_write` body may cover.
@@ -811,7 +763,7 @@ fn native_histogram_to_pb(histogram: &NativeHistogram, timestamp: i64) -> pb::v1
         zero_threshold: histogram.zero_threshold,
         positive_spans: spans_to_pb(&histogram.positive_spans),
         negative_spans: spans_to_pb(&histogram.negative_spans),
-        reset_hint: reset_hint_to_pb(histogram.reset_hint),
+        reset_hint: remote_read_reset_hint(histogram.reset_hint),
         timestamp,
         custom_values: histogram.custom_values.clone().unwrap_or_default(),
         ..Default::default()
@@ -844,15 +796,6 @@ fn spans_to_pb(spans: &[BucketSpan]) -> Vec<pb::v1::BucketSpan> {
             length: span.length,
         })
         .collect()
-}
-
-fn reset_hint_to_pb(hint: ResetHint) -> i32 {
-    match hint {
-        ResetHint::Unknown => pb::v1::histogram::ResetHint::Unknown as i32,
-        ResetHint::Yes => pb::v1::histogram::ResetHint::Yes as i32,
-        ResetHint::No => pb::v1::histogram::ResetHint::No as i32,
-        ResetHint::Gauge => pb::v1::histogram::ResetHint::Gauge as i32,
-    }
 }
 
 fn counts_to_deltas(counts: &[f64]) -> Vec<i64> {

@@ -9,7 +9,6 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use assert2::{assert, check};
-use async_trait::async_trait;
 use futures::{StreamExt as _, TryStreamExt as _, stream::BoxStream};
 use krabka_blockstore::{
     BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, ConditionalUpdateRequirement,
@@ -18,9 +17,9 @@ use krabka_blockstore::{
     verify_object_store_semantics,
 };
 use object_store::{
-    CopyOptions, Error as ObjectStoreError, GetOptions, GetRange, GetResult, ListResult,
-    MultipartUpload, ObjectMeta, ObjectStore, PutMode, PutMultipartOptions, PutOptions, PutPayload,
-    PutResult, UpdateVersion, local::LocalFileSystem, memory::InMemory, path::Path,
+    Error as ObjectStoreError, GetOptions, GetRange, GetResult, ObjectMeta, ObjectStore, PutMode,
+    PutOptions, PutPayload, PutResult, UpdateVersion, local::LocalFileSystem, memory::InMemory,
+    path::Path,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,8 +100,10 @@ fn not_implemented(operation: &str) -> ObjectStoreError {
     }
 }
 
-#[async_trait]
-impl ObjectStore for QuirkyStore {
+krabka_blockstore::delegate_object_store! {
+    QuirkyStore => inner;
+    forward [put_multipart_opts, list_with_delimiter, copy_opts];
+
     async fn put_opts(
         &self,
         location: &Path,
@@ -159,14 +160,6 @@ impl ObjectStore for QuirkyStore {
         Ok(result)
     }
 
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
-
     async fn get_opts(
         &self,
         location: &Path,
@@ -201,19 +194,6 @@ impl ObjectStore for QuirkyStore {
                 .boxed();
         }
         self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 
     fn delete_stream(

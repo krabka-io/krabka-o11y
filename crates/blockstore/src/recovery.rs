@@ -409,6 +409,20 @@ async fn get_optional(
     }
 }
 
+/// Lists every object in `store` and returns their paths in sorted order.
+///
+/// # Errors
+/// Returns the object-store error when the listing fails.
+pub async fn sorted_object_paths(store: &dyn ObjectStore) -> object_store::Result<Vec<String>> {
+    let mut paths = store
+        .list(None)
+        .map_ok(|meta| meta.location.to_string())
+        .try_collect::<Vec<_>>()
+        .await?;
+    paths.sort();
+    Ok(paths)
+}
+
 async fn inventory(
     store: &dyn ObjectStore,
     ignore_completion_marker: bool,
@@ -704,12 +718,7 @@ async fn refuse_unplanned_objects(
         .iter()
         .map(|name| format!("{PARTS_PREFIX}/{name}/"))
         .collect::<Vec<_>>();
-    let mut paths = backup
-        .list(None)
-        .map_ok(|meta| meta.location.to_string())
-        .try_collect::<Vec<_>>()
-        .await?;
-    paths.sort();
+    let paths = sorted_object_paths(backup).await?;
     if let Some(path) = paths.iter().find(|path| {
         path.as_str() != CUT_MANIFEST_PATH
             && !prefixes.iter().any(|prefix| path.starts_with(prefix))

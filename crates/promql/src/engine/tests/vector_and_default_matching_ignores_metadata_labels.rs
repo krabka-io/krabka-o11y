@@ -16,18 +16,7 @@ pub(crate) async fn vector_and_default_set_matching_ignores_metadata_labels() {
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "(requests_total + 1) and requests_total",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "(requests_total + 1) and requests_total", 10_000).await;
     check!(samples.len() == 1);
     check!(samples[0].value == SampleValue::Float(11.0));
 }

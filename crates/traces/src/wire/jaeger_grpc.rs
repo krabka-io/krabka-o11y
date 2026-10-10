@@ -126,6 +126,8 @@ mod decode_jaeger_grpc_batch;
 mod duration_micros;
 mod key_value_from_proto;
 mod log_from_proto;
+#[cfg(test)]
+pub(crate) mod post_spans_fixture;
 mod process_from_proto;
 mod ref_from_proto;
 mod span_from_proto;

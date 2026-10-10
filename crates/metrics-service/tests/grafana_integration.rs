@@ -25,35 +25,39 @@
 //! `with_host(.., Host::HostGateway)`. Docker exposes the host to a container
 //! this way on Linux, macOS, and Windows.
 
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, time::Duration};
 
-use bytes::Bytes;
-use diff_corpus::seed_dataset;
-use krabka_metrics::{
-    WalRecord,
-    distributor::{DistributorState, ProduceError, WalSink},
-    wire::pb,
-};
 use krabka_promql::WalHead;
-use prost::Message;
-use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
     GenericImage, ImageExt,
     core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
-use tokio::sync::oneshot;
 
 // The shared corpus/differ module is path-included exactly as `diff_prometheus.rs`
 // does it, so all metrics differential suites share one corpus definition. This
 // integration only needs `seed_dataset`; the differ/corpus helpers are unused
 // here, so allow dead code on the included module.
+#[path = "support/pinned_grafana_image.rs"]
+mod pinned_grafana_image;
+#[path = "support/seed_remote_write.rs"]
+mod seed_remote_write;
+#[path = "support/upstream_http.rs"]
+mod upstream_http;
+
+use self::{
+    pinned_grafana_image::pinned_grafana_image,
+    seed_remote_write::remote_write_body,
+    upstream_http::{
+        KrabkaServer, RemoteWrite, TestResult, mapped_base_url, post_remote_write,
+        wait_for_http_ok, wait_for_non_empty_result,
+    },
+};
+
 #[allow(dead_code)]
 #[path = "../../metrics/tests/support/diff_corpus.rs"]
 mod diff_corpus;
-
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// The deadline for a container to start, which includes the image pull.
 ///
@@ -108,19 +112,32 @@ async fn grafana_e2e_covers_all_api_surfaces_and_query_shapes() -> TestResult {
     let krabka = start_krabka_query_server().await?;
     post_remote_write(
         &client,
-        &krabka.base_url,
-        "/api/v1/write",
-        TENANT,
-        &remote_write_body(),
+        RemoteWrite {
+            base: &krabka.base_url,
+            path: "/api/v1/write",
+            tenant: Some(TENANT),
+            body: &remote_write_body(),
+        },
     )
     .await?;
     wait_for_query_ready(&client, &krabka.base_url, TENANT, "up").await?;
 
     // Real Grafana with the provisioned datasource.
-    let datasource_yaml = DATASOURCE_YAML_TEMPLATE.replace("{PORT}", &krabka.host_port.to_string());
+    let datasource_yaml = DATASOURCE_YAML_TEMPLATE.replace(
+        "{PORT}",
+        krabka
+            .base_url
+            .rsplit_once(':')
+            .map_or("", |(_, port)| port),
+    );
     let grafana = start_grafana(&datasource_yaml).await?;
     let base = mapped_base_url(&grafana, GRAFANA_PORT).await?;
-    wait_for_http_ok(&client, &base, "/api/health").await?;
+    wait_for_http_ok(
+        &client,
+        &format!("{base}/api/health"),
+        Duration::from_mins(1),
+    )
+    .await?;
     // /api/health ("database: ok") can race ahead of datasource provisioning; a
     // query before the datasource UID resolves returns 404. Poll until present.
     wait_for_datasource(&client, &base, DATASOURCE_UID).await?;
@@ -1205,21 +1222,9 @@ fn series_value(series: &[(BTreeMap<String, String>, f64)], want: &[(&str, &str)
 /// labels. The instant value is the last datum of the field, and the field has
 /// only one datum.
 fn parse_instant_series(resp: &Value) -> Vec<(BTreeMap<String, String>, f64)> {
-    let mut out = Vec::new();
-    let Some(frames) = resp["results"]["A"]["frames"].as_array() else {
-        return out;
-    };
-    for frame in frames {
-        let (Some(fields), Some(columns)) = (
-            frame["schema"]["fields"].as_array(),
-            frame["data"]["values"].as_array(),
-        ) else {
-            continue;
-        };
-        for (index, field) in fields.iter().enumerate() {
-            if field["type"].as_str() != Some("number") {
-                continue; // skip the Time field
-            }
+    number_fields(resp)
+        .into_iter()
+        .filter_map(|(field, column)| {
             let labels = field["labels"]
                 .as_object()
                 .map(|map| {
@@ -1228,25 +1233,36 @@ fn parse_instant_series(resp: &Value) -> Vec<(BTreeMap<String, String>, f64)> {
                         .collect::<BTreeMap<_, _>>()
                 })
                 .unwrap_or_default();
-            if let Some(value) = columns.get(index).and_then(Value::as_array).and_then(|c| {
-                c.last()
-                    .and_then(Value::as_f64)
-                    .or((!c.is_empty()).then_some(f64::NAN))
-            }) {
-                out.push((labels, value));
-            }
-        }
-    }
-    out
+            column
+                .last()
+                .and_then(Value::as_f64)
+                .or((!column.is_empty()).then_some(f64::NAN))
+                .map(|value| (labels, value))
+        })
+        .collect()
 }
 
 /// Parse a Grafana `/api/ds/query` range response into one value-column per
 /// series.
 fn parse_range_series(resp: &Value) -> Vec<Vec<f64>> {
-    let mut out = Vec::new();
+    number_fields(resp)
+        .into_iter()
+        .map(|(_, column)| {
+            column
+                .iter()
+                .map(|v| v.as_f64().unwrap_or(f64::NAN))
+                .collect()
+        })
+        .collect()
+}
+
+/// Every numeric field of a Grafana `/api/ds/query` response, with its value
+/// column. The Time field is skipped.
+fn number_fields(resp: &Value) -> Vec<(&Value, &Vec<Value>)> {
     let Some(frames) = resp["results"]["A"]["frames"].as_array() else {
-        return out;
+        return Vec::new();
     };
+    let mut out = Vec::new();
     for frame in frames {
         let (Some(fields), Some(columns)) = (
             frame["schema"]["fields"].as_array(),
@@ -1259,12 +1275,7 @@ fn parse_range_series(resp: &Value) -> Vec<Vec<f64>> {
                 continue;
             }
             if let Some(column) = columns.get(index).and_then(Value::as_array) {
-                out.push(
-                    column
-                        .iter()
-                        .map(|v| v.as_f64().unwrap_or(f64::NAN))
-                        .collect(),
-                );
+                out.push((field, column));
             }
         }
     }
@@ -1340,19 +1351,9 @@ fn string_array(value: &Value) -> Vec<String> {
 async fn start_grafana(
     datasource_yaml: &str,
 ) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite compared
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+        pinned_grafana_image()
             .with_exposed_port(GRAFANA_PORT.tcp())
             // Grafana writes its go logger to STDOUT (verified: the "HTTP Server
             // Listen" line appears on stdout, not stderr). /api/health is polled for
@@ -1377,141 +1378,12 @@ async fn start_grafana(
     .await??)
 }
 
-async fn mapped_base_url(
-    container: &testcontainers::ContainerAsync<GenericImage>,
-    port: u16,
-) -> TestResult<String> {
-    let mapped = container.get_host_port_ipv4(port.tcp()).await?;
-    Ok(format!("http://127.0.0.1:{mapped}"))
-}
-
-struct KrabkaServer {
-    base_url: String,
-    /// Host-reachable port that the container dials through host.docker.internal.
-    host_port: u16,
-    shutdown: Option<oneshot::Sender<()>>,
-}
-
-impl KrabkaServer {
-    fn shutdown(mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
-    }
-}
-
 async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let head = WalHead::new();
     let query_router = krabka_metrics_service::prometheus_router_for_store(head.clone());
-    let sink: Arc<dyn WalSink> = Arc::new(WalHeadSink { head });
-    let distributor = Arc::new(DistributorState::new(sink));
-    let router = query_router.merge(krabka_metrics::distributor::router(distributor));
-    let (tx, rx) = oneshot::channel();
     // Bind 0.0.0.0 so the Grafana container can reach the server through the
     // Docker host gateway; the OS picks the port.
-    let addr: SocketAddr = "0.0.0.0:0".parse()?;
-    let bound = krabka_metrics_service::serve_prometheus_router(
-        addr,
-        router,
-        &krabka_observability::server_security::ServerSecurity::default(),
-        async move {
-            let _ = rx.await;
-        },
-    )
-    .await?;
-
-    Ok(KrabkaServer {
-        // Local queries dial loopback against the bound port.
-        base_url: format!("http://127.0.0.1:{}", bound.port()),
-        host_port: bound.port(),
-        shutdown: Some(tx),
-    })
-}
-
-struct WalHeadSink {
-    head: WalHead,
-}
-
-#[async_trait::async_trait]
-impl WalSink for WalHeadSink {
-    async fn append(&self, _key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
-        self.head.apply_wal_record(&record);
-        Ok(())
-    }
-}
-
-fn remote_write_body() -> Vec<u8> {
-    let req = pb::v1::WriteRequest {
-        timeseries: seed_dataset()
-            .into_iter()
-            .map(|point| pb::v1::TimeSeries {
-                labels: remote_write_labels(point.metric, point.labels),
-                samples: point
-                    .samples
-                    .iter()
-                    .map(|(timestamp, value)| pb::v1::Sample {
-                        value: *value,
-                        timestamp: *timestamp,
-                    })
-                    .collect(),
-                ..Default::default()
-            })
-            .collect(),
-        ..Default::default()
-    };
-    snap::raw::Encoder::new()
-        .compress_vec(&req.encode_to_vec())
-        .expect("snappy remote_write")
-}
-
-fn remote_write_labels(metric: &str, labels: &[(&str, &str)]) -> Vec<pb::v1::Label> {
-    std::iter::once(pb::v1::Label {
-        name: "__name__".to_string(),
-        value: metric.to_string(),
-    })
-    .chain(labels.iter().map(|(name, value)| pb::v1::Label {
-        name: (*name).to_string(),
-        value: (*value).to_string(),
-    }))
-    .collect()
-}
-
-async fn post_remote_write(
-    client: &reqwest::Client,
-    base: &str,
-    path: &str,
-    tenant: &str,
-    body: &[u8],
-) -> TestResult {
-    let status = client
-        .post(format!("{base}{path}"))
-        .header("Content-Type", "application/x-protobuf")
-        .header("Content-Encoding", "snappy")
-        .header("X-Scope-OrgID", tenant)
-        .body(body.to_vec())
-        .send()
-        .await?
-        .status();
-    if !(status == StatusCode::OK || status == StatusCode::NO_CONTENT) {
-        return Err(format!("remote_write to {base}{path} returned {status}").into());
-    }
-    Ok(())
-}
-
-async fn wait_for_http_ok(client: &reqwest::Client, base: &str, path: &str) -> TestResult {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_mins(1);
-    while std::time::Instant::now() < deadline {
-        if client
-            .get(format!("{base}{path}"))
-            .send()
-            .await
-            .is_ok_and(|response| response.status().is_success())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    Err(format!("{base}{path} did not become ready").into())
+    KrabkaServer::start(query_router, head, "0.0.0.0:0".parse()?).await
 }
 
 async fn wait_for_datasource(client: &reqwest::Client, base: &str, uid: &str) -> TestResult {
@@ -1536,13 +1408,13 @@ async fn wait_for_query_ready(
     tenant: &str,
     query: &str,
 ) -> TestResult {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    while std::time::Instant::now() < deadline {
-        let url = format!(
-            "{base}/api/v1/query?query={}&time=45.000",
-            url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>()
-        );
-        let json: Value = client
+    let url = format!(
+        "{base}/api/v1/query?query={}&time=45.000",
+        url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>()
+    );
+    let url = &url;
+    let ready = wait_for_non_empty_result(std::time::Duration::from_secs(15), || async move {
+        let response: Value = client
             .get(url)
             .header("X-Scope-OrgID", tenant)
             .send()
@@ -1550,13 +1422,11 @@ async fn wait_for_query_ready(
             .error_for_status()?
             .json()
             .await?;
-        if json["data"]["result"]
-            .as_array()
-            .is_some_and(|result| !result.is_empty())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        Ok(response)
+    })
+    .await?;
+    if ready {
+        return Ok(());
     }
     Err(format!("query `{query}` did not become non-empty on {base}").into())
 }

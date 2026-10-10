@@ -1,30 +1,24 @@
 use super::{
-    MetricScalarArithmeticOp, MetricValue, Value, format_metric_value, json,
-    metric_scalar_arithmetic_value, parse_metric_sample_value,
+    MetricValue, SampleValueSlot, ScalarArithmetic, ScalarOperands, Value, format_metric_value,
+    json, metric_scalar_arithmetic_value, sample_value_slot,
 };
 
 pub(crate) fn apply_metric_scalar_arithmetic_to_sample(
     sample: &mut Value,
-    op: MetricScalarArithmeticOp,
+    arithmetic: ScalarArithmetic,
     scalar: MetricValue,
-    scalar_on_left: bool,
 ) -> bool {
-    let Some(values) = sample.as_array_mut() else {
+    let Some(SampleValueSlot { slot, sample_value }) = sample_value_slot(sample) else {
         return false;
     };
-    let Some(sample_value) = values
-        .get(1)
-        .and_then(Value::as_str)
-        .and_then(parse_metric_sample_value)
-    else {
+    let operands = ScalarOperands {
+        sample: sample_value,
+        scalar,
+        scalar_side: arithmetic.scalar_side,
+    };
+    let Some(result) = metric_scalar_arithmetic_value(operands, arithmetic.op) else {
         return false;
     };
-    let Some(result) = metric_scalar_arithmetic_value(sample_value, op, scalar, scalar_on_left)
-    else {
-        return false;
-    };
-    if let Some(value) = values.get_mut(1) {
-        *value = json!(format_metric_value(result));
-    }
+    *slot = json!(format_metric_value(result));
     true
 }

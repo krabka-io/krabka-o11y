@@ -1,9 +1,11 @@
 use super::*;
 
 pub(crate) async fn otlp_http_handler(
-    Extension(state): Extension<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    IngestRequestParts {
+        state,
+        principal,
+        headers,
+    }: IngestRequestParts,
     body: Bytes,
 ) -> Response {
     let start = std::time::Instant::now();
@@ -12,17 +14,8 @@ pub(crate) async fn otlp_http_handler(
     let tenant = tenant_from_headers(&headers, &state.tenant_policy);
     let json = is_json(&headers);
     let response_is_json = matches!(json, Ok(true));
-    // ONE server span per ingest request (not per sample). `krabka.ingest.samples`
-    // is filled in after the body runs and the item count is known.
-    let ingest_span = tracing::info_span!(
-        "profiles_ingest",
-        otel.kind = "server",
-        messaging.system = "kafka",
-        messaging.destination.name = PROFILES_WAL_TOPIC,
-        krabka.tenant = ingest_span_tenant(tenant.as_ref().ok()),
-        krabka.ingest.samples = tracing::field::Empty,
-        krabka.ingest.bytes = bytes,
-    );
+    // ONE server span per ingest request (not per sample).
+    let ingest_span = ingest_request_span(tenant.as_ref().ok(), bytes);
     let result = async {
         let tenant = tenant.as_ref().map_err(TenantResolveError::clone)?;
         // Before the profiles are decoded, so a denied push reaches no WAL.
@@ -52,15 +45,16 @@ pub(crate) async fn otlp_http_handler(
     .instrument(ingest_span.clone())
     .await;
 
-    ingest_span.record("krabka.ingest.samples", items);
-    if let Ok(tenant) = &tenant {
-        state.metrics.record_ingest_samples(tenant.as_str(), items);
-    }
-    state.metrics.record_ingest(
-        result.is_ok(),
-        IngestBytes(bytes),
-        IngestItems(items),
-        start.elapsed().as_time(),
+    record_ingest_outcome(
+        &state,
+        &ingest_span,
+        &IngestOutcome {
+            tenant: tenant.as_ref().ok(),
+            outcome: RequestOutcome::from_result(&result),
+            bytes,
+            items,
+            start,
+        },
     );
     match result {
         Ok((content_type, body)) => (

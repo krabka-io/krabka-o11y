@@ -13,11 +13,13 @@ use crate::{
     log_level, log_level_post, measured_size, memberlist_status, normalize_loki_http_push,
     normalize_otlp_http_logs, normalize_otlp_proto_logs_for_tenant, otlp_http_error_response, post,
     ready, record_ingest_response, require_org_id, resolve_single_tenant, role_config,
-    role_metrics, role_ring, role_services, set_prepare_shutdown, shutdown_ingester,
-    tenant_error_response, tenant_header_value, unset_prepare_shutdown, validate_ingest_body_limit,
+    role_metrics, role_ring, role_services, service_metrics::IngestPushMeasurement,
+    set_prepare_shutdown, shutdown_ingester, tenant_error_response, tenant_header_value,
+    unset_prepare_shutdown, validate_ingest_body_limit,
 };
 
 mod all_ops;
+mod append_and_record_push;
 mod block_builder_ops;
 mod distributor_ops;
 mod distributor_push_routes;
@@ -51,6 +53,7 @@ mod role_ops;
 mod with_role_ops_routes;
 
 pub(crate) use all_ops::ALL_OPS;
+pub(crate) use append_and_record_push::{NormalizedPush, append_and_record_push};
 pub(crate) use block_builder_ops::BLOCK_BUILDER_OPS;
 pub(crate) use distributor_ops::DISTRIBUTOR_OPS;
 pub(crate) use distributor_push_routes::distributor_push_routes;

@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RulerAlertState, RulerStateSink,
-    TenantId, evaluate_and_persist_alerting_rule_with_state, yaml_optional_string,
+    TenantId, alerting_rules, evaluate_and_persist_alerting_rule_with_state,
 };
 
 /// Evaluates all alerting rules in one rule group, persists alert state, and dispatches firing alerts.
@@ -23,17 +23,8 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    let Some(rules) = group.get("rules").and_then(serde_yaml::Value::as_sequence) else {
-        return Err(PromqlError::Exec(
-            "alerting rule group must contain rules".into(),
-        ));
-    };
-
     let mut dispatched = 0;
-    for rule in rules {
-        if yaml_optional_string(rule, "alert").is_none() {
-            continue;
-        }
+    for rule in alerting_rules(group)? {
         dispatched += evaluate_and_persist_alerting_rule_with_state(
             engine,
             sink,

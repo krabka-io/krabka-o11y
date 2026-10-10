@@ -18,6 +18,7 @@ mod tests {
     use object_store::{ObjectStoreExt as _, memory::InMemory, path::Path};
 
     use super::*;
+    use crate::test_support::check_falls_back_to_address_frame;
 
     #[test]
     fn fallback_resolver_names_build_id_and_offset() {
@@ -48,17 +49,9 @@ mod tests {
 
     #[test]
     fn native_resolver_falls_back_to_address_frame() {
-        let resolver = native_resolver_from_debuginfod_urls(Vec::new()).unwrap();
-        let out = resolver
-            .symbolize(&SymbolizeRequest {
-                build_id: String::new(),
-                filename: "/missing/native".to_string(),
-                address: 0x99,
-            })
-            .unwrap();
-
-        assert!(out[0].function == "/missing/native+0x99");
-        assert!(out[0].file == "/missing/native");
+        check_falls_back_to_address_frame(
+            &native_resolver_from_debuginfod_urls(Vec::new()).unwrap(),
+        );
     }
 
     #[cfg(target_os = "linux")]

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::{
     FlameGraphDiff, Level,
-    tree::{Tree, TreeSnapshotNode},
+    tree::{Tree, TreeSnapshotNode, name_slot::name_slot},
 };
 
 #[cfg(test)]
@@ -136,7 +136,6 @@ mod diff_trees;
 mod keep_set;
 mod merge_node;
 mod merged_node;
-mod name_slot;
 mod other_name;
 mod parents;
 mod root_name;
@@ -151,7 +150,6 @@ pub use diff_trees::diff_trees;
 use keep_set::keep_set;
 use merge_node::merge_node;
 use merged_node::MergedNode;
-use name_slot::name_slot;
 use other_name::OTHER_NAME;
 use parents::parents;
 use root_name::ROOT_NAME;

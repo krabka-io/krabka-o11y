@@ -10,8 +10,6 @@ use super::*;
 /// interpreter's `eval_instant_expr` byte-for-byte.
 #[tokio::test]
 pub(crate) async fn extended_range_fold_planner_matches_interpreter() {
-    use crate::{DurationExprContext, parse_promql_with_duration_context};
-
     let mut store = InMemoryMetricStore::new();
     // A monotonic-ish counter with a reset, sampled every 30s through t=300000.
     for (job, samples) in [
@@ -71,31 +69,10 @@ pub(crate) async fn extended_range_fold_planner_matches_interpreter() {
     ];
 
     for query in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
+        let (via_operators, via_interpreter) =
+            planned_and_interpreted(&engine, query, time_ms).await;
 
-        // The planner must claim this query (Some, never None).
-        let plan = engine
-            .plan_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = engine
-            .assemble_planned_instant(plan, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-        let via_interpreter = engine
-            .eval_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-
-        let normalize = |result: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut samples) = result else {
-                panic!("expected vector for `{query}`");
-            };
-            samples.sort_by_key(|sample| sample.labels.fingerprint());
-            samples
-        };
+        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
         let via_operators = normalize(via_operators);
         let via_interpreter = normalize(via_interpreter);
         assert2::assert!(instant_samples_match(&via_operators, &via_interpreter));

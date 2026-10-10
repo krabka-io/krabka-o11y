@@ -1,4 +1,5 @@
-use super::{DataFusionError, DfResult, Expr, LogicalPlan, UserDefinedLogicalNodeCore, fmt};
+use super::{DfResult, Expr, LogicalPlan, UserDefinedLogicalNodeCore, fmt};
+use crate::extension::only_logical_input;
 
 /// Logical node: partition the input into per-series batches.
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd)]
@@ -12,35 +13,17 @@ impl UserDefinedLogicalNodeCore for SeriesDivide {
         "SeriesDivide"
     }
 
-    fn inputs(&self) -> Vec<&LogicalPlan> {
-        vec![&self.input]
-    }
-
-    fn schema(&self) -> &datafusion::common::DFSchemaRef {
-        self.input.schema()
-    }
-
-    fn expressions(&self) -> Vec<Expr> {
-        vec![]
-    }
+    pass_through_logical_node_plumbing!();
 
     fn fmt_for_explain(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "PromSeriesDivide: tags={:?}", self.tag_columns)
     }
 
-    fn with_exprs_and_inputs(
-        &self,
-        exprs: Vec<Expr>,
-        mut inputs: Vec<LogicalPlan>,
-    ) -> DfResult<Self> {
-        if !exprs.is_empty() || inputs.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "SeriesDivide expects no expressions and one input".to_string(),
-            ));
-        }
+    fn with_exprs_and_inputs(&self, exprs: Vec<Expr>, inputs: Vec<LogicalPlan>) -> DfResult<Self> {
+        let input = only_logical_input(&exprs, inputs, "SeriesDivide")?;
         Ok(Self {
             tag_columns: self.tag_columns.clone(),
-            input: inputs.swap_remove(0),
+            input,
         })
     }
 }

@@ -25,16 +25,10 @@ pub(crate) async fn a_query_over_present_blocks_raises_no_warning() {
     )
     .await;
 
-    let store = MetricBlockStore::new(block_store);
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let (result, annotations) = engine
-        .query_instant_with_annotations(&tenant_id("tenant-a"), "up", 1_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected instant vector");
-    };
+    let InstantUpQuery {
+        samples,
+        annotations,
+    } = instant_up_query(block_store).await;
     check!(samples.len() == 2);
     check!(annotations == Annotations::new());
 }

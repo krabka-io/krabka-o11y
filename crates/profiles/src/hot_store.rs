@@ -291,6 +291,16 @@ mod tests {
         assert!(trace_ids.value(0) == &[0xaa; 16]);
     }
 
+    /// The position of a record at `offset` of partition 0, all with the same
+    /// hash.
+    fn partition_zero_position(offset: i64) -> crate::wal::WalPosition {
+        crate::wal::WalPosition {
+            partition: 0,
+            offset,
+            record_hash: [42; 32],
+        }
+    }
+
     fn record_at(value: i64, timestamp_ns: i64) -> ProfileRecord {
         let mut rec = record();
         rec.samples[0].value = value;
@@ -335,52 +345,17 @@ mod tests {
         });
         store
             .append_records_with_positions([
-                (
-                    record_at(1, 1_000_000),
-                    Some(crate::wal::WalPosition {
-                        partition: 0,
-                        offset: 0,
-                        record_hash: [42; 32],
-                    }),
-                ),
-                (
-                    record_at(2, 2_000_000),
-                    Some(crate::wal::WalPosition {
-                        partition: 0,
-                        offset: 1,
-                        record_hash: [42; 32],
-                    }),
-                ),
-                (
-                    record_at(4, 3_000_000),
-                    Some(crate::wal::WalPosition {
-                        partition: 0,
-                        offset: 2,
-                        record_hash: [42; 32],
-                    }),
-                ),
+                (record_at(1, 1_000_000), Some(partition_zero_position(0))),
+                (record_at(2, 2_000_000), Some(partition_zero_position(1))),
+                (record_at(4, 3_000_000), Some(partition_zero_position(2))),
             ])
             .unwrap();
         // A rebuild must keep the source positions, otherwise the persisted
         // copies of surviving records are counted again during handoff.
         let cold = super::WalTailProfileStore::new();
         cold.append_records_with_positions([
-            (
-                record_at(2, 2_000_000),
-                Some(crate::wal::WalPosition {
-                    partition: 0,
-                    offset: 1,
-                    record_hash: [42; 32],
-                }),
-            ),
-            (
-                record_at(4, 3_000_000),
-                Some(crate::wal::WalPosition {
-                    partition: 0,
-                    offset: 2,
-                    record_hash: [42; 32],
-                }),
-            ),
+            (record_at(2, 2_000_000), Some(partition_zero_position(1))),
+            (record_at(4, 3_000_000), Some(partition_zero_position(2))),
         ])
         .unwrap();
         let union = krabka_pprof::UnionProfileStore::new(Arc::new(store), Arc::new(cold));

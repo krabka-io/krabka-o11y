@@ -1,6 +1,7 @@
 use super::{
-    COL_ROOT_SERVICE_NAME, RESOURCE_ATTR_PREFIX, RecordBatch, SpanMatcher, TraceqlError,
-    batch_attr_matches_with_resource, root_service_matches, string_value,
+    AttrMatch, COL_ROOT_SERVICE_NAME, RESOURCE_ATTR_PREFIX, RecordBatch, ResourceAttrs,
+    SpanMatcher, TraceqlError, batch_attr_matches_with_resource, root_service_matches,
+    string_value,
 };
 
 pub(crate) fn resource_matches(
@@ -15,10 +16,12 @@ pub(crate) fn resource_matches(
         _ => batch_attr_matches_with_resource(
             batch,
             row,
-            &format!("{RESOURCE_ATTR_PREFIX}{}", matcher.key),
-            matcher.op,
-            &matcher.value,
-            true,
+            AttrMatch {
+                key: &format!("{RESOURCE_ATTR_PREFIX}{}", matcher.key),
+                op: matcher.op,
+                expected: &matcher.value,
+                resource: ResourceAttrs::Include,
+            },
         )?,
     })
 }

@@ -90,6 +90,28 @@ mod tests {
         out
     }
 
+    /// Five tree nodes: an unnamed root over "a" (10, with the child "a1"
+    /// worth 5), "b" (7), and "c", a named node worth nothing on its own. "c"
+    /// must not become a sample: only a positive self value earns one.
+    fn five_node_tree() -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend(tree_node("", 0, 3));
+        body.extend(tree_node("a", 10, 1));
+        body.extend(tree_node("a1", 5, 0));
+        body.extend(tree_node("b", 7, 0));
+        body.extend(tree_node("c", 0, 0));
+        body
+    }
+
+    /// Each sample of `profile` as its leaf-first frame names and its values.
+    fn stacks_and_values(profile: &PprofProfile) -> Vec<(Vec<&str>, &[i64])> {
+        profile
+            .samples()
+            .iter()
+            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
+            .collect()
+    }
+
     /// `tree_to_pprof` walks a pre-order node stream, carrying each node's
     /// path down to its children and charging self values to the path that
     /// reaches them.
@@ -100,25 +122,14 @@ mod tests {
     /// whose value sits only in a descendant are represented.
     #[test]
     fn tree_nodes_decode_into_the_stacks_that_reach_them() {
-        let mut body = Vec::new();
-        body.extend(tree_node("", 0, 3));
-        body.extend(tree_node("a", 10, 1));
-        body.extend(tree_node("a1", 5, 0));
-        body.extend(tree_node("b", 7, 0));
-        // A named node worth nothing on its own. It must not become a sample:
-        // only a positive self value earns one.
-        body.extend(tree_node("c", 0, 0));
+        let body = five_node_tree();
 
         let profile =
             super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
 
         check!(profile.sample_types() == vec![("samples".to_string(), "bytes".to_string())]);
 
-        let decoded: Vec<(Vec<&str>, &[i64])> = profile
-            .samples()
-            .iter()
-            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
-            .collect();
+        let decoded = stacks_and_values(&profile);
         check!(
             decoded
                 == vec![
@@ -149,12 +160,7 @@ mod tests {
     /// allowed and one more is not.
     #[test]
     fn the_tree_node_budget_admits_exactly_its_limit() {
-        let mut body = Vec::new();
-        body.extend(tree_node("", 0, 3));
-        body.extend(tree_node("a", 10, 1));
-        body.extend(tree_node("a1", 5, 0));
-        body.extend(tree_node("b", 7, 0));
-        body.extend(tree_node("c", 0, 0));
+        let body = five_node_tree();
 
         let limits = |max_nodes| LegacyDecodeLimits {
             max_nodes,
@@ -199,24 +205,22 @@ mod tests {
     /// Encodes one node of Pyroscope's binary trie format: the suffix this
     /// node adds to its parent's key, the value charged to the whole key, and
     /// how many children follow.
+    ///
+    /// A trie node has the same byte layout as a tree node.
     fn trie_node(suffix: &str, value: u64, children: u64) -> Vec<u8> {
-        fn varint(mut value: u64, out: &mut Vec<u8>) {
-            loop {
-                let byte = u8::try_from(value & 0x7f).expect("seven bits fit a byte");
-                value >>= 7;
-                if value == 0 {
-                    out.push(byte);
-                    return;
-                }
-                out.push(byte | 0x80);
-            }
-        }
-        let mut out = Vec::new();
-        varint(suffix.len() as u64, &mut out);
-        out.extend_from_slice(suffix.as_bytes());
-        varint(value, &mut out);
-        varint(children, &mut out);
-        out
+        tree_node(suffix, value, children)
+    }
+
+    /// Five trie nodes: "main;" with the children "work" (which has its own
+    /// child ";inner") and "idle", then a second top-level node, "other".
+    fn five_node_trie() -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend(trie_node("main;", 0, 2));
+        body.extend(trie_node("work", 7, 1));
+        body.extend(trie_node(";inner", 4, 0));
+        body.extend(trie_node("idle", 3, 0));
+        body.extend(trie_node("other", 2, 0));
+        body
     }
 
     /// `trie_to_pprof` builds each node's key by appending its suffix to its
@@ -228,21 +232,12 @@ mod tests {
     /// exercised rather than a single tree.
     #[test]
     fn trie_nodes_extend_their_parents_key() {
-        let mut body = Vec::new();
-        body.extend(trie_node("main;", 0, 2));
-        body.extend(trie_node("work", 7, 1));
-        body.extend(trie_node(";inner", 4, 0));
-        body.extend(trie_node("idle", 3, 0));
-        body.extend(trie_node("other", 2, 0));
+        let body = five_node_trie();
 
         let profile =
             super::trie_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
 
-        let decoded: Vec<(Vec<&str>, &[i64])> = profile
-            .samples()
-            .iter()
-            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
-            .collect();
+        let decoded = stacks_and_values(&profile);
         check!(
             decoded
                 == vec![
@@ -260,12 +255,7 @@ mod tests {
     /// indistinguishable from the one next to it.
     #[test]
     fn the_trie_limits_admit_exactly_their_boundary() {
-        let mut body = Vec::new();
-        body.extend(trie_node("main;", 0, 2));
-        body.extend(trie_node("work", 7, 1));
-        body.extend(trie_node(";inner", 4, 0));
-        body.extend(trie_node("idle", 3, 0));
-        body.extend(trie_node("other", 2, 0));
+        let body = five_node_trie();
         let decode = |limits| super::trie_to_pprof("app", "bytes", &body, limits);
 
         // Five nodes fit a budget of five, and not one of four.
@@ -385,20 +375,89 @@ mod tests {
         );
     }
 
+    /// One named octet-stream part of a multipart form.
+    struct NamedPart<'a> {
+        name: &'a str,
+        content: &'a [u8],
+    }
+
     /// Wraps `parts` as a multipart body with a fixed boundary.
-    fn multipart_body(parts: &[(&str, &[u8])]) -> bytes::Bytes {
+    fn multipart_body(parts: &[NamedPart<'_>]) -> bytes::Bytes {
+        let dispositions = parts
+            .iter()
+            .map(|part| format!("name=\"{}\"", part.name))
+            .collect::<Vec<_>>();
+        let parts = parts
+            .iter()
+            .zip(&dispositions)
+            .map(|(&NamedPart { content, .. }, disposition)| FormPart {
+                disposition,
+                content_type: "application/octet-stream",
+                content,
+            })
+            .collect::<Vec<_>>();
+        multipart_form(&parts)
+    }
+
+    /// One part of a multipart form.
+    struct FormPart<'a> {
+        /// The `Content-Disposition` parameters after `form-data; `.
+        disposition: &'a str,
+        content_type: &'a str,
+        content: &'a [u8],
+    }
+
+    /// Wraps `parts` as a multipart body with a fixed boundary.
+    fn multipart_form(parts: &[FormPart<'_>]) -> bytes::Bytes {
         let mut body = Vec::new();
-        for (name, content) in parts {
+        for FormPart {
+            disposition,
+            content_type,
+            content,
+        } in parts
+        {
             body.extend_from_slice(b"--test-boundary\r\n");
             body.extend_from_slice(
-                format!("Content-Disposition: form-data; name=\"{name}\"\r\n").as_bytes(),
+                format!("Content-Disposition: form-data; {disposition}\r\n").as_bytes(),
             );
-            body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+            body.extend_from_slice(format!("Content-Type: {content_type}\r\n\r\n").as_bytes());
             body.extend_from_slice(content);
             body.extend_from_slice(b"\r\n");
         }
         body.extend_from_slice(b"--test-boundary--\r\n");
         bytes::Bytes::from(body)
+    }
+
+    async fn decode_multipart(query: &IngestQuery, body: bytes::Bytes) -> RawProfile {
+        decode_ingest_multipart(
+            query,
+            "multipart/form-data; boundary=test-boundary",
+            body,
+            mebibytes(1),
+        )
+        .await
+        .unwrap()
+    }
+
+    fn sorted_sample_values(raw: &RawProfile) -> Vec<i64> {
+        let mut values = raw
+            .profile
+            .inner()
+            .sample
+            .iter()
+            .map(|sample| sample.value[0])
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values
+    }
+
+    fn function_names(raw: &RawProfile) -> Vec<&str> {
+        raw.profile
+            .inner()
+            .function
+            .iter()
+            .filter_map(|function| raw.profile.string(function.name))
+            .collect()
     }
 
     /// Each ingest format accepts its own part names and ignores the rest.
@@ -451,7 +510,10 @@ mod tests {
             let result = futures::executor::block_on(super::decode_ingest_multipart_with_limits(
                 &query,
                 "multipart/form-data; boundary=test-boundary",
-                multipart_body(&[(part, payload)]),
+                multipart_body(&[NamedPart {
+                    name: part,
+                    content: payload,
+                }]),
                 mebibytes(1),
                 LegacyDecodeLimits::default(),
             ));
@@ -472,7 +534,10 @@ mod tests {
             futures::executor::block_on(super::decode_ingest_multipart_with_limits(
                 &query,
                 "multipart/form-data; boundary=test-boundary",
-                multipart_body(&[("profile", folded)]),
+                multipart_body(&[NamedPart {
+                    name: "profile",
+                    content: folded,
+                }]),
                 krabka_units::bytes(limit),
                 LegacyDecodeLimits::default(),
             ))
@@ -525,7 +590,16 @@ mod tests {
             futures::executor::block_on(super::decode_ingest_multipart_with_limits(
                 &query,
                 "multipart/form-data; boundary=test-boundary",
-                multipart_body(&[("labels", labels), (profile_part, folded)]),
+                multipart_body(&[
+                    NamedPart {
+                        name: "labels",
+                        content: labels,
+                    },
+                    NamedPart {
+                        name: profile_part,
+                        content: folded,
+                    },
+                ]),
                 mebibytes(1),
                 LegacyDecodeLimits::default(),
             ))
@@ -733,24 +807,15 @@ mod tests {
     async fn decode_multipart_pprof_profile_part() {
         let query =
             parse_ingest_query("name=myapp{env=\"prod\"}&format=pprof&sampleRate=7").unwrap();
-        let boundary = "test-boundary";
         let pprof = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
         let original_period = PprofProfile::decode(&pprof).unwrap().inner().period;
-        let mut body = Vec::new();
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(b"Content-Disposition: form-data; name=\"profile\"\r\n");
-        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
-        body.extend_from_slice(&pprof);
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="profile""#,
+            content_type: "application/octet-stream",
+            content: pprof.as_slice(),
+        }]);
 
-        let raw = decode_ingest_multipart(
-            &query,
-            &format!("multipart/form-data; boundary={boundary}"),
-            bytes::Bytes::from(body),
-            mebibytes(1),
-        )
-        .await
-        .unwrap();
+        let raw = decode_multipart(&query, body).await;
 
         // A pprof brings its own sample types, so the metric name follows
         // them rather than the `?name=` application, which stays the service.
@@ -764,28 +829,22 @@ mod tests {
     #[tokio::test]
     async fn decode_multipart_pprof_applies_sample_type_config() {
         let query = parse_ingest_query("name=myapp&format=pprof").unwrap();
-        let boundary = "test-boundary";
         let pprof = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
         let config = r#"{"units":"nanoseconds","display-name":"wall","aggregation":"sum","cumulative":true,"sampled":true}"#;
-        let mut body = Vec::new();
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(b"Content-Disposition: form-data; name=\"sample_type_config\"\r\n");
-        body.extend_from_slice(b"Content-Type: application/json\r\n\r\n");
-        body.extend_from_slice(config.as_bytes());
-        body.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(b"Content-Disposition: form-data; name=\"profile\"\r\n");
-        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
-        body.extend_from_slice(&pprof);
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let body = multipart_form(&[
+            FormPart {
+                disposition: r#"name="sample_type_config""#,
+                content_type: "application/json",
+                content: config.as_bytes(),
+            },
+            FormPart {
+                disposition: r#"name="profile""#,
+                content_type: "application/octet-stream",
+                content: pprof.as_slice(),
+            },
+        ]);
 
-        let raw = decode_ingest_multipart(
-            &query,
-            &format!("multipart/form-data; boundary={boundary}"),
-            bytes::Bytes::from(body),
-            mebibytes(1),
-        )
-        .await
-        .unwrap();
+        let raw = decode_multipart(&query, body).await;
 
         assert!(raw.profile.sample_types()[0] == ("wall".to_string(), "nanoseconds".to_string()));
         assert!(
@@ -807,23 +866,14 @@ mod tests {
     #[tokio::test]
     async fn decode_multipart_folded_groups_profile_part() {
         let query = parse_ingest_query("name=myapp{env=\"prod\"}").unwrap();
-        let boundary = "test-boundary";
         let folded = "main;work 7\nmain;idle 3\n";
-        let mut body = Vec::new();
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(b"Content-Disposition: form-data; name=\"profile\"\r\n");
-        body.extend_from_slice(b"Content-Type: text/plain\r\n\r\n");
-        body.extend_from_slice(folded.as_bytes());
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="profile""#,
+            content_type: "text/plain",
+            content: folded.as_bytes(),
+        }]);
 
-        let raw = decode_ingest_multipart(
-            &query,
-            &format!("multipart/form-data; boundary={boundary}"),
-            bytes::Bytes::from(body),
-            mebibytes(1),
-        )
-        .await
-        .unwrap();
+        let raw = decode_multipart(&query, body).await;
 
         // Pyroscope reads a folded upload as its default CPU profile and
         // keeps `?name=` as the service, so the metric name is fixed.
@@ -841,23 +891,14 @@ mod tests {
     #[tokio::test]
     async fn decode_multipart_folded_groups_ignores_query_units() {
         let query = parse_ingest_query("name=myapp&units=bytes").unwrap();
-        let boundary = "test-boundary";
         let folded = "main;work 7\n";
-        let mut body = Vec::new();
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(b"Content-Disposition: form-data; name=\"profile\"\r\n");
-        body.extend_from_slice(b"Content-Type: text/plain\r\n\r\n");
-        body.extend_from_slice(folded.as_bytes());
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="profile""#,
+            content_type: "text/plain",
+            content: folded.as_bytes(),
+        }]);
 
-        let raw = decode_ingest_multipart(
-            &query,
-            &format!("multipart/form-data; boundary={boundary}"),
-            bytes::Bytes::from(body),
-            mebibytes(1),
-        )
-        .await
-        .unwrap();
+        let raw = decode_multipart(&query, body).await;
 
         assert!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
     }
@@ -877,14 +918,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut values = raw
-            .profile
-            .inner()
-            .sample
-            .iter()
-            .map(|sample| sample.value[0])
-            .collect::<Vec<_>>();
-        values.sort_unstable();
+        let values = sorted_sample_values(&raw);
 
         // One count at 250 Hz stands for 4ms, and Pyroscope stores that time
         // rather than the count, so the three `main;work` lines are 12ms.
@@ -925,82 +959,48 @@ mod tests {
         .await
         .unwrap();
 
-        let mut values = raw
-            .profile
-            .inner()
-            .sample
-            .iter()
-            .map(|sample| sample.value[0])
-            .collect::<Vec<_>>();
-        values.sort_unstable();
+        let values = sorted_sample_values(&raw);
 
         assert!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
         assert!(values == vec![40_000_000, 50_000_000]);
     }
 
+    /// The `tree` format carries serialized tree nodes and the `trie` format
+    /// a serialized folded-stack trie. Both payloads below hold the stacks
+    /// `a;b` (1) and `a;c` (2).
     #[tokio::test]
-    async fn decode_plain_tree_format_payload_uses_serialized_tree_nodes() {
-        let query = parse_ingest_query("name=myapp&format=tree&units=samples").unwrap();
-        let body =
-            bytes::Bytes::from_static(b"\x00\x00\x01\x01a\x00\x02\x01b\x01\x00\x01c\x02\x00");
+    async fn decode_plain_tree_and_trie_format_payloads() {
+        let cases: [(&str, &'static [u8]); 2] = [
+            (
+                "tree",
+                b"\x00\x00\x01\x01a\x00\x02\x01b\x01\x00\x01c\x02\x00",
+            ),
+            (
+                "trie",
+                b"\x00\x00\x01\x02a;\x00\x02\x01b\x01\x00\x01c\x02\x00",
+            ),
+        ];
+        for (format, payload) in cases {
+            let query =
+                parse_ingest_query(&format!("name=myapp&format={format}&units=samples")).unwrap();
+            let body = bytes::Bytes::from_static(payload);
 
-        let raw = decode_ingest_body(&query, Some("application/octet-stream"), body, mebibytes(1))
-            .await
-            .unwrap();
+            let raw =
+                decode_ingest_body(&query, Some("application/octet-stream"), body, mebibytes(1))
+                    .await
+                    .unwrap();
 
-        let mut values = raw
-            .profile
-            .inner()
-            .sample
-            .iter()
-            .map(|sample| sample.value[0])
-            .collect::<Vec<_>>();
-        values.sort_unstable();
-        let functions = raw
-            .profile
-            .inner()
-            .function
-            .iter()
-            .filter_map(|function| raw.profile.string(function.name))
-            .collect::<Vec<_>>();
+            let values = sorted_sample_values(&raw);
+            let functions = function_names(&raw);
 
-        check!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
-        check!(values == vec![10_000_000, 20_000_000]);
-        for function in ["a", "b", "c"] {
-            check!(functions.contains(&function));
-        }
-    }
-
-    #[tokio::test]
-    async fn decode_plain_trie_format_payload_uses_serialized_folded_stack_trie() {
-        let query = parse_ingest_query("name=myapp&format=trie&units=samples").unwrap();
-        let body =
-            bytes::Bytes::from_static(b"\x00\x00\x01\x02a;\x00\x02\x01b\x01\x00\x01c\x02\x00");
-
-        let raw = decode_ingest_body(&query, Some("application/octet-stream"), body, mebibytes(1))
-            .await
-            .unwrap();
-
-        let mut values = raw
-            .profile
-            .inner()
-            .sample
-            .iter()
-            .map(|sample| sample.value[0])
-            .collect::<Vec<_>>();
-        values.sort_unstable();
-        let functions = raw
-            .profile
-            .inner()
-            .function
-            .iter()
-            .filter_map(|function| raw.profile.string(function.name))
-            .collect::<Vec<_>>();
-
-        check!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
-        check!(values == vec![10_000_000, 20_000_000]);
-        for function in ["a", "b", "c"] {
-            check!(functions.contains(&function));
+            check!(
+                raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()),
+                "{format}"
+            );
+            check!(values == vec![10_000_000, 20_000_000], "{format}");
+            for function in ["a", "b", "c"] {
+                check!(functions.contains(&function), "{format}");
+            }
         }
     }
 
@@ -1008,23 +1008,14 @@ mod tests {
     async fn decode_multipart_folded_groups_uses_until_as_profile_time() {
         let query =
             parse_ingest_query("name=myapp&from=1699999999000&until=1700000000000").unwrap();
-        let boundary = "test-boundary";
         let folded = "main;work 7\n";
-        let mut body = Vec::new();
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(b"Content-Disposition: form-data; name=\"profile\"\r\n");
-        body.extend_from_slice(b"Content-Type: text/plain\r\n\r\n");
-        body.extend_from_slice(folded.as_bytes());
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="profile""#,
+            content_type: "text/plain",
+            content: folded.as_bytes(),
+        }]);
 
-        let raw = decode_ingest_multipart(
-            &query,
-            &format!("multipart/form-data; boundary={boundary}"),
-            bytes::Bytes::from(body),
-            mebibytes(1),
-        )
-        .await
-        .unwrap();
+        let raw = decode_multipart(&query, body).await;
 
         assert!(raw.profile.inner().time_nanos == 1_700_000_000_000_000_000);
     }
@@ -1032,31 +1023,23 @@ mod tests {
     #[tokio::test]
     async fn decode_multipart_jfr_part_with_labels_as_folded_stacks() {
         let query = parse_ingest_query("name=myapp&format=jfr&event=wall").unwrap();
-        let boundary = "test-boundary";
         let folded =
             "java.lang.Thread.run;app.Worker.loop 11\njava.lang.Thread.run;app.Worker.idle 2\n";
         let labels = r#"{"service_name":"payments","region":"us-east"}"#;
-        let mut body = Vec::new();
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(b"Content-Disposition: form-data; name=\"labels\"\r\n");
-        body.extend_from_slice(b"Content-Type: application/json\r\n\r\n");
-        body.extend_from_slice(labels.as_bytes());
-        body.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(
-            b"Content-Disposition: form-data; name=\"jfr\"; filename=\"profile.jfr\"\r\n",
-        );
-        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
-        body.extend_from_slice(folded.as_bytes());
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let body = multipart_form(&[
+            FormPart {
+                disposition: r#"name="labels""#,
+                content_type: "application/json",
+                content: labels.as_bytes(),
+            },
+            FormPart {
+                disposition: r#"name="jfr"; filename="profile.jfr""#,
+                content_type: "application/octet-stream",
+                content: folded.as_bytes(),
+            },
+        ]);
 
-        let raw = decode_ingest_multipart(
-            &query,
-            &format!("multipart/form-data; boundary={boundary}"),
-            bytes::Bytes::from(body),
-            mebibytes(1),
-        )
-        .await
-        .unwrap();
+        let raw = decode_multipart(&query, body).await;
 
         // A `labels` part overrides the service the `?name=` application would
         // otherwise give, and the metric name comes from the decoded sample
@@ -1075,37 +1058,20 @@ mod tests {
     #[tokio::test]
     async fn decode_multipart_jfr_binary_execution_samples() {
         let query = parse_ingest_query("name=myapp&format=jfr").unwrap();
-        let boundary = "test-boundary";
         let jfr = include_bytes!("../../tests/fixtures/profiler-wall.jfr");
-        let mut body = Vec::new();
-        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        body.extend_from_slice(
-            b"Content-Disposition: form-data; name=\"jfr\"; filename=\"profile.jfr\"\r\n",
-        );
-        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
-        body.extend_from_slice(jfr);
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="jfr"; filename="profile.jfr""#,
+            content_type: "application/octet-stream",
+            content: jfr.as_slice(),
+        }]);
 
-        let raw = decode_ingest_multipart(
-            &query,
-            &format!("multipart/form-data; boundary={boundary}"),
-            bytes::Bytes::from(body),
-            mebibytes(1),
-        )
-        .await
-        .unwrap();
+        let raw = decode_multipart(&query, body).await;
 
         let sample_types = raw.profile.sample_types();
         assert!(sample_types.contains(&("cpu".to_string(), "nanoseconds".to_string())));
         assert!(sample_types.contains(&("wall".to_string(), "nanoseconds".to_string())));
         assert!(!raw.profile.samples().is_empty());
-        let functions = raw
-            .profile
-            .inner()
-            .function
-            .iter()
-            .filter_map(|function| raw.profile.string(function.name))
-            .collect::<Vec<_>>();
+        let functions = function_names(&raw);
         assert!(
             functions
                 .iter()
@@ -1240,7 +1206,6 @@ mod default_spy_name;
 mod folded_to_pprof;
 mod ingest_format;
 mod ingest_query;
-mod intern_profile_string;
 mod intern_string;
 mod jfr_labels;
 mod jfr_method_name;
@@ -1253,6 +1218,7 @@ mod maybe_gunzip;
 mod parse_ingest_query;
 mod parse_labels_part;
 mod parse_sample_type_config;
+mod parse_text_stacks;
 mod parse_unix_time_ms;
 mod pprof_metric_name;
 mod query_labels;
@@ -1280,7 +1246,6 @@ use default_spy_name::DEFAULT_SPY_NAME;
 use folded_to_pprof::folded_to_pprof;
 pub use ingest_format::IngestFormat;
 pub use ingest_query::IngestQuery;
-use intern_profile_string::intern_profile_string;
 use intern_string::intern_string;
 use jfr_labels::{JfrLabels, LabelsSnapshot};
 use jfr_method_name::jfr_method_name;
@@ -1293,6 +1258,7 @@ use maybe_gunzip::maybe_gunzip;
 pub use parse_ingest_query::parse_ingest_query;
 use parse_labels_part::parse_labels_part;
 use parse_sample_type_config::parse_sample_type_config;
+use parse_text_stacks::{TextStackFormat, parse_text_stacks};
 use parse_unix_time_ms::parse_unix_time_ms;
 use pprof_metric_name::pprof_metric_name;
 use query_labels::query_labels;
@@ -1305,3 +1271,5 @@ use tree_to_pprof::tree_to_pprof;
 use trie_frame::TrieFrame;
 use trie_to_pprof::trie_to_pprof;
 use urldecode::urldecode;
+
+use super::intern_profile_string;

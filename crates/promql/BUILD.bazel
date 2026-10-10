@@ -2,8 +2,13 @@ load("//bazel:defs.bzl", "crate_library", "crate_tests")
 
 package(default_visibility = ["//visibility:public"])
 
-# Consumed by `crate.from_cargo` (see //MODULE.bazel).
-exports_files(["Cargo.toml"])
+# Consumed by `crate.from_cargo` (see //MODULE.bazel). The vector-sample
+# check is shared with //crates/metrics-service's unit tests, which reach it
+# with `#[path]`.
+exports_files([
+    "Cargo.toml",
+    "src/http_api/tests/first_vector_sample.rs",
+])
 
 # `experimental-functions` is off by default, so the default build never
 # compiles the code behind it: `limitk`, `limit_ratio`,
@@ -22,6 +27,15 @@ crate_library(
 
 crate_tests(
     data = glob(["tests/testdata/**"]),
+    # The shared near-miss and token-salad query generators, reached with
+    # `#[path]` from //crates/logql.
+    extra_srcs = {
+        "parser_proptest": [
+            "//crates/logql:tests/support/seed_splice.rs",
+            "//crates/logql:tests/support/token_salad.rs",
+            "//crates/logql:tests/support/unicode_noise.rs",
+        ],
+    },
     feature_variants = EXPERIMENTAL,
     lib = "promql",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is

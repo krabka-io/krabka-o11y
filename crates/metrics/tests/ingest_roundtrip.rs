@@ -22,7 +22,6 @@ use krabka_metrics::{
     distributor::{DistributorState, KafkaSink},
     metrics::ServiceMetrics,
     run_compactor_consumer_loop,
-    wire::pb,
 };
 use krabka_observability::{
     server_security::{ServerSecurity, authenticate_requests},
@@ -30,8 +29,12 @@ use krabka_observability::{
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, memory::InMemory};
-use prost::Message;
 use tower::ServiceExt as _;
+
+#[path = "support/up_remote_write.rs"]
+mod up_remote_write;
+
+use self::up_remote_write::remote_write_v1_body;
 
 // Every request goes through the authentication layer, as it does on a served
 // listener. With no credentials file, the layer lets each request through.
@@ -250,24 +253,4 @@ async fn inspect_wal_record(bootstrap: &str) -> WalRecord {
         }
     }
     panic!("timed out waiting for metrics WAL record");
-}
-
-fn remote_write_v1_body() -> Vec<u8> {
-    let req = pb::v1::WriteRequest {
-        timeseries: vec![pb::v1::TimeSeries {
-            labels: vec![pb::v1::Label {
-                name: "__name__".into(),
-                value: "up".into(),
-            }],
-            samples: vec![pb::v1::Sample {
-                value: 1.0,
-                timestamp: 100,
-            }],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
-    snap::raw::Encoder::new()
-        .compress_vec(&req.encode_to_vec())
-        .expect("snappy compress")
 }

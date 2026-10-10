@@ -27,14 +27,7 @@ pub(crate) async fn vector_vector_arithmetic_drops_metadata_labels() {
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "requests_total + 1", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "requests_total + 1", 10_000).await;
     check!(samples.len() == 2);
     for name in ["__name__", "__type__", "__unit__"] {
         check!(

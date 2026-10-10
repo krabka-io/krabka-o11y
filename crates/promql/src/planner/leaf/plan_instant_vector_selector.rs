@@ -1,8 +1,9 @@
 use super::{
-    Arc, BTreeSet, Extension, InstantManipulate, InstantSelectorPlan, LabeledSeries, LogicalPlan,
-    Result, SeriesDivide, SeriesNormalize, StepGrid, TIME_COLUMN, Time, TimeExt, VALUE_COLUMN,
-    build_leaf_batch, leaf_scan, leaf_schema, prom_session_context,
+    Arc, Extension, InstantManipulate, InstantSelectorPlan, LabeledSeries, LogicalPlan, Result,
+    SampleTimePresence, SeriesLeaf, StepGrid, TIME_COLUMN, Time, TimeExt, VALUE_COLUMN,
+    divide_and_normalize, prom_session_context, series_leaf,
 };
+use crate::InstantManipulateSettings;
 
 /// Builds the leaf table and operator chain for a bare instant-vector selector.
 ///
@@ -29,54 +30,25 @@ pub async fn plan_instant_vector_selector(
     grid: StepGrid,
     lookback_delta: Time,
 ) -> Result<InstantSelectorPlan> {
-    // Collect the distinct label names across all matched series; these become
-    // the label columns carried through the operator chain.
-    let mut label_names: BTreeSet<String> = BTreeSet::new();
-    let mut labels_by_fp = std::collections::BTreeMap::new();
-    for one in &series {
-        for (name, _) in one.labels.iter() {
-            label_names.insert(name.clone());
-        }
-        labels_by_fp
-            .entry(one.fp)
-            .or_insert_with(|| (*one.labels).clone());
-    }
-    let label_names: Vec<String> = label_names.into_iter().collect();
-
-    let schema = leaf_schema(&label_names);
-    let batch = build_leaf_batch(Arc::clone(&schema), &label_names, &series)?;
-
+    let SeriesLeaf {
+        label_names,
+        labels_by_fp,
+        leaf,
+    } = series_leaf(&series, "prom_leaf", SampleTimePresence::Included)?;
     let ctx = prom_session_context();
-    let leaf = leaf_scan("prom_leaf", schema, batch)?;
-
-    // SeriesDivide on every label column splits the sorted input into exact
-    // per-series batches.
-    let divide = LogicalPlan::Extension(Extension {
-        node: Arc::new(SeriesDivide {
-            tag_columns: label_names.clone(),
-            input: leaf,
-        }),
-    });
-    // SeriesNormalize sorts each per-series batch by timestamp. The offset is
-    // already folded into the grid by the caller, so it is zero here.
-    let normalize = LogicalPlan::Extension(Extension {
-        node: Arc::new(SeriesNormalize {
-            offset_ms: 0,
-            time_index: TIME_COLUMN.to_string(),
-            need_filter_out_nan: false,
-            input: divide,
-        }),
-    });
+    let normalize = divide_and_normalize(&label_names, leaf);
     // InstantManipulate selects, for each grid instant, the latest sample
     // within (instant - lookback, instant], dropping NaN.
     let instant = LogicalPlan::Extension(Extension {
         node: Arc::new(InstantManipulate {
-            start_ms: grid.start,
-            end_ms: grid.end,
-            step_ms: grid.step,
-            lookback_delta_ms: lookback_delta.millis_i64(),
-            time_index: TIME_COLUMN.to_string(),
-            field_column: VALUE_COLUMN.to_string(),
+            settings: InstantManipulateSettings {
+                start_ms: grid.start,
+                end_ms: grid.end,
+                step_ms: grid.step,
+                lookback_delta_ms: lookback_delta.millis_i64(),
+                time_index: TIME_COLUMN.to_string(),
+                field_column: VALUE_COLUMN.to_string(),
+            },
             input: normalize,
         }),
     });

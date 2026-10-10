@@ -31,21 +31,7 @@ impl<R: NativeResolver> LazySymbolizer<R> {
                 .saturating_sub(location.mapping.memory_start)
                 + location.mapping.file_offset,
         };
-        if let Some(cached) = lock_recover(&self.cache).get(&request) {
-            return cached.clone().unwrap_or_default();
-        }
-        let resolved = self.resolver.symbolize(&request).map(|symbols| {
-            symbols
-                .into_iter()
-                .map(|symbol| Frame {
-                    function: symbol.function,
-                    file: symbol.file,
-                    line: symbol.line,
-                })
-                .collect::<Vec<_>>()
-        });
-        lock_recover(&self.cache).insert(request, resolved.clone());
-        resolved.unwrap_or_default()
+        self.symbolize_cached(request)
     }
 
     fn symbolize_resolved_location(&self, address: u64, mapping: &ResolvedMapping) -> Vec<Frame> {
@@ -57,6 +43,11 @@ impl<R: NativeResolver> LazySymbolizer<R> {
             filename: mapping.filename.clone(),
             address: address.saturating_sub(mapping.memory_start) + mapping.file_offset,
         };
+        self.symbolize_cached(request)
+    }
+
+    // Asks the resolver once per request, remembering misses as well as hits.
+    fn symbolize_cached(&self, request: SymbolizeRequest) -> Vec<Frame> {
         if let Some(cached) = lock_recover(&self.cache).get(&request) {
             return cached.clone().unwrap_or_default();
         }

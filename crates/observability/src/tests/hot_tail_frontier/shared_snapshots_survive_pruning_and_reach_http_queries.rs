@@ -2,8 +2,9 @@ use assert2::assert;
 
 use super::*;
 use crate::{
-    LokiDirection, LokiStreamEncoding, execute_http_stream_query,
-    execute_stream_query_with_hot_tail_frontier_and_deletes, hot_tail_snapshot,
+    HttpStreamQuery, LokiDirection, LokiStreamEncoding, LokiStreamOptions,
+    execute_http_stream_query, execute_stream_query_with_hot_tail_frontier_and_deletes,
+    hot_tail_snapshot,
 };
 
 struct SharedOnly(BufferedLogHotTail);
@@ -132,11 +133,18 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
         };
         let actual = execute_http_stream_query(
             &state,
-            "{app=\"api\"}",
-            "tenant",
-            range,
-            (LokiDirection::Forward, None, None, None),
-            LokiStreamEncoding::Folded,
+            HttpStreamQuery {
+                query: "{app=\"api\"}",
+                tenant: "tenant",
+                time_range: range,
+                options: LokiStreamOptions {
+                    direction: LokiDirection::Forward,
+                    limit: None,
+                    interval: None,
+                },
+                end_exclusive: None,
+                encoding: LokiStreamEncoding::Folded,
+            },
         )
         .await
         .unwrap();
@@ -179,11 +187,18 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
     ]);
     let fresh = execute_http_stream_query(
         &state,
-        "{app=\"api\"}",
-        "tenant",
-        range,
-        (LokiDirection::Forward, None, None, None),
-        LokiStreamEncoding::Folded,
+        HttpStreamQuery {
+            query: "{app=\"api\"}",
+            tenant: "tenant",
+            time_range: range,
+            options: LokiStreamOptions {
+                direction: LokiDirection::Forward,
+                limit: None,
+                interval: None,
+            },
+            end_exclusive: None,
+            encoding: LokiStreamEncoding::Folded,
+        },
     )
     .await
     .unwrap();

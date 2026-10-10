@@ -18,7 +18,7 @@ use krabka_observability::{
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
 use serde_json::json;
 use support::{
-    assert_loki_error, current_unix_epoch_nanos, json_body, multi_tenant_fixture,
+    Tenant, assert_loki_error, current_unix_epoch_nanos, json_body, multi_tenant_fixture,
     proto_logs_request_at_ns, text_body,
 };
 use tokio::net::TcpListener;
@@ -63,30 +63,11 @@ async fn a_per_tenant_override_changes_what_the_querier_serves() {
     let uri =
         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
 
-    let refused = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let refused = Tenant("tenant-a").get(&app, uri).await;
     assert!(refused.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(refused).await, "bad_data", "bytes");
 
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
     let body = json_body(served).await;
     check!(body["status"] == "success");
@@ -160,32 +141,30 @@ async fn the_defaults_block_caps_a_tenant_with_no_entry_of_its_own() {
         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
 
     // `tenant-a` has no entry, so the defaults block applies to it.
-    let refused = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let refused = Tenant("tenant-a").get(&app, uri).await;
     assert!(refused.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(refused).await, "bad_data", "bytes");
 
     // `tenant-b` names a limit of its own, which wins over the block.
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
+}
+
+/// A querier config over a fresh data root whose local manifest indexes one
+/// `{app="api"}` stream for each of tenant-a and tenant-b.
+fn two_tenant_querier_config() -> ServiceConfig {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let mut label_index = LabelIndex::default();
+    label_index.insert_series("tenant-a", labels([("app", "api")]));
+    label_index.insert_series("tenant-b", labels([("app", "api")]));
+    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
+    ServiceConfig {
+        target: Role::Querier,
+        listen_addr: "127.0.0.1:0".parse().unwrap(),
+        data_root: dir,
+        querier_index_source: QuerierIndexSource::LocalManifest,
+        ..ServiceConfig::default()
+    }
 }
 
 /// `--logs-limits-overrides-config` is what an operator actually sets, so
@@ -193,13 +172,8 @@ async fn the_defaults_block_caps_a_tenant_with_no_entry_of_its_own() {
 /// provider a test constructs by hand.
 #[tokio::test]
 async fn the_overrides_config_flag_reaches_the_service_router() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api")]));
-    label_index.insert_series("tenant-b", labels([("app", "api")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
-
-    let overrides_path = dir.join("logs-limits.yaml");
+    let querier = two_tenant_querier_config();
+    let overrides_path = querier.data_root.join("logs-limits.yaml");
     std::fs::write(
         &overrides_path,
         "overrides:\n  tenant-a:\n    max_query_string_bytes: \"1B\"\n",
@@ -207,42 +181,19 @@ async fn the_overrides_config_flag_reaches_the_service_router() {
     .unwrap();
 
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
         logs_limits_overrides_config: Some(overrides_path),
-        ..ServiceConfig::default()
+        ..querier
     };
     let app = build_service_router(&config, ServiceDependencies::default(), None)
         .await
         .unwrap();
     let uri = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D";
 
-    let refused = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let refused = Tenant("tenant-a").get(&app, uri).await;
     assert!(refused.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(refused).await, "bad_data", "query length");
 
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
 }
 
@@ -280,19 +231,9 @@ async fn an_unreadable_overrides_config_stops_the_service() {
 /// tenant gets.
 #[tokio::test]
 async fn the_scalar_limit_flags_cap_every_tenant_when_no_file_is_set() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api")]));
-    label_index.insert_series("tenant-b", labels([("app", "api")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
-
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
         max_query_string_bytes: Some(krabka_units::bytes(1)),
-        ..ServiceConfig::default()
+        ..two_tenant_querier_config()
     };
     let app = build_service_router(&config, ServiceDependencies::default(), None)
         .await
@@ -439,17 +380,7 @@ async fn a_lookback_cap_moves_the_query_start_rather_than_refusing_the_query() {
     let uri =
         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
 
-    let clamped = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let clamped = Tenant("tenant-a").get(&app, uri).await;
     assert!(clamped.status() == StatusCode::OK, "the query is answered");
     let body = json_body(clamped).await;
     check!(
@@ -457,16 +388,7 @@ async fn a_lookback_cap_moves_the_query_start_rather_than_refusing_the_query() {
         "the epoch-dated block is outside the lookback: {body}"
     );
 
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
     let body = json_body(served).await;
     check!(
@@ -487,17 +409,7 @@ async fn an_entries_limit_caps_the_limit_parameter_per_tenant() {
     let app = loki_router(state.with_limits_overrides(overrides));
     let uri = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030&limit=6";
 
-    let refused = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let refused = Tenant("tenant-a").get(&app, uri).await;
     assert!(refused.status() == StatusCode::BAD_REQUEST);
     let message = text_body(refused).await;
     check!(
@@ -505,15 +417,6 @@ async fn an_entries_limit_caps_the_limit_parameter_per_tenant() {
         "{message}"
     );
 
-    let served = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let served = Tenant("tenant-b").get(&app, uri).await;
     assert!(served.status() == StatusCode::OK);
 }

@@ -97,17 +97,11 @@ pub(crate) async fn rate_range_planner_path_matches_interpreter() {
             .await
             .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
         let planner = engine
-            .eval_rate_range_via_planner("t", selector, time_ms, kind)
+            .eval_rate_range_via_planner("t", MatrixSelectorAt { selector, time_ms }, kind)
             .await
             .unwrap_or_else(|error| panic!("planner `{query}`: {error}"));
 
-        let normalize = |result: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut samples) = result else {
-                panic!("expected vector for `{query}`");
-            };
-            samples.sort_by_key(|sample| sample.labels.fingerprint());
-            samples
-        };
+        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
 
         let interpreter = normalize(interpreter);
         let planner = normalize(planner);

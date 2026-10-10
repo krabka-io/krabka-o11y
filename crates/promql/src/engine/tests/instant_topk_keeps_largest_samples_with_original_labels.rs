@@ -2,25 +2,8 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_topk_keeps_largest_samples_with_original_labels() {
-    let mut store = InMemoryMetricStore::new();
-    for (instance, value) in [("a", 1.0), ("b", 3.0), ("c", 2.0)] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "memory_bytes"), ("instance", instance)]),
-            10_000,
-            value,
-        );
-    }
-
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "topk(2, memory_bytes)", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let engine = memory_bytes_engine();
+    let samples = instant_vector(&engine, "topk(2, memory_bytes)", 10_000).await;
     let mut projection = samples
         .iter()
         .map(|sample| {

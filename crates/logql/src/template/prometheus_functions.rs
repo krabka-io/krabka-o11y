@@ -7,6 +7,7 @@ use std::{collections::BTreeMap, net::IpAddr, sync::Arc};
 use num_traits::ToPrimitive;
 
 use super::{TemplateRenderContext, TemplateRuntimeValue as V};
+use crate::util::hex_digit_value;
 pub(super) mod histogram;
 pub(super) mod histogram_value;
 mod numeric;
@@ -282,7 +283,10 @@ fn url_path(value: &[u8]) -> Vec<u8> {
     while index < value.len() {
         if value[index] == b'%'
             && index + 2 < value.len()
-            && let (Some(high), Some(low)) = (hex(value[index + 1]), hex(value[index + 2]))
+            && let (Some(high), Some(low)) = (
+                hex_digit_value(value[index + 1]),
+                hex_digit_value(value[index + 2]),
+            )
         {
             output.push(high * 16 + low);
             index += 3;
@@ -292,14 +296,6 @@ fn url_path(value: &[u8]) -> Vec<u8> {
         index += 1;
     }
     output
-}
-fn hex(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 pub(super) fn query_result(value: V) -> V {

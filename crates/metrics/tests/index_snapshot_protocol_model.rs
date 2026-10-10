@@ -6,9 +6,12 @@
 //! is separate from manifest creation, and sweep selection is separate from a
 //! version-conditional reclamation.
 
-use std::time::Duration;
+use stateright::{Model, Property};
 
-use stateright::{Checker, Model, Property};
+#[path = "support/bounded_model.rs"]
+mod bounded_model;
+
+use bounded_model::{ModelBounds, check_bounded_model};
 
 const MAX_DEPTH: usize = 48;
 const MAX_STATES: usize = 1_000_000;
@@ -342,15 +345,12 @@ impl Model for SnapshotModel {
 
 #[test]
 fn concurrent_snapshot_publication_is_safe() {
-    let checker = SnapshotModel
-        .checker()
-        .target_max_depth(MAX_DEPTH)
-        .target_state_count(MAX_STATES)
-        .timeout(Duration::from_secs(30))
-        .spawn_bfs()
-        .join();
-    assert2::check!(checker.max_depth() < MAX_DEPTH);
-    assert2::check!(checker.state_count() < MAX_STATES);
-    assert2::check!(checker.unique_state_count() == SNAPSHOT_STATES);
-    checker.assert_properties();
+    check_bounded_model(
+        SnapshotModel,
+        &ModelBounds {
+            max_depth: MAX_DEPTH,
+            max_states: MAX_STATES,
+            expected_states: SNAPSHOT_STATES,
+        },
+    );
 }

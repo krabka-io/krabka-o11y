@@ -1,21 +1,13 @@
-use datafusion::{common::tree_node::TreeNodeRecursion, physical_expr::PhysicalExpr};
-
 use super::{
     Arc, ArrayRef, DataFusionError, DfResult, DisplayAs, DisplayFormatType, EquivalenceProperties,
-    ExecutionPlan, Float64Array, Int64Array, PlanProperties, RangeArray, RecordBatch,
-    RecordBatchStreamAdapter, SchemaRef, SendableRecordBatchStream, StepWindows, StreamExt,
-    TaskContext, UInt32Array, build_extended_range_schema, fmt, take,
+    ExecutionPlan, Float64Array, Int64Array, PlanProperties, RangeArray, RangeManipulateSettings,
+    RecordBatch, SchemaRef, StepWindows, UInt32Array, build_extended_range_schema, fmt, take,
 };
 
 /// Physical node that folds samples into per-eval-step range windows.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RangeManipulateExec {
-    pub(crate) start_ms: i64,
-    pub(crate) end_ms: i64,
-    pub(crate) interval_ms: i64,
-    pub(crate) range_ms: i64,
-    pub(crate) time_index: String,
-    pub(crate) field_column: String,
+    pub(crate) settings: RangeManipulateSettings,
     pub(crate) output_schema: SchemaRef,
     pub(crate) input: Arc<dyn ExecutionPlan>,
     pub(crate) properties: Arc<PlanProperties>,
@@ -23,17 +15,12 @@ pub struct RangeManipulateExec {
 
 impl RangeManipulateExec {
     #[must_use]
-    pub fn new(
-        start_ms: i64,
-        end_ms: i64,
-        interval_ms: i64,
-        range_ms: i64,
-        time_index: String,
-        field_column: String,
-        input: Arc<dyn ExecutionPlan>,
-    ) -> Self {
-        let output_schema =
-            build_extended_range_schema(&input.schema(), &time_index, &field_column);
+    pub fn new(settings: RangeManipulateSettings, input: Arc<dyn ExecutionPlan>) -> Self {
+        let output_schema = build_extended_range_schema(
+            &input.schema(),
+            &settings.time_index,
+            &settings.field_column,
+        );
         // RangeManipulate rewrites the schema (it drops the scalar time/value
         // columns and appends the windowed RangeArray columns), so the
         // input's `PlanProperties` schema is stale. Build fresh properties keyed
@@ -47,12 +34,7 @@ impl RangeManipulateExec {
             input_properties.boundedness,
         ));
         Self {
-            start_ms,
-            end_ms,
-            interval_ms,
-            range_ms,
-            time_index,
-            field_column,
+            settings,
             output_schema,
             input,
             properties,
@@ -66,10 +48,10 @@ impl RangeManipulateExec {
     /// `(eval_timestamps, ranges)`, where `ranges[i] == (offset, len)` indexes
     /// the sorted input rows for eval step `eval_timestamps[i]`.
     pub(crate) fn windows(&self, timestamps: &Int64Array) -> DfResult<StepWindows> {
-        if self.interval_ms <= 0 {
+        if self.settings.interval_ms <= 0 {
             return Err(DataFusionError::Execution(format!(
                 "interval_ms must be positive, got {}",
-                self.interval_ms
+                self.settings.interval_ms
             )));
         }
 
@@ -79,9 +61,9 @@ impl RangeManipulateExec {
         // as the grid steps forward.
         let mut lo = 0_usize;
         let mut hi = 0_usize;
-        let mut grid_ts = self.start_ms;
-        while grid_ts <= self.end_ms {
-            let lower_bound = grid_ts.checked_sub(self.range_ms).ok_or_else(|| {
+        let mut grid_ts = self.settings.start_ms;
+        while grid_ts <= self.settings.end_ms {
+            let lower_bound = grid_ts.checked_sub(self.settings.range_ms).ok_or_else(|| {
                 DataFusionError::Execution("range lower-bound underflow".to_string())
             })?;
             // Left edge is open: exclude samples with ts <= grid_ts - range.
@@ -104,7 +86,7 @@ impl RangeManipulateExec {
             ranges.push((offset, len));
 
             grid_ts = grid_ts
-                .checked_add(self.interval_ms)
+                .checked_add(self.settings.interval_ms)
                 .ok_or_else(|| DataFusionError::Execution("grid timestamp overflow".to_string()))?;
         }
 
@@ -114,7 +96,7 @@ impl RangeManipulateExec {
     pub(crate) fn manipulate_batch(&self, batch: &RecordBatch) -> DfResult<RecordBatch> {
         let time_column_index = batch
             .schema()
-            .index_of(&self.time_index)
+            .index_of(&self.settings.time_index)
             .map_err(|error| DataFusionError::Execution(error.to_string()))?;
         let timestamps = batch
             .column(time_column_index)
@@ -123,12 +105,12 @@ impl RangeManipulateExec {
             .ok_or_else(|| {
                 DataFusionError::Execution(format!(
                     "RangeManipulate time column `{}` must be Int64",
-                    self.time_index
+                    self.settings.time_index
                 ))
             })?;
         let value_column_index = batch
             .schema()
-            .index_of(&self.field_column)
+            .index_of(&self.settings.field_column)
             .map_err(|error| DataFusionError::Execution(error.to_string()))?;
         let values = batch
             .column(value_column_index)
@@ -137,7 +119,7 @@ impl RangeManipulateExec {
             .ok_or_else(|| {
                 DataFusionError::Execution(format!(
                     "RangeManipulate field column `{}` must be Float64",
-                    self.field_column
+                    self.settings.field_column
                 ))
             })?;
 
@@ -191,7 +173,10 @@ impl DisplayAs for RangeManipulateExec {
         write!(
             f,
             "PromRangeManipulateExec: start_ms={}, end_ms={}, interval_ms={}, range_ms={}",
-            self.start_ms, self.end_ms, self.interval_ms, self.range_ms
+            self.settings.start_ms,
+            self.settings.end_ms,
+            self.settings.interval_ms,
+            self.settings.range_ms
         )
     }
 }
@@ -201,64 +186,7 @@ impl ExecutionPlan for RangeManipulateExec {
         "RangeManipulateExec"
     }
 
-    fn properties(&self) -> &Arc<PlanProperties> {
-        &self.properties
-    }
+    single_input_exec_plumbing!();
 
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![&self.input]
-    }
-
-    fn maintains_input_order(&self) -> Vec<bool> {
-        vec![false]
-    }
-
-    fn apply_expressions(
-        &self,
-        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DfResult<TreeNodeRecursion>,
-    ) -> DfResult<TreeNodeRecursion> {
-        Ok(TreeNodeRecursion::Continue)
-    }
-
-    fn with_new_children(
-        self: Arc<Self>,
-        mut children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> DfResult<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "RangeManipulateExec expects one child".to_string(),
-            ));
-        }
-        Ok(Arc::new(Self::new(
-            self.start_ms,
-            self.end_ms,
-            self.interval_ms,
-            self.range_ms,
-            self.time_index.clone(),
-            self.field_column.clone(),
-            children.swap_remove(0),
-        )))
-    }
-
-    fn execute(
-        &self,
-        partition: usize,
-        context: Arc<TaskContext>,
-    ) -> DfResult<SendableRecordBatchStream> {
-        let input = self.input.execute(partition, context)?;
-        let schema = Arc::clone(&self.output_schema);
-        let this = Self {
-            start_ms: self.start_ms,
-            end_ms: self.end_ms,
-            interval_ms: self.interval_ms,
-            range_ms: self.range_ms,
-            time_index: self.time_index.clone(),
-            field_column: self.field_column.clone(),
-            output_schema: Arc::clone(&self.output_schema),
-            input: Arc::clone(&self.input),
-            properties: Arc::clone(&self.properties),
-        };
-        let stream = input.map(move |batch| batch.and_then(|batch| this.manipulate_batch(&batch)));
-        Ok(Box::pin(RecordBatchStreamAdapter::new(schema, stream)))
-    }
+    settings_batch_exec_methods!(manipulate_batch);
 }

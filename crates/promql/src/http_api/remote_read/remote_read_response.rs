@@ -1,6 +1,6 @@
 use super::{
-    ApiError, BTreeMap, Labels, MetricStore, PrometheusApiState, SeriesFingerprint, TenantId,
-    append_remote_read_exemplars, append_remote_read_float_samples,
+    ApiError, BTreeMap, Labels, MetricStore, PrometheusApiState, RemoteReadSampleSink,
+    SeriesFingerprint, TenantId, append_remote_read_exemplars, append_remote_read_float_samples,
     append_remote_read_histogram_samples, enforce_query_range_limit, enforce_selected_series_limit,
     pb, remote_read_matchers, validate_timestamp_range,
 };
@@ -65,30 +65,18 @@ pub(crate) async fn remote_read_response<S: MetricStore>(
         let mut by_fp = BTreeMap::<SeriesFingerprint, pb::v1::TimeSeries>::new();
         let mut returned_samples = 0_u64;
 
+        let mut sink = RemoteReadSampleSink {
+            state,
+            tenant,
+            labels_by_fp: &labels_by_fp,
+            series_by_fp: &mut by_fp,
+            returned_samples: &mut returned_samples,
+        };
         if let Some(float_table) = scan.float_table.clone() {
-            append_remote_read_float_samples(
-                state,
-                tenant,
-                &scan,
-                &float_table,
-                &labels_by_fp,
-                &mut by_fp,
-                &mut returned_samples,
-            )
-            .await?;
+            append_remote_read_float_samples(&mut sink, &scan, &float_table).await?;
         }
-
         if let Some(histogram_table) = scan.histogram_table.clone() {
-            append_remote_read_histogram_samples(
-                state,
-                tenant,
-                &scan,
-                &histogram_table,
-                &labels_by_fp,
-                &mut by_fp,
-                &mut returned_samples,
-            )
-            .await?;
+            append_remote_read_histogram_samples(&mut sink, &scan, &histogram_table).await?;
         }
 
         append_remote_read_exemplars(

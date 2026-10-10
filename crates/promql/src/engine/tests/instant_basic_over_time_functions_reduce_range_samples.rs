@@ -2,15 +2,11 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_basic_over_time_functions_reduce_range_samples() {
-    let mut store = InMemoryMetricStore::new();
-    for (ts_ms, value) in [(0_i64, 1.0), (60_000, 3.0), (120_000, 5.0)] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "queue_depth"), ("job", "api")]),
-            ts_ms,
-            value,
-        );
-    }
+    let store = SeriesFixture::new(labels(&[("__name__", "queue_depth"), ("job", "api")]))
+        .at(0_i64, 1.0)
+        .at(60_000, 3.0)
+        .at(120_000, 5.0)
+        .store();
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     for (query, expected, preserves_name) in [
@@ -23,13 +19,7 @@ pub(crate) async fn instant_basic_over_time_functions_reduce_range_samples() {
         ("last_over_time(queue_depth[2m])", 5.0, true),
         ("present_over_time(queue_depth[2m])", 1.0, false),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 120_000)
-            .await
-            .unwrap();
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(&engine, query, 120_000).await;
         assert2::assert!(samples.len() == 1);
         if preserves_name {
             assert2::assert!(samples[0].labels.get("__name__") == Some("queue_depth"));

@@ -1,15 +1,5 @@
 use super::*;
-
-fn record_for_test(tenant: &str) -> WalLogRecord {
-    WalLogRecord {
-        tenant: tenant.to_string(),
-        labels: BTreeMap::from([("app".to_string(), "api".to_string())]),
-        timestamp_ns: 1,
-        line: "line".to_string(),
-        structured_metadata: BTreeMap::new(),
-        position: None,
-    }
-}
+use crate::tests::api_record_for_test::api_record_for_test;
 
 /// A client can name any number of tenants. The quota snapshots and the rate
 /// buckets hold at most the configured count, so a spray of tenant names
@@ -34,7 +24,7 @@ pub(crate) async fn the_quota_cache_and_the_rate_buckets_stay_within_the_tenant_
                 .check(
                     &Principal::Unauthenticated,
                     &tenant,
-                    &[record_for_test(&name)]
+                    &[api_record_for_test(&name)]
                 )
                 .await
                 .is_ok()

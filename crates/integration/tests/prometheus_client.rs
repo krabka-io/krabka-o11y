@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc};
 
 use axum::{Router, extract::State, http::Uri};
 use testcontainers::{
@@ -7,6 +7,10 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 use tokio::sync::Mutex;
+
+mod captured_requests;
+
+use self::captured_requests::expect_seen;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -48,16 +52,7 @@ async fn official_prometheus_sends_remote_write_v1_and_v2() -> TestResult {
         .await?;
 
     let expected = BTreeSet::from(["/prom-v1".to_string(), "/prom-v2".to_string()]);
-    tokio::time::timeout(Duration::from_secs(45), async {
-        loop {
-            if *seen.lock().await == expected {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await?;
-    assert2::assert!(*seen.lock().await == expected);
+    expect_seen(&seen, &expected).await?;
     Ok(())
 }
 

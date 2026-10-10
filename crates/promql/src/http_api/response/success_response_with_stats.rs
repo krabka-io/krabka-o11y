@@ -3,9 +3,7 @@ use std::time::Duration;
 use krabka_units::prelude::*;
 use serde::Serialize;
 
-use super::{
-    Annotations, IntoResponse, Json, Map, QueryResult, Response, Value, json, result_json,
-};
+use super::{Annotations, QueryResult, Response, annotated_success_response, result_json};
 use crate::engine::QuerySampleStats;
 
 #[derive(Debug, Serialize)]
@@ -34,6 +32,19 @@ struct QuerySamples {
     peak_samples: usize,
 }
 
+/// How long each phase of one query took, as its `stats` timings report it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct QueryPhaseDurations {
+    /// Parameter decode and planning before the engine runs.
+    pub(crate) preparation: Duration,
+    /// The engine's evaluation.
+    pub(crate) evaluation: Duration,
+    /// The wait for a query permit.
+    pub(crate) queue: Duration,
+    /// The whole request, from receipt to response.
+    pub(crate) total: Duration,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct QueryResponseStats {
     timings: QueryTimings,
@@ -41,13 +52,13 @@ pub(crate) struct QueryResponseStats {
 }
 
 impl QueryResponseStats {
-    pub(crate) fn new(
-        samples: QuerySampleStats,
-        preparation: Duration,
-        evaluation: Duration,
-        queue: Duration,
-        total: Duration,
-    ) -> Self {
+    pub(crate) fn new(samples: QuerySampleStats, durations: QueryPhaseDurations) -> Self {
+        let QueryPhaseDurations {
+            preparation,
+            evaluation,
+            queue,
+            total,
+        } = durations;
         Self {
             timings: QueryTimings {
                 eval_total: evaluation.as_secs_f64(),
@@ -85,14 +96,5 @@ pub(crate) fn success_response_with_stats(
             "stats".to_string(),
             serde_json::to_value(stats).expect("query stats serialize"),
         );
-    let mut envelope = Map::new();
-    envelope.insert("status".to_string(), json!("success"));
-    envelope.insert("data".to_string(), data);
-    if !annotations.warnings.is_empty() {
-        envelope.insert("warnings".to_string(), json!(annotations.warnings));
-    }
-    if !annotations.infos.is_empty() {
-        envelope.insert("infos".to_string(), json!(annotations.http_infos()));
-    }
-    Json(Value::Object(envelope)).into_response()
+    annotated_success_response(data, annotations)
 }

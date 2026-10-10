@@ -4,15 +4,10 @@ use super::*;
 #[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn instant_double_exponential_smoothing_validates_factors() {
-    let mut store = InMemoryMetricStore::new();
-    for (ts_ms, value) in [(0_i64, 3.0), (60_000, 6.0)] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "queue_depth"), ("job", "api")]),
-            ts_ms,
-            value,
-        );
-    }
+    let store = SeriesFixture::new(labels(&[("__name__", "queue_depth"), ("job", "api")]))
+        .at(0_i64, 3.0)
+        .at(60_000, 6.0)
+        .store();
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let error = engine

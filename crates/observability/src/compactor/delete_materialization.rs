@@ -10,7 +10,7 @@ use crate::{
     log_block_deletion, read_log_block, read_log_block_from_object_store, read_log_index_manifest,
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
-    read_tenant_log_index_shard_ranges_from_object_store, write_log_block,
+    read_tenant_log_index_shard_ranges_or_empty_from_object_store, write_log_block,
     write_log_block_to_object_store, write_log_index_manifest,
     write_tenant_log_index_manifest_to_object_store,
     write_tenant_log_index_shard_catalog_to_object_store,

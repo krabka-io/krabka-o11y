@@ -4,14 +4,30 @@ package(default_visibility = ["//visibility:public"])
 
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
 # `tests/support/lifecycle_store.rs` opens the store a signal's lifecycle suite
-# runs against. The four signal crates reach it with `#[path]`, so it has to be
-# nameable from there.
+# runs against, and `tests/support/hooked_store.rs` is the in-memory store the
+# traces and profiles suites inject faults through. `tests/support/flaky_put_store.rs`
+# wraps it in a store whose first puts fail, for the block writer's and the
+# metrics compactor's unit tests. The signal crates reach them with `#[path]`,
+# so they have to be nameable from there.
 exports_files([
     "Cargo.toml",
+    "tests/support/flaky_put_store.rs",
+    "tests/support/hooked_store.rs",
     "tests/support/lifecycle_store.rs",
 ])
 
-crate_library(name = "blockstore")
+crate_library(
+    name = "blockstore",
+    # The writer's unit tests reach the flaky object store, which is shared
+    # with //crates/metrics, with `#[path]`.
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/bin/**"],
+    ) + [
+        "tests/support/flaky_put_store.rs",
+        "tests/support/hooked_store.rs",
+    ],
+)
 
 crate_binary(
     name = "krabka-storage-admin",

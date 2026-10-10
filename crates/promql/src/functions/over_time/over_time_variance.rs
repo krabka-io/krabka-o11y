@@ -3,12 +3,12 @@ use super::kahan_sum_inc;
 /// Returns the population variance of `values`.
 ///
 /// The fold uses Welford's online algorithm with Kahan-compensated
-/// accumulation, a port of the engine's `over_time_variance`, which matches
-/// Prometheus' `stdvar_over_time` and `stddev_over_time`. The naive
+/// accumulation; the engine's range functions and the `*_over_time` UDFs
+/// share it, and it matches Prometheus' `stdvar_over_time` and `stddev_over_time`. The naive
 /// `E[x^2] - E[x]^2` form suffers catastrophic cancellation for large-magnitude
 /// close-valued windows and gives a negative variance whose `sqrt` is NaN.
 /// Welford stays stable.
-pub(crate) fn over_time_variance(values: &[f64]) -> f64 {
+pub(crate) fn over_time_variance(values: impl IntoIterator<Item = f64>) -> f64 {
     let mut count = 0.0_f64;
     let (mut mean, mut mean_comp) = (0.0_f64, 0.0_f64);
     let (mut aux, mut aux_comp) = (0.0_f64, 0.0_f64);

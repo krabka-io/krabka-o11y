@@ -14,94 +14,32 @@ use tower::ServiceExt as _;
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_can_reference_log_timestamp() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%7C%20line_format%20%60%7B%7B%20__timestamp__%20%7C%20unixEpochNanos%20%7D%7D%60&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "19"]])));
+    let values = query_range_values("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%7C%20line_format%20%60%7B%7B%20__timestamp__%20%7C%20unixEpochNanos%20%7D%7D%60&start=0.000000000&end=0.000000030").await;
+    assert!(values == Some(json!([["19", "19"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_accepts_line_and_timestamp_aliases() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%7C%20line_format%20%60%7B%7B%20line%20%7D%7D%20%7B%7B%20timestamp%20%7C%20unixEpochNanos%20%7D%7D%60&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "api error 19"]])));
+    let values = query_range_values("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%7C%20line_format%20%60%7B%7B%20line%20%7D%7D%20%7B%7B%20timestamp%20%7C%20unixEpochNanos%20%7D%7D%60&start=0.000000000&end=0.000000030").await;
+    assert!(values == Some(json!([["19", "api error 19"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_formats_timestamp_with_date_helper() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query={app=\"api\"} |= \"error\" | line_format `{{ __timestamp__ | date \"2006-01-02\" }}`&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "1970-01-01"]])));
+    let values = posted_query_range_values(
+        "query={app=\"api\"} |= \"error\" | line_format `{{ __timestamp__ | date \"2006-01-02\" }}`&start=0.000000000&end=0.000000030",
+    )
+    .await;
+    assert!(values == Some(json!([["19", "1970-01-01"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_converts_epoch_strings_with_unix_to_time_helper() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query={app=\"api\"} |= \"error\" | line_format `{{ \"1679577215000\" | unixToTime | date \"2006-01-02\" }}`&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "2023-03-23"]])));
+    let values = posted_query_range_values(
+        "query={app=\"api\"} |= \"error\" | line_format `{{ \"1679577215000\" | unixToTime | date \"2006-01-02\" }}`&start=0.000000000&end=0.000000030",
+    )
+    .await;
+    assert!(values == Some(json!([["19", "2023-03-23"]])));
 }
 
 #[tokio::test]
@@ -167,177 +105,65 @@ async fn query_range_endpoint_line_format_exposes_now_template_helper() {
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_ranges_over_from_json_arrays() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ range $q := fromJson "[{\"query\":\"rate\",\"duration\":30},{\"query\":\"sum\",\"duration\":15}]" }}{{ $q.query }}={{ $q.duration }};{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "rate=30;sum=15;"]])));
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ range $q := fromJson "[{\"query\":\"rate\",\"duration\":30},{\"query\":\"sum\",\"duration\":15}]" }}{{ $q.query }}={{ $q.duration }};{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "rate=30;sum=15;"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_ranges_with_current_dot_over_from_json_arrays() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ range fromJson "[{\"query\":\"rate\",\"duration\":30},{\"query\":\"sum\",\"duration\":15}]" }}{{ .query }}={{ .duration }};{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "rate=30;sum=15;"]])));
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ range fromJson "[{\"query\":\"rate\",\"duration\":30},{\"query\":\"sum\",\"duration\":15}]" }}{{ .query }}={{ .duration }};{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "rate=30;sum=15;"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_ranges_with_index_and_value_variables() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ range $i, $q := fromJson "[{\"query\":\"rate\",\"duration\":30},{\"query\":\"sum\",\"duration\":15}]" }}{{ $i }}:{{ $q.query }}={{ $q.duration }};{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "0:rate=30;1:sum=15;"]])));
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ range $i, $q := fromJson "[{\"query\":\"rate\",\"duration\":30},{\"query\":\"sum\",\"duration\":15}]" }}{{ $i }}:{{ $q.query }}={{ $q.duration }};{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "0:rate=30;1:sum=15;"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_ranges_over_from_json_objects() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ range $name, $duration := fromJson "{\"rate\":30,\"sum\":15}" }}{{ $name }}={{ $duration }};{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "rate=30;sum=15;"]])));
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ range $name, $duration := fromJson "{\"rate\":30,\"sum\":15}" }}{{ $name }}={{ $duration }};{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "rate=30;sum=15;"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_uses_range_else_for_empty_from_json_arrays() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ range $q := fromJson "[]" }}{{ $q.query }};{{ else }}none{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "none"]])));
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ range $q := fromJson "[]" }}{{ $q.query }};{{ else }}none{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "none"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_go_template_index_and_slice_helpers() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ index (fromJson "{\"servers\":[{\"name\":\"api\"},{\"name\":\"worker\"}],\"status\":200}") "servers" 1 "name" }}|{{ slice "abcdef" 1 4 }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "worker|bcd"]])));
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ index (fromJson "{\"servers\":[{\"name\":\"api\"},{\"name\":\"worker\"}],\"status\":200}") "servers" 1 "name" }}|{{ slice "abcdef" 1 4 }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "worker|bcd"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_integer_math_template_helpers() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query={app=\"api\"} |= \"error\" | line_format `{{ add 3 2 5 }} {{ sub 5 2 }} {{ mul 5 2 3 }} {{ div 10 2 }} {{ mod 10 3 }}`&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "10 3 30 5 1"]])));
+    let values = posted_query_range_values(
+        "query={app=\"api\"} |= \"error\" | line_format `{{ add 3 2 5 }} {{ sub 5 2 }} {{ mul 5 2 3 }} {{ div 10 2 }} {{ mod 10 3 }}`&start=0.000000000&end=0.000000030",
+    )
+    .await;
+    assert!(values == Some(json!([["19", "10 3 30 5 1"]])));
 }
 
 #[tokio::test]
@@ -370,27 +196,11 @@ async fn query_range_endpoint_line_format_applies_float_math_template_helpers() 
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_base64_template_helpers() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query={app=\"api\"} |= \"error\" | line_format `{{ \"hello\" | b64enc }} {{ \"aGVsbG8=\" | b64dec }}`&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "aGVsbG8= hello"]])));
+    let values = posted_query_range_values(
+        "query={app=\"api\"} |= \"error\" | line_format `{{ \"hello\" | b64enc }} {{ \"aGVsbG8=\" | b64dec }}`&start=0.000000000&end=0.000000030",
+    )
+    .await;
+    assert!(values == Some(json!([["19", "aGVsbG8= hello"]])));
 }
 
 #[tokio::test]
@@ -422,27 +232,11 @@ async fn query_range_endpoint_line_format_applies_measurement_template_helpers()
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_printf_template_helper() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query={app=\"api\"} |= \"error\" | line_format `{{ printf \"status=%25s\" \"500\" }} {{ printf \"%25-5.5s\" \"GET\" }}`&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "status=500 GET  "]])));
+    let values = posted_query_range_values(
+        "query={app=\"api\"} |= \"error\" | line_format `{{ printf \"status=%25s\" \"500\" }} {{ printf \"%25-5.5s\" \"GET\" }}`&start=0.000000000&end=0.000000030",
+    )
+    .await;
+    assert!(values == Some(json!([["19", "status=500 GET  "]])));
 }
 
 #[tokio::test]
@@ -505,234 +299,125 @@ async fn query_range_endpoint_line_format_applies_go_template_escape_helpers() {
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_conditional_template_blocks() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query={app=\"api\"} |= \"error\" | line_format `{{ if contains \"error\" __line__ }}error{{ else }}other{{ end }}`&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "error"]])));
+    let values = posted_query_range_values(
+        "query={app=\"api\"} |= \"error\" | line_format `{{ if contains \"error\" __line__ }}error{{ else }}other{{ end }}`&start=0.000000000&end=0.000000030",
+    )
+    .await;
+    assert!(values == Some(json!([["19", "error"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_control_template_variable_declarations() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ if $line := __line__ }}line={{ $line }}{{ else }}missing={{ $line }}{{ end }}|{{ with $payload := fromJson "{\"route\":\"checkout\"}" }}route={{ .route }}/{{ $payload.route }}{{ else }}missing={{ $payload }}{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(
-        body.pointer("/data/result/0/values")
-            == Some(&json!([["19", "line=api error|route=checkout/checkout"]]))
-    );
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ if $line := __line__ }}line={{ $line }}{{ else }}missing={{ $line }}{{ end }}|{{ with $payload := fromJson "{\"route\":\"checkout\"}" }}route={{ .route }}/{{ $payload.route }}{{ else }}missing={{ $payload }}{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "line=api error|route=checkout/checkout"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_can_reference_root_fields() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ with fromJson "{\"status\":\"200\"}" }}inner={{ .status }} root={{ $.app }}{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "inner=200 root=api"]])));
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ with fromJson "{\"status\":\"200\"}" }}inner={{ .status }} root={{ $.app }}{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "inner=200 root=api"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_json_template_truthiness() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ if fromJson "[]" }}array{{ else }}empty-array{{ end }}|{{ if fromJson "{}" }}object{{ else }}empty-object{{ end }}|{{ if fromJson "0" }}number{{ else }}empty-number{{ end }}|{{ with fromJson "{\"method\":\"GET\"}" }}{{ .method }}{{ else }}missing{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(
-        body.pointer("/data/result/0/values")
-            == Some(&json!([[
-                "19",
-                "empty-array|empty-object|empty-number|GET"
-            ]]))
-    );
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ if fromJson "[]" }}array{{ else }}empty-array{{ end }}|{{ if fromJson "{}" }}object{{ else }}empty-object{{ end }}|{{ if fromJson "0" }}number{{ else }}empty-number{{ end }}|{{ with fromJson "{\"method\":\"GET\"}" }}{{ .method }}{{ else }}missing{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "empty-array|empty-object|empty-number|GET"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_else_with_template_blocks() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ with .missing }}primary={{ . }}{{ else with fromJson "{\"fallback\":\"worker\"}" }}fallback={{ .fallback }}{{ else }}none{{ end }}`&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "fallback=worker"]])));
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ with .missing }}primary={{ . }}{{ else with fromJson "{\"fallback\":\"worker\"}" }}fallback={{ .fallback }}{{ else }}none{{ end }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "fallback=worker"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_boolean_template_combinators() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query={app=\"api\"} |= \"error\" | line_format `{{ if and (contains \"error\" __line__) (not (contains \"debug\" __line__)) }}matched{{ else }}other{{ end }}`&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "matched"]])));
+    let values = posted_query_range_values(
+        "query={app=\"api\"} |= \"error\" | line_format `{{ if and (contains \"error\" __line__) (not (contains \"debug\" __line__)) }}matched{{ else }}other{{ end }}`&start=0.000000000&end=0.000000030",
+    )
+    .await;
+    assert!(values == Some(json!([["19", "matched"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_ordering_template_helpers() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query={app=\"api\"} |= \"error\" | line_format `{{ if and (gt 2 1) (le 2 2) }}matched{{ else }}other{{ end }}`&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "matched"]])));
+    let values = posted_query_range_values(
+        "query={app=\"api\"} |= \"error\" | line_format `{{ if and (gt 2 1) (le 2 2) }}matched{{ else }}other{{ end }}`&start=0.000000000&end=0.000000030",
+    )
+    .await;
+    assert!(values == Some(json!([["19", "matched"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_applies_template_variable_assignments() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query={app=\"api\"} |= \"error\" | line_format `{{ $line := __line__ }}seen={{ $line }}`&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "seen=api error"]])));
+    let values = posted_query_range_values(
+        "query={app=\"api\"} |= \"error\" | line_format `{{ $line := __line__ }}seen={{ $line }}`&start=0.000000000&end=0.000000030",
+    )
+    .await;
+    assert!(values == Some(json!([["19", "seen=api error"]])));
 }
 
 #[tokio::test]
 async fn query_range_endpoint_line_format_reassigns_template_variables() {
-    let state = fixture();
-    let app = loki_router(state);
+    let values = posted_query_range_values(
+        r#"query={app="api"} |= "error" | line_format `{{ $line := __line__ }}{{ $line = print "seen=" $line }}{{ $line }}`&start=0.000000000&end=0.000000030"#,
+    )
+    .await;
+    assert!(values == Some(json!([["19", "seen=api error"]])));
+}
 
-    let response = app
+/// POSTs `form_body` to tenant-a's `query_range` over the shared fixture,
+/// checks that it succeeds, and returns the first result's values.
+/// The values of the first stream that `tenant-a` gets for the `GET` of
+/// `uri` over the fixture.
+async fn query_range_values(uri: &str) -> Option<Value> {
+    let response = loki_router(fixture())
         .oneshot(
             Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/query_range")
+                .uri(uri)
                 .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api"} |= "error" | line_format `{{ $line := __line__ }}{{ $line = print "seen=" $line }}{{ $line }}`&start=0.000000000&end=0.000000030"#,
-                ))
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
 
     assert!(response.status() == StatusCode::OK);
-    let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "seen=api error"]])));
+    json_body(response)
+        .await
+        .pointer("/data/result/0/values")
+        .cloned()
+}
+
+async fn posted_query_range_values(form_body: &str) -> Option<Value> {
+    let response = loki_router(fixture())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/loki/api/v1/query_range")
+                .header("X-Scope-OrgID", "tenant-a")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(form_body.to_owned()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(response.status() == StatusCode::OK);
+    json_body(response)
+        .await
+        .pointer("/data/result/0/values")
+        .cloned()
 }

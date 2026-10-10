@@ -70,6 +70,7 @@ use query::{
     query, query_exemplars, query_exemplars_post, query_post, query_range, query_range_post,
 };
 use remote_read::remote_read;
+pub use remote_read::remote_read_reset_hint;
 use request::{
     CardinalityParams, DiscoveryParams, apply_limit, apply_result_limit, check_range_resolution,
     discovery_matchers, discovery_window, duration_param, enforce_query_range_limit,
@@ -108,6 +109,8 @@ mod prometheus_api_state;
 mod prometheus_router;
 mod query_frontend_state;
 mod record_query_response;
+mod request_auth;
+mod request_caller;
 mod ruler_alert_state_store;
 mod ruler_rule_store;
 mod rules_params;
@@ -123,6 +126,8 @@ pub use prometheus_api_state::PrometheusApiState;
 pub use prometheus_router::{mimir_ruler_prometheus_router, prometheus_router};
 use query_frontend_state::QueryFrontendState;
 use record_query_response::record_query_response;
+use request_auth::{Rejection, RequestAuth};
+use request_caller::{AuthorizedTenant, ParsedForm, ParsedQuery, RequestCaller};
 use ruler_alert_state_store::RulerAlertStateStore;
 use ruler_rule_store::RulerRuleStore;
 use rules_params::RulesParams;

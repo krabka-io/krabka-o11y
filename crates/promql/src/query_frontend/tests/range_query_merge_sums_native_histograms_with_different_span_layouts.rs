@@ -4,11 +4,8 @@ use super::*;
 pub(crate) fn range_query_merge_sums_native_histograms_with_different_span_layouts() {
     let labels = labels(&[]);
     let result = merge_range_query_results(vec![
-        QueryResult::RangeMatrix(vec![RangeSeries {
-            drop_name: false,
-            start_timestamps_ms: std::collections::BTreeMap::new(),
-            labels: labels.clone().into(),
-            samples: vec![(
+        UnlabeledMatrix::default()
+            .at(
                 0,
                 SampleValue::Histogram(native_histogram_with_positive_buckets(
                     3.0,
@@ -19,13 +16,10 @@ pub(crate) fn range_query_merge_sums_native_histograms_with_different_span_layou
                     }],
                     vec![1.0, 2.0],
                 )),
-            )],
-        }]),
-        QueryResult::RangeMatrix(vec![RangeSeries {
-            drop_name: false,
-            start_timestamps_ms: std::collections::BTreeMap::new(),
-            labels: labels.clone().into(),
-            samples: vec![(
+            )
+            .matrix(),
+        UnlabeledMatrix::default()
+            .at(
                 0,
                 SampleValue::Histogram(native_histogram_with_positive_buckets(
                     7.0,
@@ -36,8 +30,8 @@ pub(crate) fn range_query_merge_sums_native_histograms_with_different_span_layou
                     }],
                     vec![3.0, 4.0],
                 )),
-            )],
-        }]),
+            )
+            .matrix(),
     ])
     .unwrap();
 

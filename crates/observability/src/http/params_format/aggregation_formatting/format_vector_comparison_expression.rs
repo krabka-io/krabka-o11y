@@ -1,4 +1,5 @@
 use super::{
+    ComparisonResult, VectorComparisonText, format_vector_comparison_text,
     parse_formatted_vector_function, parse_vector_binary_modifiers,
     parse_vector_comparison_operator,
 };
@@ -22,16 +23,11 @@ pub(crate) fn format_vector_comparison_expression(query: &str) -> Option<String>
     if end != query.len() {
         return None;
     }
-    match (bool_modifier, modifiers) {
-        (true, Some(modifiers)) => Some(format!(
-            "({left} {operator} bool {}{}{right})",
-            modifiers.text, modifiers.right_separator
-        )),
-        (true, None) => Some(format!("({left} {operator} bool {right})")),
-        (false, Some(modifiers)) => Some(format!(
-            "({left} {operator} {}{}{right})",
-            modifiers.text, modifiers.right_separator
-        )),
-        (false, None) => Some(format!("({left} {operator} {right})")),
-    }
+    Some(format_vector_comparison_text(VectorComparisonText {
+        left: &left,
+        operator,
+        comparison_result: ComparisonResult::from_bool_modifier(bool_modifier),
+        modifiers,
+        right: &right,
+    }))
 }

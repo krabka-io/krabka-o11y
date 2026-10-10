@@ -1,13 +1,17 @@
 use super::{
-    Arc, BTreeSet, Expr, Extension, FunctionRegistry, LabeledSeries, LogicalPlan,
-    LogicalPlanBuilder, PromqlError, RANGE_SUFFIX, RATE_VALUE_COLUMN, RangeManipulate,
-    RateRangePlan, RateUdfKind, Result, SeriesDivide, SeriesNormalize, StepGrid, TIME_COLUMN, Time,
-    TimeExt, VALUE_COLUMN, build_leaf_batch, col, leaf_scan, leaf_schema, lit,
-    prom_session_context,
+    Expr, LabeledSeries, LogicalPlanBuilder, RATE_VALUE_COLUMN, RateRangePlan, RateUdfKind, Result,
+    TIME_COLUMN, VALUE_COLUMN, col, lit, prom_session_context,
+};
+use crate::planner::{
+    RangeWindowGrid,
+    leaf::{
+        RangeWindows, SampleTimePresence, SeriesLeaf, WindowUdf, divide_and_normalize,
+        range_udf_plan, series_leaf,
+    },
 };
 
 /// Builds the leaf table and operator chain that evaluates `f(selector[range])`
-/// at every instant of `grid` with the given `range` width.
+/// at every instant of `windows.grid` with the `windows.range` width.
 ///
 /// An instant query passes a one-point grid; the range driver passes the query's
 /// whole step grid, so one plan covers every step. [`RangeManipulate`] derives
@@ -30,10 +34,10 @@ use super::{
 /// the projection plan.
 pub async fn plan_rate_range_selector(
     mut series: Vec<LabeledSeries>,
-    grid: StepGrid,
-    range: Time,
+    windows: RangeWindowGrid,
     kind: RateUdfKind,
 ) -> Result<RateRangePlan> {
+    let RangeWindowGrid { grid, range } = windows;
     let created = series.iter().any(|series| {
         series
             .samples
@@ -41,33 +45,15 @@ pub async fn plan_rate_range_selector(
             .any(|sample| sample.start_timestamp_ms.is_some())
     });
     if created {
-        super::fold_start_timestamp_rates::fold_start_timestamp_rates(
-            &mut series,
-            grid,
-            range,
-            kind,
-        );
+        super::fold_start_timestamp_rates::fold_start_timestamp_rates(&mut series, windows, kind);
     }
 
-    // Collect the distinct label names across all matched series; these become
-    // the label columns carried through the operator chain and projected out.
-    let mut label_names: BTreeSet<String> = BTreeSet::new();
-    let mut labels_by_fp = std::collections::BTreeMap::new();
-    for one in &series {
-        for (name, _) in one.labels.iter() {
-            label_names.insert(name.clone());
-        }
-        labels_by_fp
-            .entry(one.fp)
-            .or_insert_with(|| (*one.labels).clone());
-    }
-    let label_names: Vec<String> = label_names.into_iter().collect();
-
-    let schema = leaf_schema(&label_names);
-    let batch = build_leaf_batch(Arc::clone(&schema), &label_names, &series)?;
-
+    let SeriesLeaf {
+        label_names,
+        labels_by_fp,
+        leaf,
+    } = series_leaf(&series, "prom_rate_leaf", SampleTimePresence::Omitted)?;
     let ctx = prom_session_context();
-    let leaf = leaf_scan("prom_rate_leaf", schema, batch)?;
 
     if created {
         let mut projections: Vec<Expr> = label_names.iter().map(col).collect();
@@ -83,73 +69,25 @@ pub async fn plan_rate_range_selector(
         });
     }
 
-    // SeriesDivide on every label column splits the sorted input into exact
-    // per-series batches.
-    let divide = LogicalPlan::Extension(Extension {
-        node: Arc::new(SeriesDivide {
-            tag_columns: label_names.clone(),
-            input: leaf,
-        }),
-    });
-    // SeriesNormalize sorts each per-series batch by timestamp. The offset is
-    // already folded into the grid by the caller, so it is zero here. NaN is
-    // NOT filtered here: matrix selectors keep genuine NaN (only stale-NaN is
-    // dropped, which the caller already did), so the operator chain must not
-    // strip it.
-    let normalize = LogicalPlan::Extension(Extension {
-        node: Arc::new(SeriesNormalize {
-            offset_ms: 0,
-            time_index: TIME_COLUMN.to_string(),
-            need_filter_out_nan: false,
-            input: divide,
-        }),
-    });
-    // RangeManipulate folds the samples into each grid instant's window
-    // (t - range, t].
-    let range_ms = range.millis_i64();
-    let range = RangeManipulate::new(
-        grid.start,
-        grid.end,
-        grid.step,
-        range_ms,
-        TIME_COLUMN.to_string(),
-        VALUE_COLUMN.to_string(),
-        normalize,
-    )
-    .map_err(|error| PromqlError::Exec(error.to_string()))?;
-    let range = LogicalPlan::Extension(Extension {
-        node: Arc::new(range),
-    });
-
-    // Project the label columns through plus the rate-family UDF over the
-    // windowed columns, aliased to the result value column.
-    let udf = ctx
-        .udf(kind.udf_name())
-        .map_err(|error| PromqlError::Exec(error.to_string()))?;
-    let time_range_column = format!("{TIME_COLUMN}{RANGE_SUFFIX}");
-    let value_range_column = format!("{VALUE_COLUMN}{RANGE_SUFFIX}");
-    let rate_call = udf
-        .call(vec![
-            col(TIME_COLUMN),
-            col(time_range_column),
-            col(value_range_column),
-            lit(range_ms),
-        ])
-        .alias(RATE_VALUE_COLUMN);
-
-    let mut projections: Vec<Expr> = label_names.iter().map(col).collect();
-    projections.push(rate_call);
-    // Carry the eval timestamp through, so a grid-driven plan's output says
-    // which instant each row belongs to. It is an `Int64` column, so neither the
-    // label reader nor the aggregate's grouping-column scan mistakes it for a
-    // label.
-    projections.push(col(TIME_COLUMN));
-
-    let plan = LogicalPlanBuilder::from(range)
-        .project(projections)
-        .map_err(|error| PromqlError::Exec(error.to_string()))?
-        .build()
-        .map_err(|error| PromqlError::Exec(error.to_string()))?;
+    let normalize = divide_and_normalize(&label_names, leaf);
+    let plan = range_udf_plan(
+        &ctx,
+        RangeWindows {
+            normalize,
+            grid,
+            range,
+            label_names: &label_names,
+        },
+        WindowUdf {
+            udf_name: kind.udf_name(),
+            build_args: |window: [Expr; 3], range_ms: i64| {
+                let mut args = window.to_vec();
+                args.push(lit(range_ms));
+                args
+            },
+            value_column: RATE_VALUE_COLUMN,
+        },
+    )?;
 
     Ok(RateRangePlan {
         ctx,

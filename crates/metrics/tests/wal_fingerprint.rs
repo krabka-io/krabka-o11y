@@ -1,9 +1,86 @@
 use assert2::assert;
-use krabka_metrics::{SamplePayload, WalRecord};
+use krabka_metrics::{MetricLabels, SamplePayload, WalRecord};
 
 #[test]
 fn wal_fingerprints_keep_canonical_order_and_original_label_bytes() {
-    let cases = [
+    let mut cases = canonical_cases();
+    cases.extend([
+        (
+            vec![
+                ("a".to_owned(), b"old".to_vec()),
+                ("a".to_owned(), vec![0xff]),
+            ],
+            0x41c8_72a7_2d0b_9833,
+        ),
+        (
+            vec![
+                ("z".to_owned(), b"last".to_vec()),
+                ("a".to_owned(), b"old".to_vec()),
+                ("a".to_owned(), vec![0xfe]),
+            ],
+            0xf264_0131_96a1_a379,
+        ),
+        (
+            vec![
+                ("a".to_owned(), b"old".to_vec()),
+                ("z".to_owned(), b"last".to_vec()),
+                ("a".to_owned(), "\u{fffd}".as_bytes().to_vec()),
+            ],
+            0xe399_2f90_611a_8c2a,
+        ),
+    ]);
+    for (pairs, expected) in cases {
+        let record = record(pairs);
+        assert!(record.series_fingerprint() == expected);
+        assert!(record.labels().fingerprint() == expected);
+        let restored = WalRecord::decode(&record.encode().unwrap()).unwrap();
+        assert!(restored == record && restored.series_fingerprint() == expected);
+    }
+
+    let mut reversed = record(vec![
+        ("job".to_owned(), b"api".to_vec()),
+        ("__name__".to_owned(), b"http_requests_total".to_vec()),
+    ]);
+    assert!(reversed.series_fingerprint() == 0x24b4_e51d_5c88_a37e);
+    reversed.labels.reverse();
+    assert!(reversed.series_fingerprint() == 0x24b4_e51d_5c88_a37e);
+}
+
+fn record(labels: Vec<(String, Vec<u8>)>) -> WalRecord {
+    WalRecord {
+        tenant: "tenant".to_owned(),
+        labels: labels
+            .into_iter()
+            .map(|(name, value)| (name, value.into()))
+            .collect(),
+        payload: SamplePayload::Float {
+            timestamp_ms: 17,
+            value: 3.5,
+            start_timestamp_ms: Some(11),
+        },
+        exemplars: Vec::new(),
+    }
+}
+
+#[test]
+fn canonical_fingerprints_preserve_lengths_order_and_original_bytes() {
+    for (pairs, expected) in canonical_cases() {
+        let labels = MetricLabels::from_pairs(pairs.clone());
+        assert!(labels.fingerprint() == expected);
+        assert!(MetricLabels::from_pairs(pairs.into_iter().rev()).fingerprint() == expected);
+        if let Ok(storage_labels) = labels.to_storage_labels() {
+            assert!(storage_labels.fingerprint() == expected);
+        }
+    }
+}
+
+// Label name and raw value pairs, in the order a client sent them.
+type LabelPairs = Vec<(String, Vec<u8>)>;
+
+// Distinct label sets and the fingerprints they hash to: lengths, order,
+// separators, empty names and values, and bytes that are not UTF-8.
+fn canonical_cases() -> Vec<(LabelPairs, u64)> {
+    vec![
         (vec![], 0xcbf2_9ce4_8422_2325),
         (
             vec![
@@ -44,59 +121,5 @@ fn wal_fingerprints_keep_canonical_order_and_original_label_bytes() {
             vec![("é".to_owned(), "☃".as_bytes().to_vec())],
             0x9ccf_2c0b_8143_2adf,
         ),
-        (
-            vec![
-                ("a".to_owned(), b"old".to_vec()),
-                ("a".to_owned(), vec![0xff]),
-            ],
-            0x41c8_72a7_2d0b_9833,
-        ),
-        (
-            vec![
-                ("z".to_owned(), b"last".to_vec()),
-                ("a".to_owned(), b"old".to_vec()),
-                ("a".to_owned(), vec![0xfe]),
-            ],
-            0xf264_0131_96a1_a379,
-        ),
-        (
-            vec![
-                ("a".to_owned(), b"old".to_vec()),
-                ("z".to_owned(), b"last".to_vec()),
-                ("a".to_owned(), "\u{fffd}".as_bytes().to_vec()),
-            ],
-            0xe399_2f90_611a_8c2a,
-        ),
-    ];
-    for (pairs, expected) in cases {
-        let record = record(pairs);
-        assert!(record.series_fingerprint() == expected);
-        assert!(record.labels().fingerprint() == expected);
-        let restored = WalRecord::decode(&record.encode().unwrap()).unwrap();
-        assert!(restored == record && restored.series_fingerprint() == expected);
-    }
-
-    let mut reversed = record(vec![
-        ("job".to_owned(), b"api".to_vec()),
-        ("__name__".to_owned(), b"http_requests_total".to_vec()),
-    ]);
-    assert!(reversed.series_fingerprint() == 0x24b4_e51d_5c88_a37e);
-    reversed.labels.reverse();
-    assert!(reversed.series_fingerprint() == 0x24b4_e51d_5c88_a37e);
-}
-
-fn record(labels: Vec<(String, Vec<u8>)>) -> WalRecord {
-    WalRecord {
-        tenant: "tenant".to_owned(),
-        labels: labels
-            .into_iter()
-            .map(|(name, value)| (name, value.into()))
-            .collect(),
-        payload: SamplePayload::Float {
-            timestamp_ms: 17,
-            value: 3.5,
-            start_timestamp_ms: Some(11),
-        },
-        exemplars: Vec::new(),
-    }
+    ]
 }

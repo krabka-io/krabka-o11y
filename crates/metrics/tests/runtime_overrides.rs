@@ -8,21 +8,16 @@
 //! The listed tenant gets the limits in the file. An unlisted one gets the
 //! defaults.
 
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
-
 use assert2::check;
-use async_trait::async_trait;
-use bytes::Bytes;
-use krabka_metrics::{
-    OverridesProvider, WalRecord,
-    distributor::{DistributorState, ProduceError, WalSink, serve},
-    wire::pb,
-};
-use krabka_observability::server_security::ServerSecurity;
+use krabka_metrics::{OverridesProvider, wire::pb};
 use prost::Message;
+
+#[path = "support/overrides_distributor.rs"]
+mod overrides_distributor;
+#[path = "support/recording_sink.rs"]
+mod recording_sink;
+
+use self::overrides_distributor::OverridesDistributor;
 
 const TIGHT: &str = "tenant-tight";
 const LOOSE: &str = "tenant-loose";
@@ -33,30 +28,6 @@ overrides:
     max_series_per_request: 1
     max_samples_per_series: 1
 ";
-
-/// In-memory WAL sink. It records every appended `WalRecord` and never touches
-/// a broker.
-#[derive(Default)]
-struct RecordingSink {
-    records: Mutex<Vec<WalRecord>>,
-}
-
-#[async_trait]
-impl WalSink for RecordingSink {
-    async fn append(&self, _key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
-        self.records
-            .lock()
-            .expect("recording sink poisoned")
-            .push(record);
-        Ok(())
-    }
-}
-
-impl RecordingSink {
-    fn len(&self) -> usize {
-        self.records.lock().expect("recording sink poisoned").len()
-    }
-}
 
 /// A snappy-compressed `remote_write` v1 body holding `series` series with
 /// `samples` samples each.
@@ -90,66 +61,49 @@ fn load_runtime_overrides(path: &std::path::Path) -> OverridesProvider {
     OverridesProvider::from_yaml(&yaml).expect("parse runtime overrides")
 }
 
-async fn boot_distributor(overrides: OverridesProvider) -> (SocketAddr, Arc<RecordingSink>) {
-    let sink = Arc::new(RecordingSink::default());
-    let state = Arc::new(DistributorState::new(sink.clone()).with_overrides(overrides));
-    let addr = serve(
-        "127.0.0.1:0".parse().expect("socket addr"),
-        state,
-        &ServerSecurity::default(),
-        std::future::pending(),
-    )
-    .await
-    .expect("serve distributor");
-    (addr, sink)
-}
-
-async fn push(
-    client: &reqwest::Client,
-    addr: SocketAddr,
-    tenant: &str,
-    body: Vec<u8>,
-) -> reqwest::StatusCode {
-    client
-        .post(format!("http://{addr}/api/v1/push"))
-        .header("Content-Type", "application/x-protobuf")
-        .header("Content-Encoding", "snappy")
-        .header("X-Scope-OrgID", tenant)
-        .body(body)
-        .send()
-        .await
-        .expect("send push")
-        .status()
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_runtime_overrides_file_sets_the_limits_a_push_is_judged_by() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("runtime.yaml");
     std::fs::write(&path, RUNTIME_YAML).expect("write runtime overrides");
 
-    let (addr, sink) = boot_distributor(load_runtime_overrides(&path)).await;
+    let distributor = OverridesDistributor::boot(load_runtime_overrides(&path)).await;
     let client = reqwest::Client::new();
 
     // The file caps the listed tenant at one series and one sample per series.
     check!(
-        push(&client, addr, TIGHT, remote_write_v1_body(2, 1)).await
+        distributor
+            .push(&client, TIGHT, remote_write_v1_body(2, 1))
+            .await
             == reqwest::StatusCode::BAD_REQUEST,
         "two series exceed the file's cap of one"
     );
     check!(
-        push(&client, addr, TIGHT, remote_write_v1_body(1, 2)).await
+        distributor
+            .push(&client, TIGHT, remote_write_v1_body(1, 2))
+            .await
             == reqwest::StatusCode::BAD_REQUEST,
         "two samples exceed the file's cap of one"
     );
     check!(
-        push(&client, addr, TIGHT, remote_write_v1_body(1, 1)).await == reqwest::StatusCode::OK,
+        distributor
+            .push(&client, TIGHT, remote_write_v1_body(1, 1))
+            .await
+            == reqwest::StatusCode::OK,
         "one series of one sample is exactly the cap"
     );
 
     // A tenant the file does not list keeps the built-in defaults, so the
     // same load it refused for the listed tenant goes through.
-    check!(push(&client, addr, LOOSE, remote_write_v1_body(2, 1)).await == reqwest::StatusCode::OK);
+    check!(
+        distributor
+            .push(&client, LOOSE, remote_write_v1_body(2, 1))
+            .await
+            == reqwest::StatusCode::OK
+    );
 
-    check!(sink.len() == 3, "only the accepted pushes appended");
+    check!(
+        distributor.sink.len() == 3,
+        "only the accepted pushes appended"
+    );
 }

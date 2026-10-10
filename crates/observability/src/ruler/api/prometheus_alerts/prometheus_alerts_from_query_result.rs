@@ -2,7 +2,7 @@ use super::{
     BTreeMap, BTreeSet, PrometheusAlertKey, PrometheusAlertRuntimeState,
     PrometheusRetainedAlertParams, SharedPrometheusAlertStates, Value,
     expand_prometheus_alert_template, json, prometheus_active_at, prometheus_alert_template_map,
-    retained_prometheus_alerts, yaml_duration_ns_field, yaml_string_template_map_field,
+    retained_prometheus_alerts, yaml_duration_ns_field, yaml_string_labels_field,
 };
 
 pub(crate) fn prometheus_alerts_from_query_result(
@@ -16,8 +16,8 @@ pub(crate) fn prometheus_alerts_from_query_result(
 ) -> Vec<Value> {
     let hold_duration_ns = yaml_duration_ns_field(fields, "for").unwrap_or(0);
     let keep_firing_for_ns = yaml_duration_ns_field(fields, "keep_firing_for").unwrap_or(0);
-    let annotation_templates = yaml_string_template_map_field(fields, "annotations");
-    let rule_label_templates = yaml_string_template_map_field(fields, "labels");
+    let annotation_templates = yaml_string_labels_field(fields, "annotations");
+    let rule_label_templates = yaml_string_labels_field(fields, "labels");
     let samples = result
         .pointer("/data/result")
         .and_then(Value::as_array)

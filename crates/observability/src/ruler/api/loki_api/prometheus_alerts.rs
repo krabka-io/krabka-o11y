@@ -1,7 +1,6 @@
 use super::{
-    HeaderMap, IntoResponse, PrometheusRulesFilters, QuerierState, RawQuery, RequestSecurity,
-    Response, State, StatusCode, TenantErrorSurface, authorized_ruler_tenant, current_unix_time_ns,
-    json, json_response, prometheus_alerts_response,
+    HeaderMap, IntoResponse, PrometheusRulerInputs, PrometheusRulerRequest, QuerierState, RawQuery,
+    RequestSecurity, Response, State, StatusCode, json, json_response, prometheus_alerts_response,
 };
 
 pub(crate) async fn prometheus_alerts(
@@ -10,29 +9,23 @@ pub(crate) async fn prometheus_alerts(
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
-    let tenant = match authorized_ruler_tenant(
-        &state,
-        &security,
-        &headers,
-        TenantErrorSurface::PrometheusRuler,
-    )
+    let PrometheusRulerRequest {
+        tenant,
+        filters: _,
+        evaluation_time,
+        namespaces,
+    } = match (PrometheusRulerInputs {
+        state: &state,
+        security: &security,
+        headers: &headers,
+        raw_query: raw_query.as_deref(),
+    })
+    .resolve()
     .await
     {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
+        Ok(request) => request,
+        Err(response) => return *response,
     };
-    let filters = match PrometheusRulesFilters::parse(raw_query.as_deref()) {
-        Ok(filters) => filters,
-        Err(error) => return error.into_response(),
-    };
-    let evaluation_time = filters.evaluation_time.unwrap_or_else(current_unix_time_ns);
-    let namespaces = state
-        .rules
-        .tenants
-        .lock()
-        .expect("Loki rule store lock poisoned")
-        .get(tenant.as_str())
-        .cloned();
     let alerts = match namespaces {
         Some(namespaces) => {
             match prometheus_alerts_response(&state, &tenant, &namespaces, evaluation_time).await {

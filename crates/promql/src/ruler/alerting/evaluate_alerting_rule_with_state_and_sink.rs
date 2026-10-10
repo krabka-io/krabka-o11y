@@ -268,24 +268,6 @@ where
     Ok(count)
 }
 
-pub(crate) async fn evaluate_and_persist_alerting_rule_with_state_and_wal<S, W, A, R>(
-    engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
-    state: &mut RulerAlertState,
-    tenant: &TenantId,
-    rule: &serde_yaml::Value,
-    eval_time_ms: i64,
-) -> Result<usize, PromqlError>
-where
-    S: MetricStore,
-    W: RecordingRuleWalSink,
-    A: AlertmanagerSink,
-    R: RulerStateSink,
-{
-    evaluate_alerting_rule_with_state_and_sink(engine, sinks, state, tenant, rule, eval_time_ms)
-        .await
-}
-
 #[allow(clippy::cast_precision_loss)]
 fn active_alert_records(
     tenant: &TenantId,

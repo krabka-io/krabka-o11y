@@ -53,14 +53,14 @@ pub(crate) async fn increase_extrapolates_to_the_range_edges_by_the_sample_spaci
         // `rate` is that same extrapolation over the range in seconds.
         ("rate(spans_range[1m])", 0.16),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 100_000)
-            .await
-            .unwrap_or_else(|error| panic!("{query}: {error}"));
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected a vector for {query}");
-        };
-        assert2::assert!(samples.len() == 1, "{query}");
-        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+        assert_lone_value_at(
+            &engine,
+            LoneValueQuery {
+                query,
+                time_ms: 100_000,
+                want,
+            },
+        )
+        .await;
     }
 }

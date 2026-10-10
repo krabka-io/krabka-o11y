@@ -15,23 +15,26 @@ mod tests {
     /// Every other default is Tempo's.
     #[test]
     fn defaults_match_tempo() {
-        let c = MetricsGenConfig::default();
+        // Compared as the serialized document, so the check covers the
+        // Tempo-spelled keys each default is written under too.
+        let defaults = serde_json::to_value(MetricsGenConfig::default()).unwrap();
         assert2::assert!(
-            c == MetricsGenConfig {
-                collection_interval: secs(15),
-                histogram_buckets_ns: DEFAULT_LATENCY_BUCKETS_NS.to_vec(),
-                max_exemplars_per_series: 0,
-                edge_ttl: secs(10),
-                edge_store_max_items: 10_000,
-                max_active_series: 10_000,
-                max_tenants: 10_000,
-                enable_target_info: false,
-                enable_status_message: false,
-                enable_messaging_system_latency: false,
-                remote_write_url: "http://localhost:9009/api/v1/push".to_string(),
-                processor: ProcessorConfig::default(),
-                overrides: HashMap::new(),
-            }
+            defaults
+                == serde_json::json!({
+                    "collection_interval_secs": 15,
+                    "histogram_buckets_ns": DEFAULT_LATENCY_BUCKETS_NS,
+                    "max_exemplars_per_series": 0,
+                    "edge_ttl_secs": 10,
+                    "edge_store_max_items": 10_000,
+                    "max_active_series": 10_000,
+                    "max_tenants": 10_000,
+                    "enable_target_info": false,
+                    "enable_status_message": false,
+                    "enable_messaging_system_latency": false,
+                    "remote_write_url": "http://localhost:9009/api/v1/push",
+                    "processor": ProcessorConfig::default(),
+                    "overrides": {},
+                })
         );
     }
 
@@ -61,18 +64,8 @@ mod tests {
         assert2::assert!(
             c == MetricsGenConfig {
                 collection_interval: secs(30),
-                histogram_buckets_ns: DEFAULT_LATENCY_BUCKETS_NS.to_vec(),
                 max_exemplars_per_series: 5,
-                edge_ttl: secs(10),
-                edge_store_max_items: 10_000,
-                max_active_series: 10_000,
-                max_tenants: 10_000,
-                enable_target_info: false,
-                enable_status_message: false,
-                enable_messaging_system_latency: false,
-                remote_write_url: "http://localhost:9009/api/v1/push".to_string(),
-                processor: ProcessorConfig::default(),
-                overrides: HashMap::new(),
+                ..MetricsGenConfig::default()
             }
         );
     }

@@ -63,6 +63,8 @@ pub(super) fn render(value: &TemplateRuntimeValue, verb: char, spec: Spec) -> St
             render(value, 'v', spec)
         )
     };
+    // Go's fmt prints a `Stringer`'s text for these verbs, and its fields otherwise.
+    let renders_as_text = matches!(verb, 's' | 'q' | 'x' | 'X') || (verb == 'v' && !spec.sharp_v);
     if verb == 'T' && matches!(value, TemplateRuntimeValue::Json(Value::Null)) {
         return spec.pad("<nil>");
     }
@@ -91,19 +93,17 @@ pub(super) fn render(value: &TemplateRuntimeValue, verb: char, spec: Spec) -> St
         TemplateRuntimeValue::CounterResetHint(value) | TemplateRuntimeValue::Byte(value) => {
             integer(u64::from(*value), false, false, verb, spec).unwrap_or_else(invalid)
         }
+        TemplateRuntimeValue::FloatHistogram(value) if renders_as_text => {
+            string(&value.as_string(), verb, spec)
+        }
         TemplateRuntimeValue::FloatHistogram(value) => {
-            if matches!(verb, 's' | 'q' | 'x' | 'X') || (verb == 'v' && !spec.sharp_v) {
-                string(&value.as_string(), verb, spec)
-            } else {
-                reflection(&value.reflection(), verb, spec, 0)
-            }
+            reflection(&value.reflection(), verb, spec, 0)
+        }
+        TemplateRuntimeValue::HistogramBucket(value) if renders_as_text => {
+            string(&value.as_string(), verb, spec)
         }
         TemplateRuntimeValue::HistogramBucket(value) => {
-            if matches!(verb, 's' | 'q' | 'x' | 'X') || (verb == 'v' && !spec.sharp_v) {
-                string(&value.as_string(), verb, spec)
-            } else {
-                reflection(&value.reflection(), verb, spec, 0)
-            }
+            reflection(&value.reflection(), verb, spec, 0)
         }
         TemplateRuntimeValue::HistogramIterator(value) => {
             reflection(&value.reflection(), verb, spec, 0)
@@ -174,13 +174,10 @@ pub(super) fn render(value: &TemplateRuntimeValue, verb: char, spec: Spec) -> St
         TemplateRuntimeValue::Month(number) | TemplateRuntimeValue::Weekday(number) => {
             named_integer(i64::from(*number), &value.as_rendered_string(), verb, spec)
         }
-        TemplateRuntimeValue::TimeLocation(value) => {
-            if matches!(verb, 's' | 'q' | 'x' | 'X') || (verb == 'v' && !spec.sharp_v) {
-                string(&value.name(), verb, spec)
-            } else {
-                reflection(&value.reflection(), verb, spec, 0)
-            }
+        TemplateRuntimeValue::TimeLocation(value) if renders_as_text => {
+            string(&value.name(), verb, spec)
         }
+        TemplateRuntimeValue::TimeLocation(value) => reflection(&value.reflection(), verb, spec, 0),
         TemplateRuntimeValue::QueryError(_) => String::new(),
         TemplateRuntimeValue::NilError => {
             if verb == 'v' {
@@ -189,12 +186,11 @@ pub(super) fn render(value: &TemplateRuntimeValue, verb: char, spec: Spec) -> St
                 format!("%!{verb}(<nil>)")
             }
         }
+        TemplateRuntimeValue::HistogramError(value) if renders_as_text => {
+            string(&value.message, verb, spec)
+        }
         TemplateRuntimeValue::HistogramError(value) => {
-            if matches!(verb, 's' | 'q' | 'x' | 'X') || (verb == 'v' && !spec.sharp_v) {
-                string(&value.message, verb, spec)
-            } else {
-                reflection(&error_view(value), verb, spec, 0)
-            }
+            reflection(&error_view(value), verb, spec, 0)
         }
         TemplateRuntimeValue::SafeHtml(_)
         | TemplateRuntimeValue::QueryResult(_)

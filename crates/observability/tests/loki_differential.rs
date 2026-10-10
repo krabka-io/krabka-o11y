@@ -35,6 +35,9 @@ mod loki_experimental_queries;
 #[path = "support/loki_remote_fixture.rs"]
 mod loki_remote_fixture;
 
+#[path = "support/rejection_responses.rs"]
+mod rejection_responses;
+
 #[path = "../../metrics-service/tests/support/generated_differential.rs"]
 mod generated_differential;
 
@@ -57,6 +60,7 @@ use krabka_observability::{
     distributor_router_with_overrides, json_logging_layer, loki_router,
 };
 use prost::Message as _;
+use rejection_responses::{ImplementationAnswer, record_rejection_response};
 use reqwest::Method;
 use serde_json::{Value, json};
 use support::{
@@ -71,6 +75,26 @@ use tokio_tungstenite::{
 use tracing_subscriber::{Registry, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+/// The test's undeclared outputs directory, which is `target` when Bazel does
+/// not name one, created if it is missing.
+fn test_output_dir() -> TestResult<std::path::PathBuf> {
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::path::PathBuf::from("../../target"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&output)?;
+    Ok(output)
+}
+
+/// Writes `report` as pretty JSON to `file_name` in [`test_output_dir`].
+fn write_test_output(file_name: &str, report: &impl serde::Serialize) -> TestResult {
+    std::fs::write(
+        test_output_dir()?.join(file_name),
+        serde_json::to_vec_pretty(report)?,
+    )?;
+    Ok(())
+}
 
 /// The deadline for a container to start, which includes the image pull.
 ///
@@ -313,18 +337,13 @@ async fn loki_corpus_matches_krabka() -> TestResult {
         }
     }
 
-    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
-        || std::path::PathBuf::from("../../target"),
-        std::path::PathBuf::from,
-    );
-    std::fs::create_dir_all(&output)?;
-    std::fs::write(
-        output.join("loki-supported-template-functions.json"),
-        serde_json::to_vec_pretty(&json!({
+    write_test_output(
+        "loki-supported-template-functions.json",
+        &json!({
             "schema_version": 1, "upstream_source": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
             "timeline_base_ns": timeline.base_ns,
             "planned": template_functions::CASES.len(), "cases": template_cases,
-        }))?,
+        }),
     )?;
     krabka.shutdown();
     // How much was actually asked. An empty divergence list over four queries
@@ -383,11 +402,7 @@ async fn upstream_loki_remote_correctness_matches_krabka() -> TestResult {
         }
     }
     wait_for_remote_fixture(&client, &[&loki_base, &krabka.query_url], &fixture).await?;
-    let report_dir = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
-        || std::path::PathBuf::from("../../target"),
-        std::path::PathBuf::from,
-    );
-    std::fs::create_dir_all(&report_dir)?;
+    let report_dir = test_output_dir()?;
     std::fs::write(
         report_dir.join("loki-remote-dataset-metadata.json"),
         serde_json::to_vec_pretty(&fixture.metadata)?,
@@ -534,14 +549,15 @@ async fn run_generated_logql(
                         .header("X-Scope-OrgID", TENANT)
                         .send()
                         .await?;
-                    let status = response.status().as_u16();
-                    let body = response.text().await?;
-                    let classification = logql_query_rejection_kind(status, &body);
-                    rejected &= classification.is_some();
-                    responses.push(
-                        json!({"implementation": implementation, "http_status": status,
-                        "classification": classification, "body": body}),
-                    );
+                    rejected &= record_rejection_response(
+                        &mut responses,
+                        ImplementationAnswer {
+                            implementation,
+                            response,
+                        },
+                        logql_query_rejection_kind,
+                    )
+                    .await?;
                 }
                 let mut observations = observations
                     .lock()

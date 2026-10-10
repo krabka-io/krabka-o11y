@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use url::form_urlencoded;
 
 use super::{
-    ApiError, Extension, Principal, PrometheusApiState, apply_limit,
+    ApiError, AuthorizedTenant, Extension, Principal, PrometheusApiState, apply_limit,
     authorized_tenant_from_headers, parse_limit_parameter, success_data_response,
 };
 use crate::{

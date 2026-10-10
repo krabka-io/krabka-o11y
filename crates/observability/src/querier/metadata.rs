@@ -30,7 +30,7 @@ mod series_data;
 pub(crate) use execute_api_prom_label_names_query::execute_api_prom_label_names_query;
 pub(crate) use execute_api_prom_series_query::execute_api_prom_series_query;
 pub(crate) use execute_label_names_query::execute_label_names_query;
-pub(crate) use execute_label_values_query::execute_label_values_query;
+pub(crate) use execute_label_values_query::{LabelValuesRequest, execute_label_values_query};
 pub(crate) use execute_series_query::execute_series_query;
 pub(crate) use label_names_data::label_names_data;
 pub(crate) use label_values_data::label_values_data;

@@ -1,7 +1,7 @@
 //! Compactor helpers for merging late-span blocks into replacement span blocks.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::SystemTime,
 };
@@ -55,7 +55,9 @@ mod tests {
 
     use super::*;
     use crate::span::{
-        AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode, batch::span_batch,
+        AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode,
+        batch::span_batch,
+        test_span::{api_server_span, string_attr},
     };
 
     /// `recompute_nested_sets` renumbers a trace's spans as a nested set.
@@ -282,41 +284,20 @@ mod tests {
 
     fn span() -> Span {
         Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            parent_span_id: None,
-            name: "GET /".into(),
-            kind: SpanKind::Server,
-            start_ns: 1_000,
-            duration_ns: 100,
-            status: StatusCode::Ok,
-            status_message: String::new(),
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
-            span_attrs: vec![KeyValue {
-                key: "env".into(),
-                value: AttrValue::Str("prod".into()),
-            }],
+            span_attrs: vec![string_attr("env", "prod")],
             events: vec![EventRecord {
                 time_unix_nano: 1_050,
                 name: "exception".into(),
-                attrs: vec![KeyValue {
-                    key: "cache.key".into(),
-                    value: AttrValue::Str("users".into()),
-                }],
+                attrs: vec![string_attr("cache.key", "users")],
             }],
             links: vec![LinkRecord {
                 trace_id: [9; 16],
                 span_id: [8; 8],
-                attrs: vec![KeyValue {
-                    key: "link.kind".into(),
-                    value: AttrValue::Str("retry".into()),
-                }],
+                attrs: vec![string_attr("link.kind", "retry")],
             }],
             instrumentation_scope: "otel-rust".into(),
             instrumentation_version: "1.2.3".into(),
+            ..api_server_span()
         }
     }
 
@@ -780,7 +761,6 @@ mod expire_trace_blocks;
 mod first_string_list_value;
 mod fixed_column;
 mod float64_array;
-mod insert_tag_value;
 mod int64_array;
 mod int64_column;
 mod list_column;
@@ -821,7 +801,6 @@ pub use delete_trace_blocks::delete_trace_blocks;
 pub use expire_trace_blocks::expire_trace_blocks;
 use first_string_list_value::first_string_list_value;
 use fixed_column::fixed_column;
-use insert_tag_value::insert_tag_value;
 use int64_column::int64_column;
 use list_column::list_column;
 use metadata_value_array::MetadataValueArray;
@@ -842,3 +821,5 @@ use struct_list_field::struct_list_field;
 use struct_string_field::struct_string_field;
 pub use sweep_orphaned_trace_blocks::sweep_orphaned_trace_blocks;
 use trace_group_buffer::TraceGroupBuffer;
+
+use crate::blockbuilder::TagCatalog;

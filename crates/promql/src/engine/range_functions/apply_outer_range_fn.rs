@@ -1,4 +1,6 @@
-use super::{InstantSample, OuterRangeFn, RangeEval, outer_range_sample_from_series};
+use super::{
+    InstantSample, OuterRangeFn, OuterRangeFold, RangeEval, outer_range_sample_from_series,
+};
 
 /// Applies an [`OuterRangeFn`] over an evaluated range vector.
 ///
@@ -17,12 +19,11 @@ pub(crate) fn apply_outer_range_fn(
         .filter_map(|series| {
             outer_range_sample_from_series(
                 &series,
-                range.end_ms,
-                range.range,
-                outer,
-                range.modifier,
-                time_ms,
-                range.enable_type_and_unit_labels,
+                &range.window,
+                OuterRangeFold {
+                    outer,
+                    eval_ms: time_ms,
+                },
             )
             .map(|(labels, value)| InstantSample {
                 labels,

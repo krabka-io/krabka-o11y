@@ -11,8 +11,13 @@
 //! server future that returned -- rather than on the signal being received.
 #![cfg(unix)]
 
+#[path = "support/parquet_files.rs"]
+mod parquet_files;
+#[path = "support/sigterm_child.rs"]
+mod sigterm_child;
+
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     process::Command,
     sync::Arc,
     time::{Duration, Instant},
@@ -28,6 +33,8 @@ use krabka_observability::{
 };
 use krabka_units::Time;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
+
+use self::{parquet_files::parquet_files_under, sigterm_child::terminate_and_wait_for_exit};
 
 /// Set on the child re-execution of this test binary, and holds the directory
 /// the child and the parent communicate through.
@@ -59,17 +66,7 @@ fn sigterm_drains_the_compactor_before_the_process_exits() {
     let committed = wait_for_file(&root.join("committed"), Duration::from_secs(45));
     assert!(!committed.trim().is_empty());
 
-    // Through `sh` rather than a `kill` binary: the shell builtin is always
-    // there, including inside a Bazel test sandbox, and `unsafe_code` is
-    // forbidden workspace-wide so `libc::kill` is not an option.
-    let signalled = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(format!("kill -TERM {}", child.id()))
-        .status()
-        .expect("send SIGTERM");
-    assert!(signalled.success());
-
-    let status = wait_for_exit(&mut child, Duration::from_secs(30));
+    let status = terminate_and_wait_for_exit(&mut child, Duration::from_secs(30));
 
     // Exited of its own accord: `code()` is `None` for a process a signal
     // killed, which is what an unheard SIGTERM leaves behind.
@@ -119,7 +116,20 @@ fn run_compactor_child(root: std::path::PathBuf) {
         };
         let dependencies =
             ServiceDependencies::default().with_wal_consumer(CommitLoggingConsumer {
-                batches: vec![vec![kafka_wal_record(10, "api ok", 6, 42)]],
+                batches: VecDeque::from([vec![kafka_wal_record(
+                    &WalLogRecord {
+                        tenant: "tenant-a".to_string(),
+                        labels: labels([("app", "api"), ("env", "prod")]),
+                        timestamp_ns: 10,
+                        line: "api ok".to_string(),
+                        structured_metadata: BTreeMap::new(),
+                        position: None,
+                    },
+                    WalPosition {
+                        partition: PartitionIndex(6),
+                        offset: Offset(42),
+                    },
+                )]]),
                 commit_log: root.join("committed"),
             });
 
@@ -134,18 +144,14 @@ fn run_compactor_child(root: std::path::PathBuf) {
 /// A WAL consumer that appends every committed offset to a file, so the commit
 /// survives the process it happened in.
 struct CommitLoggingConsumer {
-    batches: Vec<Vec<KafkaWalRecord>>,
+    batches: VecDeque<Vec<KafkaWalRecord>>,
     commit_log: std::path::PathBuf,
 }
 
 #[async_trait]
 impl LogWalConsumer for CommitLoggingConsumer {
     async fn poll(&mut self, _timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
-        if self.batches.is_empty() {
-            Ok(Vec::new())
-        } else {
-            Ok(self.batches.remove(0))
-        }
+        Ok(self.batches.pop_front().unwrap_or_default())
     }
 
     async fn commit_compacted(&mut self, position: WalPosition) -> Result<(), WalConsumerError> {
@@ -162,21 +168,15 @@ impl LogWalConsumer for CommitLoggingConsumer {
     }
 }
 
-fn kafka_wal_record(timestamp_ns: i64, line: &str, partition: i32, offset: i64) -> KafkaWalRecord {
-    let record = WalLogRecord {
-        tenant: "tenant-a".to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
-        timestamp_ns,
-        line: line.to_string(),
-        structured_metadata: BTreeMap::new(),
-        position: None,
-    };
-    let producer_record = build_kafka_wal_record("__krabka_observability_logs_wal", &record)
-        .expect("producer record");
+/// The Kafka record the WAL producer writes for `record`, as a consumer reads
+/// it back at `position`.
+fn kafka_wal_record(record: &WalLogRecord, position: WalPosition) -> KafkaWalRecord {
+    let producer_record =
+        build_kafka_wal_record("__krabka_observability_logs_wal", record).expect("producer record");
     KafkaWalRecord {
         value: producer_record.value.expect("producer value").to_vec(),
-        partition: PartitionIndex(partition),
-        offset: Offset(offset),
+        partition: position.partition,
+        offset: position.offset,
         timestamp_ms: producer_record.timestamp_ms,
         headers: producer_record
             .headers
@@ -206,39 +206,7 @@ fn wait_for_file(path: &std::path::Path, within: Duration) -> String {
     panic!("{} never appeared", path.display());
 }
 
-fn wait_for_exit(child: &mut std::process::Child, within: Duration) -> std::process::ExitStatus {
-    let deadline = Instant::now() + within;
-    while Instant::now() < deadline {
-        match child.try_wait().expect("poll the child") {
-            Some(status) => return status,
-            None => std::thread::sleep(Duration::from_millis(20)),
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("the role did not exit within {within:?} of SIGTERM");
-}
-
 /// Every block the compactor physically wrote under the index prefix.
 fn block_paths(store_root: &std::path::Path) -> Vec<std::path::PathBuf> {
-    fn walk(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, found);
-            } else if path.extension().is_some_and(|ext| ext == "parquet") {
-                found.push(path);
-            }
-        }
-    }
-
-    let mut found = Vec::new();
-    walk(
-        &store_root.join(ObjectPath::from(INDEX_PREFIX).to_string()),
-        &mut found,
-    );
-    found
+    parquet_files_under(&store_root.join(ObjectPath::from(INDEX_PREFIX).to_string()))
 }

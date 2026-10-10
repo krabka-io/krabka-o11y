@@ -2,10 +2,11 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn range_query_accepts_parenthesized_expression() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels(&[("__name__", "up")]), 0, 0.0);
-    store.push_float("tenant-a", labels(&[("__name__", "up")]), 60_000, 1.0);
-    store.push_float("tenant-a", labels(&[("__name__", "up")]), 120_000, 2.0);
+    let store = SeriesFixture::new(labels(&[("__name__", "up")]))
+        .at(0_i64, 0.0)
+        .at(60_000, 1.0)
+        .at(120_000, 2.0)
+        .store();
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
@@ -13,18 +14,22 @@ pub(crate) async fn range_query_accepts_parenthesized_expression() {
         .await
         .unwrap();
 
-    let QueryResult::RangeMatrix(series) = result else {
-        panic!("expected matrix");
-    };
-    check!(series.len() == 1);
-    check!(series[0].samples.len() == 3);
-    for (sample, (want_ts, want)) in
-        series[0]
-            .samples
-            .iter()
-            .zip([(0, 0.0), (60_000, 1.0), (120_000, 2.0)])
-    {
-        check!(sample.0 == want_ts);
-        check!(approx_eq(float_value(&sample.1), want), "at ts {want_ts}");
-    }
+    let series = lone_matrix_series(&result);
+    check_series_points(
+        series,
+        &[
+            ExpectedPoint {
+                ts_ms: 0,
+                value: 0.0,
+            },
+            ExpectedPoint {
+                ts_ms: 60_000,
+                value: 1.0,
+            },
+            ExpectedPoint {
+                ts_ms: 120_000,
+                value: 2.0,
+            },
+        ],
+    );
 }

@@ -29,7 +29,7 @@ mod tests {
             },
         ];
 
-        let sets = assign_nested_set(&spans);
+        let sets = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         assert2::check!(sets.len() == 2);
         // The self-parenting span encloses its real child.
         assert2::check!(sets[0].nested_set_left < sets[1].nested_set_left);
@@ -58,7 +58,7 @@ mod tests {
             },
         ];
 
-        let sets = assign_nested_set(&spans);
+        let sets = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         // Both are roots, in span order: the self-parent is first.
         assert2::check!(
             (sets[0].nested_set_left, sets[0].nested_set_right) == (1, 2),
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn root_has_sentinel_parent_id() {
         let spans = sample_tree();
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         // -1 = Tempo's no-parent sentinel (so `nestedSetParent < 0` finds roots).
         assert2::assert!(ns[idx(&spans, 1)].parent_id == -1);
     }
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn child_parent_id_equals_parent_left() {
         let spans = sample_tree();
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         let p_left = ns[idx(&spans, 3)].nested_set_left;
         let root_left = ns[idx(&spans, 1)].nested_set_left;
         assert2::assert!(ns[idx(&spans, 4)].parent_id == p_left);
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn ancestor_interval_strictly_contains_descendants() {
         let spans = sample_tree();
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         let r = ns[idx(&spans, 1)];
         for id in [2_u8, 3, 4] {
             let d = ns[idx(&spans, id)];
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn orphan_is_treated_as_root() {
         let spans = vec![node(5, Some(99))];
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         assert2::assert!(ns[0].parent_id == -1); // dangling parent → root sentinel
         assert2::assert!(ns[0].nested_set_left < ns[0].nested_set_right);
     }
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn left_lt_right_for_every_node() {
         let spans = sample_tree();
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         for n in &ns {
             assert2::assert!(n.nested_set_left < n.nested_set_right);
         }
@@ -162,7 +162,7 @@ mod tests {
                 vec![node(1, Some(3)), node(2, Some(1)), node(3, Some(2))],
             ),
         ] {
-            let ns = assign_nested_set(&spans);
+            let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
             let mut lefts: Vec<i32> = ns.iter().map(|n| n.nested_set_left).collect();
             lefts.sort_unstable();
             lefts.dedup();
@@ -177,7 +177,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let spans = vec![node(1, None), node(2, Some(3)), node(3, Some(2))];
-            let _ = tx.send(assign_nested_set(&spans));
+            let _ = tx.send(assign_nested_set(&spans, CycleSpans::AssignIntervals));
         });
 
         let ns = rx
@@ -189,9 +189,11 @@ mod tests {
 }
 
 mod assign_nested_set;
+mod cycle_spans;
 mod nested_set_type;
 mod span_node;
 
 pub use assign_nested_set::assign_nested_set;
+pub use cycle_spans::CycleSpans;
 pub use nested_set_type::NestedSet;
 pub use span_node::SpanNode;

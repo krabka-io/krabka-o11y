@@ -14,27 +14,7 @@ pub(crate) async fn instant_sum_and_avg_aggregations_combine_compatible_native_h
     right.positive_spans = left.positive_spans.clone();
     right.positive_counts = vec![2.0, 2.0];
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            ("__name__", "request_duration_seconds"),
-            ("job", "api"),
-            ("instance", "a"),
-        ]),
-        10_000,
-        left,
-    );
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            ("__name__", "request_duration_seconds"),
-            ("job", "api"),
-            ("instance", "b"),
-        ]),
-        10_000,
-        right,
-    );
+    let store = instance_histogram_store(InstanceHistograms { a: left, b: right });
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     for (query, expected_count, expected_sum, expected_avg) in [

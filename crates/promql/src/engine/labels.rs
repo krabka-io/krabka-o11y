@@ -24,7 +24,7 @@ mod record_metric_name;
 pub(super) use absent_labels::absent_labels;
 use absent_labels_from_matchers::absent_labels_from_matchers;
 use absent_labels_from_selector::absent_labels_from_selector;
-pub(super) use aggregate_labels::aggregate_labels;
+pub(crate) use aggregate_labels::aggregate_labels;
 pub(super) use float_sample_value::float_sample_value;
 pub(super) use is_result_metadata_label::is_result_metadata_label;
 pub(super) use labels_key::labels_key;

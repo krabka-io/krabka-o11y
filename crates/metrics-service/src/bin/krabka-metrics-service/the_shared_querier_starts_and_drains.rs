@@ -26,12 +26,14 @@ async fn the_shared_querier_serves_before_its_stage_drains_without_a_process_sig
     let mut drain = krabka_observability::StagedDrain::new(secs(30));
     drain.stage("querier", move |token| {
         let role = run_querier(
-            cli,
-            krabka_promql::metrics::ServiceMetrics::new(),
-            role_readiness,
+            RoleLaunch {
+                cli,
+                metrics: krabka_promql::metrics::ServiceMetrics::new(),
+                readiness: role_readiness,
+                wal_security: None,
+                audit: AuditHandle::disabled(),
+            },
             security,
-            None,
-            AuditHandle::disabled(),
             Shutdown::from(token),
         );
         async move {

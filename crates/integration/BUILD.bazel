@@ -22,11 +22,12 @@ crate_tests(
         "alloy_client": {"previous": {"alloy": "alloy_previous"}},
         "prometheus_client": {"previous": {"prometheus": "prometheus_previous"}},
     },
-    # `backup_restore` reaches the fixture reader of //crates/metrics with
-    # `#[path]`; naming it here puts it at that same relative path inside the
-    # sandbox.
+    # `backup_restore` reaches the fixture reader of //crates/metrics, and the
+    # soak the MinIO starter of //crates/observability, with `#[path]`; naming
+    # them here puts them at that same relative path inside the sandbox.
     extra_srcs = {
         "backup_restore": ["//crates/metrics:tests/support/tsdb_fixture.rs"],
+        "soak_envelope": ["//crates/observability:tests/support/minio_store.rs"],
     },
     lib = "integration",
     # The library holds no code to mutate -- it is the `//!` doc that says why

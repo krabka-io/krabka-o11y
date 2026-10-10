@@ -29,8 +29,7 @@ use krabka_blockstore::{
     write_tenant_log_index_shard_to_object_store,
 };
 use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    ObjectStoreExt as _, PutMultipartOptions, PutOptions, PutPayload, PutResult, path::Path,
+    GetOptions, GetResult, ObjectStore, ObjectStoreExt as _, PutPayload, path::Path,
 };
 use storage_fixtures::{
     PROFILE_INDEX, TRACE_INDEX, block_key, foreign_entry, healthy, later, listed_keys,
@@ -60,24 +59,9 @@ impl fmt::Display for InterferingStore {
     }
 }
 
-#[async_trait::async_trait]
-impl ObjectStore for InterferingStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        options: PutOptions,
-    ) -> object_store::Result<PutResult> {
-        self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
+krabka_blockstore::delegate_object_store! {
+    InterferingStore => inner;
+    forward [put_opts, put_multipart_opts, list, list_with_delimiter, copy_opts];
 
     async fn get_opts(
         &self,
@@ -96,23 +80,6 @@ impl ObjectStore for InterferingStore {
             _ => {}
         }
         self.inner.get_opts(location, options).await
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 
     fn delete_stream(

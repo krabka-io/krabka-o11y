@@ -1,4 +1,7 @@
-use super::{FieldExpr, Result, comparison_to_sql_qualified, ident, qualified_field_ident};
+use super::{
+    FieldExpr, QualifiedComparison, Result, comparison_to_sql_qualified, ident,
+    qualified_field_ident,
+};
 
 pub(crate) fn field_expr_to_sql_qualified(
     fe: &FieldExpr,
@@ -19,7 +22,13 @@ pub(crate) fn field_expr_to_sql_qualified(
             ident(&crate::ast::field_comparison_column(fe))
         )),
         FieldExpr::Comparison { lhs, op, rhs } => {
-            comparison_to_sql_qualified(lhs, *op, rhs, span_alias, parent_alias)
+            comparison_to_sql_qualified(&QualifiedComparison {
+                field: lhs,
+                op: *op,
+                operand: rhs,
+                span_alias,
+                parent_alias,
+            })
         }
         FieldExpr::And(a, b) => Ok(format!(
             "({} AND {})",

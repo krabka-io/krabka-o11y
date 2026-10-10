@@ -20,14 +20,7 @@ pub(crate) async fn unary_minus_negates_native_histogram_values_and_marks_gauge(
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "-request_duration_seconds", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "-request_duration_seconds", 10_000).await;
     check!(samples.len() == 1);
     check!(samples[0].labels.get("__name__").is_none());
     check!(samples[0].labels.get("job") == Some("api"));

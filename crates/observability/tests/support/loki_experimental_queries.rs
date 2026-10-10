@@ -82,19 +82,14 @@ async fn loki_experimental_queries_match_native_and_independent_ledgers() -> Tes
             "status":if matched { if case.expected_status == 200 { "matched" } else { "paired-expected-error" } } else { "mismatch" },
         }));
     }
-    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
-        || std::path::PathBuf::from("../../target"),
-        std::path::PathBuf::from,
-    );
-    std::fs::create_dir_all(&output)?;
-    std::fs::write(
-        output.join("loki-experimental-query-conformance.json"),
-        serde_json::to_vec_pretty(&json!({
+    super::write_test_output(
+        "loki-experimental-query-conformance.json",
+        &json!({
             "schema_version":1,"upstream_source":"7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
             "timeline_base_ns":timeline.base_ns,"planned":cases.len(),"cases":cases,
             "oracle_config":config,"oracle_overrides":fixture::LOKI_OVERRIDES,"candidate_overrides":fixture::LIMITS_YAML,
             "max_count_min_sketch_heap_size":10_000,
-        }))?,
+        }),
     )?;
     krabka.shutdown();
     assert!(failures.is_empty(), "{}", failures.join("\n"));

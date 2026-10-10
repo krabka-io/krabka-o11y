@@ -449,7 +449,8 @@ mod tests {
     use crate::{
         ProfileRecord,
         blockbuilder::build_block,
-        wal::{WalFunction, WalLocation, WalSample, WalSymbolSet},
+        test_support::{CpuRecord, cpu_record},
+        wal::{WalFunction, WalLocation, WalSample},
     };
 
     const PROFILE_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
@@ -579,36 +580,13 @@ mod tests {
     }
 
     fn profile_record(value: i64) -> ProfileRecord {
-        ProfileRecord {
-            tenant: "tenant-a".to_string(),
-            labels: vec![
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("__profile_type__".to_string(), PROFILE_TYPE.to_string()),
-                ("service_name".to_string(), "api".to_string()),
-            ],
-            profile_type: PROFILE_TYPE.to_string(),
-            samples: vec![WalSample {
-                stacktrace_location_refs: vec![0],
-                value,
-                timestamp_ns: 1_000_000,
-                span_id: None,
-                trace_id: None,
-            }],
-            symbols: WalSymbolSet {
-                strings: vec![String::new(), "main".to_string()],
-                functions: vec![WalFunction {
-                    name: 1,
-                    system_name: 1,
-                    filename: 0,
-                    start_line: 0,
-                }],
-                locations: vec![WalLocation {
-                    address: 0,
-                    mapping_id: 0,
-                    lines: vec![(0, 1)],
-                }],
-                mappings: Vec::new(),
-            },
-        }
+        cpu_record(CpuRecord {
+            tenant: "tenant-a",
+            service: "api",
+            stack: vec![0],
+            value,
+            timestamp_ns: 1_000_000,
+            function: "main",
+        })
     }
 }

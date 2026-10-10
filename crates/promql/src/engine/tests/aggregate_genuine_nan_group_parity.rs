@@ -12,8 +12,6 @@ use super::*;
 /// against the interpreter and asserts the absolute Prometheus outcomes.
 #[tokio::test]
 pub(crate) async fn aggregate_genuine_nan_group_parity() {
-    use crate::{DurationExprContext, parse_promql_with_duration_context};
-
     type ExpectedGroup = (&'static str, Option<f64>);
     type AggregationCase = (&'static str, &'static [ExpectedGroup]);
 
@@ -112,28 +110,9 @@ pub(crate) async fn aggregate_genuine_nan_group_parity() {
 
     for (query, expect) in cases {
         let time_ms = 120_000_i64;
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-        let plan = engine
-            .plan_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = engine
-            .assemble_planned_instant(plan, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-        let via_interpreter = engine
-            .eval_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-        let norm = |r: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut s) = r else {
-                panic!("expected vector for `{query}`");
-            };
-            s.sort_by_key(|item| item.labels.fingerprint());
-            s
-        };
+        let (via_operators, via_interpreter) =
+            planned_and_interpreted(&engine, query, time_ms).await;
+        let norm = |result: QueryResult| fingerprint_sorted(result, query);
         let oper = norm(via_operators);
         let interp = norm(via_interpreter);
         assert2::assert!(instant_samples_match(&interp, &oper));

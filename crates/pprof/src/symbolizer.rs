@@ -94,8 +94,9 @@ mod tests {
         std::env::var_os("LLVM_PROFILE_FILE").is_some()
     }
 
-    #[test]
-    fn lazy_symbolizer_resolves_unsymbolized_location_once() {
+    /// A database holding one unsymbolized mapping of `/bin/app` (build
+    /// `build-a`) at `0x1000..0x2000`, file offset `0x30`, and that mapping's id.
+    fn db_with_unsymbolized_app_mapping() -> (SymbolDb, u32) {
         let mut db = SymbolDb::new();
         let filename = db.intern_string("/bin/app");
         let build_id = db.intern_string("build-a");
@@ -107,6 +108,12 @@ mod tests {
             build_id,
             symbolization: MappingSymbolization::default(),
         });
+        (db, mapping)
+    }
+
+    #[test]
+    fn lazy_symbolizer_resolves_unsymbolized_location_once() {
+        let (mut db, mapping) = db_with_unsymbolized_app_mapping();
         let loc = db.intern_location(LocationRec {
             address: 0x1010,
             mapping_id: mapping,
@@ -142,17 +149,7 @@ mod tests {
             }
         }
 
-        let mut db = SymbolDb::new();
-        let filename = db.intern_string("/bin/app");
-        let build_id = db.intern_string("build-a");
-        let mapping = db.intern_mapping(MappingRec {
-            memory_start: 0x1000,
-            memory_limit: 0x2000,
-            file_offset: 0x30,
-            filename,
-            build_id,
-            symbolization: MappingSymbolization::default(),
-        });
+        let (mut db, mapping) = db_with_unsymbolized_app_mapping();
         for address in [0x1010, 0x1020] {
             db.intern_location(LocationRec {
                 address,
@@ -210,9 +207,10 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
-        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            bytes,
+            anchor_address: address,
+        } = own_executable();
         let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
@@ -248,9 +246,10 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
-        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            bytes,
+            anchor_address: address,
+        } = own_executable();
         let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
@@ -290,9 +289,10 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
-        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            bytes,
+            anchor_address: address,
+        } = own_executable();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         let max_debuginfo = ByteSize::from_bytes(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
@@ -383,10 +383,11 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
         let exe = std::env::current_exe().unwrap();
-        let bytes = std::fs::read(&exe).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            anchor_address: address,
+            ..
+        } = own_executable();
         let resolver = FileSystemResolver::default();
         let request = SymbolizeRequest {
             build_id: String::new(),
@@ -589,6 +590,25 @@ mod tests {
         server_thread.join().unwrap();
         assert!(out.is_none());
         assert!(followed.load(Ordering::Relaxed) == 0);
+    }
+
+    /// The test binary's own bytes, and the address of
+    /// `object_symbol_anchor` in them.
+    #[cfg(target_os = "linux")]
+    struct OwnExecutable {
+        bytes: Vec<u8>,
+        anchor_address: u64,
+    }
+
+    #[cfg(target_os = "linux")]
+    fn own_executable() -> OwnExecutable {
+        let _ = object_symbol_anchor();
+        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+        let anchor_address = object_symbol_anchor_address(&bytes);
+        OwnExecutable {
+            bytes,
+            anchor_address,
+        }
     }
 
     #[cfg(target_os = "linux")]

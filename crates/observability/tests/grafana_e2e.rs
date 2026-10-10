@@ -25,6 +25,9 @@
 //!
 //! `cargo test -p krabka-observability --test grafana_e2e -- --ignored --nocapture`
 
+#[path = "support/grafana_loki.rs"]
+mod grafana_loki;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
@@ -32,41 +35,21 @@ use std::{
 };
 
 use assert2::assert;
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
-use krabka_blockstore::{LabelIndex, LogBlockIndex as BlockIndex};
-use krabka_observability::{InMemoryWalSink, QuerierState, distributor_router, loki_router};
 use serde_json::{Value, json};
 use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt,
-    core::{Host, IntoContainerPort, WaitFor},
-    runners::AsyncRunner,
+    ContainerAsync, GenericImage, ImageExt, core::IntoContainerPort, runners::AsyncRunner,
 };
-use tokio::{net::TcpListener, sync::oneshot};
-use tower::ServiceExt as _;
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
-/// The deadline for a container to start, which includes the image pull.
-///
-/// `AsyncRunner::start` waits for the pull with no bound of its own. A stalled
-/// pull thus holds the test process open until the CI job wall stops it, and
-/// the job log then names no test as the cause.
-const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
+use self::grafana_loki::{
+    CONTAINER_START_TIMEOUT, GRAFANA_PORT, HttpBase, QueryPair, TENANT, TestResult, query_string,
+    serve_pushed, start_grafana,
+};
 
 /// How long a component gets to report itself ready.
 const READY_TIMEOUT: Duration = Duration::from_mins(2);
 
-/// Grafana's default HTTP port.
-const GRAFANA_PORT: u16 = 3000;
-
 /// Loki's HTTP port in single-binary mode.
 const LOKI_PORT: u16 = 3100;
-
-/// The tenant both datasources send on every request.
-const TENANT: &str = "tenant-a";
 
 /// The UID of the datasource that points at Krabka.
 const KRABKA_UID: &str = "krabka-loki";
@@ -171,7 +154,7 @@ struct Case {
     name: &'static str,
     /// The path below `/loki/api/v1/`.
     path: String,
-    params: Vec<(&'static str, String)>,
+    query_pairs: Vec<QueryPair>,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -183,10 +166,15 @@ async fn grafana_reads_the_same_answer_from_krabka_and_from_loki() -> TestResult
 
     let loki = start_loki().await?;
     let loki_port = loki.get_host_port_ipv4(LOKI_PORT.tcp()).await?;
-    wait_for_http_ok(&client, &format!("http://127.0.0.1:{loki_port}"), "/ready").await?;
+    HttpBase {
+        client: &client,
+        base: &format!("http://127.0.0.1:{loki_port}"),
+    }
+    .wait_for_ok("/ready", READY_TIMEOUT)
+    .await?;
     push_to_loki(&client, loki_port, &payload).await?;
 
-    let krabka = start_krabka(&payload).await?;
+    let krabka = serve_pushed(&payload).await?;
 
     let datasources = DATASOURCES_YAML_TEMPLATE
         .replace("{KRABKA_PORT}", &krabka.host_port.to_string())
@@ -196,9 +184,15 @@ async fn grafana_reads_the_same_answer_from_krabka_and_from_loki() -> TestResult
         "http://127.0.0.1:{}",
         grafana.get_host_port_ipv4(GRAFANA_PORT.tcp()).await?
     );
-    wait_for_http_ok(&client, &base, "/api/health").await?;
+    let grafana_api = HttpBase {
+        client: &client,
+        base: &base,
+    };
+    grafana_api
+        .wait_for_ok("/api/health", READY_TIMEOUT)
+        .await?;
     for uid in [KRABKA_UID, LOKI_UID] {
-        wait_for_datasource(&client, &base, uid).await?;
+        grafana_api.wait_for_datasource(uid, READY_TIMEOUT).await?;
     }
     // Loki acknowledges a push before the entry is queryable, so the corpus
     // waits for the data rather than for the process.
@@ -400,13 +394,13 @@ fn range_cases(timeline: &Timeline, queries: &[(&'static str, &'static str)]) ->
         .map(|(name, logql)| Case {
             name,
             path: "query_range".to_string(),
-            params: vec![
-                ("query", logql.to_string()),
-                ("start", timeline.start.to_string()),
-                ("end", timeline.end.to_string()),
-                ("step", STEP_SECS.to_string()),
-                ("direction", "forward".to_string()),
-                ("limit", "5000".to_string()),
+            query_pairs: vec![
+                QueryPair::new("query", logql),
+                QueryPair::new("start", timeline.start),
+                QueryPair::new("end", timeline.end),
+                QueryPair::new("step", STEP_SECS),
+                QueryPair::new("direction", "forward"),
+                QueryPair::new("limit", "5000"),
             ],
         })
         .collect()
@@ -416,23 +410,23 @@ fn range_cases(timeline: &Timeline, queries: &[(&'static str, &'static str)]) ->
 fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
     let window = || {
         vec![
-            ("start", timeline.start.to_string()),
-            ("end", timeline.end.to_string()),
+            QueryPair::new("start", timeline.start),
+            QueryPair::new("end", timeline.end),
         ]
     };
     let mut cases = vec![
         Case {
             name: "labels_endpoint",
             path: "labels".to_string(),
-            params: window(),
+            query_pairs: window(),
         },
         Case {
             name: "series_endpoint",
             path: "series".to_string(),
-            params: {
-                let mut params = window();
-                params.push(("match[]", r#"{app=~".+"}"#.to_string()));
-                params
+            query_pairs: {
+                let mut query_pairs = window();
+                query_pairs.push(QueryPair::new("match[]", r#"{app=~".+"}"#));
+                query_pairs
             },
         },
     ];
@@ -444,7 +438,7 @@ fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
         cases.push(Case {
             name,
             path: format!("label/{label}/values"),
-            params: window(),
+            query_pairs: window(),
         });
     }
     cases
@@ -509,7 +503,7 @@ async fn probe(client: &reqwest::Client, base: &str, uid: &str, case: &Case) -> 
     let url = format!(
         "{base}/api/datasources/proxy/uid/{uid}/loki/api/v1/{}?{}",
         case.path,
-        query_string(&case.params)
+        query_string(&case.query_pairs)
     );
     let response = client.get(url).send().await?;
     let status = response.status();
@@ -521,23 +515,6 @@ async fn probe(client: &reqwest::Client, base: &str, uid: &str, case: &Case) -> 
         Ok(body) => normalize(&body),
         Err(_) => json!({ "non_json": text }),
     })
-}
-
-/// Encodes one query string from its pairs.
-///
-/// `reqwest` is built here without its `query` feature, which is what
-/// `RequestBuilder::query` needs, so the pairs are encoded the way
-/// `krabka-metrics-service`'s Grafana suite encodes its own.
-fn query_string(pairs: &[(&str, String)]) -> String {
-    pairs
-        .iter()
-        .map(|(name, value)| format!("{}={}", form_encode(name), form_encode(value)))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-fn form_encode(value: &str) -> String {
-    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 /// Strips the members of an answer that are not a property of the query.
@@ -634,10 +611,10 @@ fn known_divergence(case: &str) -> Option<Divergence> {
 
 fn report(case: &Case, krabka: &Value, loki: &Value) -> String {
     let query = case
-        .params
+        .query_pairs
         .iter()
-        .find(|(name, _)| *name == "query" || *name == "match[]")
-        .map_or_else(|| case.path.clone(), |(_, value)| value.clone());
+        .find(|pair| pair.name == "query" || pair.name == "match[]")
+        .map_or_else(|| case.path.clone(), |pair| pair.value.clone());
     format!(
         "\n--- {} ---\n  ask:    {query}\n  krabka: {}\n  loki:   {}\n",
         case.name,
@@ -702,33 +679,6 @@ async fn start_loki() -> TestResult<ContainerAsync<GenericImage>> {
     .await??)
 }
 
-async fn start_grafana(datasources_yaml: &str) -> TestResult<ContainerAsync<GenericImage>> {
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under cargo, set it to \
-         that image's tag in //bazel/images/images.bzl.",
-    );
-    Ok(tokio::time::timeout(
-        CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
-            .with_exposed_port(GRAFANA_PORT.tcp())
-            .with_wait_for(WaitFor::message_on_stdout("HTTP Server Listen"))
-            .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
-            .with_copy_to(
-                "/etc/grafana/provisioning/datasources/krabka.yaml",
-                datasources_yaml.as_bytes().to_vec(),
-            )
-            // Both backends run on the host: Loki on its mapped port, Krabka
-            // in this process.
-            .with_host("host.docker.internal", Host::HostGateway)
-            .with_env_var("GF_AUTH_ANONYMOUS_ENABLED", "true")
-            .with_env_var("GF_AUTH_ANONYMOUS_ORG_ROLE", "Admin")
-            .with_env_var("GF_AUTH_BASIC_ENABLED", "false")
-            .start(),
-    )
-    .await??)
-}
-
 async fn push_to_loki(client: &reqwest::Client, port: u16, payload: &Value) -> TestResult {
     let response = client
         .post(format!("http://127.0.0.1:{port}/loki/api/v1/push"))
@@ -740,97 +690,9 @@ async fn push_to_loki(client: &reqwest::Client, port: u16, payload: &Value) -> T
     Ok(())
 }
 
-struct KrabkaServer {
-    /// The host port the Grafana container dials through
-    /// `host.docker.internal`.
-    host_port: u16,
-    shutdown: oneshot::Sender<()>,
-}
-
-impl KrabkaServer {
-    fn shutdown(self) {
-        let _ = self.shutdown.send(());
-    }
-}
-
-/// Seeds the querier through the real push door and serves it on the host.
-///
-/// The push goes through `distributor_router`, not straight into the sink, so
-/// Krabka derives `detected_level` and `service_name` the way Loki's own
-/// discovery does. The bind address is `0.0.0.0`, not `127.0.0.1`: the
-/// container reaches this process over the host gateway, and a loopback-only
-/// listener refuses that connection.
-async fn start_krabka(payload: &Value) -> TestResult<KrabkaServer> {
-    let sink = InMemoryWalSink::default();
-    let response = distributor_router(sink.clone())
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("content-type", "application/json")
-                .header("X-Scope-OrgID", TENANT)
-                .body(Body::from(payload.to_string()))?,
-        )
-        .await?;
-    assert!(response.status() == StatusCode::NO_CONTENT);
-
-    // `i64::MIN`: nothing has been compacted, so every record the distributor
-    // wrote is in the querier's hot tail.
-    let root = tempfile::tempdir()?.keep();
-    let state = QuerierState::new(root, LabelIndex::default(), BlockIndex::default())
-        .with_hot_tail(sink, i64::MIN);
-
-    let listener = TcpListener::bind(("0.0.0.0", 0)).await?;
-    let host_port = listener.local_addr()?.port();
-    let (shutdown, stop) = oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, loki_router(state))
-            .with_graceful_shutdown(async move {
-                let _ = stop.await;
-            })
-            .await;
-    });
-    Ok(KrabkaServer {
-        host_port,
-        shutdown,
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Waiting.
 // ---------------------------------------------------------------------------
-
-async fn wait_for_http_ok(client: &reqwest::Client, base: &str, path: &str) -> TestResult {
-    let deadline = Instant::now() + READY_TIMEOUT;
-    while Instant::now() < deadline {
-        if client
-            .get(format!("{base}{path}"))
-            .send()
-            .await
-            .is_ok_and(|response| response.status().is_success())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    Err(format!("{base}{path} did not become ready").into())
-}
-
-async fn wait_for_datasource(client: &reqwest::Client, base: &str, uid: &str) -> TestResult {
-    let deadline = Instant::now() + READY_TIMEOUT;
-    while Instant::now() < deadline {
-        if client
-            .get(format!("{base}/api/datasources/uid/{uid}"))
-            .send()
-            .await
-            .is_ok_and(|response| response.status().is_success())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    Err(format!("datasource {uid} was not provisioned on {base}").into())
-}
 
 /// The `app` label values a seed probe answer holds.
 fn answered_apps(answer: &Value) -> BTreeSet<String> {
@@ -858,12 +720,12 @@ async fn wait_for_seeded(client: &reqwest::Client, base: &str, timeline: &Timeli
     let case = Case {
         name: "seed probe",
         path: "query_range".to_string(),
-        params: vec![
-            ("query", r#"{app=~".+"}"#.to_string()),
-            ("start", timeline.start.to_string()),
-            ("end", timeline.end.to_string()),
-            ("step", STEP_SECS.to_string()),
-            ("direction", "forward".to_string()),
+        query_pairs: vec![
+            QueryPair::new("query", r#"{app=~".+"}"#),
+            QueryPair::new("start", timeline.start),
+            QueryPair::new("end", timeline.end),
+            QueryPair::new("step", STEP_SECS),
+            QueryPair::new("direction", "forward"),
         ],
     };
     let deadline = Instant::now() + READY_TIMEOUT;

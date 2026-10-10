@@ -12,17 +12,7 @@ use super::*;
 #[test]
 pub(crate) fn a_signed_vector_literal_is_reported_at_the_sign() {
     let error = super::super::prelude::signed_vector_function_literal_error;
-    let column = |query: &str| {
-        error(query).map(|message| {
-            message
-                .split("col ")
-                .nth(1)
-                .and_then(|rest| rest.split(':').next())
-                .expect("the message names a column")
-                .parse::<usize>()
-                .expect("the column is a number")
-        })
-    };
+    let column = |query: &str| error(query).as_deref().map(reported_column);
 
     check!(column("vector(+1)") == Some(8));
     check!(column("vector(-1)") == Some(8));

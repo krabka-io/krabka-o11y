@@ -1,3 +1,5 @@
+use crate::http::params_format::QuotedTextScanner;
+
 pub(crate) fn find_logql_function_call_end(
     query: &str,
     position: usize,
@@ -12,21 +14,12 @@ pub(crate) fn find_logql_function_call_end(
     }
 
     let mut parens = 1_i32;
-    let mut quote = None;
-    let mut escaped = false;
+    let mut quotes = QuotedTextScanner::default();
     for (index, ch) in chars {
-        if let Some(quote_ch) = quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == quote_ch {
-                quote = None;
-            }
+        if quotes.in_quotes(ch) {
             continue;
         }
         match ch {
-            '"' | '`' => quote = Some(ch),
             '(' => parens += 1,
             ')' => {
                 parens -= 1;

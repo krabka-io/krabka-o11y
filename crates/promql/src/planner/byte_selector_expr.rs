@@ -1,7 +1,8 @@
-use std::{any::Any, collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
-use promql_parser::parser::{Expr, Extension, ast::ExtensionExpr, value::ValueType};
+use promql_parser::parser::{Expr, Extension, value::ValueType};
 
+use super::leaf_extension_expr::{LeafExtension, LeafExtensionExpr};
 use crate::{PromqlMatcher, PromqlString};
 
 /// A selector with byte-valued matchers. The dependency child retains only its
@@ -12,22 +13,11 @@ pub(crate) struct ByteSelectorExpr {
     pub(crate) matcher_sets: Vec<Vec<PromqlMatcher>>,
 }
 
-impl ExtensionExpr for ByteSelectorExpr {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn name(&self) -> &'static str {
-        "byteSelector"
-    }
-    fn value_type(&self) -> ValueType {
+impl LeafExtension for ByteSelectorExpr {
+    const NAME: &'static str = "byteSelector";
+
+    fn leaf_value_type(&self) -> ValueType {
         self.child.value_type()
-    }
-    fn children(&self) -> &[Expr] {
-        &[]
-    }
-    fn with_new_children(&self, children: Vec<Expr>) -> Arc<dyn ExtensionExpr> {
-        assert2::assert!(children.is_empty());
-        Arc::new(self.clone())
     }
 }
 
@@ -91,10 +81,10 @@ pub(crate) fn restore_byte_selector(expr: &mut Expr, values: &BTreeMap<String, P
     }
     let child = expr.clone();
     *expr = Expr::Extension(Extension {
-        expr: Arc::new(ByteSelectorExpr {
+        expr: Arc::new(LeafExtensionExpr(ByteSelectorExpr {
             child,
             matcher_sets,
-        }),
+        })),
     });
 }
 

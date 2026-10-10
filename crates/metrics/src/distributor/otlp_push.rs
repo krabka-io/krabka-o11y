@@ -8,21 +8,19 @@ pub(crate) async fn otlp_push(
     headers: HeaderMap,
     body: BodyBytes,
 ) -> Response {
-    let started = std::time::Instant::now();
-    let body_size = ByteSize::from_bytes(body.len() as u64);
-    let tenant = authorized_tenant_from_headers(&headers, &principal);
+    let ingest = IngestRequestStart::begin(&headers, &principal, &body);
     // ONE ingest span per OTLP HTTP push request; series recorded post-decode.
-    let span = ingest_span(tenant.as_ref().ok(), body_size);
-    let result = async { otlp_push_inner(&state, &tenant?, &headers, &body).await }
-        .instrument(span)
-        .await;
+    let result =
+        async { otlp_push_inner(&state, ingest.authorized_tenant()?, &headers, &body).await }
+            .instrument(ingest.span())
+            .await;
     if let Some(metrics) = &state.metrics {
-        match &result {
-            Ok((_, items, _)) => {
-                metrics.record_ingest(true, body_size, *items, started.elapsed().as_time());
-            }
-            Err(_) => metrics.record_ingest(false, body_size, 0, started.elapsed().as_time()),
-        }
+        metrics.record_ingest(IngestRequest {
+            outcome: RequestOutcome::from_result(&result),
+            body: ingest.body_size,
+            items: result.as_ref().map_or(0, |(_, items, _)| *items),
+            elapsed: ingest.started.elapsed().as_time(),
+        });
     }
     match result {
         Ok((success, _items, partial_success)) => {

@@ -266,17 +266,7 @@ async fn distinct_profiles_at_one_timestamp_add_to_unfiltered_and_function_total
     .await
     .unwrap()
     .remove(0);
-    let rule = pb::settings::v1::RecordingRule {
-        id: "same-time".into(),
-        metric_name: "profiles_recorded_function_total".into(),
-        matchers: vec![format!(r#"{{__profile_type__="{PROFILE_TYPE}"}}"#)],
-        group_by: vec!["service_name".into()],
-        external_labels: vec![pb::types::v1::LabelPair {
-            name: "team".into(),
-            value: "profiles".into(),
-        }],
-        ..Default::default()
-    };
+    let rule = function_total_rule("same-time");
     for (filter, total) in [
         (None, 18.0),
         (Some(function_filter("main")), 18.0),
@@ -329,17 +319,9 @@ async fn recording_functions_match_any_inline_frame_once_and_preserve_zero_group
         .add_series("tenant-b", labels.fingerprint(), &labels)
         .unwrap();
     let rule = pb::settings::v1::RecordingRule {
-        id: "filtered".into(),
-        metric_name: "profiles_recorded_function_total".into(),
         profile_type: PROFILE_TYPE.into(),
-        matchers: vec![format!(r#"{{__profile_type__="{PROFILE_TYPE}"}}"#)],
-        group_by: vec!["service_name".into()],
-        external_labels: vec![pb::types::v1::LabelPair {
-            name: "team".into(),
-            value: "profiles".into(),
-        }],
         generation: 1,
-        ..Default::default()
+        ..function_total_rule("filtered")
     };
     // Independently counted sample ledger: target 7+11; leaf 11; root 48;
     // missing 0. Repeated target and inline frames never multiply the value.
@@ -386,4 +368,21 @@ async fn recording_functions_match_any_inline_frame_once_and_preserve_zero_group
             .unwrap()
             .is_empty()
     );
+}
+
+/// A recording rule `id` that records `profiles_recorded_function_total` for
+/// every `PROFILE_TYPE` series, grouped by `service_name`, with the external
+/// label `team="profiles"`.
+fn function_total_rule(id: &str) -> pb::settings::v1::RecordingRule {
+    pb::settings::v1::RecordingRule {
+        id: id.into(),
+        metric_name: "profiles_recorded_function_total".into(),
+        matchers: vec![format!(r#"{{__profile_type__="{PROFILE_TYPE}"}}"#)],
+        group_by: vec!["service_name".into()],
+        external_labels: vec![pb::types::v1::LabelPair {
+            name: "team".into(),
+            value: "profiles".into(),
+        }],
+        ..Default::default()
+    }
 }

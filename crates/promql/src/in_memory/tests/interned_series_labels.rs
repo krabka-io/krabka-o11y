@@ -7,6 +7,25 @@ use object_store::memory::InMemory;
 use super::*;
 use crate::{MergedMetricStore, MetricBlockStore};
 
+/// Merges `head` over an empty cold block store.
+fn merged_with_empty_cold(head: WalHead) -> MergedMetricStore<MetricBlockStore, WalHead> {
+    let blocks = BlockStore::new(
+        Arc::new(InMemory::new()),
+        url::Url::parse("memory:///").unwrap(),
+    );
+    MergedMetricStore::new(MetricBlockStore::new(blocks), head)
+}
+
+/// Adds to the `t` label cache, under `fp`, an entry whose labels are
+/// already dropped.
+fn cache_dead_label_entry(store: &mut InMemoryMetricStore, fp: SeriesFingerprint, labels: &Labels) {
+    let dead = Arc::new(labels.clone());
+    Arc::make_mut(store.series_labels.get_mut("t").unwrap())
+        .get_mut(&fp)
+        .unwrap()
+        .push(Arc::downgrade(&dead));
+}
+
 #[test]
 fn shared_series_summary_keeps_row_keys_and_histogram_owners() {
     let first = Arc::new(lbls(&[("__name__", "up"), ("job", "first")]));
@@ -48,7 +67,7 @@ fn shared_series_summary_keeps_row_keys_and_histogram_owners() {
             fp,
             labels: Arc::clone(labels),
             ts_ms: 15,
-            hist: Arc::new(native_histogram()),
+            hist: Arc::new(count_two_sum_three_histogram()),
         });
     }
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
@@ -178,7 +197,7 @@ fn labels_are_shared_across_records_and_sample_types_within_one_tenant() {
     let labels = lbls(&[("__name__", "up"), ("job", "api")]);
     store.push_float("t", labels.clone(), 100, 1.0);
     store.push_float("t", labels.clone(), 200, 2.0);
-    store.push_histogram("t", labels.clone(), 300, native_histogram());
+    store.push_histogram("t", labels.clone(), 300, count_two_sum_three_histogram());
     store.push_exemplar("t", labels.clone(), Labels::new(), 400, 3.0);
     store.push_float("other", labels, 500, 4.0);
 
@@ -220,7 +239,7 @@ fn live_label_hits_share_the_cache_with_snapshots_but_dead_entries_are_cleaned()
     store.push_float("t", labels.clone(), 100, 1.0);
     let snapshot = store.clone();
     store.push_float("t", labels.clone(), 200, 2.0);
-    store.push_histogram("t", labels.clone(), 300, native_histogram());
+    store.push_histogram("t", labels.clone(), 300, count_two_sum_three_histogram());
     store.push_exemplar("t", labels.clone(), Labels::new(), 400, 3.0);
     assert!(Arc::ptr_eq(
         &store.series_labels["t"],
@@ -244,12 +263,7 @@ fn live_label_hits_share_the_cache_with_snapshots_but_dead_entries_are_cleaned()
     assert!(!snapshot.hists.contains_key("t"));
     assert!(!snapshot.exemplars.contains_key("t"));
 
-    let dead = Arc::new(labels.clone());
-    Arc::make_mut(store.series_labels.get_mut("t").unwrap())
-        .get_mut(&fp)
-        .unwrap()
-        .push(Arc::downgrade(&dead));
-    drop(dead);
+    cache_dead_label_entry(&mut store, fp, &labels);
     let dirty_snapshot = store.clone();
     store.push_float("t", labels.clone(), 500, 4.0);
     assert!(!Arc::ptr_eq(
@@ -328,7 +342,7 @@ fn wal_replay_keeps_byte_labels_tenants_and_snapshots_with_shared_series() {
             store.apply_wal_record(&record);
             record.payload = SamplePayload::Hist {
                 timestamp_ms: 30,
-                hist: native_histogram(),
+                hist: count_two_sum_three_histogram(),
             };
             record.exemplars.clear();
             store.apply_wal_record(&record);
@@ -361,7 +375,7 @@ fn wal_replay_keeps_byte_labels_tenants_and_snapshots_with_shared_series() {
                     histogram.labels.as_ref(),
                     histogram.ts_ms,
                     histogram.hist.as_ref()
-                ) == (fp, &labels, 30, &native_histogram())
+                ) == (fp, &labels, 30, &count_two_sum_three_histogram())
             );
             assert!(
                 (
@@ -420,12 +434,7 @@ fn wal_label_hits_keep_collisions_and_clean_dead_entries_without_changing_snapsh
     };
     store.apply_wal_record(&record);
     let snapshot = store.clone();
-    let dead = Arc::new(labels.clone());
-    Arc::make_mut(store.series_labels.get_mut("t").unwrap())
-        .get_mut(&fp)
-        .unwrap()
-        .push(Arc::downgrade(&dead));
-    drop(dead);
+    cache_dead_label_entry(&mut store, fp, &labels);
     let dirty_snapshot = store.clone();
     record.payload = SamplePayload::Float {
         timestamp_ms: 20,
@@ -479,11 +488,7 @@ async fn equal_fingerprints_do_not_reuse_matchers_for_different_labels() {
                 start_timestamp_ms: None,
             });
     }
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
+    let store = merged_with_empty_cold(WalHead::from_store(hot));
     let scan = store
         .try_latest_float_scan(
             "tenant-a",
@@ -621,7 +626,12 @@ async fn eligible_summary_keeps_old_rows_boundaries_raw_counts_and_future_fallba
     }
     hot.push_float("t", boundary.clone(), 8_000, 40.0);
     hot.push_float("t", boundary.clone(), 9_000, 42.0);
-    hot.push_histogram("t", histogram.clone(), 9_000, native_histogram());
+    hot.push_histogram(
+        "t",
+        histogram.clone(),
+        9_000,
+        count_two_sum_three_histogram(),
+    );
     hot.push_float("t", lbls(&[("__name__", "down")]), 13_000, 99.0);
     hot.push_float("other", labels.clone(), 11_000, 99.0);
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
@@ -639,11 +649,7 @@ async fn eligible_summary_keeps_old_rows_boundaries_raw_counts_and_future_fallba
     // Old retained rows count conservatively; labels-only rows contribute zero.
     assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000) == Some((expected, 5)));
     let head = WalHead::from_store(hot);
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), head.clone());
+    let store = merged_with_empty_cold(head.clone());
     let scan = store
         .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 5)
         .await
@@ -723,11 +729,7 @@ async fn latest_summary_preserves_first_tie_stale_bits_and_optional_zero_start()
         ),
     ]);
     assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000) == Some((expected, 6)));
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
+    let store = merged_with_empty_cold(WalHead::from_store(hot));
     let scan = store
         .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 6)
         .await
@@ -753,6 +755,25 @@ async fn latest_summary_preserves_first_tie_stale_bits_and_optional_zero_start()
                 .map(|labels| (labels.fingerprint(), Arc::new(labels)))
                 .collect::<BTreeMap<_, _>>()
     );
+}
+
+/// Prunes `hot` at 10s, which drops one sample, and checks that the latest
+/// `up` sample in `(9s, 12s]` then takes the row path and answers the 7 at 11s
+/// under the very `owner` label set.
+async fn assert_pruned_scan_shares_owner(mut hot: InMemoryMetricStore, owner: &Arc<Labels>) {
+    let fp = owner.fingerprint();
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
+    assert!(hot.prune(10_000).samples_dropped == 1);
+    assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000).is_none());
+    let store = merged_with_empty_cold(WalHead::from_store(hot));
+    let scan = store
+        .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(scan.samples == vec![(fp, 11_000, 7.0, Some(0))]);
+    assert!(scan.labels == BTreeMap::from([(fp, Arc::clone(owner))]));
+    assert!(Arc::ptr_eq(&scan.labels[&fp], owner));
 }
 
 #[tokio::test]
@@ -781,23 +802,10 @@ async fn summary_falls_back_after_direct_append_and_rebuilt_label_identity_colli
         value: 99.0,
         start_timestamp_ms: None,
     });
-    assert!(hot.prune(10_000).samples_dropped == 1);
     // Pruning rebuilds a complete summary; the two distinct label Arcs still
     // require the row path, including the rejected newer 'down' sample.
-    assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000).is_none());
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
-    let scan = store
-        .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 2)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(scan.samples == vec![(fp, 11_000, 7.0, Some(0))]);
-    assert!(scan.labels == BTreeMap::from([(fp, Arc::new(wanted))]));
-    assert!(Arc::ptr_eq(&scan.labels[&fp], &wanted_arc));
+    assert!(*wanted_arc == wanted);
+    assert_pruned_scan_shares_owner(hot, &wanted_arc).await;
 
     let wanted = lbls(&[("__name__", "up"), ("job", "api")]);
     let in_window = Arc::new(wanted.clone());
@@ -811,21 +819,7 @@ async fn summary_falls_back_after_direct_append_and_rebuilt_label_identity_colli
         value: 7.0,
         start_timestamp_ms: Some(0),
     });
-    assert!(hot.prune(10_000).samples_dropped == 1);
-    assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000).is_none());
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
-    let scan = store
-        .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 2)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(scan.samples == vec![(fp, 11_000, 7.0, Some(0))]);
-    assert!(scan.labels == BTreeMap::from([(fp, Arc::clone(&in_window))]));
-    assert!(Arc::ptr_eq(&scan.labels[&fp], &in_window));
+    assert_pruned_scan_shares_owner(hot, &in_window).await;
 }
 
 #[tokio::test]
@@ -868,11 +862,7 @@ async fn byte_labels_remain_distinct_in_interning_and_latest_scan_snapshots() {
         assert!(Arc::ptr_eq(&pair[0].labels, &pair[1].labels));
     }
     assert!(snapshot.series_labels["tenant-a"].len() == 3);
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), head.clone());
+    let store = merged_with_empty_cold(head.clone());
     let captured = store
         .try_latest_float_scan("tenant-a", &[], 9_000, 9_001, 11_000, 6)
         .await

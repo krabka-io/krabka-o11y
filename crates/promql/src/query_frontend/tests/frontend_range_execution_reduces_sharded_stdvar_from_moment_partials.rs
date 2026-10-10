@@ -5,24 +5,10 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_stdvar_from_moment_
     let cache = QueryFrontendCache::default();
     let executor = MomentPartialRecordingExecutor::default();
 
-    let result = execute_range_query_frontend(
-        &executor,
-        &cache,
-        &FrontendRangeRequest {
-            tenant: tenant_id("tenant-a"),
-            query: "stdvar(up)".into(),
-            start_ms: 0,
-            end_ms: 0,
-            step: millis(60_000),
-            admission_limits: krabka_query_frontend::AdmissionLimits::default(),
-            opts: QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        },
-    )
-    .await
-    .unwrap();
+    let result =
+        execute_range_query_frontend(&executor, &cache, &two_shard_instant_request("stdvar(up)"))
+            .await
+            .unwrap();
 
     let calls = executor
         .calls
@@ -30,18 +16,7 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_stdvar_from_moment_
         .expect("moment partial executor calls poisoned")
         .clone();
     assert2::assert!(
-        calls
-            .iter()
-            .map(|query| (query.query.as_str(), query.shard))
-            .collect::<Vec<_>>()
-            == vec![
-                ("sum(up)", Some(QueryShard { index: 1, total: 2 })),
-                ("sum(up)", Some(QueryShard { index: 2, total: 2 })),
-                ("count(up)", Some(QueryShard { index: 1, total: 2 })),
-                ("count(up)", Some(QueryShard { index: 2, total: 2 })),
-                ("sum((up) * (up))", Some(QueryShard { index: 1, total: 2 }),),
-                ("sum((up) * (up))", Some(QueryShard { index: 2, total: 2 }),),
-            ]
+        shard_calls(&calls) == on_both_shards(&["sum(up)", "count(up)", "sum((up) * (up))"])
     );
     let QueryResult::RangeMatrix(series) = result.result else {
         panic!("stdvar range matrix");

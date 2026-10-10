@@ -2,15 +2,11 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn range_selector_at_start_and_end_use_query_bounds() {
-    let mut store = InMemoryMetricStore::new();
-    for (ts_ms, value) in [(60_000_i64, 1.0), (120_000, 2.0), (180_000, 3.0)] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "up"), ("job", "api")]),
-            ts_ms,
-            value,
-        );
-    }
+    let store = SeriesFixture::new(labels(&[("__name__", "up"), ("job", "api")]))
+        .at(60_000_i64, 1.0)
+        .at(120_000, 2.0)
+        .at(180_000, 3.0)
+        .store();
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     for (query, expected) in [("up @ start()", 1.0), ("up @ end()", 3.0)] {

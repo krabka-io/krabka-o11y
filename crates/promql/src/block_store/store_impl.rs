@@ -13,7 +13,7 @@ use crate::{
     error::Result,
     store::{
         ExemplarRecord, ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataRecord,
-        MetadataScan, MetricStore, NamedTsdbStat, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
+        MetadataScan, MetricStore, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
     },
 };
 
@@ -28,7 +28,6 @@ mod metadata_from_batch;
 mod metadata_table;
 mod metric_block_store;
 mod missing_block_warnings;
-mod named_stats;
 
 use append_exemplar_label_map::append_exemplar_label_map;
 use blockstore_error::blockstore_error;
@@ -40,4 +39,5 @@ use histogram_table::HISTOGRAM_TABLE;
 use metadata_from_batch::metadata_from_batch;
 use metadata_table::METADATA_TABLE;
 use missing_block_warnings::missing_block_warnings;
-use named_stats::named_stats;
+
+use crate::series_stats::{SeriesRef, label_name_cardinality, label_value_cardinality, tsdb_stats};

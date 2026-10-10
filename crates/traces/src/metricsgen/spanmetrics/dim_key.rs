@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::{SpanMetricsConfig, SpanRecord, span_kind_dim, status_dim};
+use super::{SpanMetricsConfig, SpanRecord, red_dimension_pairs};
 use crate::metricsgen::config::{FilterPolicy, MatchType};
 
 pub(crate) type DimKey = Vec<(String, String)>;
@@ -10,18 +10,7 @@ pub(crate) fn dim_key(
     include_status_message: bool,
     config: &SpanMetricsConfig,
 ) -> DimKey {
-    let mut labels = BTreeMap::from([
-        ("service".to_string(), span.service_name.clone()),
-        ("span_name".to_string(), span.name.clone()),
-        (
-            "span_kind".to_string(),
-            span_kind_dim(span.kind).to_string(),
-        ),
-        (
-            "status_code".to_string(),
-            status_dim(span.status).to_string(),
-        ),
-    ]);
+    let mut labels = BTreeMap::from(red_dimension_pairs(span));
     if include_status_message {
         labels.insert("status_message".to_string(), span.status_message.clone());
     }

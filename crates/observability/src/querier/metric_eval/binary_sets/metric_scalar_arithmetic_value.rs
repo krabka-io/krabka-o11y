@@ -1,16 +1,10 @@
-use super::{MetricScalarArithmeticOp, MetricValue};
+use super::{MetricScalarArithmeticOp, MetricValue, ScalarOperands};
 
 pub(crate) fn metric_scalar_arithmetic_value(
-    sample: MetricValue,
+    operands: ScalarOperands,
     op: MetricScalarArithmeticOp,
-    scalar: MetricValue,
-    scalar_on_left: bool,
 ) -> Option<MetricValue> {
-    let (left, right) = if scalar_on_left {
-        (scalar, sample)
-    } else {
-        (sample, scalar)
-    };
+    let (left, right) = operands.left_and_right();
     match op {
         MetricScalarArithmeticOp::Add => Some(left.add(right)),
         MetricScalarArithmeticOp::Subtract => Some(left.subtract(right)),

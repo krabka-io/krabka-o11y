@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use super::{
     Arc, BlockStoreError, ByteSize, ByteSizeExt as _, Bytes, ObjectStore, ObjectStoreExt as _,
     Path, Result,
@@ -16,35 +18,81 @@ pub(crate) async fn read_index_shard(
 ) -> Result<Bytes> {
     match krabka_object_store::v013::read_capped(store, path, max_bytes.bytes_u64()).await {
         Ok(bytes) => Ok(bytes),
-        Err(error) => Err(match error {
-            krabka_object_store::v013::ObjectStoreError::TooLarge {
-                size, max_bytes, ..
-            } => BlockStoreError::InvalidBlock(format!(
-                "index shard `{path}` is {size} bytes, exceeds cap of {max_bytes} bytes"
-            )),
-            krabka_object_store::v013::ObjectStoreError::Backend(message)
-            | krabka_object_store::v013::ObjectStoreError::InvalidConfig(message) => {
-                BlockStoreError::ObjectStore(message)
+        Err(error) => Err(
+            match oversized_object_error(
+                CappedObject {
+                    label: "index shard",
+                    name: path,
+                },
+                &error,
+            ) {
+                Some(oversized) => oversized,
+                None => capped_read_error(store, path, error).await,
+            },
+        ),
+    }
+}
+
+/// An object a capped read names in its errors: the kind of object, and the
+/// object itself.
+#[derive(Clone, Copy)]
+pub(crate) struct CappedObject<'a> {
+    pub(crate) label: &'a str,
+    pub(crate) name: &'a dyn Display,
+}
+
+/// Reports a `read_capped` refusal of an object over its cap as an
+/// [`BlockStoreError::InvalidBlock`] that names `object`, and returns `None`
+/// for every other failure.
+pub(crate) fn oversized_object_error(
+    object: CappedObject<'_>,
+    error: &krabka_object_store::v013::ObjectStoreError,
+) -> Option<BlockStoreError> {
+    let CappedObject { label, name } = object;
+    match error {
+        krabka_object_store::v013::ObjectStoreError::TooLarge {
+            size, max_bytes, ..
+        } => Some(BlockStoreError::InvalidBlock(format!(
+            "{label} `{name}` is {size} bytes, exceeds cap of {max_bytes} bytes"
+        ))),
+        _ => None,
+    }
+}
+
+/// Maps a `read_capped` failure other than `TooLarge` onto the blockstore
+/// error the index readers report.
+///
+/// A missing object is re-checked with a `head`: an index object that a
+/// listing or a live manifest names is not allowed to vanish, whether a
+/// concurrent save deleted it or a torn write or outside deletion did, and
+/// answering from a partial index would hide that.
+pub(crate) async fn capped_read_error(
+    store: &Arc<dyn ObjectStore>,
+    path: &Path,
+    error: krabka_object_store::v013::ObjectStoreError,
+) -> BlockStoreError {
+    match error {
+        krabka_object_store::v013::ObjectStoreError::Backend(message)
+        | krabka_object_store::v013::ObjectStoreError::InvalidConfig(message) => {
+            BlockStoreError::ObjectStore(message)
+        }
+        krabka_object_store::v013::ObjectStoreError::Io(error) => {
+            BlockStoreError::ObjectStore(error.to_string())
+        }
+        not_found @ krabka_object_store::v013::ObjectStoreError::NotFound(_) => {
+            match store.head(path).await {
+                Ok(_) => BlockStoreError::ObjectStore(not_found.to_string()),
+                Err(missing) => BlockStoreError::ObjectStore(missing.to_string()),
             }
-            krabka_object_store::v013::ObjectStoreError::Io(error) => {
-                BlockStoreError::ObjectStore(error.to_string())
-            }
-            not_found @ krabka_object_store::v013::ObjectStoreError::NotFound(_) => {
-                // A shard the listing named and the read could not find was
-                // deleted between the two, which a concurrent save does. Report
-                // it rather than answering from a partial index.
-                match store.head(path).await {
-                    Ok(_) => BlockStoreError::ObjectStore(not_found.to_string()),
-                    Err(missing) => BlockStoreError::ObjectStore(missing.to_string()),
-                }
-            }
-            // Write-side variants: `read_capped` cannot raise them, but they
-            // are part of the enum, so surface them like any other backend
-            // failure rather than widening the read path.
-            conflict @ (krabka_object_store::v013::ObjectStoreError::AlreadyExists(_)
-            | krabka_object_store::v013::ObjectStoreError::Precondition { .. }) => {
-                BlockStoreError::ObjectStore(conflict.to_string())
-            }
-        }),
+        }
+        // Write-side variants: `read_capped` cannot raise them, but they are
+        // part of the enum, so surface them like any other backend failure
+        // rather than widening the read path. `TooLarge` reaches here only if
+        // a caller forwards it, and is a backend failure like the rest.
+        other @ (krabka_object_store::v013::ObjectStoreError::AlreadyExists(_)
+        | krabka_object_store::v013::ObjectStoreError::Precondition { .. }
+        | krabka_object_store::v013::ObjectStoreError::TooLarge { .. }) => {
+            BlockStoreError::ObjectStore(other.to_string())
+        }
     }
 }

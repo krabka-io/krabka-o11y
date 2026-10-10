@@ -1,6 +1,9 @@
 use super::{ResetHint, pb};
 
-pub(crate) fn remote_read_reset_hint(reset_hint: ResetHint) -> i32 {
+/// The remote-read protobuf `Histogram.reset_hint` value for `reset_hint`, as
+/// the `i32` that prost stores for an enum field.
+#[must_use]
+pub fn remote_read_reset_hint(reset_hint: ResetHint) -> i32 {
     match reset_hint {
         ResetHint::Unknown => pb::v1::histogram::ResetHint::Unknown as i32,
         ResetHint::Yes => pb::v1::histogram::ResetHint::Yes as i32,

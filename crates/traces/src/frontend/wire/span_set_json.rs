@@ -15,6 +15,18 @@ pub struct SpanSetJson {
     pub attributes: Vec<KeyValueJson>,
 }
 
+impl SpanSetJson {
+    /// A spanSet that matched exactly `spans`, with no spanSet attributes.
+    #[must_use]
+    pub fn of_matched_spans(spans: Vec<SpanJson>) -> Self {
+        SpanSetJson {
+            matched: u32::try_from(spans.len()).unwrap_or(u32::MAX),
+            spans,
+            attributes: Vec::new(),
+        }
+    }
+}
+
 impl From<&SpanSet> for SpanSetJson {
     fn from(ss: &SpanSet) -> Self {
         SpanSetJson {

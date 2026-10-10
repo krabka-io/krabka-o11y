@@ -13,14 +13,7 @@ pub(crate) async fn instant_group_returns_one_for_each_group() {
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "group by (job) (up)", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "group by (job) (up)", 10_000).await;
     assert2::assert!(samples.len() == 2);
     for sample in samples {
         assert2::assert!(sample.labels.get("__name__") == None);

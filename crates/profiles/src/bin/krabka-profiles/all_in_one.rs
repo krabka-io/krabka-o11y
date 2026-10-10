@@ -24,24 +24,24 @@
 //! real role composition.
 
 use std::{
-    collections::BTreeMap,
-    io::Write as _,
     process::{Child, Command},
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use assert2::{assert, check};
+use assert2::assert;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use clap::Parser as _;
-use flate2::{Compression, write::GzEncoder};
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
-use krabka_pprof::{PprofProfile, proto};
-use krabka_profiles::PROFILES_WAL_TOPIC;
 use serde_json::{Value, json};
 
-use super::{Cli, run};
+use super::{
+    Cli,
+    render_roundtrip::{ExpectedFlame, check_rendered_flame, flame_names, gzip_bytes},
+    run,
+    sigterm_child_runtime::{SigtermChildRuntime, free_loopback_addr},
+    synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, SyntheticCpuProfile},
+    wal_topic::WalTopicBroker,
+};
 
 /// Set on the child re-execution, and carries the broker the child's roles
 /// speak to. One marker per test, because both spawn the same executable and
@@ -67,8 +67,6 @@ const ARCHIVED_SERVICE: &str = "checkout";
 /// is what makes the older one unreachable from the WAL tail -- and a block in
 /// the shared object store the only place it can be answered from.
 const RECENT_SERVICE: &str = "heartbeat";
-const FUNC_WORK: &str = "main.work";
-const FUNC_HOT: &str = "main.hotloop";
 const LEAF_VALUE: i64 = 100;
 const SELF_VALUE: i64 = 40;
 const ARCHIVED_AGE: Duration = Duration::from_hours(1);
@@ -109,19 +107,14 @@ fn a_push_at_the_ingest_door_is_answered_at_the_query_door() {
         .lock()
         .expect("serialize all-in-one tests");
 
-    let dir = tempfile::tempdir().expect("temporary directory");
-    let runtime = parent_runtime();
-    let broker = start_broker(&runtime, dir.path());
-    let bootstrap = broker.listen_addr().to_string();
-    let listen = free_loopback_addr();
-    let admin = free_loopback_addr();
-    let _serving = spawn_all_child(INGEST_TEST, INGEST_CHILD, &bootstrap, &listen, &admin);
+    let parent = start_all_in_one(&INGEST);
+    let listen = parent.listen.as_str();
 
-    runtime.block_on(async {
+    parent.runtime.block_on(async {
         // Every role's gates, on the one port, before anything is pushed. A
         // push accepted by a process whose block builder had not yet reached
         // the broker would be a race this suite could not tell from a bug.
-        wait_until_ready(&listen, Duration::from_secs(90)).await;
+        wait_until_ready(listen, Duration::from_secs(90)).await;
 
         let now_ms = epoch_millis();
         let archived_ms =
@@ -134,13 +127,22 @@ fn a_push_at_the_ingest_door_is_answered_at_the_query_door() {
         // for it to come from is a block in the object store the block builder
         // wrote to -- which is the point.
         push(
-            &listen,
-            &[(ARCHIVED_SERVICE, archived_ms), (RECENT_SERVICE, now_ms)],
+            listen,
+            &[
+                ServiceProfile {
+                    service: ARCHIVED_SERVICE,
+                    at_ms: archived_ms,
+                },
+                ServiceProfile {
+                    service: RECENT_SERVICE,
+                    at_ms: now_ms,
+                },
+            ],
         )
         .await;
 
         let render = render_until_answered(
-            &listen,
+            listen,
             ARCHIVED_SERVICE,
             archived_ms - 60_000,
             archived_ms + 60_000,
@@ -148,11 +150,12 @@ fn a_push_at_the_ingest_door_is_answered_at_the_query_door() {
         )
         .await;
 
-        check!(flame_names(&render) == vec![FUNC_HOT.to_string(), FUNC_WORK.to_string()]);
-        check!(flame_ticks(&render) == Some(LEAF_VALUE + SELF_VALUE));
-        check!(
-            render.pointer("/metadata/units").and_then(Value::as_str) == Some("nanoseconds"),
-            "render metadata must carry the profile type's unit, got {render}"
+        check_rendered_flame(
+            &render,
+            &ExpectedFlame {
+                names: &[FUNC_HOT, FUNC_WORK],
+                ticks: LEAF_VALUE + SELF_VALUE,
+            },
         );
     });
 }
@@ -178,22 +181,24 @@ fn a_sigterm_stops_every_role_and_the_process_exits_cleanly() {
         .lock()
         .expect("serialize all-in-one tests");
 
-    let dir = tempfile::tempdir().expect("temporary directory");
-    let runtime = parent_runtime();
-    let broker = start_broker(&runtime, dir.path());
-    let bootstrap = broker.listen_addr().to_string();
-    let listen = free_loopback_addr();
-    let admin = free_loopback_addr();
-    let mut serving = spawn_all_child(SIGTERM_TEST, SIGTERM_CHILD, &bootstrap, &listen, &admin);
+    let mut parent = start_all_in_one(&SIGTERM);
+    let listen = parent.listen.as_str();
 
-    runtime.block_on(async {
+    parent.runtime.block_on(async {
         // Signalled only once every role is up. A stop that arrived mid-start
         // would exercise the start's own cancellation paths instead of the
         // drain.
-        wait_until_ready(&listen, Duration::from_secs(90)).await;
+        wait_until_ready(listen, Duration::from_secs(90)).await;
         // Something in the WAL, so the block builder has a partition
         // assignment and an offset to commit rather than nothing to drain.
-        push(&listen, &[(RECENT_SERVICE, epoch_millis())]).await;
+        push(
+            listen,
+            &[ServiceProfile {
+                service: RECENT_SERVICE,
+                at_ms: epoch_millis(),
+            }],
+        )
+        .await;
     });
 
     // Through `sh` rather than a `kill` binary: the shell builtin is always
@@ -201,12 +206,12 @@ fn a_sigterm_stops_every_role_and_the_process_exits_cleanly() {
     // forbidden workspace-wide so `libc::kill` is not an option.
     let signalled = Command::new("/bin/sh")
         .arg("-c")
-        .arg(format!("kill -TERM {}", serving.0.id()))
+        .arg(format!("kill -TERM {}", parent.child.0.id()))
         .status()
         .expect("send SIGTERM");
     assert!(signalled.success());
 
-    let status = serving.wait_for_exit(Duration::from_mins(1));
+    let status = parent.child.wait_for_exit(Duration::from_mins(1));
 
     assert!(status.code() == Some(0), "`--target all` exited {status}");
 }
@@ -214,19 +219,7 @@ fn a_sigterm_stops_every_role_and_the_process_exits_cleanly() {
 /// The role under test, in the child: the binary's own `run`, on the real
 /// `--target all` composition, built from a real `Cli`.
 fn run_all_child(bootstrap: &str, flags: &[&str]) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("child runtime");
-    // Registered before the parent can see anything this process exports, so
-    // the parent's `kill` cannot land in the window before the roles install
-    // their own. Tokio's handlers are process-wide and refcounted, so the one
-    // installed later is this same registration.
-    let _terminate = runtime
-        .block_on(async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        })
-        .expect("install SIGTERM handler");
+    let runtime = SigtermChildRuntime::start();
 
     let listen = std::env::var(CHILD_LISTEN).expect("child listen address");
     let admin = std::env::var(CHILD_ADMIN).expect("child admin address");
@@ -259,25 +252,56 @@ fn run_all_child(bootstrap: &str, flags: &[&str]) {
     runtime.block_on(async { run(cli).await.expect("`--target all` returns on SIGTERM") });
 }
 
-/// Re-executes this test binary as the named test, with the environment that
-/// makes it the child rather than the parent.
-fn spawn_all_child(
-    test: &str,
-    marker: &str,
-    bootstrap: &str,
-    listen: &str,
-    admin: &str,
-) -> ChildGuard {
-    ChildGuard(
+/// One of this suite's tests: its name, which the child re-executes, and the
+/// variable whose presence makes a process that child.
+struct AllInOneTest {
+    name: &'static str,
+    child_marker: &'static str,
+}
+
+const INGEST: AllInOneTest = AllInOneTest {
+    name: INGEST_TEST,
+    child_marker: INGEST_CHILD,
+};
+const SIGTERM: AllInOneTest = AllInOneTest {
+    name: SIGTERM_TEST,
+    child_marker: SIGTERM_CHILD,
+};
+
+/// The parent's side of a test: a broker, and a `--target all` child serving
+/// on its own free ports.
+struct AllInOneParent {
+    // Fields drop in declaration order: the child before the broker it speaks
+    // to, and the broker before the runtime it serves from.
+    child: ChildGuard,
+    /// The child's Pyroscope port.
+    listen: String,
+    _broker: WalTopicBroker,
+    runtime: tokio::runtime::Runtime,
+}
+
+/// Starts a broker and re-executes this test binary as `test`, with the
+/// environment that makes it the child rather than the parent.
+fn start_all_in_one(test: &AllInOneTest) -> AllInOneParent {
+    let runtime = parent_runtime();
+    let broker = runtime.block_on(WalTopicBroker::start());
+    let listen = free_loopback_addr();
+    let child = ChildGuard(
         Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", test, "--nocapture"])
-            .env(marker, bootstrap)
-            .env(CHILD_LISTEN, listen)
-            .env(CHILD_ADMIN, admin)
+            .args(["--exact", test.name, "--nocapture"])
+            .env(test.child_marker, &broker.bootstrap)
+            .env(CHILD_LISTEN, &listen)
+            .env(CHILD_ADMIN, free_loopback_addr())
             .env("RUST_LOG", "warn")
             .spawn()
             .expect("spawn the `--target all` child"),
-    )
+    );
+    AllInOneParent {
+        child,
+        listen,
+        _broker: broker,
+        runtime,
+    }
 }
 
 /// Kills the process whatever the test does, including panicking out of an
@@ -315,16 +339,6 @@ fn parent_runtime() -> tokio::runtime::Runtime {
         .expect("parent runtime")
 }
 
-fn start_broker(runtime: &tokio::runtime::Runtime, dir: &std::path::Path) -> BrokerHandle {
-    runtime.block_on(async {
-        let broker = Broker::start(BrokerConfig::for_tests(dir.join("broker")))
-            .await
-            .expect("broker start");
-        create_wal_topic(&broker.listen_addr().to_string()).await;
-        broker
-    })
-}
-
 fn epoch_millis() -> i64 {
     i64::try_from(
         SystemTime::now()
@@ -333,35 +347,6 @@ fn epoch_millis() -> i64 {
             .as_millis(),
     )
     .expect("epoch milliseconds fit in i64")
-}
-
-async fn create_wal_topic(bootstrap: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: PROFILES_WAL_TOPIC.into(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
-        )
-        .await
-        .expect("create the profiles WAL topic");
-}
-
-/// An address nothing is listening on yet. The child's ports have to be named
-/// before it starts, because the parent connects to them.
-fn free_loopback_addr() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a free port");
-    listener
-        .local_addr()
-        .expect("the bound address")
-        .to_string()
 }
 
 /// Polls `/ready` on the Pyroscope port until every role's gates are met.
@@ -386,9 +371,16 @@ async fn wait_until_ready(listen: &str, within: Duration) {
     panic!("`--target all` was not ready within {within:?}: {last}");
 }
 
-/// Pushes one profile per `(service, timestamp)` pair, through the
-/// distributor's Connect door, in the order given.
-async fn push(listen: &str, series: &[(&str, i64)]) {
+/// One synthetic CPU profile of `service`, taken at `at_ms` Unix
+/// milliseconds.
+struct ServiceProfile {
+    service: &'static str,
+    at_ms: i64,
+}
+
+/// Pushes one series per profile, through the distributor's Connect door, in
+/// the order given.
+async fn push(listen: &str, series: &[ServiceProfile]) {
     let response = reqwest::Client::new()
         .post(format!("http://{listen}/push.v1.PusherService/Push"))
         .header("content-type", "application/json")
@@ -453,128 +445,26 @@ async fn render_until_answered(
     panic!("no profile for {service} came back within {within:?}; last answer was {last}");
 }
 
-fn flame_names(value: &Value) -> Vec<String> {
-    let mut names: Vec<String> = value
-        .pointer("/flamebearer/names")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flat_map(|names| names.iter())
-        .filter_map(Value::as_str)
-        .filter(|name| *name != "total" && !name.is_empty())
-        .map(ToString::to_string)
-        .collect();
-    names.sort();
-    names
-}
-
-fn flame_ticks(value: &Value) -> Option<i64> {
-    value
-        .pointer("/flamebearer/numTicks")
-        .or_else(|| value.pointer("/flamebearer/total"))
-        .and_then(Value::as_i64)
-}
-
-fn push_body(series: &[(&str, i64)]) -> Value {
+fn push_body(series: &[ServiceProfile]) -> Value {
     let series: Vec<Value> = series
         .iter()
-        .map(|(service, at_ms)| {
+        .map(|&ServiceProfile { service, at_ms }| {
+            let profile = SyntheticCpuProfile {
+                time_nanos: at_ms * 1_000_000,
+                hot_value: LEAF_VALUE,
+                work_value: SELF_VALUE,
+            };
             json!({
                 "labels": [
                     { "name": "__name__", "value": PROFILE_NAME },
                     { "name": "service_name", "value": service }
                 ],
                 "samples": [{
-                    "rawProfile": BASE64.encode(gzip_bytes(&synthetic_cpu_pprof(at_ms * 1_000_000))),
+                    "rawProfile": BASE64.encode(gzip_bytes(&profile.encode())),
                     "ID": format!("krabka-all-in-one-{service}")
                 }]
             })
         })
         .collect();
     json!({ "series": series })
-}
-
-/// A two-sample CPU profile: `main.hotloop` called from `main.work`, and
-/// `main.work` on its own.
-fn synthetic_cpu_pprof(time_nanos: i64) -> Vec<u8> {
-    // string_table: 0="" 1="cpu" 2="nanoseconds" 3=main.work 4=main.hotloop 5="app.go"
-    let profile = proto::Profile {
-        sample_type: vec![proto::ValueType { r#type: 1, unit: 2 }],
-        sample: vec![
-            proto::Sample {
-                location_id: vec![2, 1], // leaf-first: main.hotloop -> main.work
-                value: vec![LEAF_VALUE],
-                label: Vec::new(),
-            },
-            proto::Sample {
-                location_id: vec![1], // main.work
-                value: vec![SELF_VALUE],
-                label: Vec::new(),
-            },
-        ],
-        mapping: vec![proto::Mapping {
-            id: 1,
-            symbolization: proto::MappingSymbolization::from_parts((true, false, false, false)),
-            ..Default::default()
-        }],
-        location: vec![
-            proto::Location {
-                id: 1,
-                mapping_id: 1,
-                address: 0x1000,
-                line: vec![proto::Line {
-                    function_id: 1,
-                    line: 10,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-            proto::Location {
-                id: 2,
-                mapping_id: 1,
-                address: 0x2000,
-                line: vec![proto::Line {
-                    function_id: 2,
-                    line: 20,
-                    column: 0,
-                }],
-                is_folded: false,
-            },
-        ],
-        function: vec![
-            proto::Function {
-                id: 1,
-                name: 3,
-                system_name: 3,
-                filename: 5,
-                start_line: 1,
-            },
-            proto::Function {
-                id: 2,
-                name: 4,
-                system_name: 4,
-                filename: 5,
-                start_line: 2,
-            },
-        ],
-        string_table: vec![
-            String::new(),
-            "cpu".to_string(),
-            "nanoseconds".to_string(),
-            FUNC_WORK.to_string(),
-            FUNC_HOT.to_string(),
-            "app.go".to_string(),
-        ],
-        time_nanos,
-        duration_nanos: 1_000_000_000,
-        period_type: Some(proto::ValueType { r#type: 1, unit: 2 }),
-        period: 10_000_000,
-        ..Default::default()
-    };
-    PprofProfile::from(profile).encode()
-}
-
-fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(bytes).expect("gzip write");
-    encoder.finish().expect("gzip finish")
 }

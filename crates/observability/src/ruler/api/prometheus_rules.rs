@@ -28,7 +28,6 @@ mod yaml_duration_seconds_field;
 mod yaml_string_field;
 mod yaml_string_labels_field;
 mod yaml_string_map_field;
-mod yaml_string_template_map_field;
 
 pub(crate) use expand_prometheus_alert_template::expand_prometheus_alert_template;
 pub(crate) use loki_yaml_mapping::loki_yaml_mapping;
@@ -49,4 +48,3 @@ pub(crate) use yaml_duration_seconds_field::yaml_duration_seconds_field;
 pub(crate) use yaml_string_field::yaml_string_field;
 pub(crate) use yaml_string_labels_field::yaml_string_labels_field;
 pub(crate) use yaml_string_map_field::yaml_string_map_field;
-pub(crate) use yaml_string_template_map_field::yaml_string_template_map_field;

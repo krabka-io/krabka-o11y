@@ -3,13 +3,13 @@ use std::{collections::BTreeMap, fmt::Write as _, sync::Arc};
 use axum::{
     Extension, Router,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use krabka_observability::server_security::{Principal, authorize_admin};
 
-use super::{MetricStore, PrometheusApiState, authorized_tenant_from_headers};
+use super::{AuthorizedTenant, MetricStore, PrometheusApiState};
 
 /// Builds Mimir's tenant-wide ruler inspection and deletion routes.
 pub fn mimir_ruler_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>) -> Router {
@@ -136,13 +136,8 @@ fn escape_html(value: &str) -> String {
 
 async fn delete_tenant_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    AuthorizedTenant(tenant): AuthorizedTenant,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
-    };
     let deleted = match state.ruler_rules.write() {
         Ok(mut rules) => {
             rules.remove(&tenant);

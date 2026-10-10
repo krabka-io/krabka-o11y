@@ -1,8 +1,6 @@
-use krabka_observability::persisted_format::validate_persisted_format;
-
 use super::{
     MetricStore, PrometheusApiState, RulerStateConsumerError, Time, WalHeadConsumerCommit,
-    WalHeadConsumerPoll, WalHeadConsumerRecord, WalHeadReplayResult, replay_ruler_state_records,
+    WalHeadConsumerPoll, WalHeadReplayResult, checked_replay_records, replay_ruler_state_records,
 };
 
 #[tracing::instrument(
@@ -29,24 +27,8 @@ where
         .poll(timeout)
         .await
         .map_err(|error| RulerStateConsumerError::Poll(error.to_string()))?;
-    for record in records.iter().filter(|record| record.topic == state_topic) {
-        validate_persisted_format(
-            record
-                .headers
-                .iter()
-                .map(|header| (header.key.as_str(), header.value.as_deref())),
-        )
+    let replay_records = checked_replay_records(records, state_topic)
         .map_err(|error| RulerStateConsumerError::UnsupportedFormat(error.to_string()))?;
-    }
-    let replay_records = records
-        .into_iter()
-        .map(|record| WalHeadConsumerRecord {
-            topic: record.topic,
-            partition: record.partition.into(),
-            offset: record.offset.into(),
-            value: record.value.map(|value| value.to_vec()),
-        })
-        .collect::<Vec<_>>();
     let result = replay_ruler_state_records(state, state_topic, &replay_records)?;
     let span = tracing::Span::current();
     span.record("polled", result.polled_records);

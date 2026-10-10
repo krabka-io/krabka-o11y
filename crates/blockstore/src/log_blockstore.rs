@@ -65,14 +65,12 @@ mod tests {
 
     use assert2::check;
     use datafusion::prelude::{col, lit};
-    use futures::stream::BoxStream;
     use object_store::{
-        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta,
-        PutMultipartOptions, PutOptions, PutPayload, PutResult, local::LocalFileSystem,
-        memory::InMemory, path::Path as ObjectPath,
+        GetOptions, GetResult, local::LocalFileSystem, memory::InMemory, path::Path as ObjectPath,
     };
 
     use super::*;
+    use crate::awkward_tenants::AWKWARD_TENANTS;
 
     #[test]
     fn labels_and_fingerprints_are_canonicalized_with_length_prefixes() {
@@ -1108,24 +1106,9 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl ObjectStore for CountingObjectStore {
-        async fn put_opts(
-            &self,
-            location: &ObjectPath,
-            payload: PutPayload,
-            options: PutOptions,
-        ) -> object_store::Result<PutResult> {
-            self.inner.put_opts(location, payload, options).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &ObjectPath,
-            options: PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn MultipartUpload>> {
-            self.inner.put_multipart_opts(location, options).await
-        }
+    crate::delegate_object_store! {
+        CountingObjectStore => inner;
+        forward [put_opts, put_multipart_opts, list, list_with_delimiter, copy_opts, delete_stream];
 
         async fn get_opts(
             &self,
@@ -1142,36 +1125,6 @@ mod tests {
                     .fetch_add(result.range.end - result.range.start, Ordering::Relaxed);
             }
             Ok(result)
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> object_store::Result<ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &ObjectPath,
-            to: &ObjectPath,
-            options: CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<ObjectPath>>,
-        ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-            self.inner.delete_stream(locations)
         }
     }
 
@@ -1233,22 +1186,6 @@ mod tests {
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect()
     }
-
-    const AWKWARD_TENANTS: [(&str, &str); 13] = [
-        ("plain", "tenant-a"),
-        ("separator", "a/b"),
-        ("relative", ".."),
-        ("current", "."),
-        ("traversal", "../../etc"),
-        ("absolute", "/etc/passwd"),
-        ("space", "a b"),
-        ("star", "a*b"),
-        ("marker", "a!b"),
-        ("quote", "a'b"),
-        ("brackets", "(a)"),
-        ("backslash", "a\\b"),
-        ("non ASCII", "\u{e9}"),
-    ];
 
     /// A tenant reaches these keys from an untrusted header, and the keys are
     /// what separates one tenant's blocks and index shards from another's.
@@ -1376,6 +1313,7 @@ mod read_log_index_manifest_from_object_store;
 mod read_tenant_log_index_manifest_from_object_store;
 mod read_tenant_log_index_shard_from_object_store;
 mod read_tenant_log_index_shard_ranges_from_object_store;
+mod read_tenant_log_index_shard_ranges_or_empty_from_object_store;
 mod read_tenant_log_index_shards_from_object_store;
 mod register_log_blocks;
 mod register_log_blocks_from_object_store;
@@ -1451,6 +1389,7 @@ use read_tenant_log_index_shard_from_object_store::{
     log_snapshot_error, read_log_index_shard_snapshot_base,
 };
 pub use read_tenant_log_index_shard_ranges_from_object_store::read_tenant_log_index_shard_ranges_from_object_store;
+pub use read_tenant_log_index_shard_ranges_or_empty_from_object_store::read_tenant_log_index_shard_ranges_or_empty_from_object_store;
 pub use read_tenant_log_index_shards_from_object_store::read_tenant_log_index_shards_from_object_store;
 pub use register_log_blocks::register_log_blocks;
 pub use register_log_blocks_from_object_store::register_log_blocks_from_object_store;

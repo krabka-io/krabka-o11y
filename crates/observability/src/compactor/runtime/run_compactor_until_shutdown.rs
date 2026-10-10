@@ -6,7 +6,7 @@ use super::{
     TimeExt, advance_and_persist_compaction_frontier, build_compactor_configured_object_store,
     compact_polled_kafka_wal_records_to_object_store_from_existing_manifest,
     compactor_delete_requests_for_config, compactor_object_store,
-    compactor_run_error_is_object_store, effective_object_store_prefix, limits_provider_for_config,
+    compactor_run_error_is_object_store, limits_provider_for_config,
     load_existing_compaction_frontier,
     materialize_delete_requests_in_existing_local_manifest_blocks,
     materialize_log_deletes_before_compaction, next_compactor_object_store_backoff,
@@ -41,13 +41,7 @@ pub async fn run_compactor_until_shutdown(
         });
     let configured_store =
         build_compactor_configured_object_store(config, object_store, object_store_metrics).await?;
-    let (store, object_store_prefix) =
-        compactor_object_store(object_store, configured_store.as_ref())?;
-    let index_prefix = config
-        .index_prefix
-        .as_deref()
-        .ok_or(ServiceConfigError::MissingCompactorIndexPrefix)?;
-    let prefix = effective_object_store_prefix(object_store_prefix, index_prefix);
+    let (store, prefix) = compactor_object_store(config, object_store, configured_store.as_ref())?;
     let compaction_frontier = dependencies.compaction_frontier.unwrap_or_default();
     let delete_requests =
         compactor_delete_requests_for_config(config, dependencies.delete_requests)?;

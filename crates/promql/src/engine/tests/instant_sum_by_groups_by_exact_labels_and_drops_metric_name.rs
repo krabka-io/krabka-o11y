@@ -2,35 +2,21 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_sum_by_groups_by_exact_labels_and_drops_metric_name() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
-        10_000,
-        2.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "c")]),
-        10_000,
-        4.0,
-    );
-
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "sum by (job) (up)", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let engine = FloatStore::default()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
+            2.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("instance", "c")]),
+            4.0,
+        )
+        .engine();
+    let samples = instant_vector(&engine, "sum by (job) (up)", 10_000).await;
     assert2::assert!(samples.len() == 2);
     let api = samples
         .iter()

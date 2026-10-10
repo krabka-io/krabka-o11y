@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    HttpQueryError, Labels, Value, VectorAggregation, VectorAggregationOp, apply_metric_selection,
-    json, metric_series_labels, querier::aggregate::sample_windows::vector_group_labels,
+    HttpQueryError, Labels, SampleOrder, Value, VectorAggregation, VectorAggregationOp,
+    apply_metric_selection, json, metric_series_labels,
+    querier::aggregate::sample_windows::vector_group_labels,
 };
 
 // A selection keeps full sample labels, while its grouping chooses independent
@@ -11,9 +12,9 @@ pub(crate) fn apply_grouped_metric_selection(
     value: &mut Value,
     aggregation: &VectorAggregation,
 ) -> Result<(), HttpQueryError> {
-    let (limit, largest) = match aggregation.op {
-        VectorAggregationOp::TopK(limit) => (limit, true),
-        VectorAggregationOp::BottomK(limit) => (limit, false),
+    let (limit, order) = match aggregation.op {
+        VectorAggregationOp::TopK(limit) => (limit, SampleOrder::Descending),
+        VectorAggregationOp::BottomK(limit) => (limit, SampleOrder::Ascending),
         _ => {
             return Err(HttpQueryError::VariantUnsupported(
                 "expected topk or bottomk".into(),
@@ -38,7 +39,7 @@ pub(crate) fn apply_grouped_metric_selection(
         apply_metric_selection(
             &mut group,
             usize::try_from(limit).unwrap_or(usize::MAX),
-            largest,
+            order,
         );
         selected.extend(
             group["data"]["result"]

@@ -1,4 +1,4 @@
-use super::emit_info;
+use super::{TypeAndUnitLabels, emit_info};
 use crate::PromqlLabels as Labels;
 
 pub(crate) fn metric_might_not_be_counter_info(metric: &str, metric_type: &str) -> String {
@@ -7,10 +7,13 @@ pub(crate) fn metric_might_not_be_counter_info(metric: &str, metric_type: &str) 
     )
 }
 
-pub(crate) fn emit_metric_might_not_be_counter_info(labels: &Labels, type_and_unit_labels: bool) {
+pub(crate) fn emit_metric_might_not_be_counter_info(
+    labels: &Labels,
+    type_and_unit_labels: TypeAndUnitLabels,
+) {
     let metric = labels.get("__name__").unwrap_or("");
     let metric_type = labels.get("__type__").unwrap_or("");
-    if !type_and_unit_labels {
+    if type_and_unit_labels == TypeAndUnitLabels::Disabled {
         if !metric.is_empty()
             && !["_total", "_sum", "_count", "_bucket"]
                 .iter()

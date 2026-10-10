@@ -23,16 +23,13 @@ pub(crate) async fn vector_vector_arithmetic_matches_on_labels() {
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "a + on (x) b", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
-    check!(samples.len() == 1);
-    check!(samples[0].labels.get("__name__").is_none());
-    check!(samples[0].labels.get("x") == Some("1"));
-    check!(approx_eq(float_value(&samples[0].value), 15.0));
+    let samples = instant_vector(&engine, "a + on (x) b", 10_000).await;
+    assert_one_unnamed_float(
+        &samples,
+        ExpectedLabel {
+            name: "x",
+            label_value: "1",
+        },
+        15.0,
+    );
 }

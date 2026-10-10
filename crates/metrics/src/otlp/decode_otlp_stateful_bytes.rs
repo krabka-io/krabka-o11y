@@ -1,17 +1,12 @@
 use super::*;
 
+/// Decodes a protobuf-encoded `MetricsData` body under `options`, keeping
+/// the series that translate when others in the body are rejected.
 pub(crate) fn decode_otlp_stateful_bytes_partial(
     body: &[u8],
-    strategy: TranslationStrategy,
-    accumulator: &mut DeltaAccumulator,
-    additional_resource_attributes: &[String],
+    options: OtlpDecodeOptions<'_>,
 ) -> Result<PartialOtlpDecode, OtlpError> {
-    decode_otlp_inner_partial(
-        &MetricsData::decode(body)?,
-        strategy,
-        Some(accumulator),
-        additional_resource_attributes,
-    )
+    decode_otlp_inner_partial(&MetricsData::decode(body)?, options)
 }
 
 /// Decodes a protobuf-encoded `MetricsData` body and handles the delta state.

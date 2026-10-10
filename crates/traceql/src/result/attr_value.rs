@@ -10,6 +10,22 @@ pub enum AttrValue {
     Unsupported(String),
 }
 
+impl AttrValue {
+    /// The Arrow type of the column that holds this value.
+    ///
+    /// Strings, arrays and unsupported values all project as `Utf8`.
+    #[must_use]
+    pub fn arrow_data_type(&self) -> arrow::datatypes::DataType {
+        use arrow::datatypes::DataType;
+        match self {
+            Self::Int(_) => DataType::Int64,
+            Self::Float(_) => DataType::Float64,
+            Self::Bool(_) => DataType::Boolean,
+            Self::Str(_) | Self::Unsupported(_) | Self::Array(_) => DataType::Utf8,
+        }
+    }
+}
+
 // JSON round-tripping must retain NaN/infinities instead of converting to null.
 mod float_text {
     use serde::{Deserialize, Deserializer, Serializer};

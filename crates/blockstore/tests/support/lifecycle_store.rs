@@ -16,10 +16,12 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation};
+use krabka_blockstore::{
+    MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, object_store_cloud,
+    object_store_endpoint_host,
+};
 use object_store::{
-    ObjectStore, ObjectStoreExt as _, ObjectStoreScheme, memory::InMemory, path::Path,
-    prefix::PrefixStore,
+    ObjectStore, ObjectStoreExt as _, memory::InMemory, path::Path, prefix::PrefixStore,
 };
 use serde_json::json;
 use url::Url;
@@ -140,9 +142,9 @@ impl LifecycleStore {
             "commit": std::env::var("KRABKA_CONTRACT_COMMIT")
                 .unwrap_or_else(|_| "unknown".into()),
             "provider": url.scheme(),
-            "cloud": cloud(url),
+            "cloud": object_store_cloud(url),
             "bucket": url.host_str(),
-            "endpoint_host": endpoint_host(),
+            "endpoint_host": object_store_endpoint_host(),
             "signal": self.signal,
             "test": self.test,
             "prefix": prefix.as_ref(),
@@ -229,31 +231,6 @@ async fn objects_below(store: &dyn ObjectStore) -> Vec<Path> {
         pending.extend(listing.common_prefixes.into_iter().map(Some));
     }
     objects
-}
-
-/// The host of the endpoint override, or `None` for the provider's default.
-///
-/// The URL host of `s3://`, `gs://` and `az://` names a bucket or container,
-/// so an S3-compatible store is only visible here.
-fn endpoint_host() -> Option<String> {
-    ["AWS_ENDPOINT", "AWS_ENDPOINT_URL", "AZURE_STORAGE_ENDPOINT"]
-        .into_iter()
-        .find_map(|name| std::env::var(name).ok())
-        .and_then(|raw| Url::parse(&raw).ok())
-        .and_then(|endpoint| endpoint.host_str().map(str::to_owned))
-}
-
-/// The cloud whose client serves `url`: `aws`, `gcs` or `azure`.
-///
-/// `object_store` picks the client from the scheme, and for an `https://` URL
-/// from the host. The URL scheme alone does not name the cloud.
-fn cloud(url: &Url) -> &'static str {
-    match ObjectStoreScheme::parse(url) {
-        Ok((ObjectStoreScheme::AmazonS3, _)) => "aws",
-        Ok((ObjectStoreScheme::GoogleCloudStorage, _)) => "gcs",
-        Ok((ObjectStoreScheme::MicrosoftAzure, _)) => "azure",
-        _ => "other",
-    }
 }
 
 fn report_dir() -> Option<PathBuf> {

@@ -1,4 +1,5 @@
 use super::{HistogramExtrapolation, RangeFn, extrapolate_histogram_delta, extrapolated_rate};
+use crate::functions::extrapolate::{RateWindow, WindowBounds};
 
 pub(crate) fn extrapolated_histogram_component(
     extrapolation: &HistogramExtrapolation<'_>,
@@ -6,11 +7,15 @@ pub(crate) fn extrapolated_histogram_component(
 ) -> Option<f64> {
     if matches!(extrapolation.kind, RangeFn::Delta) {
         return extrapolated_rate(
-            extrapolation.timestamps,
-            values,
-            extrapolation.range_start_ms,
-            extrapolation.range_end_ms,
-            extrapolation.range,
+            RateWindow {
+                timestamps: extrapolation.timestamps,
+                values,
+                bounds: WindowBounds {
+                    range_start_ms: extrapolation.range_start_ms,
+                    range_end_ms: extrapolation.range_end_ms,
+                },
+                range: extrapolation.range,
+            },
             extrapolation.kind,
         );
     }

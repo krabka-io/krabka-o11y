@@ -3,9 +3,12 @@ use super::{
     MapBuilder, RecordBatch, StringBuilder, UInt64Builder, exemplar_schema,
 };
 
-pub(crate) fn encode_exemplar_rows(
-    rows: &[ExemplarRow],
-) -> Result<RecordBatch, HistogramCodecError> {
+/// Encodes exemplar rows into one record batch of [`exemplar_schema`].
+///
+/// # Errors
+///
+/// Returns an error when Arrow rejects the label map or the assembled batch.
+pub fn encode_exemplar_rows(rows: &[ExemplarRow]) -> Result<RecordBatch, HistogramCodecError> {
     let mut fingerprints = UInt64Builder::new();
     let mut timestamps = Int64Builder::new();
     let mut values = Float64Builder::new();

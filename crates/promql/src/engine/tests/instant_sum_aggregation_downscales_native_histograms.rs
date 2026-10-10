@@ -16,27 +16,7 @@ pub(crate) async fn instant_sum_aggregation_downscales_native_histograms() {
     }];
     right.positive_counts = vec![2.0];
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            ("__name__", "request_duration_seconds"),
-            ("job", "api"),
-            ("instance", "a"),
-        ]),
-        10_000,
-        left,
-    );
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            ("__name__", "request_duration_seconds"),
-            ("job", "api"),
-            ("instance", "b"),
-        ]),
-        10_000,
-        right,
-    );
+    let store = instance_histogram_store(InstanceHistograms { a: left, b: right });
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine

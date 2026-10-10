@@ -1,1 +1,0 @@
-variants(absent_over_time({app="original"}[1m])) of ({app="api"}[1m])

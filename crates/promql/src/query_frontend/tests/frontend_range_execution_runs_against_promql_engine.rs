@@ -45,15 +45,19 @@ pub(crate) async fn frontend_range_execution_runs_against_promql_engine() {
 
     assert2::assert!(
         result
-            == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-                drop_name: false,
-                start_timestamps_ms: std::collections::BTreeMap::new(),
-                labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
-                samples: vec![
-                    (0, SampleValue::Float(1.0)),
-                    (60_000, SampleValue::Float(2.0)),
-                    (120_000, SampleValue::Float(3.0)),
-                ],
-            }]))
+            == up_api_matrix(&[
+                FloatPoint {
+                    ts_ms: 0,
+                    value: 1.0
+                },
+                FloatPoint {
+                    ts_ms: 60_000,
+                    value: 2.0
+                },
+                FloatPoint {
+                    ts_ms: 120_000,
+                    value: 3.0
+                }
+            ])
     );
 }

@@ -1,7 +1,7 @@
 use super::prelude::{
     BTreeMap, CompactionFrontier, LabelIndex, Labels, LokiStreamEncoding, MetricValue, StreamPlan,
-    TimeRange, WalLogRecord, check, execute_tail_query_with_frontier_and_deletes, json,
-    parse_query,
+    TimeRange, WalLogRecord, check, execute_tail_query_with_frontier_and_deletes, instant_series,
+    json, parse_query, range_pairs, range_series, timed_sample,
 };
 
 mod a_bytes_literal_needs_a_number_and_a_unit_it_knows;

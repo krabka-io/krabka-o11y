@@ -1,28 +1,18 @@
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 
-use promql_parser::parser::{Expr, Extension, ast::ExtensionExpr, value::ValueType};
+use promql_parser::parser::{Expr, Extension, value::ValueType};
 
+use super::leaf_extension_expr::{LeafExtension, LeafExtensionExpr};
 use crate::PromqlString;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ByteStringExpr(pub(crate) PromqlString);
 
-impl ExtensionExpr for ByteStringExpr {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn name(&self) -> &'static str {
-        "byteString"
-    }
-    fn value_type(&self) -> ValueType {
+impl LeafExtension for ByteStringExpr {
+    const NAME: &'static str = "byteString";
+
+    fn leaf_value_type(&self) -> ValueType {
         ValueType::String
-    }
-    fn children(&self) -> &[Expr] {
-        &[]
-    }
-    fn with_new_children(&self, children: Vec<Expr>) -> Arc<dyn ExtensionExpr> {
-        assert2::assert!(children.is_empty());
-        Arc::new(self.clone())
     }
 }
 
@@ -48,7 +38,7 @@ pub(crate) fn restore_byte_strings(
         Expr::StringLiteral(literal) => {
             if let Some(value) = values.get(&literal.val) {
                 *expr = Expr::Extension(Extension {
-                    expr: Arc::new(ByteStringExpr(value.clone())),
+                    expr: Arc::new(LeafExtensionExpr(ByteStringExpr(value.clone()))),
                 });
             }
         }

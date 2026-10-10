@@ -1,7 +1,7 @@
 use krabka_metrics::wire::pb;
 use serde::Deserialize;
 
-use super::{SAMPLES_PER_BATCH, TestResult, remote_write_labels};
+use super::{FixtureLabel, SAMPLES_PER_BATCH, TestResult, remote_write_labels};
 
 pub const END_MS: i64 = 1_750_000_000_000;
 const START_MS: i64 = END_MS - 80 * 60 * 1_000;
@@ -9,11 +9,11 @@ const LAST_MS: i64 = END_MS + 10 * 60 * 1_000;
 
 fn series(
     metric: &str,
-    labels: &[(&str, &str)],
+    labels: &[FixtureLabel<'_>],
     value: impl Fn(i32) -> Option<f64>,
 ) -> pb::v1::TimeSeries {
     pb::v1::TimeSeries {
-        labels: remote_write_labels(metric, labels),
+        labels: remote_write_labels(metric, labels.iter().copied()),
         samples: (START_MS..=LAST_MS)
             .step_by(5_000)
             .enumerate()
@@ -30,7 +30,16 @@ pub fn batches() -> Vec<Vec<u8>> {
     let mut timeseries = Vec::new();
     for instance in 0..3 {
         let address = format!("demo.promlabs.com:{}", 10_000 + instance);
-        let labels = [("job", "demo"), ("instance", address.as_str())];
+        let labels = [
+            FixtureLabel {
+                name: "job",
+                value: "demo",
+            },
+            FixtureLabel {
+                name: "instance",
+                value: address.as_str(),
+            },
+        ];
         let multiplier = f64::from(instance + 1);
         for (kind, base) in [
             ("free", 1_000_000.0),
@@ -38,7 +47,10 @@ pub fn batches() -> Vec<Vec<u8>> {
             ("cached", 500_000.0),
         ] {
             let mut labels = labels.to_vec();
-            labels.push(("type", kind));
+            labels.push(FixtureLabel {
+                name: "type",
+                value: kind,
+            });
             timeseries.push(series("demo_memory_usage_bytes", &labels, |tick| {
                 Some(base * multiplier + f64::from(tick % 37) * 1_024.0)
             }));
@@ -67,7 +79,10 @@ pub fn batches() -> Vec<Vec<u8>> {
         }));
         for (bound, factor) in [("0.1", 1.0), ("0.5", 2.0), ("1", 3.0), ("+Inf", 4.0)] {
             let mut labels = labels.to_vec();
-            labels.push(("le", bound));
+            labels.push(FixtureLabel {
+                name: "le",
+                value: bound,
+            });
             timeseries.push(series(
                 "demo_api_request_duration_seconds_bucket",
                 &labels,

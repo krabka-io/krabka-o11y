@@ -1,4 +1,6 @@
-use super::{HttpQueryError, hex_value};
+use krabka_logql::hex_digit_value;
+
+use super::HttpQueryError;
 
 pub(crate) fn decode_form_component(component: &str) -> Result<String, HttpQueryError> {
     let mut bytes = Vec::with_capacity(component.len());
@@ -9,11 +11,11 @@ pub(crate) fn decode_form_component(component: &str) -> Result<String, HttpQuery
             b'%' => {
                 let high = iter
                     .next()
-                    .and_then(hex_value)
+                    .and_then(hex_digit_value)
                     .ok_or(HttpQueryError::InvalidPercentEncoding)?;
                 let low = iter
                     .next()
-                    .and_then(hex_value)
+                    .and_then(hex_digit_value)
                     .ok_or(HttpQueryError::InvalidPercentEncoding)?;
                 bytes.push(high << 4 | low);
             }

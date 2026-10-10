@@ -11,14 +11,7 @@ pub(crate) async fn merge_sql_to_tree(
     call_sites: &[String],
     trace_ids: Option<&[Vec<u8>]>,
 ) -> Result<(), ProfileError> {
-    let batches = scan
-        .ctx
-        .sql(sql)
-        .await
-        .map_err(|err| ProfileError::Plan(err.to_string()))?
-        .collect()
-        .await
-        .map_err(|err| ProfileError::Exec(err.to_string()))?;
+    let batches = scan.collect_sql(sql).await?;
     for batch in batches {
         let partitions = batch.column(0).as_primitive::<UInt64Type>();
         let stacktrace_ids = batch.column(1).as_primitive::<UInt64Type>();
@@ -150,17 +143,13 @@ mod tests {
                     1,
                 ])),
                 Arc::new(Int64Array::from(vec![3, -4, 0, 5, 7, 2, 6, 999, 999])),
-                Arc::new(BinaryArray::from(vec![
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"wanted"[..]),
-                    Some(&b"other"[..]),
-                    None,
-                ])),
+                // Seven rows of the wanted profile type, then one of another
+                // type and one with none.
+                Arc::new(
+                    std::iter::repeat_n(Some(&b"wanted"[..]), 7)
+                        .chain([Some(&b"other"[..]), None])
+                        .collect::<BinaryArray>(),
+                ),
                 Arc::new(UInt64Array::from_iter_values(0..9)),
             ],
         )

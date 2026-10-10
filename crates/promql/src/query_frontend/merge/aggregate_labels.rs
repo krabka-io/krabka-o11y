@@ -1,28 +1,19 @@
-use super::{BTreeSet, LabelModifier, Labels};
+use super::{LabelModifier, Labels};
 
+/// The labels a sharded aggregation groups a series by.
+///
+/// This is the engine's grouping, except that a `by` clause never keeps
+/// `__name__` and keeps each value as its UTF-8 text.
 pub(crate) fn aggregate_labels(input: &Labels, modifier: Option<&LabelModifier>) -> Labels {
+    let grouped = crate::engine::aggregate_labels(input, modifier);
+    if !matches!(modifier, Some(LabelModifier::Include(_))) {
+        return grouped;
+    }
     let mut labels = Labels::new();
-    match modifier {
-        Some(LabelModifier::Include(include)) => {
-            for name in &include.labels {
-                if name == "__name__" {
-                    continue;
-                }
-                if let Some(value) = input.get(name) {
-                    labels.insert(name, value);
-                }
-            }
+    for (name, value) in grouped.iter() {
+        if name != "__name__" {
+            labels.insert(name, value.as_str());
         }
-        Some(LabelModifier::Exclude(exclude)) => {
-            let excluded = exclude.labels.iter().collect::<BTreeSet<_>>();
-            for (name, value) in input.iter() {
-                if name == "__name__" || excluded.contains(name) {
-                    continue;
-                }
-                labels.insert(name, value);
-            }
-        }
-        None => {}
     }
     labels
 }

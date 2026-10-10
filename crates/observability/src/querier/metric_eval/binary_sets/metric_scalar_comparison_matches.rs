@@ -1,16 +1,7 @@
-use super::{ComparisonOp, MetricValue, Ordering};
+use super::{ComparisonOp, Ordering, ScalarOperands};
 
-pub(crate) fn metric_scalar_comparison_matches(
-    sample: MetricValue,
-    op: ComparisonOp,
-    scalar: MetricValue,
-    scalar_on_left: bool,
-) -> bool {
-    let (left, right) = if scalar_on_left {
-        (scalar, sample)
-    } else {
-        (sample, scalar)
-    };
+pub(crate) fn metric_scalar_comparison_matches(operands: ScalarOperands, op: ComparisonOp) -> bool {
+    let (left, right) = operands.left_and_right();
     let ordering = left.cmp_value(right);
     match op {
         ComparisonOp::Equal => ordering == Ordering::Equal,

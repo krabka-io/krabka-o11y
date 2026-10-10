@@ -25,8 +25,7 @@ use std::{
 };
 
 use assert2::{assert, check};
-use async_trait::async_trait;
-use futures::{TryStreamExt as _, stream::BoxStream};
+use futures::TryStreamExt as _;
 use krabka_metrics_service::{
     DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK, MimirTenantAdminState, RefreshingMetricBlockStore,
     mimir_tenant_admin_router, serve_prometheus_router,
@@ -34,10 +33,7 @@ use krabka_metrics_service::{
 use krabka_observability::server_security::ServerSecurity;
 use krabka_promql::{EngineOpts, PrometheusApiState, WalHead, prometheus_router};
 use krabka_units::prelude::*;
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
-};
+use object_store::{GetOptions, GetResult, ObjectStore, memory::InMemory, path::Path};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
@@ -59,6 +55,8 @@ mod diff_corpus;
 
 #[path = "../../metrics/tests/support/crashing_store.rs"]
 mod crashing_store;
+#[path = "support/pinned_prometheus_image.rs"]
+mod pinned_prometheus_image;
 #[path = "../../metrics/tests/support/tsdb_fixture.rs"]
 mod tsdb_fixture;
 
@@ -89,6 +87,27 @@ struct Krabka {
     store: Arc<dyn ObjectStore>,
     client: reqwest::Client,
     _shutdown: oneshot::Sender<()>,
+}
+
+/// Two Krabkas holding the fixture block: one with the default unbounded
+/// lookback, which does not reach the fixture's samples, and one whose
+/// lookback does.
+struct LookbackPair {
+    recent: Krabka,
+    reaching: Krabka,
+}
+
+impl LookbackPair {
+    async fn with_fixture_uploaded() -> TestResult<Self> {
+        let recent = Krabka::start().await?;
+        recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
+        let reaching =
+            Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
+        reaching
+            .upload(FIXTURE_ULID, &UploadBlock::fixture())
+            .await?;
+        Ok(Self { recent, reaching })
+    }
 }
 
 impl Krabka {
@@ -654,24 +673,9 @@ impl std::fmt::Display for RangeFailingStore {
     }
 }
 
-#[async_trait]
-impl ObjectStore for RangeFailingStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        options: PutOptions,
-    ) -> object_store::Result<PutResult> {
-        self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
+krabka_blockstore::delegate_object_store! {
+    RangeFailingStore => inner;
+    forward [put_opts, put_multipart_opts, delete_stream, list, list_with_delimiter, copy_opts];
 
     async fn get_opts(
         &self,
@@ -686,37 +690,10 @@ impl ObjectStore for RangeFailingStore {
         }
         self.inner.get_opts(location, options).await
     }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
 }
 
-#[tokio::test]
-async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> TestResult {
-    let store = Arc::new(RangeFailingStore::default());
-    let krabka = Krabka::start_with(store.clone()).await?;
-    let block = UploadBlock::fixture();
+// Starts the fixture upload and sends every file, without finishing it.
+async fn start_and_upload_files(krabka: &Krabka, block: &UploadBlock) -> TestResult {
     let (status, body) = krabka
         .post(
             krabka.upload_url(FIXTURE_ULID, "start"),
@@ -733,6 +710,15 @@ async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> Te
         let (status, body) = krabka.post(url, bytes.clone()).await?;
         assert!(status == StatusCode::OK, "file {path}: {body}");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> TestResult {
+    let store = Arc::new(RangeFailingStore::default());
+    let krabka = Krabka::start_with(store.clone()).await?;
+    let block = UploadBlock::fixture();
+    start_and_upload_files(&krabka, &block).await?;
     store.fail_ranges.store(true, Ordering::SeqCst);
 
     let (failed_status, _) = krabka
@@ -772,22 +758,7 @@ async fn a_query_during_a_stopped_import_reads_all_samples_or_none() -> TestResu
         let store = Arc::new(CrashingStore::default());
         let krabka = Krabka::start_with(store.clone()).await?;
         let block = UploadBlock::fixture();
-        let (status, body) = krabka
-            .post(
-                krabka.upload_url(FIXTURE_ULID, "start"),
-                block.meta(FIXTURE_ULID),
-            )
-            .await?;
-        assert!(status == StatusCode::OK, "start: {body}");
-        for (path, bytes) in &block.uploaded {
-            let url = format!(
-                "{}?path={}",
-                krabka.upload_url(FIXTURE_ULID, "files"),
-                encode(path)
-            );
-            let (status, body) = krabka.post(url, bytes.clone()).await?;
-            assert!(status == StatusCode::OK, "file {path}: {body}");
-        }
+        start_and_upload_files(&krabka, &block).await?;
         store.crash_at(Some(CrashPoint {
             key_part: key_part.to_owned(),
             occurrence,
@@ -825,17 +796,10 @@ async fn a_query_during_a_stopped_import_reads_all_samples_or_none() -> TestResu
 async fn start_prometheus(
     files: &FixtureFiles,
 ) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // //bazel/defs.bzl sets this from //bazel/images/images.bzl, the map that
-    // decides what `docker load` tags.
-    let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG").expect(
-        "KRABKA_PROMETHEUS_IMAGE_TAG is unset. This suite runs under `bazel test \
-         --config=docker`, which loads the digest-pinned image and sets this. To run it under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     let block = format!("/prometheus/{FIXTURE_ULID}");
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/prom/prometheus".to_owned(), tag)
+        pinned_prometheus_image::pinned_prometheus_image()
             .with_exposed_port(PROMETHEUS_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stderr(
                 "Server is ready to receive web requests",
@@ -1374,12 +1338,7 @@ async fn cardinality_routes_count_the_imported_block_inside_the_lookback() -> Te
             ]}),
         ),
     ];
-    let recent = Krabka::start().await?;
-    recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
-    let reaching = Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
-    reaching
-        .upload(FIXTURE_ULID, &UploadBlock::fixture())
-        .await?;
+    let LookbackPair { recent, reaching } = LookbackPair::with_fixture_uploaded().await?;
 
     for (path, params, expected) in cases {
         let outside = recent
@@ -1461,12 +1420,7 @@ async fn tsdb_status_counts_the_imported_block_inside_the_lookback() -> TestResu
             stat("instance=zürich", 1),
         ],
     });
-    let recent = Krabka::start().await?;
-    recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
-    let reaching = Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
-    reaching
-        .upload(FIXTURE_ULID, &UploadBlock::fixture())
-        .await?;
+    let LookbackPair { recent, reaching } = LookbackPair::with_fixture_uploaded().await?;
 
     check!(tsdb_status_lists(&recent).await? == empty);
     check!(tsdb_status_lists(&reaching).await? == counted);

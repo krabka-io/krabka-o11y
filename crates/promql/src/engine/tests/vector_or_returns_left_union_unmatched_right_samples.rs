@@ -3,18 +3,7 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn vector_or_returns_left_union_unmatched_right_samples() {
     let engine = PromqlEngine::new(Arc::new(set_op_store()), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "up or on (instance) target_info",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "up or on (instance) target_info", 10_000).await;
     check!(samples.len() == 3);
     check!(samples.iter().any(|sample| {
         sample.labels.get("__name__") == Some("up") && sample.labels.get("instance") == Some("a")

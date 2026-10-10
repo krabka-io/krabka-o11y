@@ -2,17 +2,36 @@ load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
 
 package(default_visibility = ["//visibility:public"])
 
-# Consumed by `crate.from_cargo` (see //MODULE.bazel).
-exports_files(["Cargo.toml"])
+# Consumed by `crate.from_cargo` (see //MODULE.bazel). The `tests/support`
+# files are the test helpers other packages reach with `#[path]`: the signal
+# binaries' compactor, WAL fetch and `SIGTERM` suites, and the soak's MinIO.
+exports_files([
+    "Cargo.toml",
+    "tests/support/compaction_passes.rs",
+    "tests/support/in_process_broker.rs",
+    "tests/support/index_snapshot_flags.rs",
+    "tests/support/minio_store.rs",
+    "tests/support/pipeline_bundle_metrics.rs",
+    "tests/support/rejection_responses.rs",
+    "tests/support/server_security_pki.rs",
+    "tests/support/sigterm_child.rs",
+    "tests/support/token_sha256.rs",
+    "tests/support/wal_fetch_limit_flags.rs",
+])
 
 crate_library(
     name = "observability",
-    # Shared by the public HTTP unit suite and the native Loki differential.
+    # Each one is shared by a unit suite and an integration suite, or by this
+    # crate's unit suite and //crates/traces', which all reach it with `#[path]`.
     srcs = glob(
         ["src/**/*.rs"],
         exclude = ["src/bin/**"],
     ) + [
         "tests/support/experimental_queries.rs",
+        "tests/support/pipeline_bundle_metrics.rs",
+        "tests/support/recorded_security_events.rs",
+        "tests/support/server_security_pki.rs",
+        "tests/support/token_sha256.rs",
     ],
 )
 

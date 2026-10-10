@@ -1,22 +1,14 @@
-use super::{
-    MetricScalarArithmeticOp, MetricValue, Value, apply_metric_scalar_arithmetic_to_sample,
-};
+use super::{MetricValue, ScalarArithmetic, Value, apply_metric_scalar_arithmetic_to_sample};
 
 pub(crate) fn apply_metric_scalar_arithmetic_to_series(
     series: &mut Value,
-    op: MetricScalarArithmeticOp,
+    arithmetic: ScalarArithmetic,
     scalar: MetricValue,
-    scalar_on_left: bool,
 ) -> bool {
     if let Some(values) = series.get_mut("values").and_then(Value::as_array_mut) {
         let mut index = 0;
         while index < values.len() {
-            if apply_metric_scalar_arithmetic_to_sample(
-                &mut values[index],
-                op,
-                scalar,
-                scalar_on_left,
-            ) {
+            if apply_metric_scalar_arithmetic_to_sample(&mut values[index], arithmetic, scalar) {
                 index += 1;
             } else {
                 values.remove(index);
@@ -28,5 +20,5 @@ pub(crate) fn apply_metric_scalar_arithmetic_to_series(
     let Some(sample) = series.get_mut("value") else {
         return false;
     };
-    apply_metric_scalar_arithmetic_to_sample(sample, op, scalar, scalar_on_left)
+    apply_metric_scalar_arithmetic_to_sample(sample, arithmetic, scalar)
 }

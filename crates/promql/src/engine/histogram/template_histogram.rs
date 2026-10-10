@@ -707,32 +707,15 @@ fn compact(hist: &mut Dto, max_empty: i64) {
             previous = Some(index);
         }
         // Keep the explicit zero gaps required by maxEmptyBuckets.
-        spans.clear();
-        counts.clear();
-        let mut end = 0;
-        let mut start = None;
-        let mut previous = 0;
-        for (index, count) in buckets {
-            if start.is_some() && index != previous + 1 {
-                let begin = start.take().expect("span started");
-                spans.push(TemplateHistogramSpan {
-                    offset: begin - end,
-                    length: u32::try_from(previous - begin + 1).expect("span length"),
-                });
-                end = previous + 1;
-            }
-            if start.is_none() {
-                start = Some(index);
-            }
-            counts.push(count);
-            previous = index;
-        }
-        if let Some(begin) = start {
-            spans.push(TemplateHistogramSpan {
-                offset: begin - end,
-                length: u32::try_from(previous - begin + 1).expect("span length"),
-            });
-        }
+        let (new_spans, new_counts) = spans_from_buckets(buckets);
+        *spans = new_spans
+            .into_iter()
+            .map(|span| TemplateHistogramSpan {
+                offset: span.offset,
+                length: span.length,
+            })
+            .collect();
+        *counts = new_counts;
     }
     side(
         &mut hist.positive_spans,

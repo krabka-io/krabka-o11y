@@ -41,7 +41,10 @@ mod tests {
         ) -> Result<Option<crate::result::TraceSpans>> {
             Ok(None)
         }
+    }
 
+    #[async_trait::async_trait]
+    impl TagCatalog for Empty {
         async fn tag_names(
             &self,
             _tenant: &str,
@@ -81,6 +84,7 @@ mod scan_options;
 mod scan_result;
 mod span_matcher;
 mod span_store;
+mod tag_catalog;
 
 pub use filter_trace_spans_by_time::filter_trace_spans_by_time;
 pub use match_cmp::MatchCmp;
@@ -91,3 +95,4 @@ pub use scan_options::ScanOptions;
 pub use scan_result::ScanResult;
 pub use span_matcher::SpanMatcher;
 pub use span_store::SpanStore;
+pub use tag_catalog::TagCatalog;

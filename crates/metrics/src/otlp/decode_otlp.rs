@@ -1,5 +1,6 @@
 use super::{
-    DecodedSeries, DeltaAccumulator, MetricsData, OtlpError, TranslationStrategy, decode_otlp_inner,
+    DecodedSeries, DeltaAccumulator, MetricsData, OtlpDecodeOptions, OtlpError,
+    TranslationStrategy, decode_otlp_inner,
 };
 
 /// Translates OTLP metrics into the common ingest representation.
@@ -10,5 +11,12 @@ pub fn decode_otlp(
     strategy: TranslationStrategy,
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
     let mut accumulator = DeltaAccumulator::default();
-    decode_otlp_inner(data, strategy, Some(&mut accumulator), &[])
+    decode_otlp_inner(
+        data,
+        OtlpDecodeOptions {
+            strategy,
+            accumulator: Some(&mut accumulator),
+            additional_resource_attributes: &[],
+        },
+    )
 }

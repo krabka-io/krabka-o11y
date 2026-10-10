@@ -1,7 +1,7 @@
-use super::{RecordBatch, Result, ScopedTag, TagScope, TraceSpans, TypedValue};
+use super::{RecordBatch, Result, TagCatalog, TraceSpans};
 
 #[async_trait::async_trait]
-pub trait LiveSource: Send + Sync {
+pub trait LiveSource: TagCatalog {
     async fn span_batches(
         &self,
         tenant: &str,
@@ -10,22 +10,6 @@ pub trait LiveSource: Send + Sync {
     ) -> Result<Vec<RecordBatch>>;
 
     async fn trace_spans(&self, tenant: &str, trace_id: &[u8; 16]) -> Result<Option<TraceSpans>>;
-
-    async fn tag_names(
-        &self,
-        tenant: &str,
-        scope: Option<TagScope>,
-        start_ns: i64,
-        end_ns: i64,
-    ) -> Result<Vec<ScopedTag>>;
-
-    async fn tag_values(
-        &self,
-        tenant: &str,
-        tag: &str,
-        start_ns: i64,
-        end_ns: i64,
-    ) -> Result<Vec<TypedValue>>;
 
     /// The exclusive upper bound of what the block builder has flushed for
     /// `tenant`: one nanosecond past the newest `max_ts` across its blocks.

@@ -31,11 +31,12 @@ use std::{
 use arrow::compute::concat_batches;
 use assert2::{assert, check};
 use krabka_blockstore::{BlockWriter, TraceIndex, read_block};
-use krabka_traces::{
-    AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode, blockbuilder::build_blocks,
-    compactor::compact_block_keys,
-};
+use krabka_traces::{Span, SpanRecord, blockbuilder::build_blocks, compactor::compact_block_keys};
 use object_store::{ObjectStore, local::LocalFileSystem};
+
+mod api_span;
+
+use self::api_span::ApiSpan;
 
 /// Where the child finds the blocks it is to read.
 const BLOCK_DIR: &str = "KRABKA_COMPACTION_MEMORY_DIR";
@@ -65,27 +66,17 @@ fn span(trace: u32, span_id: u64, start_ns: i64) -> Span {
     let mut trace_id = [0_u8; 16];
     trace_id[..4].copy_from_slice(&trace.to_be_bytes());
     Span {
-        trace_id,
         span_id: span_id.to_be_bytes(),
         parent_span_id: (!span_id.is_multiple_of(4)).then(|| (span_id - span_id % 4).to_be_bytes()),
         name: format!("op-{}", span_id % 8),
-        kind: SpanKind::Server,
-        start_ns,
-        duration_ns: 100,
-        status: StatusCode::Ok,
-        status_message: String::new(),
-        resource_attrs: vec![KeyValue {
-            key: "service.name".into(),
-            value: AttrValue::Str("api".into()),
-        }],
-        span_attrs: vec![KeyValue {
-            key: "http.method".into(),
-            value: AttrValue::Str("GET".into()),
-        }],
-        events: Vec::new(),
-        links: Vec::new(),
-        instrumentation_scope: "test".into(),
         instrumentation_version: "1".into(),
+        ..ApiSpan {
+            trace_id,
+            span_id: 0,
+            start_ns,
+            duration_ns: 100,
+        }
+        .build()
     }
 }
 

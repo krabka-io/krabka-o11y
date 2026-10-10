@@ -1,15 +1,17 @@
 use super::{
-    ATTR_PREFIX, Array, AttrValue, BTreeSet, DataType, RecordBatch, TraceqlError,
-    block_attr_values, bool_array_value, float64_array_value, int64_array_value,
+    ATTR_PREFIX, Array, AttrValue, DataType, RESOURCE_ATTR_PREFIX, RecordBatch, ResourceAttrs,
+    TraceqlError, block_row_attrs_where, bool_array_value, float64_array_value, int64_array_value,
     string_array_value,
 };
 
 pub(crate) fn attr_values_with_resource(
     batch: &RecordBatch,
     row: usize,
-    include_resource: bool,
+    resource: ResourceAttrs,
 ) -> Result<Vec<(String, AttrValue)>, TraceqlError> {
-    let packed = block_attr_values(batch, row, include_resource, &BTreeSet::new())?;
+    let packed = block_row_attrs_where(batch, row, |key| {
+        resource == ResourceAttrs::Include || !key.starts_with(RESOURCE_ATTR_PREFIX)
+    })?;
     let mut out = Vec::new();
     for (idx, field) in batch.schema().fields().iter().enumerate() {
         let Some(key) = field.name().strip_prefix(ATTR_PREFIX) else {

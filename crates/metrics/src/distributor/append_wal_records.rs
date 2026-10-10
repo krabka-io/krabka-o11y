@@ -27,7 +27,7 @@ pub(crate) async fn append_wal_records(
             // appended some of its records is counted a second time, because a
             // retry of the whole body then duplicates what did land.
             if let Some(metrics) = &state.metrics {
-                metrics.wal_append_failures.inc();
+                metrics.ingest.wal_append_failures.inc();
                 metrics
                     .wal_produce
                     .record_batch_failure(error.appended(), error.total());

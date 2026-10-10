@@ -1,9 +1,6 @@
 use std::future::IntoFuture as _;
 
-use super::{
-    Arc, CancellationToken, DistributorState, ServerListener, ServerSecurity, SocketAddr, router,
-    serve_router,
-};
+use super::{ReceiverEndpoint, SocketAddr, bind_listener, router, serve_router, spawn_server};
 
 /// Serve the distributor until cancelled, returning the bound address and the
 /// accept loop's handle.
@@ -25,21 +22,18 @@ use super::{
 /// # Errors
 /// Returns an error when the listener cannot be bound.
 pub async fn serve(
-    addr: SocketAddr,
-    state: Arc<DistributorState>,
-    security: &ServerSecurity,
-    shutdown: CancellationToken,
+    endpoint: ReceiverEndpoint<'_>,
 ) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
-    let tcp = tokio::net::TcpListener::bind(addr).await?;
-    let listener = ServerListener::bind(tcp, security).map_err(std::io::Error::other)?;
+    let ReceiverEndpoint {
+        addr,
+        state,
+        security,
+        shutdown,
+    } = endpoint;
+    let listener = bind_listener(addr, security).await?;
     let bound = listener.local_addr();
     let server = serve_router(listener, router(state), security)
         .with_graceful_shutdown(shutdown.cancelled_owned())
         .into_future();
-    let handle = tokio::spawn(async move {
-        if let Err(err) = server.await {
-            tracing::error!(error = %err, "traces distributor server stopped");
-        }
-    });
-    Ok((bound, handle))
+    Ok((bound, spawn_server(server, "traces distributor server")))
 }

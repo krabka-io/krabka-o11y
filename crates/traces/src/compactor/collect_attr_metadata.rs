@@ -1,6 +1,6 @@
 use super::{
     Array, BTreeMap, BTreeSet, RESOURCE_ATTR_PREFIX, RecordBatch, SCOL_ATTR_KEYS, StringArray,
-    TracesError, attr_value, insert_tag_value, list_column,
+    TagCatalog, TracesError, attr_value, list_column,
 };
 
 pub(crate) fn collect_attr_metadata(
@@ -8,6 +8,10 @@ pub(crate) fn collect_attr_metadata(
     tag_names: &mut BTreeSet<String>,
     tag_values: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), TracesError> {
+    let mut catalog = TagCatalog {
+        names: tag_names,
+        values: tag_values,
+    };
     let keys = list_column(batch, SCOL_ATTR_KEYS)?;
     for row in 0..batch.num_rows() {
         if keys.is_null(row) {
@@ -27,9 +31,9 @@ pub(crate) fn collect_attr_metadata(
                 .strip_prefix(RESOURCE_ATTR_PREFIX)
                 .unwrap_or_else(|| row_keys.value(idx));
             if let Some(value) = attr_value(batch, row, idx)? {
-                insert_tag_value(tag_names, tag_values, key, value);
+                catalog.insert(key, value);
             } else {
-                tag_names.insert(key.to_string());
+                catalog.names.insert(key.to_string());
             }
         }
     }

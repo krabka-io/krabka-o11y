@@ -9,8 +9,6 @@ use super::*;
 /// a NaN-aware comparison.
 #[tokio::test]
 pub(crate) async fn subquery_planner_path_matches_interpreter() {
-    use crate::{DurationExprContext, parse_promql_with_duration_context};
-
     // A float-only store exercising the subquery sub-grid:
     //  - `reqs_total{l}`: two counters (l=a, l=b) for rate/over_time-of-rate.
     //  - `gauge{l}`: a plain gauge in two label groups for the aggregating
@@ -97,36 +95,10 @@ pub(crate) async fn subquery_planner_path_matches_interpreter() {
     ];
 
     for (query, time_ms) in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-
-        // Operator path: the recursive planner must claim this query.
-        let plan = engine
-            .plan_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = engine
-            .assemble_planned_instant(plan, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-
-        // Interpreter path: evaluate the same expression directly.
-        let via_interpreter = engine
-            .eval_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-
-        let normalize = |result: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut samples) = result else {
-                panic!("expected vector for `{query}`");
-            };
-            samples.sort_by_key(|sample| sample.labels.fingerprint());
-            samples
-        };
-
-        let via_interpreter = normalize(via_interpreter);
-        let via_operators = normalize(via_operators);
+        let SortedParity {
+            via_operators,
+            via_interpreter,
+        } = sorted_planned_and_interpreted(&engine, query, time_ms).await;
         assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
 
         // Pin the sparse-window rule: the stranded member is dropped (no

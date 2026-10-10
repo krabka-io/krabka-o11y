@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use object_store::ObjectStoreExt as _;
 
 use super::{Arc, NativeResolver, NativeSymbol, ObjectStore, Path, ProfileIndex, SymbolizeRequest};
-use crate::metrics::ServiceMetrics;
+use crate::metrics::{ServiceMetrics, SymbolizerCacheLookup};
 
 struct UploadedResolver<'a> {
     uploaded: &'a HashMap<String, krabka_pprof::ObjectSymbolResolver>,
@@ -51,10 +51,10 @@ pub async fn symbolize_blocks_once(
             }
             let build_id = request.build_id.to_ascii_lowercase();
             if uploaded.contains_key(&build_id) {
-                metrics.record_symbolizer_cache(true);
+                metrics.record_symbolizer_cache(SymbolizerCacheLookup::Hit);
                 continue;
             }
-            metrics.record_symbolizer_cache(false);
+            metrics.record_symbolizer_cache(SymbolizerCacheLookup::Miss);
             let object = match store
                 .get(&Path::from(format!(
                     "debug-info/{}/{}/exe",

@@ -5,7 +5,7 @@ use std::{
 
 use assert2::{assert, check};
 use clap::{CommandFactory, Parser};
-use krabka_broker::{Broker, BrokerConfig};
+use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use krabka_client_admin::{AdminClient, CreateTopicSpec};
 use krabka_observability::topic_contract::{
     METRICS_HA_TOPIC, METRICS_WAL_TOPIC, TopicSettings, provision_topics,
@@ -669,11 +669,11 @@ async fn a_security_flag_set_that_cannot_work_stops_the_start() {
 /// word. Both roles of this binary reach that broker, so both must refuse.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_topic_that_breaks_the_contract_stops_every_role_that_uses_it() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
+    let TestBroker {
+        broker: _broker,
+        bootstrap,
+        log_directory: _log_directory,
+    } = TestBroker::start().await;
     create_topics(
         &bootstrap,
         &[
@@ -742,11 +742,11 @@ async fn an_unreachable_broker_stops_every_role() {
 /// return the contract error and leave its data port unbound.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_role_does_not_start_and_does_not_listen_when_the_contract_is_broken() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
+    let TestBroker {
+        broker: _broker,
+        bootstrap,
+        log_directory: _log_directory,
+    } = TestBroker::start().await;
     create_topics(&bootstrap, &[(METRICS_HA_TOPIC, BTreeMap::new())]).await;
 
     // A port nothing holds, so a bind by the role is the only thing that
@@ -783,6 +783,29 @@ fn cli_for(target: Target, bootstrap: &str) -> Cli {
     let name = target.kind().as_str();
     Cli::try_parse_from(["krabka-metrics", "--target", name, "--bootstrap", bootstrap])
         .expect("cli")
+}
+
+/// An in-process broker over a temporary log directory, and its bootstrap
+/// address.
+struct TestBroker {
+    broker: BrokerHandle,
+    bootstrap: String,
+    log_directory: tempfile::TempDir,
+}
+
+impl TestBroker {
+    async fn start() -> Self {
+        let log_directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(log_directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+        Self {
+            broker,
+            bootstrap,
+            log_directory,
+        }
+    }
 }
 
 async fn create_topics(bootstrap: &str, topics: &[(&str, BTreeMap<String, String>)]) {
@@ -855,11 +878,11 @@ async fn shared_compactor_registers_startup_before_its_stage_runs_and_drains() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn distributor_writes_all_records_with_default_and_small_frames() {
     for frame_max in [kibibytes(32), krabka_client_core::DEFAULT_CLIENT_FRAME_MAX] {
-        let directory = tempfile::tempdir().unwrap();
-        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-            .await
-            .unwrap();
-        let bootstrap = broker.listen_addr().to_string();
+        let TestBroker {
+            broker,
+            bootstrap,
+            log_directory: _log_directory,
+        } = TestBroker::start().await;
         provision_topics(
             &bootstrap,
             &METRICS_TOPICS,

@@ -1,8 +1,7 @@
 use super::{
-    AdminBrokerAccess, AdminClient, AdminError, Arc, AtomicBool, BrokerAccessCache,
-    BrokerAccessPolicy, CancellationToken, ClientResourcePolicy, ClientSecurity,
-    LogQueryAuthorizer, Principal, QueryAuthorizationError, TenantId, admin_connection_options,
-    async_trait, check_tenant_wal_read_acl,
+    AdminBrokerAccess, AdminError, Arc, AtomicBool, BrokerAccessCache, BrokerAccessPolicy,
+    CancellationToken, ClientResourcePolicy, ClientSecurity, LogQueryAuthorizer, Principal,
+    QueryAuthorizationError, TenantId, async_trait, check_tenant_wal_read_acl,
 };
 
 /// Allows a read when the broker's ACLs grant the request's ACL principal read
@@ -29,14 +28,8 @@ impl BrokerBackedQueryAuthorizer {
         connected: Arc<AtomicBool>,
         policy: BrokerAccessPolicy,
     ) -> Result<Self, AdminError> {
-        let admin = AdminClient::connect_with_options(
-            &[bootstrap.to_string()],
-            admin_connection_options(client_resource_policy, security),
-        )
-        .await?;
-        let source = Arc::new(AdminBrokerAccess {
-            admin: tokio::sync::Mutex::new(admin),
-        });
+        let source =
+            AdminBrokerAccess::connect(bootstrap, client_resource_policy, security).await?;
         Ok(Self {
             access: BrokerAccessCache::new(source, wal_topic, policy, connected),
         })

@@ -1,10 +1,9 @@
 use axum::body::to_bytes;
 
 use super::prelude::{
-    AllowAllIngestLimiter, BTreeMap, IntoResponse, Response, StatusCode, TenantErrorSurface,
-    TenantId, TenantIdError, TenantRequestError, TenantResolveError, WalLogRecord, check,
-    check_ingest_quota, grpc_tenant, resolve_federated_tenants, resolve_single_tenant,
-    tenant_error_response,
+    AllowAllIngestLimiter, IntoResponse, Response, StatusCode, TenantErrorSurface, TenantId,
+    TenantIdError, TenantRequestError, TenantResolveError, WalLogRecord, check, check_ingest_quota,
+    grpc_tenant, resolve_federated_tenants, resolve_single_tenant, tenant_error_response,
 };
 use crate::{
     DistributorError, IngestLimitError, LogIngestLimiter, async_trait, server_security::Principal,

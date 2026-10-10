@@ -12,7 +12,7 @@ use url::form_urlencoded;
 
 use super::{
     ApiError, ERASURE_REQUEST_PREFIX, Extension, Principal, PrometheusApiState, QueryResponseStats,
-    acquire_query_permit, apply_result_limit, authorized_tenant_from_headers,
+    RequestAuth, acquire_query_permit, apply_result_limit, authorized_tenant_from_headers,
     check_range_resolution, duration_param, enforce_query_range_limit, exemplar_key,
     exemplars_json, has_erasure_requests, optional_timestamp_ms, parse_limit_parameter,
     query_timeout, record_query_response, required_form_param, selector_matchers,
@@ -21,10 +21,12 @@ use super::{
 };
 use crate::{
     AnnotatedQueryResult, MetricStore,
-    engine::{collect_query_sample_stats, query_stats_step},
+    engine::{PerStepSampleStats, collect_query_sample_stats, query_stats_step},
+    planner::StepGrid,
     query_frontend::{FrontendRangeRequest, execute_range_query_frontend},
 };
 
+mod evaluated_query_response;
 mod exemplars_query_params;
 mod exemplars_query_params_from_form;
 mod instant_query_params;
@@ -43,7 +45,9 @@ mod query_range_post;
 mod query_request_timing;
 mod range_query_params;
 mod range_query_params_from_form;
+mod run_timed_query;
 
+use evaluated_query_response::{EvaluatedQuery, evaluated_query_response};
 use exemplars_query_params::ExemplarsQueryParams;
 use exemplars_query_params_from_form::exemplars_query_params_from_form;
 use instant_query_params::InstantQueryParams;
@@ -62,3 +66,4 @@ pub(super) use query_range_post::query_range_post;
 use query_request_timing::QueryRequestTiming;
 use range_query_params::RangeQueryParams;
 use range_query_params_from_form::range_query_params_from_form;
+use run_timed_query::{TimedQuery, run_timed_query};

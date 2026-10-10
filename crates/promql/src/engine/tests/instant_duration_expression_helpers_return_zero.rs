@@ -44,10 +44,11 @@ pub(crate) async fn instant_duration_expression_helpers_use_the_evaluation_time(
 #[cfg(feature = "experimental-functions")]
 #[tokio::test]
 async fn nested_query_bounds_fold_over_a_populated_range() {
-    let mut store = InMemoryMetricStore::new();
-    for (ts_ms, value) in [(60_000, 2.0), (120_000, 3.0), (180_000, 4.0)] {
-        store.push_float("tenant-a", labels(&[("__name__", "m")]), ts_ms, value);
-    }
+    let store = SeriesFixture::new(labels(&[("__name__", "m")]))
+        .at(60_000, 2.0)
+        .at(120_000, 3.0)
+        .at(180_000, 4.0)
+        .store();
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     for (query, expected) in [
         ("m * (end() - start())", vec![240.0, 360.0, 480.0]),

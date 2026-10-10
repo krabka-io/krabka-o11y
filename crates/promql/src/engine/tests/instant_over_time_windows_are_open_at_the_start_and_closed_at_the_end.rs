@@ -22,13 +22,7 @@ pub(crate) async fn instant_over_time_windows_are_open_at_the_start_and_closed_a
         ("histogram_sum(last_over_time(queue_depth[50s]))", 3.0),
         ("count_over_time(queue_depth[50s])", 1.0),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 60_000)
-            .await
-            .unwrap();
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(&engine, query, 60_000).await;
         check!(samples.len() == 1, "{query}");
         check!(
             approx_eq(float_value(&samples[0].value), expected),

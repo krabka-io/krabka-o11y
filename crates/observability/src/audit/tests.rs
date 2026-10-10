@@ -176,6 +176,39 @@ fn check_chain(records: &[AuditRecord]) {
     }
 }
 
+/// An audit layer started over one sink with [`enabled_args`]-style flags
+/// and the mock clock, together with the token that stops it.
+struct RunningAuditLayer {
+    handle: AuditHandle,
+    writer: Option<tokio::task::JoinHandle<()>>,
+    shutdown: CancellationToken,
+}
+
+impl RunningAuditLayer {
+    fn start(args: &AuditArgs, sink: Arc<dyn AuditSink>, time: &Arc<ManualMonotonicClock>) -> Self {
+        let shutdown = CancellationToken::new();
+        let (handle, writer) =
+            AuditService::start_with_sink(args, product(), sink, clocks(time), shutdown.clone())
+                .expect("the layer starts")
+                .into_parts();
+        Self {
+            handle,
+            writer,
+            shutdown,
+        }
+    }
+
+    /// Cancels the layer and waits for its writer to finish.
+    async fn stop(&mut self) {
+        self.shutdown.cancel();
+        self.writer
+            .take()
+            .expect("an enabled layer has a writer")
+            .await
+            .expect("the writer does not panic");
+    }
+}
+
 /// Yields to the writer task until `condition` holds.
 async fn await_until(what: &str, condition: impl Fn() -> bool) {
     for _ in 0..100_000 {
@@ -765,31 +798,22 @@ async fn an_audit_layer_with_bad_flags_does_not_start() {
 async fn events_reach_the_sink_in_order_on_one_valid_chain() {
     let time = mock_time();
     let sink = Arc::new(MemorySink::default());
-    let shutdown = CancellationToken::new();
-    let (handle, writer) = AuditService::start_with_sink(
+    let mut layer = RunningAuditLayer::start(
         &enabled_args(),
-        product(),
         Arc::clone(&sink) as Arc<dyn AuditSink>,
-        clocks(&time),
-        shutdown.clone(),
-    )
-    .expect("the layer starts")
-    .into_parts();
+        &time,
+    );
     let events = three_events();
 
     for event in &events {
-        handle.emit(event.clone());
+        layer.handle.emit(event.clone());
     }
-    shutdown.cancel();
-    writer
-        .expect("an enabled layer has a writer")
-        .await
-        .expect("the writer does not panic");
+    layer.stop().await;
 
     let records = sink.records();
     check!(records == expected_records(&events, ChainState::new()));
     check_chain(&records);
-    check!(handle.dropped() == 0);
+    check!(layer.handle.dropped() == 0);
 }
 
 #[tokio::test]
@@ -798,42 +822,36 @@ async fn a_failing_sink_spools_records_and_replays_them_in_order() {
     let spool_dir = tempfile::tempdir().expect("spool dir");
     let sink = Arc::new(FailableSink::default());
     sink.fail.store(true, Ordering::SeqCst);
-    let shutdown = CancellationToken::new();
-    let (handle, writer) = AuditService::start_with_sink(
+    let mut layer = RunningAuditLayer::start(
         &AuditArgs {
             spool_dir: Some(spool_dir.path().to_path_buf()),
             ..enabled_args()
         },
-        product(),
         Arc::clone(&sink) as Arc<dyn AuditSink>,
-        clocks(&time),
-        shutdown.clone(),
-    )
-    .expect("the layer starts")
-    .into_parts();
+        &time,
+    );
     let events = three_events();
 
     for event in &events {
-        handle.emit(event.clone());
+        layer.handle.emit(event.clone());
     }
-    await_until("three records spooled", || handle.stats().spooled() == 3).await;
+    await_until("three records spooled", || {
+        layer.handle.stats().spooled() == 3
+    })
+    .await;
     check!(sink.inner.records().is_empty());
-    check!(handle.stats().depth() == 3);
+    check!(layer.handle.stats().depth() == 3);
 
     sink.fail.store(false, Ordering::SeqCst);
     time.advance(AUDIT_SPOOL_REPLAY_EVERY.to_std())
         .expect("time advances");
-    await_until("the spool drained", || handle.stats().depth() == 0).await;
-    shutdown.cancel();
-    writer
-        .expect("an enabled layer has a writer")
-        .await
-        .expect("the writer does not panic");
+    await_until("the spool drained", || layer.handle.stats().depth() == 0).await;
+    layer.stop().await;
 
     let records = sink.inner.records();
     check!(records == expected_records(&events, ChainState::new()));
     check_chain(&records);
-    check!((handle.stats().replayed(), handle.dropped()) == (3, 0));
+    check!((layer.handle.stats().replayed(), layer.handle.dropped()) == (3, 0));
 }
 
 #[tokio::test]
@@ -849,48 +867,28 @@ async fn a_restarted_writer_goes_on_from_the_chain_in_its_spool() {
     // The first process writes two records while the topic is down, and stops.
     let down = Arc::new(FailableSink::default());
     down.fail.store(true, Ordering::SeqCst);
-    let first_shutdown = CancellationToken::new();
-    let (first, first_writer) = AuditService::start_with_sink(
-        &args,
-        product(),
-        Arc::clone(&down) as Arc<dyn AuditSink>,
-        clocks(&time),
-        first_shutdown.clone(),
-    )
-    .expect("the first layer starts")
-    .into_parts();
-    first.emit(events[0].clone());
-    first.emit(events[1].clone());
-    await_until("two records spooled", || first.stats().spooled() == 2).await;
-    first_shutdown.cancel();
-    first_writer
-        .expect("an enabled layer has a writer")
-        .await
-        .expect("the writer does not panic");
+    let mut first = RunningAuditLayer::start(&args, Arc::clone(&down) as Arc<dyn AuditSink>, &time);
+    first.handle.emit(events[0].clone());
+    first.handle.emit(events[1].clone());
+    await_until("two records spooled", || {
+        first.handle.stats().spooled() == 2
+    })
+    .await;
+    first.stop().await;
 
     // The next process finds them in the spool. Its own record goes after
     // them on the same chain, and all three replay in order.
     let up = Arc::new(MemorySink::default());
-    let second_shutdown = CancellationToken::new();
-    let (second, second_writer) = AuditService::start_with_sink(
-        &args,
-        product(),
-        Arc::clone(&up) as Arc<dyn AuditSink>,
-        clocks(&time),
-        second_shutdown.clone(),
-    )
-    .expect("the second layer starts")
-    .into_parts();
-    second.emit(events[2].clone());
-    await_until("the third record spooled", || second.stats().spooled() == 1).await;
+    let mut second = RunningAuditLayer::start(&args, Arc::clone(&up) as Arc<dyn AuditSink>, &time);
+    second.handle.emit(events[2].clone());
+    await_until("the third record spooled", || {
+        second.handle.stats().spooled() == 1
+    })
+    .await;
     time.advance(AUDIT_SPOOL_REPLAY_EVERY.to_std())
         .expect("time advances");
-    await_until("the spool drained", || second.stats().depth() == 0).await;
-    second_shutdown.cancel();
-    second_writer
-        .expect("an enabled layer has a writer")
-        .await
-        .expect("the writer does not panic");
+    await_until("the spool drained", || second.handle.stats().depth() == 0).await;
+    second.stop().await;
 
     let records = up.records();
     check!(records == expected_records(&events, ChainState::new()));
@@ -900,54 +898,44 @@ async fn a_restarted_writer_goes_on_from_the_chain_in_its_spool() {
 #[tokio::test]
 async fn a_full_queue_drops_events_and_never_blocks_the_caller() {
     let time = mock_time();
-    let shutdown = CancellationToken::new();
-    let (handle, writer) = AuditService::start_with_sink(
+    let mut layer = RunningAuditLayer::start(
         &AuditArgs {
             queue_capacity: NonZeroUsize::new(1).expect("1 is not zero"),
             ..enabled_args()
         },
-        product(),
         Arc::new(StuckSink),
-        clocks(&time),
-        shutdown.clone(),
-    )
-    .expect("the layer starts")
-    .into_parts();
+        &time,
+    );
 
     // The writer task has not run yet on this single-threaded runtime, so the
     // queue holds exactly one event and each later emit must return at once.
     let event = three_events().remove(0);
     for _ in 0..100 {
-        handle.emit(event.clone());
+        layer.handle.emit(event.clone());
     }
 
-    check!(handle.dropped() == 99);
-    writer.expect("an enabled layer has a writer").abort();
+    check!(layer.handle.dropped() == 99);
+    layer
+        .writer
+        .take()
+        .expect("an enabled layer has a writer")
+        .abort();
 }
 
 #[tokio::test]
 async fn an_event_after_shutdown_counts_as_dropped() {
     let time = mock_time();
     let sink = Arc::new(MemorySink::default());
-    let shutdown = CancellationToken::new();
-    let (handle, writer) = AuditService::start_with_sink(
+    let mut layer = RunningAuditLayer::start(
         &enabled_args(),
-        product(),
         Arc::clone(&sink) as Arc<dyn AuditSink>,
-        clocks(&time),
-        shutdown.clone(),
-    )
-    .expect("the layer starts")
-    .into_parts();
+        &time,
+    );
 
-    shutdown.cancel();
-    writer
-        .expect("an enabled layer has a writer")
-        .await
-        .expect("the writer does not panic");
-    handle.emit(three_events().remove(0));
+    layer.stop().await;
+    layer.handle.emit(three_events().remove(0));
 
-    check!((handle.dropped(), sink.records().len()) == (1, 0));
+    check!((layer.handle.dropped(), sink.records().len()) == (1, 0));
 }
 
 #[tokio::test]
@@ -958,30 +946,21 @@ async fn a_signing_key_signs_a_last_checkpoint_over_the_chain() {
     let key_path = key_dir.path().join("audit.pk8");
     std::fs::write(&key_path, key.serialize_der()).expect("write the key");
     let sink = Arc::new(MemorySink::default());
-    let shutdown = CancellationToken::new();
-    let (handle, writer) = AuditService::start_with_sink(
+    let mut layer = RunningAuditLayer::start(
         &AuditArgs {
             signing_key_path: Some(key_path),
             signing_key_id: Some("audit-test".to_owned()),
             ..enabled_args()
         },
-        product(),
         Arc::clone(&sink) as Arc<dyn AuditSink>,
-        clocks(&time),
-        shutdown.clone(),
-    )
-    .expect("the layer starts")
-    .into_parts();
+        &time,
+    );
     let events = &three_events()[..2];
 
     for event in events {
-        handle.emit(event.clone());
+        layer.handle.emit(event.clone());
     }
-    shutdown.cancel();
-    writer
-        .expect("an enabled layer has a writer")
-        .await
-        .expect("the writer does not panic");
+    layer.stop().await;
 
     let records = sink.records();
     assert!(records.len() == 3);

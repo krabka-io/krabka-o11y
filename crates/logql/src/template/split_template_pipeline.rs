@@ -1,29 +1,15 @@
-use super::{ParseError, template_parse_error};
+use super::{ParseError, template_parse_error, template_quote_scanner::TemplateQuoteScanner};
 
 pub(crate) fn split_template_pipeline(expression: &str) -> Result<Vec<&str>, ParseError> {
     let mut commands = Vec::new();
     let mut start = 0;
-    let mut quote = None;
-    let mut escaped = false;
+    let mut quotes = TemplateQuoteScanner::default();
     let mut depth = 0usize;
     for (index, ch) in expression.char_indices() {
-        if escaped {
-            escaped = false;
+        if quotes.consume_quoted(ch) {
             continue;
         }
-        if matches!(quote, Some('"' | '\'')) && ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if let Some(quote_ch) = quote {
-            if ch == quote_ch {
-                quote = None;
-            }
-            continue;
-        }
-        if matches!(ch, '"' | '\'' | '`') {
-            quote = Some(ch);
-        } else if ch == '(' {
+        if ch == '(' {
             depth += 1;
         } else if ch == ')' {
             depth = depth
@@ -38,7 +24,7 @@ pub(crate) fn split_template_pipeline(expression: &str) -> Result<Vec<&str>, Par
             start = index + ch.len_utf8();
         }
     }
-    if quote.is_some() {
+    if quotes.is_inside_quote() {
         return Err(template_parse_error("unterminated template string"));
     }
     if depth != 0 {

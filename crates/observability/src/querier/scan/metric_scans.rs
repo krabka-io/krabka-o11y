@@ -1,15 +1,15 @@
 use crate::{
     ActiveLogDeleteFilter, Arc, BTreeMap, BlockDescriptor, ColdBlockScan, CompactionFrontier,
-    FsPath, Int64Array, LabelIndex, Labels, LokiStreamEncoding, LokiStreamEntry, MapArray,
-    MetricQuery, MetricWindow, ObjectPath, ObjectStore, QueryError, QueryHotTail, QueryRow,
-    RecordBatch, SessionContext, StreamPlan, StringArray, TimeRange, UInt64Array, Value,
-    WalLogRecord, append_matching_hot_log_record, append_matching_hot_metric_record,
-    append_matching_log_row, apply_absent_over_time, default_block_fetch_concurrency, eval_times,
+    FsPath, LabelIndex, Labels, LokiStreamEncoding, LokiStreamEntry, MetricQuery, MetricWindow,
+    ObjectPath, ObjectStore, QueryError, QueryHotTail, RecordBatch, SessionContext, StreamPlan,
+    TimeRange, Value, WalLogRecord, append_matching_hot_log_record,
+    append_matching_hot_metric_record, append_matching_log_row, apply_absent_over_time,
+    checked_eval_times, default_block_fetch_concurrency,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
-    format_metric_samples, json, loki_matrix_response, loki_stream_results, metric_plan_scan_sql,
-    metric_samples_from_batches, register_log_blocks, register_log_blocks_from_object_store,
-    sort_loki_stream_values, structured_metadata_value,
+    for_each_query_row, format_metric_samples, json, loki_matrix_response, loki_stream_results,
+    metric_plan_scan_sql, metric_samples_from_batches, register_log_blocks,
+    register_log_blocks_from_object_store, sort_loki_stream_values,
 };
 
 mod append_matching_log_batches;
@@ -31,6 +31,7 @@ mod execute_metric_query_with_hot_tail_frontier_and_deletes;
 mod execute_tail_query;
 mod execute_tail_query_with_frontier;
 mod execute_tail_query_with_frontier_and_deletes;
+mod hot_tail_metric_samples;
 
 pub(crate) use append_matching_log_batches::append_matching_log_batches;
 pub(crate) use collect_object_store_metric_log_batches::collect_object_store_metric_log_batches;
@@ -51,3 +52,4 @@ pub(crate) use execute_metric_query_with_hot_tail_frontier_and_deletes::execute_
 pub use execute_tail_query::execute_tail_query;
 pub use execute_tail_query_with_frontier::execute_tail_query_with_frontier;
 pub(crate) use execute_tail_query_with_frontier_and_deletes::execute_tail_query_with_frontier_and_deletes;
+pub(crate) use hot_tail_metric_samples::HotTailMetricSamples;

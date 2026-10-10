@@ -18,18 +18,7 @@ pub(crate) async fn instant_subquery_aligns_start_to_step_grid() {
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "rate(metric_total[1m500ms:10s])",
-            80_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "rate(metric_total[1m500ms:10s])", 80_000).await;
     assert2::assert!(samples.len() == 1);
     assert2::assert!(approx_eq(
         float_value(&samples[0].value),

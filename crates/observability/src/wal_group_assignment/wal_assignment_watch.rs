@@ -335,6 +335,25 @@ impl WalAssignmentWatch {
 mod recovery_tests {
     use super::*;
 
+    struct CatchUpFixture {
+        metrics: WalConsumerMetrics,
+        gate: ReadinessGate,
+        watch: WalAssignmentWatch,
+    }
+
+    impl CatchUpFixture {
+        fn new() -> Self {
+            let metrics = WalConsumerMetrics::unregistered();
+            let gate = crate::RoleReadiness::new().gate("wal-catch-up");
+            let watch = WalAssignmentWatch::with_catch_up(metrics.clone(), gate.clone());
+            Self {
+                metrics,
+                gate,
+                watch,
+            }
+        }
+    }
+
     #[test]
     fn only_records_fenced_by_a_revocation_may_be_settled_by_the_broker() {
         let wal = |partition| ("wal".to_string(), partition);
@@ -371,10 +390,11 @@ mod recovery_tests {
 
     #[test]
     fn log_end_is_not_ready_until_the_fetched_batch_is_applied() {
-        let metrics = WalConsumerMetrics::unregistered();
-        let readiness = crate::RoleReadiness::new();
-        let gate = readiness.gate("wal-catch-up");
-        let mut watch = WalAssignmentWatch::with_catch_up(metrics.clone(), gate.clone());
+        let CatchUpFixture {
+            metrics,
+            gate,
+            mut watch,
+        } = CatchUpFixture::new();
         let assigned = [("wal".to_string(), 0)];
 
         watch.unapplied = Unapplied::Held;
@@ -390,10 +410,11 @@ mod recovery_tests {
 
     #[test]
     fn applied_log_end_snapshot_stays_ready_when_the_broker_advances() {
-        let metrics = WalConsumerMetrics::unregistered();
-        let readiness = crate::RoleReadiness::new();
-        let gate = readiness.gate("wal-catch-up");
-        let mut watch = WalAssignmentWatch::with_catch_up(metrics.clone(), gate.clone());
+        let CatchUpFixture {
+            metrics,
+            gate,
+            mut watch,
+        } = CatchUpFixture::new();
         let assigned = [("wal".to_string(), 0)];
 
         watch.unapplied = Unapplied::Held;

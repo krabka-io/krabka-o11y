@@ -4,8 +4,9 @@ mod support;
 
 use std::{collections::BTreeMap, io::Write as _};
 
-use assert2::{assert, check};
+use assert2::assert;
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
 };
@@ -13,696 +14,339 @@ use flate2::{
     Compression,
     write::{DeflateEncoder, GzEncoder},
 };
-use krabka_blockstore::labels;
+use krabka_blockstore::{LogLabels, labels};
 use krabka_observability::{
-    InMemoryWalSink, QuerierIndexSource, Role, ServiceConfig, ServiceDependencies, WalLogRecord,
-    build_service_router, distributor_router,
+    InMemoryWalSink, LogWalSink, Role, ServiceDependencies, WalLogRecord, build_service_router,
+    distributor_router,
 };
 use prost::Message as _;
-use serde_json::json;
+use serde_json::{Value, json};
 use snap::raw::Encoder as SnappyEncoder;
 use support::{
-    FailingWalSink, LokiProtoEntry, LokiProtoLabelPair, LokiProtoPushRequest, LokiProtoStream,
-    LokiProtoTimestamp, PartialWalSink, assert_loki_error, json_body, text_body,
+    BodyHeaders, ExpectedLokiError, FailingWalSink, JsonStream, LokiProtoEntry, LokiProtoLabelPair,
+    LokiProtoPushRequest, LokiProtoStream, LokiProtoTimestamp, PartialWalSink, PushOutcome,
+    assert_loki_error, minimal_service_config, push_request, send, text_body,
 };
-use tower::ServiceExt as _;
+
+const PUSH: &str = "/loki/api/v1/push";
+const JSON_TYPE: BodyHeaders = BodyHeaders {
+    content_type: "application/json",
+    content_encoding: None,
+};
+const PROTOBUF_TYPE: BodyHeaders = BodyHeaders {
+    content_type: "application/x-protobuf",
+    content_encoding: None,
+};
+const NO_VALID_STREAM: &str = "error at least one valid stream is required for ingestion\n";
+const UNKNOWN_VALUE_TYPE: &str =
+    "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Unknown value type";
+const LOOKS_LIKE_OBJECT: &str = "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like object";
+const BAD_LABEL_PARSE: &str =
+    "couldn't parse labels: 1:5: parse error: unexpected character inside braces: '-'\n";
+
+async fn push(app: &Router, request: Request<Body>) -> (StatusCode, String) {
+    let response = send(app, request).await;
+    (response.status(), text_body(response).await)
+}
+
+async fn push_request_to_sink(request: Request<Body>) -> PushOutcome {
+    let sink = InMemoryWalSink::default();
+    let (status, body) = push(&distributor_router(sink.clone()), request).await;
+    PushOutcome {
+        status,
+        body,
+        records: sink.records(),
+    }
+}
+
+async fn push_to_sink(headers: BodyHeaders<'_>, body: impl Into<Body>) -> PushOutcome {
+    push_request_to_sink(push_request(PUSH, headers, body)).await
+}
+
+async fn push_json(payload: &Value) -> PushOutcome {
+    push_to_sink(JSON_TYPE, payload.to_string()).await
+}
+
+async fn push_json_to(sink: impl LogWalSink, payload: &Value) -> (StatusCode, String) {
+    push(
+        &distributor_router(sink),
+        push_request(PUSH, JSON_TYPE, payload.to_string()),
+    )
+    .await
+}
+
+async fn push_proto(labels: &str, entry: LokiProtoEntry) -> PushOutcome {
+    push_to_sink(PROTOBUF_TYPE, snappy_push(labels, entry)).await
+}
+
+fn api_stream(values: Value) -> Value {
+    JsonStream {
+        stream: json!({ "app": "api" }),
+        values,
+    }
+    .payload()
+}
+
+fn api_prod_stream(values: Value) -> Value {
+    JsonStream {
+        stream: json!({ "app": "api", "env": "prod" }),
+        values,
+    }
+    .payload()
+}
+
+/// A tenant-a WAL record of `line` at `timestamp_ns`, with no structured
+/// metadata yet.
+fn record(stream_labels: LogLabels, timestamp_ns: i64, line: &str) -> WalLogRecord {
+    WalLogRecord {
+        tenant: "tenant-a".to_string(),
+        labels: stream_labels,
+        timestamp_ns,
+        line: line.to_string(),
+        structured_metadata: BTreeMap::new(),
+        position: None,
+    }
+}
+
+/// Sets a record's structured metadata.
+trait WithMetadata {
+    fn with_metadata(self, metadata: LogLabels) -> Self;
+}
+
+impl WithMetadata for WalLogRecord {
+    fn with_metadata(mut self, metadata: LogLabels) -> Self {
+        self.structured_metadata = metadata;
+        self
+    }
+}
+
+const API: [(&str, &str); 2] = [("app", "api"), ("service_name", "api")];
+const API_PROD: [(&str, &str); 3] = [("app", "api"), ("env", "prod"), ("service_name", "api")];
+const UNKNOWN_SERVICE: [(&str, &str); 1] = [("service_name", "unknown_service")];
+
+/// A protobuf `api error` entry at `timestamp`, with no structured metadata
+/// yet.
+fn proto_entry(timestamp: LokiProtoTimestamp) -> LokiProtoEntry {
+    LokiProtoEntry {
+        timestamp: Some(timestamp),
+        line: "api error".to_string(),
+        structured_metadata: vec![],
+        parsed: vec![],
+    }
+}
+
+/// Appends one structured metadata pair to a protobuf entry, keeping the
+/// order and any repeated name.
+trait ProtoMetadata {
+    fn metadata(self, metadata_name: &str, metadata_value: &str) -> Self;
+}
+
+impl ProtoMetadata for LokiProtoEntry {
+    fn metadata(mut self, metadata_name: &str, metadata_value: &str) -> Self {
+        self.structured_metadata.push(LokiProtoLabelPair {
+            name: metadata_name.to_string(),
+            value: metadata_value.to_string(),
+        });
+        self
+    }
+}
+
+fn snappy(request: &LokiProtoPushRequest) -> Vec<u8> {
+    SnappyEncoder::new()
+        .compress_vec(&request.encode_to_vec())
+        .unwrap()
+}
+
+fn snappy_push(labels: &str, entry: LokiProtoEntry) -> Vec<u8> {
+    snappy(&LokiProtoPushRequest {
+        streams: vec![LokiProtoStream {
+            labels: labels.to_string(),
+            entries: vec![entry],
+            hash: 0,
+        }],
+    })
+}
 
 #[tokio::test]
 async fn loki_push_endpoint_writes_tenant_scoped_wal_records() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_json(&api_prod_stream(json!([
+        ["19", "api error", {"trace_id": "abc", "status": "500"}],
+        ["20", "api ok"]
+    ])))
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api",
-                                    "env": "prod"
-                                },
-                                "values": [
-                                    ["19", "api error", {"trace_id": "abc", "status": "500"}],
-                                    ["20", "api ok"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![
-                WalLogRecord {
-                    tenant: "tenant-a".to_string(),
-                    labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-                    timestamp_ns: 19,
-                    line: "api error".to_string(),
-                    structured_metadata: BTreeMap::from([
-                        ("detected_level".to_string(), "error".to_string()),
-                        ("status".to_string(), "500".to_string()),
-                        ("trace_id".to_string(), "abc".to_string()),
-                    ]),
-                    position: None,
-                },
-                WalLogRecord {
-                    tenant: "tenant-a".to_string(),
-                    labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-                    timestamp_ns: 20,
-                    line: "api ok".to_string(),
-                    structured_metadata: BTreeMap::from([(
-                        "detected_level".to_string(),
-                        "unknown".to_string()
-                    )]),
-                    position: None,
-                },
+        outcome.accepted()
+            == [
+                record(labels(API_PROD), 19, "api error").with_metadata(labels([
+                    ("detected_level", "error"),
+                    ("status", "500"),
+                    ("trace_id", "abc"),
+                ])),
+                record(labels(API_PROD), 20, "api ok")
+                    .with_metadata(labels([("detected_level", "unknown")])),
             ]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_incomplete_json_value_as_empty_line() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_json(&api_prod_stream(json!([["19"]]))).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api",
-                                    "env": "prod"
-                                },
-                                "values": [
-                                    ["19"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: String::new(),
-                structured_metadata: BTreeMap::from([(
-                    "detected_level".to_string(),
-                    "unknown".to_string()
-                )]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(API_PROD), 19, "")
+                .with_metadata(labels([("detected_level", "unknown")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_ignores_extra_json_value_fields_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_json(&api_stream(json!([
+        ["19", "api error", {"trace_id": "abc"}, "extra"]
+    ])))
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["19", "api error", {"trace_id": "abc"}, "extra"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("trace_id".to_string(), "abc".to_string())
-                ]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(API), 19, "api error")
+                .with_metadata(labels([("detected_level", "error"), ("trace_id", "abc")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_decodes_empty_json_value_as_zero_timestamp_empty_line_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_json(&api_stream(json!([[]]))).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    []
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("service_name", "api")]),
-                timestamp_ns: 0,
-                line: String::new(),
-                structured_metadata: BTreeMap::from([(
-                    "detected_level".to_string(),
-                    "unknown".to_string()
-                )]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(API), 0, "").with_metadata(labels([("detected_level", "unknown")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_non_array_json_value_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["19", "api ok"],
-                                    "not-a-push-value"
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&api_stream(json!([["19", "api ok"], "not-a-push-value"])))
         .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains(
-        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Unknown value type"
-    ));
-    check!(body.contains("not-a-push-value"));
-    check!(sink.records().is_empty());
+        .rejected_containing(&[UNKNOWN_VALUE_TYPE, "not-a-push-value"]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_non_object_json_stream_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            "not-a-stream"
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&json!({ "streams": ["not-a-stream"] }))
         .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains(
-        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like object"
-    ));
-    check!(body.contains("not-a-stream"));
-    check!(sink.records().is_empty());
+        .rejected_containing(&[LOOKS_LIKE_OBJECT, "not-a-stream"]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_non_array_json_streams_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": "not-streams"
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&json!({ "streams": "not-streams" }))
         .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains(
-        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: decode slice: expect [ or n, but found"
-    ));
-    check!(body.contains("not-streams"));
-    check!(sink.records().is_empty());
+        .rejected_containing(&[
+            "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: decode slice: expect [ or n, but found",
+            "not-streams",
+        ]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_array_json_payload_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"[{"streams": []}]"#))
-                .unwrap(),
-        )
+    push_to_sink(JSON_TYPE, r#"[{"streams": []}]"#)
         .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains("readObjectStart: expect { or n, but found ["));
-    check!(body.contains(r#"[{"streams""#));
-    check!(sink.records().is_empty());
+        .rejected_containing(&[
+            "readObjectStart: expect { or n, but found [",
+            r#"[{"streams""#,
+        ]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_null_json_payload_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from("null"))
-                .unwrap(),
-        )
+    push_to_sink(JSON_TYPE, "null")
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    check!(
-        text_body(response).await == "error at least one valid stream is required for ingestion\n"
-    );
-    check!(sink.records().is_empty());
+        .rejected_with(StatusCode::UNPROCESSABLE_ENTITY, NO_VALID_STREAM);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_missing_json_streams_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(json!({}).to_string()))
-                .unwrap(),
-        )
+    push_json(&json!({}))
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    check!(
-        text_body(response).await == "error at least one valid stream is required for ingestion\n"
-    );
-    check!(sink.records().is_empty());
+        .rejected_with(StatusCode::UNPROCESSABLE_ENTITY, NO_VALID_STREAM);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_empty_json_streams_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": []
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&json!({ "streams": [] }))
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    check!(
-        text_body(response).await == "error at least one valid stream is required for ingestion\n"
-    );
-    check!(sink.records().is_empty());
+        .rejected_with(StatusCode::UNPROCESSABLE_ENTITY, NO_VALID_STREAM);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_missing_json_values_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                }
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&json!({ "streams": [{ "stream": { "app": "api" } }] }))
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::NO_CONTENT);
-    check!(text_body(response).await.is_empty());
-    check!(sink.records().is_empty());
+        .accepted_without_records();
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_null_json_values_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": null
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&api_stream(Value::Null))
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::NO_CONTENT);
-    check!(text_body(response).await.is_empty());
-    check!(sink.records().is_empty());
+        .accepted_without_records();
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_non_array_json_values_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": "not-values"
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&api_stream(json!("not-values")))
         .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains(
-        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Unknown value type"
-    ));
-    check!(body.contains("not-values"));
-    check!(sink.records().is_empty());
+        .rejected_containing(&[UNKNOWN_VALUE_TYPE, "not-values"]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_non_object_json_labels_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": "not-labels",
-                                "values": [["19", "labels field is not an object"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains(
-        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like object"
-    ));
-    check!(body.contains("labels field is not an object"));
-    check!(sink.records().is_empty());
+    push_json(
+        &JsonStream {
+            stream: json!("not-labels"),
+            values: json!([["19", "labels field is not an object"]]),
+        }
+        .payload(),
+    )
+    .await
+    .rejected_containing(&[LOOKS_LIKE_OBJECT, "labels field is not an object"]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_null_json_labels_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": null,
-                                "values": [["19", "null labels field"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains(
-        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like object"
-    ));
-    check!(body.contains("null labels field"));
-    check!(sink.records().is_empty());
+    push_json(
+        &JsonStream {
+            stream: Value::Null,
+            values: json!([["19", "null labels field"]]),
+        }
+        .payload(),
+    )
+    .await
+    .rejected_containing(&[LOOKS_LIKE_OBJECT, "null labels field"]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_missing_json_labels_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "values": [["19", "missing labels field"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&json!({ "streams": [{ "values": [["19", "missing labels field"]] }] }))
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::NO_CONTENT);
-    check!(text_body(response).await.is_empty());
-    check!(sink.records().is_empty());
+        .accepted_without_records();
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_returns_server_error_when_wal_append_fails() {
-    let app = distributor_router(FailingWalSink);
+    let (status, body) = push_json_to(
+        FailingWalSink,
+        &api_prod_stream(json!([["19", "api error"]])),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api",
-                                    "env": "prod"
-                                },
-                                "values": [["19", "api error"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::SERVICE_UNAVAILABLE);
-    assert_loki_error(&json_body(response).await, "server_error", "wal sink");
+    assert!(status == StatusCode::SERVICE_UNAVAILABLE);
+    assert_loki_error(
+        &serde_json::from_str(&body).unwrap(),
+        "server_error",
+        "wal sink",
+    );
 }
 
 /// A push whose entries appended in part must not reach the client as a
@@ -713,1541 +357,574 @@ async fn loki_push_endpoint_returns_server_error_when_wal_append_fails() {
 /// writes the entries that already landed a second time, permanently.
 #[tokio::test]
 async fn loki_push_endpoint_reports_a_partial_wal_batch_as_a_failure() {
-    let app = distributor_router(PartialWalSink::new(2));
+    let (status, body) = push_json_to(
+        PartialWalSink::new(2),
+        &api_prod_stream(json!([
+            ["19", "one"],
+            ["20", "two"],
+            ["21", "three"],
+            ["22", "four"],
+            ["23", "five"]
+        ])),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": { "app": "api", "env": "prod" },
-                                "values": [
-                                    ["19", "one"],
-                                    ["20", "two"],
-                                    ["21", "three"],
-                                    ["22", "four"],
-                                    ["23", "five"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::SERVICE_UNAVAILABLE);
+    assert!(status == StatusCode::SERVICE_UNAVAILABLE);
     assert_loki_error(
-        &json_body(response).await,
+        &serde_json::from_str(&body).unwrap(),
         "server_error",
         "wal append wrote 2 of 5 records",
     );
 }
 
+fn traced_api_prod_payload() -> String {
+    api_prod_stream(json!([["19", "api error", {"trace_id": "abc"}]])).to_string()
+}
+
+fn traced_api_prod_record() -> WalLogRecord {
+    record(labels(API_PROD), 19, "api error")
+        .with_metadata(labels([("detected_level", "error"), ("trace_id", "abc")]))
+}
+
+async fn push_encoded(encoding: &str, payload: impl Into<Body>) -> PushOutcome {
+    push_to_sink(
+        BodyHeaders {
+            content_type: "application/json",
+            content_encoding: Some(encoding),
+        },
+        payload,
+    )
+    .await
+}
+
 #[tokio::test]
 async fn loki_push_endpoint_accepts_gzipped_json_payloads() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = json!({
-        "streams": [
-            {
-                "stream": {
-                    "app": "api",
-                    "env": "prod"
-                },
-                "values": [
-                    ["19", "api error", {"trace_id": "abc"}]
-                ]
-            }
-        ]
-    })
-    .to_string();
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(payload.as_bytes()).unwrap();
-    let payload = encoder.finish().unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .header("content-encoding", "gzip")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
+    encoder
+        .write_all(traced_api_prod_payload().as_bytes())
         .unwrap();
 
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
-    assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("trace_id".to_string(), "abc".to_string())
-                ]),
-                position: None,
-            }]
-    );
+    let outcome = push_encoded("gzip", encoder.finish().unwrap()).await;
+
+    assert!(outcome.accepted() == [traced_api_prod_record()]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_malformed_gzip_payload_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .header("content-encoding", "gzip")
-                .body(Body::from("not gzip"))
-                .unwrap(),
-        )
+    push_encoded("gzip", "not gzip")
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(text_body(response).await == "unexpected EOF\n");
-    check!(sink.records().is_empty());
+        .rejected_with(StatusCode::BAD_REQUEST, "unexpected EOF\n");
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_deflated_json_payloads() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = json!({
-        "streams": [
-            {
-                "stream": {
-                    "app": "api",
-                    "env": "prod"
-                },
-                "values": [
-                    ["19", "api error", {"trace_id": "abc"}]
-                ]
-            }
-        ]
-    })
-    .to_string();
     let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(payload.as_bytes()).unwrap();
-    let payload = encoder.finish().unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .header("content-encoding", "deflate")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
+    encoder
+        .write_all(traced_api_prod_payload().as_bytes())
         .unwrap();
 
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
-    assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("trace_id".to_string(), "abc".to_string())
-                ]),
-                position: None,
-            }]
-    );
+    let outcome = push_encoded("deflate", encoder.finish().unwrap()).await;
+
+    assert!(outcome.accepted() == [traced_api_prod_record()]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_malformed_deflate_payload_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .header("content-encoding", "deflate")
-                .body(Body::from("not deflate"))
-                .unwrap(),
-        )
+    push_encoded("deflate", "not deflate")
         .await
-        .unwrap();
+        .rejected_with(StatusCode::BAD_REQUEST, "EOF\n");
+}
 
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(text_body(response).await == "EOF\n");
-    check!(sink.records().is_empty());
+fn api_error_payload() -> String {
+    api_stream(json!([["19", "api error"]])).to_string()
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_unsupported_content_encoding_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .header("content-encoding", "br")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["19", "api error"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(text_body(response).await == "Content-Encoding \"br\" not supported\n");
-    check!(sink.records().is_empty());
+    push_encoded("br", api_error_payload()).await.rejected_with(
+        StatusCode::BAD_REQUEST,
+        "Content-Encoding \"br\" not supported\n",
+    );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_treats_non_json_content_type_as_snappy_protobuf() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "text/plain")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["19", "api error"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
     // Real Loki 3.4.2 returns a plain-text body (`Content-Type: text/plain`) for a
     // failed snappy-protobuf decode on a non-JSON push, not a JSON error envelope.
-    check!(text_body(response).await == "snappy: corrupt input\n");
-    check!(sink.records().is_empty());
+    push_to_sink(
+        BodyHeaders {
+            content_type: "text/plain",
+            content_encoding: None,
+        },
+        api_error_payload(),
+    )
+    .await
+    .rejected_with(StatusCode::BAD_REQUEST, "snappy: corrupt input\n");
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_malformed_content_type_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json; charset")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["19", "api error"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "invalid media");
-    assert!(sink.records().is_empty());
+    push_to_sink(
+        BodyHeaders {
+            content_type: "application/json; charset",
+            content_encoding: None,
+        },
+        api_error_payload(),
+    )
+    .await
+    .rejected_as_loki_error(&ExpectedLokiError {
+        status: StatusCode::BAD_REQUEST,
+        error_type: "bad_data",
+        contains: "invalid media",
+    });
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_json_content_type_parameters() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_to_sink(
+        BodyHeaders {
+            content_type: "application/json; charset=utf-8",
+            content_encoding: None,
+        },
+        api_error_payload(),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json; charset=utf-8")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["19", "api error"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([(
-                    "detected_level".to_string(),
-                    "error".to_string()
-                )]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(API), 19, "api error")
+                .with_metadata(labels([("detected_level", "error")]))]
     );
 }
 
 #[tokio::test]
 async fn deprecated_api_prom_push_endpoint_writes_wal_records() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_request_to_sink(push_request(
+        "/api/prom/push",
+        JSON_TYPE,
+        api_prod_stream(json!([["19", "api error"]])).to_string(),
+    ))
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/prom/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api",
-                                    "env": "prod"
-                                },
-                                "values": [
-                                    ["19", "api error"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([(
-                    "detected_level".to_string(),
-                    "error".to_string()
-                )]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(API_PROD), 19, "api error")
+                .with_metadata(labels([("detected_level", "error")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_snappy_protobuf_payloads() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: r#"{app="api", env="prod"}"#.to_string(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
-                    seconds: 0,
-                    nanos: 19,
-                }),
-                line: "api error".to_string(),
-                structured_metadata: vec![
-                    LokiProtoLabelPair {
-                        name: "status".to_string(),
-                        value: "500".to_string(),
-                    },
-                    LokiProtoLabelPair {
-                        name: "trace_id".to_string(),
-                        value: "abc".to_string(),
-                    },
-                ],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
+    let outcome = push_proto(
+        r#"{app="api", env="prod"}"#,
+        proto_entry(LokiProtoTimestamp {
+            seconds: 0,
+            nanos: 19,
+        })
+        .metadata("status", "500")
+        .metadata("trace_id", "abc"),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("status".to_string(), "500".to_string()),
-                    ("trace_id".to_string(), "abc".to_string()),
-                ]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [
+                record(labels(API_PROD), 19, "api error").with_metadata(labels([
+                    ("detected_level", "error"),
+                    ("status", "500"),
+                    ("trace_id", "abc"),
+                ]))
+            ]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_empty_protobuf_labels_with_unknown_service() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: "{}".to_string(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
-                    seconds: 0,
-                    nanos: 19,
-                }),
-                line: "api error".to_string(),
-                structured_metadata: vec![],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
+    let outcome = push_proto(
+        "{}",
+        proto_entry(LokiProtoTimestamp {
+            seconds: 0,
+            nanos: 19,
+        }),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("service_name", "unknown_service")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([(
-                    "detected_level".to_string(),
-                    "error".to_string()
-                )]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(UNKNOWN_SERVICE), 19, "api error")
+                .with_metadata(labels([("detected_level", "error")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_empty_string_protobuf_labels_with_unknown_service() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: String::new(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
-                    seconds: 0,
-                    nanos: 19,
-                }),
-                line: "api error".to_string(),
-                structured_metadata: vec![],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
+    let outcome = push_proto(
+        "",
+        proto_entry(LokiProtoTimestamp {
+            seconds: 0,
+            nanos: 19,
+        }),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("service_name", "unknown_service")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([(
-                    "detected_level".to_string(),
-                    "error".to_string()
-                )]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(UNKNOWN_SERVICE), 19, "api error")
+                .with_metadata(labels([("detected_level", "error")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_invalid_snappy_protobuf_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(vec![0xff, 0xff, 0xff]))
-                .unwrap(),
-        )
+    push_to_sink(PROTOBUF_TYPE, vec![0xff, 0xff, 0xff])
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(text_body(response).await == "snappy: corrupt input\n");
-    check!(sink.records().is_empty());
+        .rejected_with(StatusCode::BAD_REQUEST, "snappy: corrupt input\n");
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_invalid_protobuf_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(vec![0x03, 0x08, 0xff, 0xff, 0xff]))
-                .unwrap(),
-        )
+    push_to_sink(PROTOBUF_TYPE, vec![0x03, 0x08, 0xff, 0xff, 0xff])
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(text_body(response).await == "unexpected EOF\n");
-    check!(sink.records().is_empty());
+        .rejected_with(StatusCode::BAD_REQUEST, "unexpected EOF\n");
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_empty_protobuf_push_like_loki_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest { streams: vec![] };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    check!(
-        text_body(response).await == "error at least one valid stream is required for ingestion\n"
-    );
-    check!(sink.records().is_empty());
+    push_to_sink(
+        PROTOBUF_TYPE,
+        snappy(&LokiProtoPushRequest { streams: vec![] }),
+    )
+    .await
+    .rejected_with(StatusCode::UNPROCESSABLE_ENTITY, NO_VALID_STREAM);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_invalid_protobuf_labels_like_loki_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: r#"{bad-label="api"}"#.to_string(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
-                    seconds: 0,
-                    nanos: 19,
-                }),
-                line: "api error".to_string(),
-                structured_metadata: vec![],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(
-        text_body(response).await
-            == "couldn't parse labels: 1:5: parse error: unexpected character inside braces: '-'\n"
-    );
-    check!(sink.records().is_empty());
+    push_proto(
+        r#"{bad-label="api"}"#,
+        proto_entry(LokiProtoTimestamp {
+            seconds: 0,
+            nanos: 19,
+        }),
+    )
+    .await
+    .rejected_with(StatusCode::BAD_REQUEST, BAD_LABEL_PARSE);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_duplicate_protobuf_labels_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: r#"{app="api", app="worker"}"#.to_string(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
-                    seconds: 0,
-                    nanos: 19,
-                }),
-                line: "api error".to_string(),
-                structured_metadata: vec![],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
+    push_proto(r#"{app="api", app="worker"}"#, proto_entry(LokiProtoTimestamp {
+ seconds: 0,
+ nanos: 19,
+ }))
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(
-        text_body(response).await
-            == "stream '{app=\"api\", app=\"worker\", service_name=\"api\"}' has duplicate label name: 'app'\n"
-    );
-    check!(sink.records().is_empty());
+        .rejected_with(
+            StatusCode::BAD_REQUEST,
+            "stream '{app=\"api\", app=\"worker\", service_name=\"api\"}' has duplicate label name: 'app'\n",
+        );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_duplicate_protobuf_structured_metadata_using_last_value() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: r#"{app="api"}"#.to_string(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
-                    seconds: 0,
-                    nanos: 19,
-                }),
-                line: "api error".to_string(),
-                structured_metadata: vec![
-                    LokiProtoLabelPair {
-                        name: "trace_id".to_string(),
-                        value: "abc".to_string(),
-                    },
-                    LokiProtoLabelPair {
-                        name: "trace_id".to_string(),
-                        value: "def".to_string(),
-                    },
-                ],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
+    let outcome = push_proto(
+        r#"{app="api"}"#,
+        proto_entry(LokiProtoTimestamp {
+            seconds: 0,
+            nanos: 19,
+        })
+        .metadata("trace_id", "abc")
+        .metadata("trace_id", "def"),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("trace_id".to_string(), "def".to_string())
-                ]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(API), 19, "api error")
+                .with_metadata(labels([("detected_level", "error"), ("trace_id", "def")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_invalid_protobuf_structured_metadata_name() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: r#"{app="api"}"#.to_string(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
-                    seconds: 0,
-                    nanos: 19,
-                }),
-                line: "api error".to_string(),
-                structured_metadata: vec![LokiProtoLabelPair {
-                    name: "9bad".to_string(),
-                    value: "metadata".to_string(),
-                }],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
+    let outcome = push_proto(
+        r#"{app="api"}"#,
+        proto_entry(LokiProtoTimestamp {
+            seconds: 0,
+            nanos: 19,
+        })
+        .metadata("9bad", "metadata"),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("9bad".to_string(), "metadata".to_string())
-                ]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(API), 19, "api error")
+                .with_metadata(labels([("detected_level", "error"), ("9bad", "metadata")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_empty_protobuf_structured_metadata_name_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: r#"{app="api"}"#.to_string(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
-                    seconds: 0,
-                    nanos: 19,
-                }),
-                line: "api error".to_string(),
-                structured_metadata: vec![LokiProtoLabelPair {
-                    name: String::new(),
-                    value: "metadata".to_string(),
-                }],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(text_body(response).await == "label name is empty\n");
-    assert!(sink.records().is_empty());
+    push_proto(
+        r#"{app="api"}"#,
+        proto_entry(LokiProtoTimestamp {
+            seconds: 0,
+            nanos: 19,
+        })
+        .metadata("", "metadata"),
+    )
+    .await
+    .rejected_with(StatusCode::INTERNAL_SERVER_ERROR, "label name is empty\n");
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_invalid_timestamp_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_json(&api_stream(json!([["not-a-timestamp", "api error"]]))).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["not-a-timestamp", "api error"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    assert!(outcome.status == StatusCode::BAD_REQUEST);
+    assert!(outcome.records.is_empty());
+}
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert!(sink.records().is_empty());
+fn number_decode_error(context: &str) -> String {
+    format!(
+        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like Number/Boolean/None, but can't find its end: ',' or '}}' symbol, error found in #10 byte of ...|estamp\"]]}}]}}|..., bigger context ...|{context}|...\n"
+    )
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_invalid_json_timestamp_like_loki_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["not-a-timestamp", "invalid push timestamp"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(
-        text_body(response).await
-            == "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like Number/Boolean/None, but can't find its end: ',' or '}' symbol, error found in #10 byte of ...|estamp\"]]}]}|..., bigger context ...|s\":[[\"not-a-timestamp\",\"invalid push timestamp\"]]}]}|...\n"
+    push_json(&api_stream(json!([[
+        "not-a-timestamp",
+        "invalid push timestamp"
+    ]])))
+    .await
+    .rejected_with(
+        StatusCode::BAD_REQUEST,
+        &number_decode_error("s\":[[\"not-a-timestamp\",\"invalid push timestamp\"]]}]}"),
     );
-    check!(sink.records().is_empty());
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_non_string_json_timestamp_like_loki_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    [1_000_000_000, "non-string push timestamp"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(
-        text_body(response).await
-            == "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like Number/Boolean/None, but can't find its end: ',' or '}' symbol, error found in #10 byte of ...|estamp\"]]}]}|..., bigger context ...|alues\":[[1000000000,\"non-string push timestamp\"]]}]}|...\n"
+    push_json(&api_stream(json!([[
+        1_000_000_000,
+        "non-string push timestamp"
+    ]])))
+    .await
+    .rejected_with(
+        StatusCode::BAD_REQUEST,
+        &number_decode_error("alues\":[[1000000000,\"non-string push timestamp\"]]}]}"),
     );
-    check!(sink.records().is_empty());
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_object_json_timestamp_like_loki_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    [{"ts": "1000000000"}, "object push timestamp"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(
-        text_body(response).await
-            == "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like Number/Boolean/None, but can't find its end: ',' or '}' symbol, error found in #10 byte of ...|estamp\"]]}]}|..., bigger context ...|\":[[{\"ts\":\"1000000000\"},\"object push timestamp\"]]}]}|...\n"
+    push_json(&api_stream(
+        json!([[{"ts": "1000000000"}, "object push timestamp"]]),
+    ))
+    .await
+    .rejected_with(
+        StatusCode::BAD_REQUEST,
+        &number_decode_error("\":[[{\"ts\":\"1000000000\"},\"object push timestamp\"]]}]}"),
     );
-    check!(sink.records().is_empty());
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_array_json_timestamp_like_loki_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    [["1000000000"], "array push timestamp"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(
-        text_body(response).await
-            == "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like Number/Boolean/None, but can't find its end: ',' or '}' symbol, error found in #10 byte of ...|estamp\"]]}]}|..., bigger context ...|values\":[[[\"1000000000\"],\"array push timestamp\"]]}]}|...\n"
+    push_json(&api_stream(json!([[
+        ["1000000000"],
+        "array push timestamp"
+    ]])))
+    .await
+    .rejected_with(
+        StatusCode::BAD_REQUEST,
+        &number_decode_error("values\":[[[\"1000000000\"],\"array push timestamp\"]]}]}"),
     );
-    check!(sink.records().is_empty());
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_invalid_json_line_like_loki_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["1000000000", 500]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&api_stream(json!([["1000000000", 500]])))
         .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(
-        text_body(response).await
-            == "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value is string, but can't find closing '\"' symbol, error found in #10 byte of ...|00\",500]]}]}|..., bigger context ...|ream\":{\"app\":\"api\"},\"values\":[[\"1000000000\",500]]}]}|...\n"
-    );
-    check!(sink.records().is_empty());
+        .rejected_with(
+            StatusCode::BAD_REQUEST,
+            "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value is string, but can't find closing '\"' symbol, error found in #10 byte of ...|00\",500]]}]}|..., bigger context ...|ream\":{\"app\":\"api\"},\"values\":[[\"1000000000\",500]]}]}|...\n",
+        );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_negative_timestamp_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["-1", "api error"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&api_stream(json!([["-1", "api error"]])))
         .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "timestamp");
-    assert!(sink.records().is_empty());
+        .rejected_as_loki_error(&ExpectedLokiError {
+            status: StatusCode::BAD_REQUEST,
+            error_type: "bad_data",
+            contains: "timestamp",
+        });
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_negative_protobuf_timestamp_like_loki_without_wal_append() {
     let sink = InMemoryWalSink::default();
-    let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
     let app = build_service_router(
-        &config,
+        &minimal_service_config(Role::Distributor),
         ServiceDependencies::default().with_wal_sink(sink.clone()),
         None,
     )
     .await
     .unwrap();
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: r#"{app="api"}"#.to_string(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
+
+    let (status, body) = push(
+        &app,
+        push_request(
+            PUSH,
+            PROTOBUF_TYPE,
+            snappy_push(
+                r#"{app="api"}"#,
+                proto_entry(LokiProtoTimestamp {
                     seconds: -1,
                     nanos: 0,
                 }),
-                line: "api error".to_string(),
-                structured_metadata: vec![],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
+            ),
+        ),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains("timestamp too old"));
-    check!(body.contains("1969-12-31T23:59:59Z"));
-    check!(body.contains(r#"{app="api", service_name="api"}"#));
-    check!(sink.records().is_empty());
+    PushOutcome {
+        status,
+        body,
+        records: sink.records(),
+    }
+    .rejected_containing(&[
+        "timestamp too old",
+        "1969-12-31T23:59:59Z",
+        r#"{app="api", service_name="api"}"#,
+    ]);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_out_of_range_protobuf_timestamp_nanos_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-    let payload = LokiProtoPushRequest {
-        streams: vec![LokiProtoStream {
-            labels: r#"{app="api"}"#.to_string(),
-            entries: vec![LokiProtoEntry {
-                timestamp: Some(LokiProtoTimestamp {
-                    seconds: 0,
-                    nanos: 1_000_000_000,
-                }),
-                line: "api error".to_string(),
-                structured_metadata: vec![],
-                parsed: vec![],
-            }],
-            hash: 0,
-        }],
-    };
-    let payload = SnappyEncoder::new()
-        .compress_vec(&payload.encode_to_vec())
-        .unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "timestamp");
-    assert!(sink.records().is_empty());
+    push_proto(
+        r#"{app="api"}"#,
+        proto_entry(LokiProtoTimestamp {
+            seconds: 0,
+            nanos: 1_000_000_000,
+        }),
+    )
+    .await
+    .rejected_as_loki_error(&ExpectedLokiError {
+        status: StatusCode::BAD_REQUEST,
+        error_type: "bad_data",
+        contains: "timestamp",
+    });
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_invalid_json_labels_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "bad-label": "api"
-                                },
-                                "values": [
-                                    ["19", "api error"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    check!(response.status() == StatusCode::BAD_REQUEST);
-    check!(
-        text_body(response).await
-            == "couldn't parse labels: 1:5: parse error: unexpected character inside braces: '-'\n"
-    );
-    check!(sink.records().is_empty());
+    push_json(
+        &JsonStream {
+            stream: json!({ "bad-label": "api" }),
+            values: json!([["19", "api error"]]),
+        }
+        .payload(),
+    )
+    .await
+    .rejected_with(StatusCode::BAD_REQUEST, BAD_LABEL_PARSE);
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_duplicate_json_labels_using_last_value() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_to_sink(
+        JSON_TYPE,
+        r#"{
+            "streams": [
+                {
+                    "stream": {
+                        "app": "api",
+                        "app": "worker"
+                    },
+                    "values": [
+                        ["19", "api error"]
+                    ]
+                }
+            ]
+        }"#,
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api",
-                                    "app": "worker"
-                                },
-                                "values": [
-                                    ["19", "api error"]
-                                ]
-                            }
-                        ]
-                    }"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "worker"), ("service_name", "worker")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([(
-                    "detected_level".to_string(),
-                    "error".to_string()
-                )]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(
+                labels([("app", "worker"), ("service_name", "worker")]),
+                19,
+                "api error"
+            )
+            .with_metadata(labels([("detected_level", "error")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_empty_json_labels_with_unknown_service() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_json(
+        &JsonStream {
+            stream: json!({}),
+            values: json!([["19", "api info"]]),
+        }
+        .payload(),
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {},
-                                "values": [
-                                    ["19", "api info"]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("service_name", "unknown_service")]),
-                timestamp_ns: 19,
-                line: "api info".to_string(),
-                structured_metadata: BTreeMap::from([(
-                    "detected_level".to_string(),
-                    "info".to_string()
-                )]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(UNKNOWN_SERVICE), 19, "api info")
+                .with_metadata(labels([("detected_level", "info")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_invalid_json_structured_metadata_name() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
+    let outcome = push_json(&api_stream(
+        json!([["19", "api error", {"9bad": "metadata"}]]),
+    ))
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["19", "api error", {"9bad": "metadata"}]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("9bad".to_string(), "metadata".to_string())
-                ]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(API), 19, "api error")
+                .with_metadata(labels([("detected_level", "error"), ("9bad", "metadata")]))]
     );
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_duplicate_json_structured_metadata_using_last_value() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{
-                        "streams": [
+    let outcome = push_to_sink(
+        JSON_TYPE,
+        r#"{
+            "streams": [
+                {
+                    "stream": {
+                        "app": "api"
+                    },
+                    "values": [
+                        [
+                            "19",
+                            "api error",
                             {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    [
-                                        "19",
-                                        "api error",
-                                        {
-                                            "trace_id": "abc",
-                                            "trace_id": "def"
-                                        }
-                                    ]
-                                ]
+                                "trace_id": "abc",
+                                "trace_id": "def"
                             }
                         ]
-                    }"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                    ]
+                }
+            ]
+        }"#,
+    )
+    .await;
 
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
     assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("service_name", "api")]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("trace_id".to_string(), "def".to_string())
-                ]),
-                position: None,
-            }]
+        outcome.accepted()
+            == [record(labels(API), 19, "api error")
+                .with_metadata(labels([("detected_level", "error"), ("trace_id", "def")]))]
     );
 }
 
@@ -2257,36 +934,18 @@ async fn loki_push_endpoint_rejects_non_string_json_structured_metadata_without_
     let app = distributor_router(sink.clone());
 
     for structured_metadata in [json!({"status": 500}), json!({"nested": {"status": "500"}})] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/loki/api/v1/push")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "streams": [
-                                {
-                                    "stream": {
-                                        "app": "api"
-                                    },
-                                    "values": [
-                                        ["19", "api error", structured_metadata]
-                                    ]
-                                }
-                            ]
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let (status, body) = push(
+            &app,
+            push_request(
+                PUSH,
+                JSON_TYPE,
+                api_stream(json!([["19", "api error", structured_metadata]])).to_string(),
+            ),
+        )
+        .await;
 
-        assert!(response.status() == StatusCode::BAD_REQUEST);
-        assert!(text_body(response).await.contains(
+        assert!(status == StatusCode::BAD_REQUEST);
+        assert!(body.contains(
             "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value is string"
         ));
     }
@@ -2296,41 +955,7 @@ async fn loki_push_endpoint_rejects_non_string_json_structured_metadata_without_
 
 #[tokio::test]
 async fn loki_push_endpoint_rejects_non_object_json_structured_metadata_like_loki() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [
-                                    ["19", "api error", null]
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
+    push_json(&api_stream(json!([["19", "api error", null]])))
         .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains(
-        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like object"
-    ));
-    check!(body.contains("api error\",null"));
-    check!(sink.records().is_empty());
+        .rejected_containing(&[LOOKS_LIKE_OBJECT, "api error\",null"]);
 }

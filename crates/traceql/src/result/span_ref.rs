@@ -1,7 +1,9 @@
 use super::{AttrValue, EventRef, LinkRef, Time};
 
 /// One matched span in a result span set.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `Default` is a root span with zeroed ids and no attributes, events, or links.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SpanRef {
     pub span_id: [u8; 8],
     pub parent_span_id: Option<[u8; 8]>,

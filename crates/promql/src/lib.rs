@@ -9,6 +9,7 @@
 
 mod block_store;
 mod conformance;
+mod duration_terms;
 mod engine;
 mod error;
 mod extension;
@@ -23,6 +24,7 @@ mod query_frontend;
 mod range_array;
 mod result;
 mod ruler;
+mod series_stats;
 mod store;
 #[cfg(test)]
 mod test_support;
@@ -38,9 +40,11 @@ pub use error::PromqlError;
 mod promql_labels;
 mod promql_string;
 pub use extension::{
-    instant_manipulate::{InstantManipulate, InstantManipulateExec},
-    normalize::{SeriesNormalize, SeriesNormalizeExec},
-    range_manipulate::{RangeManipulate, RangeManipulateExec, build_extended_range_schema},
+    instant_manipulate::{InstantManipulate, InstantManipulateExec, InstantManipulateSettings},
+    normalize::{NanSamples, SeriesNormalize, SeriesNormalizeExec, SeriesNormalizeSettings},
+    range_manipulate::{
+        RangeManipulate, RangeManipulateExec, RangeManipulateSettings, build_extended_range_schema,
+    },
     series_divide::{SeriesDivide, SeriesDivideExec},
 };
 pub use functions::{
@@ -48,7 +52,7 @@ pub use functions::{
 };
 pub use http_api::{
     PrometheusApiState, mimir_alertmanager_router, mimir_ruler_prometheus_router,
-    mimir_ruler_router, prometheus_router,
+    mimir_ruler_router, prometheus_router, remote_read_reset_hint,
 };
 pub use ids::{Offset, PartitionIndex};
 pub use in_memory::{
@@ -80,7 +84,6 @@ pub use ruler::{
     evaluate_and_dispatch_alerting_rule_with_state, evaluate_and_persist_alerting_rule_group,
     evaluate_and_persist_alerting_rule_with_state, evaluate_and_persist_ruler_rule_group,
     evaluate_and_persist_ruler_rule_set,
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
     evaluate_and_persist_ruler_rule_set_with_report, evaluate_recording_rule,
     evaluate_ruler_rule_group, evaluate_ruler_rule_set, filter_ruler_rule_set_due_for_eval,

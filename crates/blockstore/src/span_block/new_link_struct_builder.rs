@@ -1,35 +1,17 @@
 use super::{
-    Arc, DataType, Field, Fields, FixedSizeBinaryBuilder, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE,
-    StringBuilder, StructBuilder, new_str_list, new_str_list_list,
+    DataType, Field, FixedSizeBinaryBuilder, StructBuilder, StructColumn,
+    new_attributed_struct_builder,
 };
 
 pub(crate) fn new_link_struct_builder() -> StructBuilder {
-    StructBuilder::new(
-        Fields::from(vec![
-            Field::new("linked_trace_id", DataType::FixedSizeBinary(16), true),
-            Field::new("linked_span_id", DataType::FixedSizeBinary(8), true),
-            Field::new(
-                SCOL_ATTR_KEYS,
-                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                true,
-            ),
-            Field::new(
-                SCOL_ATTR_VALUE,
-                DataType::List(Arc::new(Field::new(
-                    "item",
-                    DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                    true,
-                ))),
-                true,
-            ),
-            Field::new("attr_typed", DataType::Utf8, true),
-        ]),
-        vec![
-            Box::new(FixedSizeBinaryBuilder::new(16)),
-            Box::new(FixedSizeBinaryBuilder::new(8)),
-            Box::new(new_str_list()),
-            Box::new(new_str_list_list()),
-            Box::new(StringBuilder::new()),
-        ],
-    )
+    new_attributed_struct_builder([
+        StructColumn {
+            field: Field::new("linked_trace_id", DataType::FixedSizeBinary(16), true),
+            builder: Box::new(FixedSizeBinaryBuilder::new(16)),
+        },
+        StructColumn {
+            field: Field::new("linked_span_id", DataType::FixedSizeBinary(8), true),
+            builder: Box::new(FixedSizeBinaryBuilder::new(8)),
+        },
+    ])
 }

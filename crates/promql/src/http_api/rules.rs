@@ -25,8 +25,8 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::form_urlencoded;
 
 use super::{
-    AlertStateKey, ApiError, AuditHandle, Extension, Principal, PrometheusApiState, RulesParams,
-    authorized_tenant_from_headers, sample_string, success_data_response,
+    AlertStateKey, ApiError, AuditHandle, Extension, Principal, PrometheusApiState, Rejection,
+    RequestAuth, RulesParams, authorized_tenant_from_headers, sample_string, success_data_response,
 };
 use crate::{MetricStore, PromqlError, QueryResult, SampleValue, parse_promql};
 
@@ -53,6 +53,7 @@ mod ruler_config_rules;
 mod rules_fn;
 mod set_ruler_config_group;
 mod store_ruler_config_group;
+mod tenant_ruler_rules;
 mod validate_rule;
 mod validate_rule_group;
 mod yaml_duration;
@@ -85,6 +86,7 @@ pub(super) use ruler_config_rules::ruler_config_rules;
 pub(super) use rules_fn::rules;
 pub(super) use set_ruler_config_group::set_ruler_config_group;
 use store_ruler_config_group::store_ruler_config_group;
+use tenant_ruler_rules::tenant_ruler_rules;
 use validate_rule::validate_rule;
 use validate_rule_group::validate_rule_group;
 use yaml_duration::yaml_duration;

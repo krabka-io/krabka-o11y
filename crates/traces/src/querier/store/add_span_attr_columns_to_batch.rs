@@ -1,13 +1,13 @@
 use num_traits::ToPrimitive;
 
 use super::{
-    Arc, ArrayRef, AttrValue, BooleanArray, DataType, Field, Float64Array, Int64Array, RecordBatch,
-    Schema, StringArray, TraceqlError, attr_values_with_resource,
+    Arc, ArrayRef, AttrValue, BooleanArray, DataType, Field, Float64Array, Int64Array,
+    ProjectedAttrColumn, RecordBatch, Schema, StringArray, TraceqlError, attr_values_with_resource,
 };
 
 pub(crate) fn add_span_attr_columns_to_batch(
     batch: &RecordBatch,
-    wanted: &[(String, String, bool, DataType)],
+    wanted: &[ProjectedAttrColumn<DataType>],
 ) -> Result<RecordBatch, TraceqlError> {
     let schema = batch.schema();
     let mut fields: Vec<Field> = schema
@@ -16,13 +16,19 @@ pub(crate) fn add_span_attr_columns_to_batch(
         .map(|field| field.as_ref().clone())
         .collect();
     let mut columns = batch.columns().to_vec();
-    for (column_name, lookup_key, include_resource, data_type) in wanted {
+    for ProjectedAttrColumn {
+        column_name,
+        lookup_key,
+        resource,
+        data_type,
+    } in wanted
+    {
         if schema.column_with_name(column_name).is_some() {
             continue; // already a (promoted) column
         }
         let mut values = Vec::with_capacity(batch.num_rows());
         for row in 0..batch.num_rows() {
-            let value = attr_values_with_resource(batch, row, *include_resource)?
+            let value = attr_values_with_resource(batch, row, *resource)?
                 .into_iter()
                 .find(|(key, _)| key == lookup_key)
                 .map(|(_, value)| value);

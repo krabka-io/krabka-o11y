@@ -233,7 +233,7 @@ mod tests {
             start_time_unix_nano: 1234,
             duration: millis(5),
             span_sets: vec![SpanSet {
-                spans: vec![span],
+                spans: vec![span.clone()],
                 matched: 1,
                 attributes: Vec::new(),
             }],
@@ -248,24 +248,10 @@ mod tests {
                 start_time_unix_nano: 1234,
                 duration: millis(5),
                 span_sets: vec![SpanSet {
+                    // The span's name does not survive the projection.
                     spans: vec![SpanRef {
-                        span_id: [7; 8],
-                        parent_span_id: None,
                         name: String::new(),
-                        kind: 0,
-                        nested_set_left: 0,
-                        nested_set_right: 0,
-                        nested_set_parent: 0,
-                        start_time_unix_nano: 1234,
-                        duration: nanos(56),
-                        status_code: 0,
-                        status_message: String::new(),
-                        instrumentation_name: String::new(),
-                        instrumentation_version: String::new(),
-                        resource_attributes: Vec::new(),
-                        attributes: vec![("k".into(), AttrValue::Int(9))],
-                        events: Vec::new(),
-                        links: Vec::new(),
+                        ..span
                     }],
                     matched: 1,
                     attributes: Vec::new(),

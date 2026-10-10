@@ -3,7 +3,7 @@ use promql_parser::parser::{BinaryExpr, Expr, value::ValueType};
 
 use super::{
     PromqlEngine,
-    binary::{InstantValue, combine_instant_binary},
+    binary::{InstantOperands, InstantValue, combine_instant_binary},
     planned::PlannedInstant,
 };
 use crate::{error::Result, result::QueryResult, store::MetricStore};
@@ -54,7 +54,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Ok(None);
         };
 
-        match combine_instant_binary(binary, lhs, rhs, time_ms)? {
+        match combine_instant_binary(binary, InstantOperands { lhs, rhs }, time_ms)? {
             QueryResult::InstantVector(samples) => Ok(Some(PlannedInstant::Precomputed(samples))),
             // A scalar∘scalar fold: carry the constant through the scalar planned
             // result. Both operands were folded via the interpreter's pure scalar

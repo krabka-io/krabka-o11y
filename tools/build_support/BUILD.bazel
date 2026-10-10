@@ -1,0 +1,10 @@
+# Sources shared by the crates' build scripts, which reach them with `#[path]`.
+# `crate_library`'s `build_script_compile_data` hands them to the
+# `cargo_build_script` compile, at their workspace path.
+exports_files(
+    ["protoc_path.rs"],
+    visibility = [
+        "//crates/metrics:__pkg__",
+        "//crates/profiles:__pkg__",
+    ],
+)

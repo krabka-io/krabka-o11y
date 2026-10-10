@@ -1,4 +1,4 @@
-use super::{Array, BTreeMap, BTreeSet, RecordBatch, StringArray, TracesError, insert_tag_value};
+use super::{Array, BTreeMap, BTreeSet, RecordBatch, StringArray, TagCatalog, TracesError};
 
 pub(crate) fn collect_string_column_metadata(
     batch: &RecordBatch,
@@ -7,6 +7,10 @@ pub(crate) fn collect_string_column_metadata(
     tag_names: &mut BTreeSet<String>,
     tag_values: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), TracesError> {
+    let mut catalog = TagCatalog {
+        names: tag_names,
+        values: tag_values,
+    };
     let Some(col) = batch.column_by_name(column) else {
         return Ok(());
     };
@@ -18,7 +22,7 @@ pub(crate) fn collect_string_column_metadata(
         if strings.is_null(row) || strings.value(row).is_empty() {
             continue;
         }
-        insert_tag_value(tag_names, tag_values, tag, strings.value(row).to_string());
+        catalog.insert(tag, strings.value(row).to_string());
     }
     Ok(())
 }

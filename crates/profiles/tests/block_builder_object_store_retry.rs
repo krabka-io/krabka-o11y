@@ -11,40 +11,26 @@
 //! is committed exactly once, and a permanent one is reported on the first
 //! attempt with the offset left where it was.
 
-use std::{
-    collections::BTreeMap,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 use assert2::{assert, check};
 use async_trait::async_trait;
-use futures::stream::BoxStream;
-use krabka_blockstore::{ObjectStoreRetryPolicy, ProfileIndex};
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
-use krabka_client_consumer::{AutoOffsetReset, Consumer};
-use krabka_client_producer::Producer;
-use krabka_profiles::{
-    PROFILES_WAL_TOPIC, ProfileRecord, WalSample, WalSymbolSet,
-    blockbuilder::{BlockBuilderConfig, run_with_config},
-    distributor::{KafkaSink, WalSink as _},
-    metrics::ServiceMetrics,
-};
-use krabka_units::{Time, hours, millis};
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
-};
-use tokio_util::sync::CancellationToken;
+use krabka_blockstore::ObjectStoreRetryPolicy;
+use object_store::{ObjectStore, PutPayload, path::Path};
 
-/// Long enough that no ordinary flush can fire during the test: the only way a
-/// block reaches the store is the drain.
-const UNREACHABLE_FLUSH_RECORDS: usize = 10_000;
-const UNREACHABLE_FLUSH_MAX_AGE: Time = hours(24);
+use self::{
+    block_builder_support::{
+        ConsumedBuilder, OneRecordBroker, RestartConsumer, indexed_block_count,
+    },
+    hooked_store::{HookedStore, StoreHooks},
+};
+
+mod block_builder_support;
+#[path = "../../blockstore/tests/support/hooked_store.rs"]
+mod hooked_store;
 
 /// A 5xx, a timeout or a reset connection -- what the `object_store` clients
 /// report once their own retry budget is spent.
@@ -63,30 +49,29 @@ fn permanent_failure() -> object_store::Error {
     }
 }
 
-/// An in-memory store whose first `failures` writes *under the index prefix*
-/// fail with `error`.
+/// The hooks of an in-memory store whose first `failures` writes *under the
+/// index prefix* fail with `error`.
 ///
 /// Only the index writes are made to fail, because the index store is the one
 /// the block-builder wraps with [`BlockBuilderConfig::object_store_retry`].
 /// The block write is retried by the `BlockWriter` under its own policy and
 /// has its own coverage in `krabka-blockstore`; leaving it alone here keeps
 /// this test's schedule entirely injected, so nothing sleeps.
-#[derive(Debug)]
-struct FlakyIndexStore {
-    inner: InMemory,
+struct FlakyIndexHooks {
     remaining_failures: AtomicUsize,
     index_put_attempts: AtomicUsize,
     error: fn() -> object_store::Error,
 }
 
-impl FlakyIndexStore {
-    fn new(failures: usize, error: fn() -> object_store::Error) -> Self {
-        Self {
-            inner: InMemory::new(),
+type FlakyIndexStore = HookedStore<FlakyIndexHooks>;
+
+impl FlakyIndexHooks {
+    fn store(failures: usize, error: fn() -> object_store::Error) -> FlakyIndexStore {
+        HookedStore::new(Self {
             remaining_failures: AtomicUsize::new(failures),
             index_put_attempts: AtomicUsize::new(0),
             error,
-        }
+        })
     }
 
     fn index_put_attempts(&self) -> usize {
@@ -94,20 +79,11 @@ impl FlakyIndexStore {
     }
 }
 
-impl std::fmt::Display for FlakyIndexStore {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("FlakyIndexStore")
-    }
-}
-
 #[async_trait]
-impl ObjectStore for FlakyIndexStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        options: PutOptions,
-    ) -> object_store::Result<PutResult> {
+impl StoreHooks for FlakyIndexHooks {
+    const NAME: &'static str = "FlakyIndexStore";
+
+    async fn before_put(&self, location: &Path, _payload: &PutPayload) -> object_store::Result<()> {
         if location.as_ref().starts_with("index/") {
             self.index_put_attempts.fetch_add(1, Ordering::SeqCst);
             if self
@@ -120,54 +96,14 @@ impl ObjectStore for FlakyIndexStore {
                 return Err((self.error)());
             }
         }
-        self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
+        Ok(())
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_drain_rides_out_a_transient_object_store_and_commits_once() {
     let broker = TestBroker::start("krabka-profiles-retry-transient").await;
-    let flaky = Arc::new(FlakyIndexStore::new(2, transient_failure));
+    let flaky = Arc::new(FlakyIndexHooks::store(2, transient_failure));
     let store: Arc<dyn ObjectStore> = Arc::clone(&flaky) as Arc<dyn ObjectStore>;
 
     let (drained, index_key) = broker.drain_with(&store, &flaky).await;
@@ -185,7 +121,7 @@ async fn a_drain_rides_out_a_transient_object_store_and_commits_once() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_drain_refused_by_the_store_fails_at_once_and_leaves_the_offset() {
     let broker = TestBroker::start("krabka-profiles-retry-permanent").await;
-    let flaky = Arc::new(FlakyIndexStore::new(usize::MAX, permanent_failure));
+    let flaky = Arc::new(FlakyIndexHooks::store(usize::MAX, permanent_failure));
     let store: Arc<dyn ObjectStore> = Arc::clone(&flaky) as Arc<dyn ObjectStore>;
 
     let (drained, _index_key) = broker.drain_with(&store, &flaky).await;
@@ -198,35 +134,17 @@ async fn a_drain_refused_by_the_store_fails_at_once_and_leaves_the_offset() {
     check!(broker.replayed_records().await == 1);
 }
 
-/// A broker with the profiles WAL topic and one buffered record in it.
+/// A broker with the profiles WAL topic and one buffered record in it, and
+/// the consumer group its block-builders join.
 struct TestBroker {
-    _broker: BrokerHandle,
-    _tempdir: tempfile::TempDir,
-    bootstrap: String,
+    broker: OneRecordBroker,
     group_id: String,
 }
 
 impl TestBroker {
     async fn start(group_id: &str) -> Self {
-        let tempdir = tempfile::TempDir::new().expect("tempdir");
-        let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
-        create_wal_topic(&bootstrap).await;
-        let producer = Producer::builder()
-            .bootstrap(&bootstrap)
-            .build()
-            .await
-            .expect("producer build");
-        KafkaSink::new(Arc::new(producer))
-            .append(profile_record())
-            .await
-            .expect("append the WAL record");
         Self {
-            _broker: broker,
-            _tempdir: tempdir,
-            bootstrap,
+            broker: OneRecordBroker::start().await,
             group_id: group_id.to_string(),
         }
     }
@@ -239,134 +157,31 @@ impl TestBroker {
         store: &Arc<dyn ObjectStore>,
         flaky: &Arc<FlakyIndexStore>,
     ) -> (Result<(), krabka_profiles::ProfilesError>, String) {
-        let mut config = BlockBuilderConfig::new(self.bootstrap.clone(), Arc::clone(store));
+        let (mut config, metrics) = self.broker.drain_only_config(store, &self.group_id);
         let index_key = config.index_key.clone();
-        config.group_id = self.group_id.clone();
-        config.flush_records = UNREACHABLE_FLUSH_RECORDS;
-        config.flush_max_age = UNREACHABLE_FLUSH_MAX_AGE;
-        config.poll_timeout = millis(100);
         // The injected schedule: the same number of attempts the default
         // allows, with none of its waiting. Raising the default cannot make
         // this suite slower.
         config.object_store_retry = ObjectStoreRetryPolicy::immediate(4);
-        let metrics = ServiceMetrics::new();
-        config.metrics = Some(metrics.clone());
 
-        let shutdown = CancellationToken::new();
-        let builder = tokio::spawn(run_with_config(config, shutdown.clone()));
-
-        // Wait for the record to be consumed before testing the drain. Group
-        // assignment can take longer than a fixed sleep on a busy CI runner.
-        tokio::time::timeout(Duration::from_secs(30), async {
-            while metrics.wal_consumer.records(PROFILES_WAL_TOPIC, 0) == 0 {
-                assert!(
-                    !builder.is_finished(),
-                    "block-builder exited before consuming"
-                );
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .expect("the block-builder consumes the WAL record before cancellation");
+        let builder = ConsumedBuilder::start(config, &metrics).await;
         check!(
             flaky.index_put_attempts() == 0,
             "no ordinary flush may fire before the drain"
         );
 
-        shutdown.cancel();
-        let drained = tokio::time::timeout(Duration::from_secs(30), builder)
-            .await
-            .expect("the block-builder returns after cancellation")
-            .expect("block-builder task");
-        (drained, index_key)
+        (builder.drain().await, index_key)
     }
 
     /// What a restart in the block-builder's own consumer group would be
     /// handed. An uncommitted offset replays the record; a committed one does
     /// not.
     async fn replayed_records(&self) -> usize {
-        let mut consumer = Consumer::builder()
-            .bootstrap(&self.bootstrap)
-            .group_id(self.group_id.clone())
-            .client_id("profiles-block-builder-retry-restart")
-            .subscribe([PROFILES_WAL_TOPIC.to_string()])
-            .auto_offset_reset(AutoOffsetReset::Earliest)
-            .build()
+        self.broker
+            .replayed_records(RestartConsumer {
+                group_id: &self.group_id,
+                client_id: "profiles-block-builder-retry-restart",
+            })
             .await
-            .expect("restart consumer");
-        tokio::time::timeout(Duration::from_secs(30), async {
-            let mut replayed = 0;
-            loop {
-                let records = consumer
-                    .poll(millis(250))
-                    .await
-                    .expect("poll the restart consumer");
-                replayed += records
-                    .iter()
-                    .filter(|record| record.topic == PROFILES_WAL_TOPIC)
-                    .count();
-                if consumer.at_log_end().await {
-                    return replayed;
-                }
-            }
-        })
-        .await
-        .expect("the restart consumer reaches the WAL end")
     }
-}
-
-/// Every block the index snapshot in the store names.
-async fn indexed_block_count(store: &Arc<dyn ObjectStore>, index_key: &str) -> usize {
-    match ProfileIndex::load_latest_snapshot(store, index_key).await {
-        Ok(index) => index.all_blocks().len(),
-        // No snapshot at all: nothing was flushed.
-        Err(_) => 0,
-    }
-}
-
-fn profile_record() -> ProfileRecord {
-    ProfileRecord {
-        tenant: "tenant-a".into(),
-        labels: vec![
-            ("__name__".into(), "process_cpu".into()),
-            ("service_name".into(), "checkout".into()),
-            (
-                "__profile_type__".into(),
-                "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
-            ),
-        ],
-        profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
-        samples: vec![WalSample {
-            stacktrace_location_refs: vec![0, 1],
-            value: 100,
-            timestamp_ns: 1_700_000_000_000_000_000,
-            span_id: None,
-            trace_id: None,
-        }],
-        symbols: WalSymbolSet {
-            strings: vec![String::new(), "main.work".into(), "main.hotloop".into()],
-            functions: vec![],
-            locations: vec![],
-            mappings: vec![],
-        },
-    }
-}
-
-async fn create_wal_topic(bootstrap: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: PROFILES_WAL_TOPIC.into(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
-        )
-        .await
-        .expect("create the profiles WAL topic");
 }

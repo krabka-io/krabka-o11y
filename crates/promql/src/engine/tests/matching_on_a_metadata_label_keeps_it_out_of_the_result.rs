@@ -14,14 +14,7 @@ pub(crate) async fn matching_on_a_metadata_label_keeps_it_out_of_the_result() {
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "x - on (__name__) x", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "x - on (__name__) x", 10_000).await;
     assert2::assert!(samples.len() == 1);
     assert2::assert!(samples[0].labels.iter().count() == 0);
     assert2::assert!(approx_eq(float_value(&samples[0].value), 0.0));

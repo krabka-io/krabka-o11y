@@ -5,7 +5,10 @@ package(default_visibility = ["//visibility:public"])
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
 exports_files([
     "Cargo.toml",
+    "tests/support/seed_splice.rs",
     "tests/support/template_functions.rs",
+    "tests/support/token_salad.rs",
+    "tests/support/unicode_noise.rs",
 ])
 
 crate_library(

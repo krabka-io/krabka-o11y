@@ -8,6 +8,7 @@ use crate::NativeHistogram;
 
 #[cfg(test)]
 mod tests {
+    use crate::wire::test_support::declared_length_bomb;
 
     /// A decoded sample compares equal to a `(timestamp, value)` pair only
     /// when it carries no start timestamp. Three conditions have to hold, so
@@ -106,20 +107,10 @@ mod tests {
     /// pre-check, before `snap` allocates the declared buffer.
     #[test]
     fn snappy_block_rejects_declared_length_bomb() {
-        // Hand-roll a raw snappy block: a varint preamble declaring ~1 GiB of
-        // output followed by a one-byte literal. `decompress_len` reads the
+        // ~1 GiB declared, one byte carried. `decompress_len` reads the
         // preamble; the guard fires without ever allocating the gigabyte.
         let huge: u64 = 1 << 30;
-        let mut frame = Vec::new();
-        let mut value = huge;
-        while value >= 0x80 {
-            frame.push(u8::try_from(value & 0x7f).unwrap() | 0x80);
-            value >>= 7;
-        }
-        frame.push(u8::try_from(value).unwrap());
-        // One literal byte (tag 0x00 = literal, length-1 encoded in upper bits).
-        frame.push(0x00);
-        frame.push(0x42);
+        let frame = declared_length_bomb(huge);
 
         assert!(snap::raw::decompress_len(&frame).unwrap() as u64 == huge);
 

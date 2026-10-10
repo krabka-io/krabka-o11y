@@ -14,10 +14,7 @@ use krabka_traces::frontend::{
     config::FrontendConfig,
     job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
     merge::TraceStatus,
-    wire::{
-        Metrics, OtlpSpanJson, ResourceSpansJson, ScopeSpansJson, TraceByIdResponseJson,
-        TraceEnvelopeJson,
-    },
+    wire::{Metrics, OtlpSpanJson, TraceByIdResponseJson, TraceEnvelopeJson},
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
@@ -45,15 +42,9 @@ fn otlp_span(id: &str) -> OtlpSpanJson {
 
 fn body(span_ids: &[&str]) -> TraceByIdResponseJson {
     TraceByIdResponseJson {
-        trace: TraceEnvelopeJson {
-            resource_spans: vec![ResourceSpansJson {
-                resource: serde_json::Value::Null,
-                scope_spans: vec![ScopeSpansJson {
-                    scope: serde_json::Value::Null,
-                    spans: span_ids.iter().map(|id| otlp_span(id)).collect(),
-                }],
-            }],
-        },
+        trace: TraceEnvelopeJson::of_unscoped_spans(
+            span_ids.iter().map(|id| otlp_span(id)).collect(),
+        ),
         status: "COMPLETE".to_string(),
         message: String::new(),
     }

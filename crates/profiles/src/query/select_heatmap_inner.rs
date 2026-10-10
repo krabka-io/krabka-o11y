@@ -1,7 +1,8 @@
 use super::{
     Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, EndMs, Extension, HeaderMap,
-    Principal, ProfileStore, QuerierState, StartMs, TimeExt, authorize_tenant, connect_error,
-    heatmap_from_points, heatmap_time_buckets, limit, pb, step_from_secs, tenant_connect_error,
+    HeatmapExemplarRequest, HeatmapSlotsMillis, Principal, ProfileStore, QuerierState,
+    SpanHeatmapRequest, StartMs, TimeExt, authorize_tenant, connect_error, heatmap_from_points,
+    heatmap_time_buckets, limit, pb, step_from_secs, tenant_connect_error,
     tenant_denied_connect_error, tenant_from_headers,
 };
 
@@ -36,42 +37,55 @@ where
     .map_err(connect_error)?;
     let step_ms = step.millis_i64();
     let scan_start = req.start.saturating_sub(step_ms);
+    let exemplar_request = HeatmapExemplarRequest {
+        tenant: &tenant,
+        profile_type: &req.profile_type_id,
+        label_selector: &req.label_selector,
+        group_by: &req.group_by,
+        slots: HeatmapSlotsMillis {
+            start: scan_start,
+            end: req.end,
+            step: step_ms,
+        },
+    };
     let span_exemplars = match req.exemplar_type {
         exemplar_type if exemplar_type == pb::querier::v1::ExemplarType::Span as i32 => state
-            .select_heatmap_span_exemplars(
-                (&tenant, &req.profile_type_id, &req.label_selector),
-                &req.group_by,
-                (scan_start, req.end),
-                step_ms,
-            )
+            .select_heatmap_span_exemplars(exemplar_request)
             .await
             .map_err(connect_error)?,
         exemplar_type if exemplar_type == pb::querier::v1::ExemplarType::Individual as i32 => state
-            .select_heatmap_individual_exemplars(
-                (&tenant, &req.profile_type_id, &req.label_selector),
-                &req.group_by,
-                (scan_start, req.end),
-                step_ms,
-            )
+            .select_heatmap_individual_exemplars(exemplar_request)
             .await
             .map_err(connect_error)?,
         _ => BTreeMap::new(),
     };
     let heatmaps = if req.query_type == pb::querier::v1::HeatmapQueryType::Span as i32 {
         state
-            .select_span_heatmap_points(
-                (&tenant, &req.profile_type_id, &req.label_selector),
-                &req.group_by,
-                (scan_start, req.end),
-            )
+            .select_span_heatmap_points(SpanHeatmapRequest {
+                tenant: &tenant,
+                profile_type: &req.profile_type_id,
+                label_selector: &req.label_selector,
+                group_by: &req.group_by,
+                range: krabka_pprof::MillisRange {
+                    start_ms: scan_start,
+                    end_ms: req.end,
+                },
+            })
             .await
     } else {
         state
             .engine
             .select_heatmap_points(
-                (tenant.as_str(), &req.profile_type_id, &req.label_selector),
+                krabka_pprof::ProfileSelection {
+                    tenant: tenant.as_str(),
+                    profile_type: &req.profile_type_id,
+                    label_selector: &req.label_selector,
+                },
                 &req.group_by,
-                (scan_start, req.end),
+                krabka_pprof::MillisRange {
+                    start_ms: scan_start,
+                    end_ms: req.end,
+                },
             )
             .await
     }

@@ -3,13 +3,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     hash::{DefaultHasher, Hash, Hasher},
-    sync::Arc,
 };
 
-use krabka_units::prelude::*;
-use object_store::ObjectStore;
 use serde::{Deserialize, Serialize};
-use tracing::instrument;
 
 use crate::{
     block::BlockMeta,
@@ -17,12 +13,13 @@ use crate::{
     bloom::{BloomShard, ShardedTraceBloom},
     compaction::{BlockLevel, CompactionCandidate, level_above},
     error::{BlockStoreError, Result},
-    index::{ByteReader, IndexShardRange, push_ivarint, push_uvarint},
+    index::{
+        ByteReader, IndexShardRange, ShardBlockBounds, dictionary_entry, push_dictionary_id,
+        push_ivarint, push_len, push_string, push_uvarint,
+    },
     index_snapshot::{
-        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, PendingBlockAdditions,
-        PendingBlockRemovals, PendingRemoval, SnapshotManifest, put_manifest_snapshot,
-        put_shard_payload, read_latest_snapshot_manifest, read_shard_payload,
-        shard_payload_content_hash, shard_payload_object_key, shard_ranges_for_span,
+        PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, TenantShardMerge,
+        shard_ranges_for_span, touched_shard_ranges,
     },
 };
 
@@ -90,6 +87,23 @@ mod tests {
             .collect();
         keys.sort();
         keys
+    }
+
+    /// Saves `index`, whose compaction consumed `b1` after the snapshot
+    /// already replaced it, checks the save is rejected naming `b1`, and
+    /// returns what the store holds afterwards.
+    async fn save_rejected_over_replaced_b1(
+        index: &TraceIndex,
+        store: &std::sync::Arc<dyn object_store::ObjectStore>,
+    ) -> TraceIndex {
+        let result = index.save_latest_snapshot(store, "index/traces.json").await;
+        assert2::assert!(matches!(
+            result,
+            Err(BlockStoreError::InvalidBlock(message)) if message.contains("b1")
+        ));
+        TraceIndex::load_latest_snapshot(store, "index/traces.json")
+            .await
+            .unwrap()
     }
 
     fn seed() -> TraceIndex {
@@ -204,12 +218,35 @@ mod tests {
         assert2::assert!(idx.block_count("t") == 2);
     }
 
-    #[test]
-    fn block_index_trait_add_block_is_idempotent_by_object_key() {
-        use crate::{block::BlockMeta, block_index::BlockIndex};
+    /// Publishes `index` under `index/traces.json` and loads it back.
+    async fn save_and_reload(
+        index: &TraceIndex,
+        store: &std::sync::Arc<dyn object_store::ObjectStore>,
+    ) -> TraceIndex {
+        index
+            .save_latest_snapshot(store, "index/traces.json")
+            .await
+            .unwrap();
+        TraceIndex::load_latest_snapshot(store, "index/traces.json")
+            .await
+            .unwrap()
+    }
 
-        let mut idx = TraceIndex::new();
-        let meta = BlockMeta {
+    /// Publishes [`seed`] to a fresh in-memory store and returns both.
+    async fn published_seed() -> (std::sync::Arc<dyn object_store::ObjectStore>, TraceIndex) {
+        let store: std::sync::Arc<dyn object_store::ObjectStore> =
+            std::sync::Arc::new(object_store::memory::InMemory::new());
+        let index = seed();
+        index
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        (store, index)
+    }
+
+    /// One ingested block of tenant `t` spanning `[10, 20]`.
+    fn first_ingested_block() -> crate::block::BlockMeta {
+        crate::block::BlockMeta {
             tenant: "t".into(),
             object_key: "traces/t/00000/00000000000000000001.parquet".into(),
             min_ts: 10,
@@ -217,7 +254,15 @@ mod tests {
             row_count: 1,
             fingerprints: Vec::new(),
             level: BlockLevel::INGESTED,
-        };
+        }
+    }
+
+    #[test]
+    fn block_index_trait_add_block_is_idempotent_by_object_key() {
+        use crate::block_index::BlockIndex;
+
+        let mut idx = TraceIndex::new();
+        let meta = first_ingested_block();
 
         BlockIndex::add_block(&mut idx, &meta);
         BlockIndex::add_block(&mut idx, &meta);
@@ -231,18 +276,10 @@ mod tests {
 
     #[test]
     fn block_index_trait_add_block_does_not_false_negative_by_id_candidates() {
-        use crate::{block::BlockMeta, block_index::BlockIndex};
+        use crate::block_index::BlockIndex;
 
         let mut idx = TraceIndex::new();
-        let meta = BlockMeta {
-            tenant: "t".into(),
-            object_key: "traces/t/00000/00000000000000000001.parquet".into(),
-            min_ts: 10,
-            max_ts: 20,
-            row_count: 1,
-            fingerprints: Vec::new(),
-            level: BlockLevel::INGESTED,
-        };
+        let meta = first_ingested_block();
 
         BlockIndex::add_block(&mut idx, &meta);
 
@@ -285,12 +322,7 @@ mod tests {
 
         let idx = seed();
         let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
-        idx.save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_and_reload(&idx, &store).await;
         let got = loaded.candidate_blocks_for_trace("t", &tid(1), 0, 1_000);
         assert2::assert!(got == vec!["b1".to_string()]);
     }
@@ -359,7 +391,6 @@ mod tests {
 
     #[tokio::test]
     async fn latest_snapshot_retains_bounded_snapshot_set() {
-        use futures::StreamExt as _;
         use object_store::{ObjectStore, memory::InMemory};
 
         let idx = seed();
@@ -371,22 +402,14 @@ mod tests {
                 .unwrap();
         }
 
-        let prefix = object_store::path::Path::from(crate::index_snapshot_prefix_for_key(
-            "index/traces.json",
-        ));
-        let mut stream = store.list(Some(&prefix));
-        let mut count = 0;
-        while let Some(meta) = stream.next().await {
-            meta.unwrap();
-            count += 1;
-        }
+        let count =
+            crate::index_snapshot::count_snapshot_prefix_objects(&store, "index/traces.json").await;
 
         assert2::assert!(count == crate::index_snapshot::DEFAULT_INDEX_SNAPSHOT_RETAIN);
     }
 
     #[tokio::test]
     async fn configurable_snapshot_policy_caps_loads_and_retention() {
-        use futures::StreamExt as _;
         use object_store::{ObjectStore, memory::InMemory};
 
         let idx = seed();
@@ -399,16 +422,9 @@ mod tests {
                 .unwrap();
         }
 
-        let prefix = object_store::path::Path::from(crate::index_snapshot_prefix_for_key(
-            "index/traces.json",
-        ));
-        let mut stream = store.list(Some(&prefix));
-        let mut count = 0;
-        while let Some(meta) = stream.next().await {
-            meta.unwrap();
-            count += 1;
-        }
-        assert_eq!(count, 2);
+        let count =
+            crate::index_snapshot::count_snapshot_prefix_objects(&store, "index/traces.json").await;
+        assert2::assert!(count == 2);
 
         let cap = krabka_units::bytes(1);
         let got =
@@ -489,36 +505,19 @@ mod tests {
     /// blocks the compactor just replaced.
     #[tokio::test]
     async fn compaction_removals_are_not_resurrected_by_the_merge() {
-        use object_store::{ObjectStore, memory::InMemory};
-
-        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
-        let mut idx = seed();
-        idx.save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let (store, mut idx) = published_seed().await;
 
         idx.replace_trace_blocks(
             "t",
             &strings(&["b1", "b2"]),
             stats("c1", 0, 300, &[1, 2, 3], &[]),
         );
-        idx.save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
-
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_and_reload(&idx, &store).await;
         check!(block_keys(&loaded) == vec!["c1".to_string()]);
 
         // The removal is durable now, so the next write need not replay it and
         // must not undo it either.
-        idx.save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_and_reload(&idx, &store).await;
         check!(block_keys(&loaded) == vec!["c1".to_string()]);
     }
 
@@ -545,17 +544,7 @@ mod tests {
             &strings(&["b1"]),
             sized(stats("c1", 0, 100, &[1, 2], &[]), 2),
         );
-        let result = compactor
-            .save_latest_snapshot(&store, "index/traces.json")
-            .await;
-
-        assert2::assert!(matches!(
-            result,
-            Err(BlockStoreError::InvalidBlock(message)) if message.contains("b1")
-        ));
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_rejected_over_replaced_b1(&compactor, &store).await;
         check!(block_keys(&loaded) == vec!["b1".to_string(), "b2".to_string()]);
         check!(
             loaded
@@ -596,17 +585,7 @@ mod tests {
             &strings(&["b1", "b2"]),
             sized(stats("y", 0, 300, &[1, 2, 3], &[]), 3),
         );
-        let result = stale
-            .save_latest_snapshot(&store, "index/traces.json")
-            .await;
-
-        assert2::assert!(matches!(
-            result,
-            Err(BlockStoreError::InvalidBlock(message)) if message.contains("b1")
-        ));
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_rejected_over_replaced_b1(&stale, &store).await;
         check!(block_keys(&loaded) == vec!["b2".to_string(), "x".to_string()]);
     }
 
@@ -788,26 +767,14 @@ mod tests {
     /// as long as the compactor ran.
     #[tokio::test]
     async fn levels_and_row_counts_survive_a_snapshot_round_trip() {
-        use object_store::{ObjectStore, memory::InMemory};
-
-        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
-        let mut idx = seed();
-        idx.save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let (store, mut idx) = published_seed().await;
 
         idx.replace_trace_blocks(
             "t",
             &strings(&["b1", "b2"]),
             sized(stats("c1", 0, 300, &[1, 2, 3], &[]), 42),
         );
-        idx.save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
-
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_and_reload(&idx, &store).await;
         check!(loaded.block_level("c1") == BlockLevel(1));
         check!(
             loaded.compaction_candidates()

@@ -10,11 +10,7 @@ use krabka_blockstore::{
     BlockLevel, BlockTimestampUnit, CompactionPolicy, DEFAULT_MAX_BLOCKS_PER_JOB,
     DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, ProfileIndex,
 };
-use krabka_client_consumer::ConsumerFetchMaxBytes;
-use krabka_client_core::{
-    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
-    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-};
+use krabka_client_core::{ClientSecurity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY};
 use krabka_client_producer::Producer;
 use krabka_observability::{
     ConfigFileArgs, ReadinessGate, argv_with_config_file,
@@ -38,13 +34,9 @@ use krabka_profiles::{
     query_frontend::FrontendConfig,
 };
 use krabka_telemetry::OtlpConfig;
-use krabka_units::{
-    ByteSize, Time,
-    convert::{ByteSizeExt as _, TimeExt as _},
-    parse,
-};
+use krabka_units::{ByteSize, Time, convert::TimeExt as _, parse};
 #[cfg(test)]
-use krabka_units::{mebibytes, secs};
+use krabka_units::{convert::ByteSizeExt as _, mebibytes, secs};
 use object_store::ObjectStore;
 use tokio_util::sync::CancellationToken;
 
@@ -54,7 +46,6 @@ mod tests {
 
     use assert2::{assert, check};
     use clap::{CommandFactory, Parser};
-    use krabka_broker::{Broker, BrokerConfig};
     use krabka_observability::{
         server_security::ClientAuth,
         topic_contract::{PROFILES_TOPICS, TopicSettings, provision_topics},
@@ -62,7 +53,7 @@ mod tests {
     };
     use krabka_units::{bytes, per_sec};
 
-    use super::*;
+    use super::{in_process_broker::InProcessBroker, *};
 
     /// A service that binds loopback inside a container is unreachable from
     /// outside the pod, and the symptom is a health check that fails with
@@ -489,42 +480,15 @@ mod tests {
     #[test]
     fn index_snapshot_policy_defaults_and_rejects_invalid_values() {
         let cli = Cli::try_parse_from(["krabka-profiles", "--target", "block-builder"]).unwrap();
-        assert_eq!(
-            cli.index_snapshot_max,
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
-        );
-        assert_eq!(
-            cli.index_snapshot_retain.into_value(),
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
+        assert!(cli.index_snapshot_max == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX);
+        assert!(
+            cli.index_snapshot_retain.into_value()
+                == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
         );
 
-        for flag in ["--index-snapshot-max", "--index-snapshot-retain"] {
-            for invalid in ["0", "not-a-number", "-1", "18446744073709551616"] {
-                assert!(
-                    Cli::try_parse_from([
-                        "krabka-profiles",
-                        "--target",
-                        "block-builder",
-                        flag,
-                        invalid,
-                    ])
-                    .is_err(),
-                    "{flag} should reject {invalid:?}"
-                );
-            }
-        }
-        for invalid in ["1.5B", "18446744073709551616B"] {
-            assert!(
-                Cli::try_parse_from([
-                    "krabka-profiles",
-                    "--target",
-                    "block-builder",
-                    "--index-snapshot-max",
-                    invalid,
-                ])
-                .is_err()
-            );
-        }
+        index_snapshot_flags::assert_rejects_invalid_index_snapshot_policy::<Cli>(
+            "krabka-profiles",
+        );
     }
 
     #[test]
@@ -569,33 +533,10 @@ mod tests {
     #[test]
     fn wal_fetch_limits_preserve_defaults_and_reject_invalid_values() {
         let cli = Cli::try_parse_from(["krabka-profiles", "--target", "block-builder"]).unwrap();
-        assert_eq!(cli.wal_fetch_max.bytes_i32(), 2_097_152);
-        assert_eq!(cli.wal_fetch_partition_max.bytes_i32(), 262_144);
+        assert!(cli.wal_fetch_max.bytes_i32() == 2_097_152);
+        assert!(cli.wal_fetch_partition_max.bytes_i32() == 262_144);
 
-        for (flag, invalid) in [
-            ("--wal-fetch-max", "0"),
-            ("--wal-fetch-max", "not-a-number"),
-            ("--wal-fetch-max", "-1B"),
-            ("--wal-fetch-max", "1.5B"),
-            ("--wal-fetch-max", "2147483648B"),
-            ("--wal-fetch-partition-max", "0"),
-            ("--wal-fetch-partition-max", "not-a-number"),
-            ("--wal-fetch-partition-max", "-1B"),
-            ("--wal-fetch-partition-max", "1.5B"),
-            ("--wal-fetch-partition-max", "2147483648B"),
-        ] {
-            assert!(
-                Cli::try_parse_from([
-                    "krabka-profiles",
-                    "--target",
-                    "block-builder",
-                    flag,
-                    invalid,
-                ])
-                .is_err(),
-                "{flag} should reject {invalid:?}"
-            );
-        }
+        wal_fetch_limit_flags::assert_rejects_invalid_wal_fetch_limits::<Cli>("krabka-profiles");
     }
 
     #[test]
@@ -879,44 +820,33 @@ overrides:
 
         let overrides = load_profiles_limits_overrides_config(Some(&path)).unwrap();
 
+        // The file's defaults, and the process default for every cap the file
+        // leaves alone.
+        let file_defaults = krabka_profiles::limits::Limits {
+            max_async_query_concurrency: 5,
+            query_admission: krabka_query_frontend::AdmissionLimits::default(),
+            ingestion_rate: per_sec(10_000),
+            ingestion_burst_profiles: 10_000,
+            max_series: 0,
+            max_label_name: bytes(1024),
+            max_label_value: bytes(100),
+            max_label_names_per_series: 10,
+            max_flamegraph_nodes_default: 8192,
+            max_flamegraph_nodes_max: 0,
+            max_query_length: krabka_profiles::limits::DEFAULT_MAX_QUERY_LENGTH,
+            max_session_id_cardinality: 32,
+            compactor_blocks_retention_period: secs(0),
+        };
         assert!(
             *overrides.for_tenant(&"tenant-a".parse().unwrap())
                 == krabka_profiles::limits::Limits {
-                    max_async_query_concurrency: 5,
-                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
-                    ingestion_rate: per_sec(10_000),
-                    ingestion_burst_profiles: 10_000,
-                    max_series: 0,
-                    max_label_name: bytes(1024),
-                    max_label_value: bytes(100),
-                    max_label_names_per_series: 10,
-                    max_flamegraph_nodes_default: 8192,
                     max_flamegraph_nodes_max: 512,
                     max_query_length: secs(30),
-                    max_session_id_cardinality: 32,
-                    compactor_blocks_retention_period: secs(0),
+                    ..file_defaults.clone()
                 }
         );
-        // An unlisted tenant takes the file's defaults, and the process default
-        // for every cap the file leaves alone.
-        assert!(
-            *overrides.for_tenant(&"tenant-b".parse().unwrap())
-                == krabka_profiles::limits::Limits {
-                    max_async_query_concurrency: 5,
-                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
-                    ingestion_rate: per_sec(10_000),
-                    ingestion_burst_profiles: 10_000,
-                    max_series: 0,
-                    max_label_name: bytes(1024),
-                    max_label_value: bytes(100),
-                    max_label_names_per_series: 10,
-                    max_flamegraph_nodes_default: 8192,
-                    max_flamegraph_nodes_max: 0,
-                    max_query_length: krabka_profiles::limits::DEFAULT_MAX_QUERY_LENGTH,
-                    max_session_id_cardinality: 32,
-                    compactor_blocks_retention_period: secs(0),
-                }
-        );
+        // An unlisted tenant takes the file's defaults.
+        assert!(*overrides.for_tenant(&"tenant-b".parse().unwrap()) == file_defaults);
     }
 
     #[test]
@@ -1043,11 +973,8 @@ overrides:
     /// must be untouched by the same fault.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_missing_wal_topic_stops_the_roles_that_use_it_and_no_others() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
+        let broker = InProcessBroker::start().await;
+        let bootstrap = broker.bootstrap.clone();
 
         let roles = [
             ("distributor", true),
@@ -1118,6 +1045,17 @@ mod all_in_one;
 #[cfg(all(test, unix))]
 mod sigterm_exits_the_querier;
 
+/// Test fixtures that the binary's suites share with suites under `tests/`,
+/// which reach them with `#[path]`.
+#[cfg(all(test, unix))]
+mod render_roundtrip;
+#[cfg(all(test, unix))]
+mod sigterm_child_runtime;
+#[cfg(all(test, unix))]
+mod synthetic_cpu_profile;
+#[cfg(all(test, unix))]
+mod wal_topic;
+
 /// `Target` is private to this binary, so the one place its clap spellings can
 /// be checked against the shared role vocabulary is here.
 #[cfg(test)]
@@ -1128,6 +1066,23 @@ mod target_names_match_the_role_vocabulary;
 /// them.
 #[cfg(test)]
 mod the_compactor_runs_under_supervision;
+
+/// A bare in-process broker, shared with the other signal binary's tests.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/in_process_broker.rs"]
+mod in_process_broker;
+
+/// The invalid WAL fetch limits, shared with the other signal binary that
+/// parses them.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/wal_fetch_limit_flags.rs"]
+mod wal_fetch_limit_flags;
+
+/// The invalid index snapshot policy values, shared with the other signal
+/// binary that parses them.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/index_snapshot_flags.rs"]
+mod index_snapshot_flags;
 
 mod all_stage;
 mod alloc;
@@ -1146,17 +1101,11 @@ mod compactor_stage;
 mod configured_object_store;
 mod debuginfod_config;
 mod load_profiles_limits_overrides_config;
-mod parse_client_dispatch_queue_capacity;
-mod parse_client_frame_max;
-mod parse_consumer_fetch_size;
 mod parse_min_two_usize;
 mod parse_non_empty_string;
 mod parse_positive_time_or_legacy;
 mod parse_positive_time_or_legacy_millis;
 mod parse_positive_time_or_legacy_nanos;
-mod parse_positive_u32;
-mod parse_positive_usize;
-mod parse_positive_whole_byte_size;
 mod process_security;
 mod profile_read_path;
 mod read_path_stage;
@@ -1170,9 +1119,11 @@ mod run_compactor;
 mod run_distributor;
 mod run_querier;
 mod run_query_frontend;
+mod run_read_role;
 mod run_symbolizer;
 mod spawn_profile_index_refresh;
 mod spawn_wal_tail;
+mod supervise_until_shutdown;
 mod symbolizer_stage;
 mod target;
 
@@ -1195,18 +1146,16 @@ use compaction_policy_from_cli::compaction_policy_from_cli;
 use compactor_stage::compactor_stage;
 use configured_object_store::ConfiguredObjectStore;
 use debuginfod_config::debuginfod_config;
+use krabka_observability::cli_value_parsers::{
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
+};
 use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
-use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
-use parse_client_frame_max::parse_client_frame_max;
-use parse_consumer_fetch_size::parse_consumer_fetch_size;
 use parse_min_two_usize::parse_min_two_usize;
 use parse_non_empty_string::parse_non_empty_string;
 use parse_positive_time_or_legacy::parse_positive_time_or_legacy;
 use parse_positive_time_or_legacy_millis::parse_positive_time_or_legacy_millis;
 use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
-use parse_positive_u32::parse_positive_u32;
-use parse_positive_usize::parse_positive_usize;
-use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
 use process_security::ProcessSecurity;
 use profile_read_path::ProfileReadPath;
 use read_path_stage::read_path_stage;
@@ -1220,9 +1169,11 @@ use run_compactor::run_compactor;
 use run_distributor::run_distributor;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
+use run_read_role::{ReadRole, ReadRoleInputs, run_read_role};
 use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;
+use supervise_until_shutdown::supervise_until_shutdown;
 use symbolizer_stage::symbolizer_stage;
 use target::Target;
 

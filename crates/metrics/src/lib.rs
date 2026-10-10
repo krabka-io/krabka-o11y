@@ -23,6 +23,8 @@ pub mod runtime;
 pub mod sample;
 pub mod schema;
 pub mod symbols;
+#[cfg(test)]
+mod test_support;
 pub mod tsdb_import;
 pub mod wal;
 pub mod wire;
@@ -45,16 +47,17 @@ pub use compactor::{
     TenantCompactionRows, compact_metric_blocks_once, compact_wal_records, compaction_object_key,
     compaction_object_plan, compaction_object_plan_for_rows, compaction_partition_object_key,
     compaction_partition_object_plan, compaction_wal_records_from_consumer_records,
-    encode_tenant_batches, enforce_compaction_retention, list_compaction_index,
-    list_compaction_manifests, plan_metric_compactions, poll_compactor_consumer_once,
-    poll_compactor_once, process_compaction_partition_window, process_compaction_record_batch,
+    encode_exemplar_rows, encode_metadata_rows, encode_tenant_batches,
+    enforce_compaction_retention, list_compaction_index, list_compaction_manifests,
+    plan_metric_compactions, poll_compactor_consumer_once, poll_compactor_once,
+    process_compaction_partition_window, process_compaction_record_batch,
     run_compactor_consumer_loop, run_compactor_consumer_loop_with_clock, run_compactor_loop,
     run_compactor_loop_with_clock, write_compacted_tenant_blocks,
     write_compacted_tenant_partition_blocks,
 };
 pub use histogram::{
-    BucketSpan, HistogramCodecError, NativeHistogram, ResetHint, decode_native_histograms,
-    encode_native_histograms,
+    BucketSpan, HistogramCodecError, NativeHistogram, ResetHint, compact_spanned_histogram_counts,
+    decode_native_histograms, encode_native_histograms,
 };
 pub use limits::{
     DEFAULT_MAX_RATE_BUCKETS, IngestEnforcer, LimitError, Limits, OverridesError,

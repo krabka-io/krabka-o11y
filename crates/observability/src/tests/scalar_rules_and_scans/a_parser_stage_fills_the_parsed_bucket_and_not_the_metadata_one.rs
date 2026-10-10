@@ -7,18 +7,11 @@ use super::*;
 /// `structuredMetadata`, and the stream keeps only the series' own labels.
 #[test]
 pub(crate) fn a_parser_stage_fills_the_parsed_bucket_and_not_the_metadata_one() {
-    let mut label_index = LabelIndex::default();
-    let mut labels = Labels::default();
-    labels.insert("app".to_string(), "api".to_string());
-    let api = label_index.insert_series("tenant", labels);
-
-    let plan = StreamPlan {
-        tenant: "tenant".to_string(),
-        time_range: TimeRange::new(0, 100).expect("a valid range"),
-        query: parse_query("{app=\"api\"} | json").expect("the query parses"),
-        fingerprints: [api].into_iter().collect(),
-        blocks: Vec::new(),
-    };
+    let ApiSeriesPlan {
+        label_index,
+        api,
+        plan,
+    } = ApiSeriesPlan::new("{app=\"api\"} | json");
 
     let mut structured_metadata = Labels::default();
     structured_metadata.insert("trace_id".to_string(), "abc".to_string());

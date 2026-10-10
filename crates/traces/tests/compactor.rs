@@ -1,3 +1,7 @@
+mod api_span;
+mod span_fixture;
+mod tenant_key_check;
+
 use std::sync::Arc;
 
 use arrow::{
@@ -8,40 +12,19 @@ use arrow::{
 use assert2::check;
 use krabka_blockstore::{
     BlockLevel, BlockMeta, BlockWriter, CompactionJob, PromotedSpanAttr, SCOL_START_NANO,
-    SCOL_TRACE_ID, TraceIndex, level_above, read_block, unescape_object_path_segment,
+    SCOL_TRACE_ID, TraceIndex, level_above, read_block,
 };
 use krabka_traces::{
-    AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode,
+    AttrValue, KeyValue, SpanRecord,
     blockbuilder::{build_blocks, build_blocks_with_promoted_attrs},
     compactor::{compact_block_keys, planned_compacted_object_key},
 };
-use object_store::{ObjectStore, memory::InMemory, path::Path};
+use object_store::{ObjectStore, memory::InMemory};
 
-fn span(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> Span {
-    Span {
-        trace_id,
-        span_id: [span_id; 8],
-        parent_span_id: parent.map(|id| [id; 8]),
-        name: format!("span-{span_id}"),
-        kind: SpanKind::Server,
-        start_ns,
-        duration_ns: 5,
-        status: StatusCode::Ok,
-        status_message: String::new(),
-        resource_attrs: vec![KeyValue {
-            key: "service.name".into(),
-            value: AttrValue::Str("api".into()),
-        }],
-        span_attrs: vec![KeyValue {
-            key: "http.method".into(),
-            value: AttrValue::Str("GET".into()),
-        }],
-        events: Vec::new(),
-        links: Vec::new(),
-        instrumentation_scope: "test".into(),
-        instrumentation_version: String::new(),
-    }
-}
+use self::{
+    span_fixture::FixtureSpan,
+    tenant_key_check::{TenantKeyCase, check_tenant_key_round_trips},
+};
 
 /// The input keys and the output key of the compaction production would plan
 /// over `inputs`.
@@ -97,29 +80,14 @@ fn a_compacted_key_escapes_the_tenant_into_one_segment_that_reads_back() {
             key.starts_with(&format!("traces/{segment}/compacted/l1-10-20-")),
             "{name}: {key}"
         );
-        let path = Path::from(key.as_str());
-        check!(
-            path.as_ref() == key,
-            "{name}: the store keeps the key as written"
-        );
-        let parts: Vec<_> = path.parts().collect();
-        check!(parts.len() == 4, "{name}");
-        check!(
-            unescape_object_path_segment(parts[1].as_ref()) == Some(tenant.to_string()),
-            "{name}"
-        );
+        check_tenant_key_round_trips(&key, TenantKeyCase { name, tenant });
     }
 }
 
-fn rec(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> SpanRecord {
-    SpanRecord {
-        tenant: "tenant-a".into(),
-        span: span(trace_id, span_id, parent, start_ns),
-    }
-}
-
-#[tokio::test]
-async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
+// Write a root span's block and then a block of its late child, and compact
+// the two. Returns the store, the index after the compaction, the planned
+// output key, and the output block's metadata.
+async fn compact_root_and_late_child() -> (Arc<dyn ObjectStore>, TraceIndex, String, BlockMeta) {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
@@ -129,7 +97,13 @@ async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
         &mut index,
         "tenant-a",
         7,
-        &[rec([1; 16], 1, None, 100)],
+        &[FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 1,
+            parent: None,
+            start_ns: 100,
+        }
+        .record("tenant-a")],
         (10, 10),
     )
     .await
@@ -139,7 +113,13 @@ async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
         &mut index,
         "tenant-a",
         7,
-        &[rec([1; 16], 2, Some(1), 200)],
+        &[FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 2,
+            parent: Some(1),
+            start_ns: 200,
+        }
+        .record("tenant-a")],
         (20, 20),
     )
     .await
@@ -156,6 +136,12 @@ async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
     )
     .await
     .unwrap();
+    (store, index, output_key, meta)
+}
+
+#[tokio::test]
+async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
+    let (store, index, output_key, meta) = compact_root_and_late_child().await;
 
     check!((meta.row_count, meta.min_ts, meta.max_ts) == (2, 100, 200));
     check!(
@@ -184,42 +170,7 @@ async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
 
 #[tokio::test]
 async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
-
-    let first = build_blocks(
-        &writer,
-        &mut index,
-        "tenant-a",
-        7,
-        &[rec([1; 16], 1, None, 100)],
-        (10, 10),
-    )
-    .await
-    .unwrap();
-    let late = build_blocks(
-        &writer,
-        &mut index,
-        "tenant-a",
-        7,
-        &[rec([1; 16], 2, Some(1), 200)],
-        (20, 20),
-    )
-    .await
-    .unwrap();
-    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &late[0]]);
-
-    let meta = compact_block_keys(
-        store.clone(),
-        &writer,
-        &mut index,
-        "tenant-a",
-        &input_keys,
-        &output_key,
-    )
-    .await
-    .unwrap();
+    let (store, _, _, meta) = compact_root_and_late_child().await;
 
     let batches = read_block(store, &meta.object_key).await.unwrap();
     let batch = &batches[0];
@@ -260,14 +211,8 @@ async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
     check!(right.value(child) < right.value(root));
 }
 
-fn rec_with_method(
-    trace_id: [u8; 16],
-    span_id: u8,
-    parent: Option<u8>,
-    start_ns: i64,
-    method: &str,
-) -> SpanRecord {
-    let mut record = rec(trace_id, span_id, parent, start_ns);
+fn rec_with_method(span: FixtureSpan, method: &str) -> SpanRecord {
+    let mut record = span.record("tenant-a");
     record.span.span_attrs = vec![KeyValue {
         key: "http.method".into(),
         value: AttrValue::Str(method.into()),
@@ -276,6 +221,20 @@ fn rec_with_method(
 }
 
 /// Read a promoted string column, which the write path dictionary-encodes.
+/// Asserts the compacted block at `object_key` holds the `GET` span at 100 ns
+/// then the `POST` span at 200 ns, each with its method in the promoted
+/// `attr.http.method` column.
+async fn assert_get_then_post_methods(store: Arc<dyn ObjectStore>, object_key: &str) {
+    let batches = read_block(store, object_key).await.unwrap();
+    let batch = &batches[0];
+    check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
+    check!(
+        promoted_strings(batch, "attr.http.method")
+            == vec![Some("GET".to_string()), Some("POST".to_string())],
+        "every row's method is in the promoted column, filled from the generic attributes where its block did not promote it"
+    );
+}
+
 fn promoted_strings(batch: &RecordBatch, column: &str) -> Vec<Option<String>> {
     let dictionary = batch
         .column_by_name(column)
@@ -336,7 +295,15 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method([1; 16], 1, None, 100, "GET")],
+        &[rec_with_method(
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 100,
+            },
+            "GET",
+        )],
         (10, 10),
         &promoted,
     )
@@ -347,7 +314,15 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method([1; 16], 2, Some(1), 200, "POST")],
+        &[rec_with_method(
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 2,
+                parent: Some(1),
+                start_ns: 200,
+            },
+            "POST",
+        )],
         (20, 20),
         &promoted,
     )
@@ -366,13 +341,7 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
     .await
     .expect("a promoted block compacts");
 
-    let batches = read_block(store, &meta.object_key).await.unwrap();
-    let batch = &batches[0];
-    check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
-    check!(
-        promoted_strings(batch, "attr.http.method")
-            == vec![Some("GET".to_string()), Some("POST".to_string())]
-    );
+    assert_get_then_post_methods(store, &meta.object_key).await;
 }
 
 /// An operator can add `--promote-span-attr` between two flushes, and the
@@ -392,7 +361,15 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method([1; 16], 1, None, 100, "GET")],
+        &[rec_with_method(
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 100,
+            },
+            "GET",
+        )],
         (10, 10),
     )
     .await
@@ -402,7 +379,15 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method([1; 16], 2, Some(1), 200, "POST")],
+        &[rec_with_method(
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 2,
+                parent: Some(1),
+                start_ns: 200,
+            },
+            "POST",
+        )],
         (20, 20),
         &[PromotedSpanAttr::string("http.method")],
     )
@@ -421,14 +406,7 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
     .await
     .expect("mixed inputs compact");
 
-    let batches = read_block(store, &meta.object_key).await.unwrap();
-    let batch = &batches[0];
-    check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
-    check!(
-        promoted_strings(batch, "attr.http.method")
-            == vec![Some("GET".to_string()), Some("POST".to_string())],
-        "the row from the unpromoted block is filled from its generic attributes"
-    );
+    assert_get_then_post_methods(store, &meta.object_key).await;
 }
 
 /// The span block declares `[trace_id, start_unix_nano]` as its sort key, and
@@ -448,7 +426,22 @@ async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
         &mut index,
         "tenant-a",
         7,
-        &[rec([2; 16], 1, None, 300), rec([1; 16], 2, None, 100)],
+        &[
+            FixtureSpan {
+                trace_id: [2; 16],
+                span_id: 1,
+                parent: None,
+                start_ns: 300,
+            }
+            .record("tenant-a"),
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 2,
+                parent: None,
+                start_ns: 100,
+            }
+            .record("tenant-a"),
+        ],
         (10, 10),
     )
     .await
@@ -458,7 +451,22 @@ async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
         &mut index,
         "tenant-a",
         7,
-        &[rec([2; 16], 3, Some(1), 400), rec([1; 16], 4, Some(2), 200)],
+        &[
+            FixtureSpan {
+                trace_id: [2; 16],
+                span_id: 3,
+                parent: Some(1),
+                start_ns: 400,
+            }
+            .record("tenant-a"),
+            FixtureSpan {
+                trace_id: [1; 16],
+                span_id: 4,
+                parent: Some(2),
+                start_ns: 200,
+            }
+            .record("tenant-a"),
+        ],
         (20, 20),
     )
     .await
