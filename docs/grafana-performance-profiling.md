@@ -1488,3 +1488,50 @@ historic numeric budgets remain unchanged. All work runs on this VM;
 temporary verified build dependencies in RAM are removed before timing.
 Fixture storage and WAL locations remain unchanged. A fresh native upstream
 comparison remains unfinished.
+
+## Skipping global selection when every entry fits
+
+The response candidate's CPU profile attributes 5.52% of whole-process
+cumulative samples to global stream-limit selection. That path parses every
+timestamp, sorts all entries, builds a selection set and tests membership
+even when the requested limit includes the entire response. A checked
+remaining-count pass now skips those steps when all entries fit. Empty or
+missing-value streams are still removed. Requests that need truncation keep
+the existing algorithm, ordering and tie handling.
+
+The [limit experiment](../qualification/inclusive-log-limit-2026-10-10.json)
+uses the unchanged response candidate as its baseline. All 96 measurements
+verify complete payloads before timing across three alternating pairs and
+four cardinalities. At one million rows, the broad medians are
+11.582/10.495 s, with median paired ratio 0.9152. Every pair improves, but
+the ranges overlap. The largest sharded paired ratio is 0.9496 with one
+slower candidate pair; its medians are 13.922/13.943 s. These different
+statistics do not qualify a consistent sharded advantage.
+
+Initial median regressions remain recorded: 2.3% for the smallest broad
+case, 4.1% for the 5,000-stream sharded case, 7.9% for its empty control,
+and 0.8% for the largest empty control. All ranges overlap. An additional
+18 verified observations repeat the first three cases with 20, 10 and
+1,000 timed iterations per process. Their median paired ratios are
+0.9464, 0.9580 and 0.9714, so those initial regressions do not recur.
+Both sets of observations remain in the record.
+
+Whole-process CPU profiles include construction, one verification request
+and three timed broad requests at 20,000 streams, with no lost samples.
+The baseline attributes 8.10% cumulative samples to global selection; the
+candidate has no entry above the 0.5% reporting threshold. Available
+callchains and overlapping callers limit attribution; this is not a
+query-only CPU ratio. Whole-process heap captures at 5,000 streams use the
+same request counts. Allocation calls fall from 8,192,858 to 8,116,350;
+peak heap remains 80.42 MB, while instrumented RSS rises from 219.45 to
+233.78 MB. The change is retained for avoiding redundant selection, with
+the mixed timings and higher instrumented RSS explicit.
+
+All 586 tests, strict lint and managed formatting pass. The new regression
+covers forward/backward ties, zero and maximum limits, both sides of the
+result-count boundary, and empty streams. Benchmark IDs and historic numeric
+budgets remain unchanged. Compiler outputs and build dependencies temporarily
+use RAM to fit this VM's disk capacity; they are removed or moved to verified
+disk artifacts before timing. Successful test executables are hashed and
+removed, with compiler commands and logs retained. Fixture and WAL storage
+remain unchanged; a fresh native upstream comparison remains unfinished.

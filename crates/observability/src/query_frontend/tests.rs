@@ -113,6 +113,54 @@ fn matrix_merge_groups_labels_orders_samples_and_deduplicates_boundaries() {
     );
 }
 
+#[test]
+fn global_limits_preserve_ties_and_clean_empty_streams_at_the_boundary() {
+    for direction in [LokiDirection::Forward, LokiDirection::Backward] {
+        for limit in [0, 1, 2, 3, 4, 5, usize::MAX] {
+            let mut response = json!({
+                "status":"success", "data":{"resultType":"streams", "result":[
+                    {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["20","b20"],["30","b30"]]},
+                    {"stream":{"app":"empty"},"values":[]},
+                    {"stream":{"app":"missing"}}
+                ]}
+            });
+            let expected = match (direction, limit) {
+                (_, 0) => json!([]),
+                (LokiDirection::Forward, 1) => json!([
+                    {"stream":{"app":"a"},"values":[["10","a10"]]}
+                ]),
+                (LokiDirection::Forward, 2) => json!([
+                    {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]}
+                ]),
+                (LokiDirection::Forward, 3) => json!([
+                    {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["20","b20"]]}
+                ]),
+                (LokiDirection::Backward, 1) => json!([
+                    {"stream":{"app":"b"},"values":[["30","b30"]]}
+                ]),
+                (LokiDirection::Backward, 2) => json!([
+                    {"stream":{"app":"a"},"values":[["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["30","b30"]]}
+                ]),
+                (LokiDirection::Backward, 3) => json!([
+                    {"stream":{"app":"a"},"values":[["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["20","b20"],["30","b30"]]}
+                ]),
+                _ => json!([
+                    {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["20","b20"],["30","b30"]]}
+                ]),
+            };
+
+            apply_global_stream_limit(&mut response, direction, Some(limit));
+
+            assert!(response["data"]["result"] == expected);
+        }
+    }
+}
+
 fn query_params(direction: &str) -> QueryParams {
     QueryParams {
         query: "{app=\"api\"}".to_string(),

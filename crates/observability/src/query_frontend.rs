@@ -562,6 +562,22 @@ pub(crate) fn apply_global_stream_limit(
     else {
         return;
     };
+    // An inclusive limit needs no global timestamp ordering or selection set.
+    if streams
+        .iter()
+        .filter_map(|stream| stream["values"].as_array())
+        .try_fold(limit, |remaining, values| {
+            remaining.checked_sub(values.len())
+        })
+        .is_some()
+    {
+        streams.retain(|stream| {
+            stream["values"]
+                .as_array()
+                .is_some_and(|values| !values.is_empty())
+        });
+        return;
+    }
     let mut entries = Vec::new();
     for (stream_index, stream) in streams.iter().enumerate() {
         if let Some(values) = stream["values"].as_array() {

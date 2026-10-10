@@ -502,3 +502,13 @@ containers, avoiding those copies. Krabka still uses an intermediate
 `serde_json::Value` tree for frontend merging; direct HTTP encoding remains
 a separate opportunity. The pinned source and checksum are retained with
 the [response experiment](../qualification/response-json-moves-2026-10-10.json).
+
+Loki's pinned [`ReadBatch`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L681)
+consumes entries from its ordered iterator until the requested output count
+is reached. Krabka still materializes stream results. Its frontend now avoids
+building a global timestamp order and selection set when every returned entry
+already fits the requested limit. Truncating requests retain their existing
+selection algorithm. This smaller change preserves Krabka's established tie
+handling; it does not implement Loki's incremental iterator consumption. The
+source checksum and measured scope are retained in the
+[limit experiment](../qualification/inclusive-log-limit-2026-10-10.json).
