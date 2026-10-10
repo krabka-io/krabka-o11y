@@ -38,6 +38,7 @@ mod loki_stream_results;
 mod loki_streams_parquet_response;
 mod loki_streams_response;
 mod loki_streams_response_with_warnings;
+mod loki_timestamp;
 mod loki_vector_response_from_matrix;
 mod unix_ns_string_to_loki_seconds;
 mod wants_loki_parquet;
@@ -74,3 +75,5 @@ pub(crate) use loki_streams_response_with_warnings::loki_streams_response_with_w
 pub(crate) use loki_vector_response_from_matrix::loki_vector_response_from_matrix;
 pub(crate) use unix_ns_string_to_loki_seconds::unix_ns_string_to_loki_seconds;
 pub(crate) use wants_loki_parquet::wants_loki_parquet;
+
+use self::loki_timestamp::LokiTimestamp;

@@ -18,7 +18,7 @@ pub(crate) fn loki_stream_results(
                         .into_iter()
                         .map(|entry| {
                             Value::Array(vec![
-                                Value::String(entry.timestamp_ns),
+                                Value::String(entry.timestamp_ns.into()),
                                 Value::String(entry.line),
                             ])
                         })
