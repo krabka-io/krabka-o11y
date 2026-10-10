@@ -1966,17 +1966,19 @@ overrides:
     #[derive(Debug)]
     struct FlakyPutStore {
         inner: InMemory,
-        /// The errors still to hand out, one per put, before puts succeed.
-        scripted: std::sync::Mutex<Vec<object_store::Error>>,
+        /// Puts still to refuse before puts succeed; `usize::MAX` refuses all.
+        remaining_failures: std::sync::atomic::AtomicUsize,
         attempts: std::sync::atomic::AtomicUsize,
+        error: fn() -> object_store::Error,
     }
 
     impl FlakyPutStore {
         fn new(failures: usize, error: fn() -> object_store::Error) -> Self {
             Self {
                 inner: InMemory::new(),
-                scripted: std::sync::Mutex::new((0..failures).map(|_| error()).collect()),
+                remaining_failures: std::sync::atomic::AtomicUsize::new(failures),
                 attempts: std::sync::atomic::AtomicUsize::default(),
+                error,
             }
         }
 
@@ -2001,17 +2003,18 @@ overrides:
             payload: object_store::PutPayload,
             options: object_store::PutOptions,
         ) -> object_store::Result<object_store::PutResult> {
-            self.attempts
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let scripted = self
-                .scripted
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .pop();
-            match scripted {
-                Some(error) => Err(error),
-                None => self.inner.put_opts(location, payload, options).await,
+            use std::sync::atomic::Ordering;
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            if self
+                .remaining_failures
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    (left > 0).then(|| left - 1)
+                })
+                .is_ok()
+            {
+                return Err((self.error)());
             }
+            self.inner.put_opts(location, payload, options).await
         }
     }
 
