@@ -1,6 +1,7 @@
 use super::{
     BT_BINARY, BT_BOOL, BT_BYTE, BT_DOUBLE, BT_I16, BT_I32, BT_I64, BT_LIST, BT_MAP, BT_SET,
-    BT_STOP, BT_STRUCT, WireError, check_collection_header, take_bytes, utf8_string,
+    BT_STOP, BT_STRUCT, CollectionHeader, WireError, check_collection_header, take_bytes,
+    utf8_string,
 };
 
 pub(crate) struct BinaryInput<'a> {
@@ -58,7 +59,11 @@ impl<'a> BinaryInput<'a> {
     /// struct -- and is the one element type whose skip would consume
     /// nothing.
     fn check_collection_header(&self, element_type: u8, len: usize) -> Result<(), WireError> {
-        check_collection_header(self.bytes, self.pos, BT_STOP, element_type, len)
+        check_collection_header(
+            CollectionHeader { element_type, len },
+            BT_STOP,
+            self.bytes.len().saturating_sub(self.pos),
+        )
     }
 
     pub(crate) fn read_map_header(&mut self) -> Result<(u8, u8, usize), WireError> {

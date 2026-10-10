@@ -1,30 +1,26 @@
 use super::{
-    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Principal, QuerierBackend,
-    QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, bounded_count,
-    ndjson_search_stream, search_request,
+    BlockCatalog, FrontendRequest, IntoResponse, Json, QuerierBackend, Response, RouteVariant,
+    SearchDelivery, StatusCode, backend_error_response, bounded_count, ndjson_search_stream,
+    search_request,
 };
 
-/// `/api/search`, or with `STREAM` the NDJSON stream of cumulative responses
-/// that `/api/search/stream` sends as shards complete.
-pub(crate) async fn search<B, C, const STREAM: bool>(
-    State(qf): State<Arc<QueryFrontend<B, C>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response
+/// `/api/search`, or for [`SearchDelivery::Streamed`] the NDJSON stream of
+/// cumulative responses that `/api/search/stream` sends as shards complete.
+pub(crate) async fn search<B, C, D>(request: FrontendRequest<B, C>) -> Response
 where
     B: QuerierBackend + 'static,
     C: BlockCatalog + 'static,
+    D: RouteVariant<SearchDelivery>,
 {
-    let (tenant, query, start_ns, end_ns) =
-        match search_request(&headers, &principal, &qf.cfg.tenant_policy, &uri) {
-            Ok(request) => request,
-            Err(rejection) => return *rejection,
-        };
+    let (tenant, query, start_ns, end_ns) = match search_request(request.tenant_request()) {
+        Ok(search) => search,
+        Err(rejection) => return *rejection,
+    };
+    let FrontendRequest { qf, uri, .. } = request;
     let limit = bounded_count(&uri, "limit", qf.default_limit());
     let spss = bounded_count(&uri, "spss", qf.default_spss());
 
-    if STREAM {
+    if matches!(D::VARIANT, SearchDelivery::Streamed) {
         return match qf
             .search_stream(&tenant, &query, start_ns, end_ns, limit, spss)
             .await

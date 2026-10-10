@@ -31,7 +31,7 @@ use krabka_traces::blockbuilder::{
 };
 use krabka_units::millis;
 
-use self::wal_group::{PARTITIONS, RECORDS_PER_PARTITION, create_topic, fill};
+use self::wal_group::{PARTITIONS, RECORDS_PER_PARTITION, WalFillProducer, create_topic, fill};
 
 const DEADLINE: Duration = Duration::from_mins(1);
 
@@ -109,7 +109,12 @@ async fn scale_out(name: &str, flushed_before_join: bool) -> Outcome {
     let proc = support::start().await;
     let topic = format!("__traces_scale_out_{name}");
     create_topic(&proc.client, &topic).await;
-    fill(&proc.bootstrap, &topic, "krabka-traces-scale-out-producer").await;
+    fill(WalFillProducer {
+        bootstrap: &proc.bootstrap,
+        topic: &topic,
+        client_id: "krabka-traces-scale-out-producer",
+    })
+    .await;
 
     let mut first = Member::join(&proc.bootstrap, &topic, name).await;
     let deadline = Instant::now() + DEADLINE;

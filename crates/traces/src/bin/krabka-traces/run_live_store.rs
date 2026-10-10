@@ -43,13 +43,13 @@ pub(crate) async fn run_live_store(
         wal_consumer_gate.mark_unready();
     });
 
-    serve_role_router(
-        "traces live-store",
+    serve_role_router(RoleServer {
+        role: "traces live-store",
         listener,
         router,
         security,
         tasks,
         shutdown,
-    )
+    })
     .await
 }

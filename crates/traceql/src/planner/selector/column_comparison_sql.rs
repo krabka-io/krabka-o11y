@@ -2,14 +2,24 @@ use super::{
     ComparisonOp, Field, Result, TraceqlError, Value, anchored, comparison_value_sql, string_lit,
 };
 
-/// Renders `col <op> value` for an already-quoted column expression. `field`
-/// decides how the comparison value is typed.
-pub(crate) fn column_comparison_sql(
-    col: &str,
-    field: &Field,
-    op: ComparisonOp,
-    value: &Value,
-) -> Result<String> {
+/// A comparison of an already-quoted column expression against a value.
+#[derive(Clone, Copy)]
+pub(crate) struct ColumnComparison<'a> {
+    pub(crate) col: &'a str,
+    /// Decides how the comparison value is typed.
+    pub(crate) field: &'a Field,
+    pub(crate) op: ComparisonOp,
+    pub(crate) operand: &'a Value,
+}
+
+/// Renders `col <op> operand`.
+pub(crate) fn column_comparison_sql(comparison: ColumnComparison<'_>) -> Result<String> {
+    let ColumnComparison {
+        col,
+        field,
+        op,
+        operand: value,
+    } = comparison;
     Ok(match (op, value) {
         (ComparisonOp::Eq, Value::Nil) => format!("{col} IS NULL"),
         (ComparisonOp::Neq, Value::Nil) => format!("{col} IS NOT NULL"),

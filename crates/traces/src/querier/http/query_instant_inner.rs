@@ -1,6 +1,7 @@
 use super::{
-    AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode, Uri,
-    instant_metric_bounds, metrics_request, scan_options_param, trace_metrics_instant_json,
+    AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode,
+    TenantRequest, Uri, instant_metric_bounds, metrics_request, scan_options_param,
+    trace_metrics_instant_json,
 };
 
 pub(crate) async fn query_instant_inner<S>(
@@ -12,8 +13,12 @@ pub(crate) async fn query_instant_inner<S>(
 where
     S: SpanStore + 'static,
 {
-    let (tenant, query) = match metrics_request(&headers, principal, &state.cfg.tenant_policy, &uri)
-    {
+    let (tenant, query) = match metrics_request(TenantRequest {
+        headers: &headers,
+        principal,
+        policy: &state.cfg.tenant_policy,
+        uri: &uri,
+    }) {
         Ok(request) => request,
         Err(rejection) => return *rejection,
     };

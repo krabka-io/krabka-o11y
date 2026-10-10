@@ -2,7 +2,7 @@ use super::{
     COL_CHILD_COUNT, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID, COL_PARENT_SPAN_ID, COL_SPAN_ID,
     COL_TRACE_ID, RecordBatch, TraceqlError, fixed, replace_scan_int32_columns,
 };
-use crate::span::nested_set::{BatchNestedSets, batch_nested_sets};
+use crate::span::nested_set::{BatchNestedSets, SpanIdColumns, batch_nested_sets};
 
 pub(crate) fn recompute_batch_nested_sets(
     batch: &RecordBatch,
@@ -12,11 +12,11 @@ pub(crate) fn recompute_batch_nested_sets(
         right,
         parent_id,
         children,
-    } = batch_nested_sets(
-        fixed(batch, COL_TRACE_ID)?,
-        fixed(batch, COL_SPAN_ID)?,
-        fixed(batch, COL_PARENT_SPAN_ID)?,
-    );
+    } = batch_nested_sets(SpanIdColumns {
+        trace: fixed(batch, COL_TRACE_ID)?,
+        span: fixed(batch, COL_SPAN_ID)?,
+        parent_span: fixed(batch, COL_PARENT_SPAN_ID)?,
+    });
     // childCount is PER TRACE: each parent's direct children, scoped to this
     // trace's rows. The nested-set `left` values reset to 1 per trace, so a
     // batch-global count would collide across traces and over-count.

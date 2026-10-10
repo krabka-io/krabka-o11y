@@ -1,6 +1,9 @@
 use krabka_observability::RoleReadiness;
 
-use super::{CancellationToken, Cli, ProcessSecurity, ReadRole, ServiceMetrics, run_read_role};
+use super::{
+    CancellationToken, Cli, ProcessSecurity, ReadRole, ReadRoleInputs, ServiceMetrics,
+    run_read_role,
+};
 
 /// Answers a query from the WAL tail this role keeps and the blocks its index
 /// names.
@@ -21,11 +24,13 @@ pub(crate) async fn run_querier(
 ) -> Result<(), Box<dyn std::error::Error>> {
     run_read_role(
         ReadRole::Querier,
-        cli,
-        metrics,
-        readiness,
-        shutdown,
-        security,
+        ReadRoleInputs {
+            cli,
+            metrics,
+            readiness,
+            shutdown,
+            security,
+        },
     )
     .await
 }

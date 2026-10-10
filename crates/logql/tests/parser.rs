@@ -696,10 +696,7 @@ fn query_evaluator_line_format_ranges_with_current_dot_over_from_json_arrays() {
 
 #[test]
 fn query_evaluator_line_format_ranges_can_reference_root_fields() {
-    let output = evaluate_api_line(
-        r#"{app="api"} | logfmt | line_format `{{ range fromJson "[{\"method\":\"POST\"}]" }}inner={{ .method }} root={{ $.method }}{{ end }}`"#,
-        r#"method=GET msg="request ok""#,
-    );
+    let output = ApiLine { query: r#"{app="api"} | logfmt | line_format `{{ range fromJson "[{\"method\":\"POST\"}]" }}inner={{ .method }} root={{ $.method }}{{ end }}`"#, line: r#"method=GET msg="request ok""# }.evaluate();
 
     check!(output.line == "inner=POST root=GET");
 }
@@ -1021,8 +1018,16 @@ fn query_evaluator_line_format_applies_conditional_template_blocks() {
 #[test]
 fn query_evaluator_line_format_applies_if_template_variable_declarations() {
     let query = r#"{app="api"} | logfmt | line_format `{{ if $method := .method }}method={{ $method }}{{ else }}missing={{ $method }}{{ end }}`"#;
-    let present = evaluate_api_line(query, r#"method=GET msg="request ok""#);
-    let absent = evaluate_api_line(query, r#"msg="request ok""#);
+    let present = ApiLine {
+        query,
+        line: r#"method=GET msg="request ok""#,
+    }
+    .evaluate();
+    let absent = ApiLine {
+        query,
+        line: r#"msg="request ok""#,
+    }
+    .evaluate();
 
     check!(present.line == "method=GET");
     check!(absent.line == "missing=");
@@ -1062,8 +1067,16 @@ fn query_evaluator_line_format_applies_integer_and_json_scalar_truthiness() {
 #[test]
 fn query_evaluator_line_format_applies_with_template_blocks() {
     let query = r#"{app="api"} | logfmt | line_format `{{ with .method }}method={{ . }}{{ else }}missing{{ end }}`"#;
-    let present = evaluate_api_line(query, r#"method=GET msg="request ok""#);
-    let absent = evaluate_api_line(query, r#"msg="request ok""#);
+    let present = ApiLine {
+        query,
+        line: r#"method=GET msg="request ok""#,
+    }
+    .evaluate();
+    let absent = ApiLine {
+        query,
+        line: r#"msg="request ok""#,
+    }
+    .evaluate();
 
     check!(present.line == "method=GET");
     check!(absent.line == "missing");
@@ -1071,10 +1084,7 @@ fn query_evaluator_line_format_applies_with_template_blocks() {
 
 #[test]
 fn query_evaluator_line_format_with_can_reference_root_fields() {
-    let output = evaluate_api_line(
-        r#"{app="api"} | logfmt | line_format `{{ with fromJson "{\"method\":\"POST\"}" }}inner={{ .method }} root={{ $.method }}{{ end }}`"#,
-        r#"method=GET msg="request ok""#,
-    );
+    let output = ApiLine { query: r#"{app="api"} | logfmt | line_format `{{ with fromJson "{\"method\":\"POST\"}" }}inner={{ .method }} root={{ $.method }}{{ end }}`"#, line: r#"method=GET msg="request ok""# }.evaluate();
 
     check!(output.line == "inner=POST root=GET");
 }
@@ -1082,8 +1092,16 @@ fn query_evaluator_line_format_with_can_reference_root_fields() {
 #[test]
 fn query_evaluator_line_format_applies_with_template_variable_declarations() {
     let query = r#"{app="api"} | logfmt | line_format `{{ with $method := .method }}dot={{ . }} var={{ $method }}{{ else }}missing={{ $method }}{{ end }}`"#;
-    let present = evaluate_api_line(query, r#"method=GET msg="request ok""#);
-    let absent = evaluate_api_line(query, r#"msg="request ok""#);
+    let present = ApiLine {
+        query,
+        line: r#"method=GET msg="request ok""#,
+    }
+    .evaluate();
+    let absent = ApiLine {
+        query,
+        line: r#"msg="request ok""#,
+    }
+    .evaluate();
 
     check!(present.line == "dot=GET var=GET");
     check!(absent.line == "missing=");
@@ -1463,10 +1481,11 @@ fn query_evaluator_parameterized_logfmt_extracts_only_requested_fields() {
 
 #[test]
 fn query_evaluator_parameterized_logfmt_keeps_missing_requested_fields_as_empty() {
-    let evaluation = evaluate_api_line(
-        r#"{app="api"} | logfmt status, message="msg""#,
-        r#"duration=25ms msg="api typed parser ok""#,
-    );
+    let evaluation = ApiLine {
+        query: r#"{app="api"} | logfmt status, message="msg""#,
+        line: r#"duration=25ms msg="api typed parser ok""#,
+    }
+    .evaluate();
 
     check!(evaluation.fields.get("status") == Some(&String::new()));
     check!(evaluation.fields.get("message") == Some(&"api typed parser ok".to_string()));
@@ -1474,10 +1493,11 @@ fn query_evaluator_parameterized_logfmt_keeps_missing_requested_fields_as_empty(
 
 #[test]
 fn query_evaluator_numeric_field_filter_keeps_invalid_present_values_as_label_filter_errors() {
-    let evaluation = evaluate_api_line(
-        r#"{app="api"} | logfmt status | status >= 500"#,
-        r#"duration=25ms msg="api typed parser ok""#,
-    );
+    let evaluation = ApiLine {
+        query: r#"{app="api"} | logfmt status | status >= 500"#,
+        line: r#"duration=25ms msg="api typed parser ok""#,
+    }
+    .evaluate();
 
     check!(evaluation.fields.get("status") == Some(&String::new()));
     check!(evaluation.fields.get("__error__") == Some(&"LabelFilterErr".to_string()));
@@ -1611,10 +1631,11 @@ fn query_evaluator_logfmt_sanitizes_ansi_prefixed_field_names() {
 
 #[test]
 fn query_evaluator_logfmt_sanitizes_field_names_without_losing_valid_characters() {
-    let evaluation = evaluate_api_line(
-        r#"{app="api"} | logfmt"#,
-        "trace.id=abc span:id=def already_ok=ghi 9lives=cat a--b=two",
-    );
+    let evaluation = ApiLine {
+        query: r#"{app="api"} | logfmt"#,
+        line: "trace.id=abc span:id=def already_ok=ghi 9lives=cat a--b=two",
+    }
+    .evaluate();
 
     check_sanitized_field_names(&evaluation);
     check!(evaluation.fields.get("a_b") == Some(&"two".to_string()));
@@ -1821,10 +1842,7 @@ fn query_evaluator_sanitizes_json_field_names_and_skips_arrays() {
 
 #[test]
 fn query_evaluator_json_parser_exposes_sanitized_scalar_fields_only() {
-    let evaluation = evaluate_api_line(
-        r#"{app="api"} | json"#,
-        r#"{"trace.id":"abc","span:id":"def","already_ok":"ghi","9lives":"cat","servers":["10.0.0.1"]}"#,
-    );
+    let evaluation = ApiLine { query: r#"{app="api"} | json"#, line: r#"{"trace.id":"abc","span:id":"def","already_ok":"ghi","9lives":"cat","servers":["10.0.0.1"]}"# }.evaluate();
 
     check_sanitized_field_names(&evaluation);
     check!(!evaluation.fields.contains_key("servers"));
@@ -4159,11 +4177,19 @@ fn app_api_labels() -> BTreeMap<String, String> {
     BTreeMap::from([("app".to_string(), "api".to_string())])
 }
 
-fn evaluate_api_line(query: &str, line: &str) -> PipelineEvaluation {
-    parse_query(query)
-        .unwrap()
-        .evaluate_with_fields(&app_api_labels(), line, &BTreeMap::new())
-        .unwrap()
+/// A log line of the `{app="api"}` stream, and the query to evaluate on it.
+struct ApiLine<'a> {
+    query: &'a str,
+    line: &'a str,
+}
+
+impl ApiLine<'_> {
+    fn evaluate(&self) -> PipelineEvaluation {
+        parse_query(self.query)
+            .unwrap()
+            .evaluate_with_fields(&app_api_labels(), self.line, &BTreeMap::new())
+            .unwrap()
+    }
 }
 
 fn check_matches_only_rate_30_queries(query: &str) {

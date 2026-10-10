@@ -6,18 +6,34 @@ use super::{
     record_ingest_response, require_content_type,
 };
 
+/// One span push.
+pub(crate) struct SpanPush<'a, D> {
+    pub(crate) state: &'a DistributorState,
+    pub(crate) principal: &'a Principal,
+    pub(crate) headers: &'a HeaderMap,
+    pub(crate) body: &'a Bytes,
+    /// The content types the endpoint accepts.
+    pub(crate) content_types: &'a [&'a str],
+    /// Decodes the decompressed body.
+    pub(crate) decode: D,
+}
+
 /// Serve one span push: resolve the tenant, check the content type against
 /// `content_types`, decode the body with `decode`, and append the spans.
 ///
 /// The ingest outcome is recorded whichever step answers.
-pub(crate) async fn push_spans(
-    state: &DistributorState,
-    principal: &Principal,
-    headers: &HeaderMap,
-    body: &Bytes,
-    content_types: &[&str],
-    decode: impl FnOnce(&[u8]) -> Result<Vec<Span>, TracesError>,
-) -> Response {
+pub(crate) async fn push_spans<D>(push: SpanPush<'_, D>) -> Response
+where
+    D: FnOnce(&[u8]) -> Result<Vec<Span>, TracesError>,
+{
+    let SpanPush {
+        state,
+        principal,
+        headers,
+        body,
+        content_types,
+        decode,
+    } = push;
     let start = std::time::Instant::now();
     let body_size = ByteSize::from_bytes(body.len() as u64);
     let tenant = match state.resolve_tenant(

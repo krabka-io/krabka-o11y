@@ -1,6 +1,9 @@
 use krabka_observability::RoleReadiness;
 
-use super::{CancellationToken, Cli, ProcessSecurity, ReadRole, ServiceMetrics, run_read_role};
+use super::{
+    CancellationToken, Cli, ProcessSecurity, ReadRole, ReadRoleInputs, ServiceMetrics,
+    run_read_role,
+};
 
 /// Answers a query by splitting its range into `--query-frontend-shard-width`
 /// shards, executing them through the shared bounded fan-out and result-cache
@@ -22,11 +25,13 @@ pub(crate) async fn run_query_frontend(
 ) -> Result<(), Box<dyn std::error::Error>> {
     run_read_role(
         ReadRole::QueryFrontend,
-        cli,
-        metrics,
-        readiness,
-        shutdown,
-        security,
+        ReadRoleInputs {
+            cli,
+            metrics,
+            readiness,
+            shutdown,
+            security,
+        },
     )
     .await
 }

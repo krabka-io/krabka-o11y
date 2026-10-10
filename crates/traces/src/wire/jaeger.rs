@@ -558,27 +558,20 @@ mod tests {
         );
     }
 
-    fn str_attr(key: &str, value: &str) -> KeyValue {
-        KeyValue {
-            key: key.into(),
-            value: AttrValue::Str(value.into()),
-        }
-    }
-
     // The process tags both sample batches carry, with the service name the
     // decoder appends.
     fn sample_resource_attrs() -> Vec<KeyValue> {
         vec![
-            str_attr("process.tag", "present"),
-            str_attr("service.name", "checkout"),
+            KeyValue::new("process.tag", AttrValue::Str("present".into())),
+            KeyValue::new("service.name", AttrValue::Str("checkout".into())),
         ]
     }
 
     // The span tags both sample batches carry.
     fn sample_span_attrs() -> Vec<KeyValue> {
         vec![
-            str_attr("span.kind", "server"),
-            str_attr("http.method", "GET"),
+            KeyValue::new("span.kind", AttrValue::Str("server".into())),
+            KeyValue::new("http.method", AttrValue::Str("GET".into())),
             KeyValue {
                 key: "error".into(),
                 value: AttrValue::Bool(true),
@@ -954,7 +947,7 @@ use bt_map::BT_MAP;
 use bt_set::BT_SET;
 use bt_stop::BT_STOP;
 use bt_struct::BT_STRUCT;
-use check_collection_header::check_collection_header;
+use check_collection_header::{CollectionHeader, check_collection_header};
 use compact_input::CompactInput;
 pub use decode_jaeger_binary_thrift::decode_jaeger_binary_thrift;
 pub use decode_jaeger_thrift::decode_jaeger_thrift;

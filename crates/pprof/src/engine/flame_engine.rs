@@ -16,6 +16,31 @@ use super::{
 };
 use crate::{ProfileScan, series_bucket_ms};
 
+/// The profiles an engine query selects: one tenant's profiles of one type
+/// whose labels match `label_selector`.
+#[derive(Clone, Copy)]
+struct ProfileSelection<'q> {
+    tenant: &'q str,
+    profile_type: &'q str,
+    label_selector: &'q str,
+}
+
+/// A time range in Unix milliseconds.
+#[derive(Clone, Copy)]
+struct MillisRange {
+    start_ms: i64,
+    end_ms: i64,
+}
+
+/// A span-profile merge over several time-range shards.
+struct SpanProfileShards<'q> {
+    selection: ProfileSelection<'q>,
+    span_selector: &'q [u64],
+    ranges: &'q [(i64, i64)],
+    /// Non-positive values resolve to the engine default.
+    max_nodes: i64,
+}
+
 /// Profiles flamegraph engine.
 pub struct FlameEngine<S: ProfileStore> {
     pub(crate) store: Arc<S>,
@@ -461,10 +486,15 @@ impl<S: ProfileStore> FlameEngine<S> {
     ) -> Result<Tree, ProfileError> {
         let scan = self
             .select_for_sample_selector(
-                tenant,
-                profile_type,
-                label_selector,
-                range_ms,
+                ProfileSelection {
+                    tenant,
+                    profile_type,
+                    label_selector,
+                },
+                MillisRange {
+                    start_ms: range_ms.0,
+                    end_ms: range_ms.1,
+                },
                 sample_selector,
             )
             .await?;
@@ -474,13 +504,11 @@ impl<S: ProfileStore> FlameEngine<S> {
     }
 
     /// Rejects an empty span or trace selector, then scans the profiles the
-    /// label selector matches over `range_ms`.
+    /// label selector matches over `range`.
     async fn select_for_sample_selector(
         &self,
-        tenant: &str,
-        profile_type: &str,
-        label_selector: &str,
-        range_ms: (i64, i64),
+        selection: ProfileSelection<'_>,
+        range: MillisRange,
         sample_selector: SampleSelector<'_>,
     ) -> Result<ProfileScan, ProfileError> {
         match sample_selector {
@@ -496,9 +524,15 @@ impl<S: ProfileStore> FlameEngine<S> {
             }
             SampleSelector::None | SampleSelector::Span(_) | SampleSelector::Trace(_) => {}
         }
-        let matchers = crate::matcher::parse_label_selector(label_selector)?;
+        let matchers = crate::matcher::parse_label_selector(selection.label_selector)?;
         self.store
-            .select(tenant, profile_type, &matchers, range_ms.0, range_ms.1)
+            .select(
+                selection.tenant,
+                selection.profile_type,
+                &matchers,
+                range.start_ms,
+                range.end_ms,
+            )
             .await
     }
 
@@ -513,10 +547,15 @@ impl<S: ProfileStore> FlameEngine<S> {
         let (tenant, profile_type, label_selector) = query;
         let scan = self
             .select_for_sample_selector(
-                tenant,
-                &profile_type.to_string(),
-                label_selector,
-                range,
+                ProfileSelection {
+                    tenant,
+                    profile_type: &profile_type.to_string(),
+                    label_selector,
+                },
+                MillisRange {
+                    start_ms: range.0,
+                    end_ms: range.1,
+                },
                 sample_selector,
             )
             .await?;
@@ -919,11 +958,14 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// non-positive `max_nodes` to the engine default.
     async fn merge_span_profile_shards(
         &self,
-        (tenant, profile_type, label_selector): (&str, &str, &str),
-        span_selector: &[u64],
-        ranges: &[(i64, i64)],
-        max_nodes: i64,
+        shards: SpanProfileShards<'_>,
     ) -> Result<(Tree, i64), ProfileError> {
+        let SpanProfileShards {
+            selection,
+            span_selector,
+            ranges,
+            max_nodes,
+        } = shards;
         if matches!(span_selector, []) {
             return Err(ProfileError::Plan(
                 "span selector must contain at least one span id".to_string(),
@@ -936,9 +978,9 @@ impl<S: ProfileStore> FlameEngine<S> {
         }
         let merged = self
             .execute_tree_shards(
-                tenant,
-                profile_type,
-                label_selector,
+                selection.tenant,
+                selection.profile_type,
+                selection.label_selector,
                 ranges,
                 SampleSelector::Span(span_selector),
                 &[],
@@ -964,12 +1006,16 @@ impl<S: ProfileStore> FlameEngine<S> {
         max_nodes: i64,
     ) -> Result<FlameGraph, ProfileError> {
         let (merged, max_nodes) = self
-            .merge_span_profile_shards(
-                (tenant, profile_type, label_selector),
+            .merge_span_profile_shards(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant,
+                    profile_type,
+                    label_selector,
+                },
                 span_selector,
                 ranges,
                 max_nodes,
-            )
+            })
             .await?;
         Ok(merged.to_flamegraph(max_nodes))
     }
@@ -986,12 +1032,16 @@ impl<S: ProfileStore> FlameEngine<S> {
         max_nodes: i64,
     ) -> Result<Vec<u8>, ProfileError> {
         let (merged, max_nodes) = self
-            .merge_span_profile_shards(
-                (tenant, profile_type, label_selector),
+            .merge_span_profile_shards(SpanProfileShards {
+                selection: ProfileSelection {
+                    tenant,
+                    profile_type,
+                    label_selector,
+                },
                 span_selector,
                 ranges,
                 max_nodes,
-            )
+            })
             .await?;
         Ok(merged.to_pyroscope_tree_bytes(max_nodes))
     }

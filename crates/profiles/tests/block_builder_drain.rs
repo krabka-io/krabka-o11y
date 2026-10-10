@@ -14,7 +14,9 @@ use std::sync::Arc;
 use assert2::{assert, check};
 use object_store::{ObjectStore, memory::InMemory};
 
-use self::block_builder_support::{ConsumedBuilder, OneRecordBroker, indexed_block_count};
+use self::block_builder_support::{
+    ConsumedBuilder, OneRecordBroker, RestartConsumer, indexed_block_count,
+};
 
 mod block_builder_support;
 
@@ -44,7 +46,10 @@ async fn cancelling_the_block_builder_flushes_and_commits_what_it_buffered() {
     // group replays nothing.
     assert!(
         broker
-            .replayed_records(GROUP_ID, "profiles-block-builder-drain-restart")
+            .replayed_records(RestartConsumer {
+                group_id: GROUP_ID,
+                client_id: "profiles-block-builder-drain-restart",
+            })
             .await
             == 0
     );

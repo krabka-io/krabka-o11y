@@ -326,7 +326,9 @@ mod backend_error_response;
 mod bounded_count;
 mod buildinfo;
 mod echo;
+mod endpoint_variant;
 mod exemplar_limit;
+mod frontend_request;
 mod key_is_safe_attribute;
 mod metrics_query;
 mod ndjson_search_stream;
@@ -358,7 +360,12 @@ use backend_error_response::backend_error_response;
 use bounded_count::bounded_count;
 use buildinfo::buildinfo;
 use echo::echo;
+use endpoint_variant::{
+    ApiVersion, InstantMetrics, MetricsQueryKind, RangeMetrics, RouteVariant, SearchDelivery,
+    StreamedSearch, V1Api, V2Api, WholeSearch,
+};
 use exemplar_limit::exemplar_limit;
+use frontend_request::FrontendRequest;
 use key_is_safe_attribute::key_is_safe_attribute;
 use metrics_query::metrics_query;
 use ndjson_search_stream::ndjson_search_stream;
@@ -387,5 +394,5 @@ use trace_v1_response::trace_v1_response;
 use with_warnings::with_warnings;
 
 use crate::querier::http::{
-    metrics_request, parse_go_duration_ns, parse_logfmt_tags, parse_seconds_to_ns,
+    TenantRequest, metrics_request, parse_go_duration_ns, parse_logfmt_tags, parse_seconds_to_ns,
 };

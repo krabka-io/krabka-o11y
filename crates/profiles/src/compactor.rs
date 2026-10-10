@@ -155,8 +155,8 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec_a = record("t", "api", 5, "main");
         let rec_b = record("t", "api", 7, "worker");
-        let meta_a = build_test_block(&store, std::slice::from_ref(&rec_a), (0, 0)).await;
-        let meta_b = build_test_block(&store, std::slice::from_ref(&rec_b), (1, 1)).await;
+        let meta_a = build_test_block(&store, std::slice::from_ref(&rec_a), 0).await;
+        let meta_b = build_test_block(&store, std::slice::from_ref(&rec_b), 1).await;
         let mut index = index_with_series([&rec_a, &rec_b], &[&meta_a]);
         index.add_profile_block("t", &meta_a.object_key, vec![STACKTRACE_PARTITION]);
         index.add_block(&meta_b);
@@ -194,9 +194,8 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let old_record = record("t", "api", 5, "old");
         let other_record = record("t", "api", 7, "other");
-        let old_input = build_test_block(&store, std::slice::from_ref(&old_record), (0, 0)).await;
-        let other_input =
-            build_test_block(&store, std::slice::from_ref(&other_record), (1, 1)).await;
+        let old_input = build_test_block(&store, std::slice::from_ref(&old_record), 0).await;
+        let other_input = build_test_block(&store, std::slice::from_ref(&other_record), 1).await;
         let make_index = |first: &BlockMeta, first_record: &ProfileRecord| {
             let mut index = ProfileIndex::new();
             for record in [first_record, &other_record] {
@@ -241,7 +240,7 @@ mod tests {
 
         let replacement_record = record("t", "api", 11, "replacement");
         let replacement_input =
-            build_test_block(&store, std::slice::from_ref(&replacement_record), (0, 0)).await;
+            build_test_block(&store, std::slice::from_ref(&replacement_record), 0).await;
         check!(replacement_input.object_key == old_input.object_key);
         let mut replacement_index = make_index(&replacement_input, &replacement_record);
         let new = compact_blocks(
@@ -696,7 +695,7 @@ mod tests {
             index
                 .add_series("t", labels.fingerprint(), &labels)
                 .unwrap();
-            let block = build_test_block(&store, std::slice::from_ref(&rec), (n, n)).await;
+            let block = build_test_block(&store, std::slice::from_ref(&rec), n).await;
             index.add_block(&block);
             index.add_profile_block("t", &block.object_key, vec![STACKTRACE_PARTITION]);
             records.push(rec);

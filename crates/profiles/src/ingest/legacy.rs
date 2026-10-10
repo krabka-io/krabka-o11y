@@ -381,19 +381,32 @@ mod tests {
         let parts = parts
             .iter()
             .zip(&dispositions)
-            .map(|((_, content), disposition)| {
-                (disposition.as_str(), "application/octet-stream", *content)
+            .map(|((_, content), disposition)| FormPart {
+                disposition,
+                content_type: "application/octet-stream",
+                content,
             })
             .collect::<Vec<_>>();
         multipart_form(&parts)
     }
 
-    /// Wraps `parts` as a multipart body with a fixed boundary. Each part is
-    /// its `Content-Disposition` parameters after `form-data; `, its
-    /// `Content-Type`, and its content.
-    fn multipart_form(parts: &[(&str, &str, &[u8])]) -> bytes::Bytes {
+    /// One part of a multipart form.
+    struct FormPart<'a> {
+        /// The `Content-Disposition` parameters after `form-data; `.
+        disposition: &'a str,
+        content_type: &'a str,
+        content: &'a [u8],
+    }
+
+    /// Wraps `parts` as a multipart body with a fixed boundary.
+    fn multipart_form(parts: &[FormPart<'_>]) -> bytes::Bytes {
         let mut body = Vec::new();
-        for (disposition, content_type, content) in parts {
+        for FormPart {
+            disposition,
+            content_type,
+            content,
+        } in parts
+        {
             body.extend_from_slice(b"--test-boundary\r\n");
             body.extend_from_slice(
                 format!("Content-Disposition: form-data; {disposition}\r\n").as_bytes(),
@@ -772,11 +785,11 @@ mod tests {
             parse_ingest_query("name=myapp{env=\"prod\"}&format=pprof&sampleRate=7").unwrap();
         let pprof = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
         let original_period = PprofProfile::decode(&pprof).unwrap().inner().period;
-        let body = multipart_form(&[(
-            r#"name="profile""#,
-            "application/octet-stream",
-            pprof.as_slice(),
-        )]);
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="profile""#,
+            content_type: "application/octet-stream",
+            content: pprof.as_slice(),
+        }]);
 
         let raw = decode_multipart(&query, body).await;
 
@@ -795,16 +808,16 @@ mod tests {
         let pprof = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
         let config = r#"{"units":"nanoseconds","display-name":"wall","aggregation":"sum","cumulative":true,"sampled":true}"#;
         let body = multipart_form(&[
-            (
-                r#"name="sample_type_config""#,
-                "application/json",
-                config.as_bytes(),
-            ),
-            (
-                r#"name="profile""#,
-                "application/octet-stream",
-                pprof.as_slice(),
-            ),
+            FormPart {
+                disposition: r#"name="sample_type_config""#,
+                content_type: "application/json",
+                content: config.as_bytes(),
+            },
+            FormPart {
+                disposition: r#"name="profile""#,
+                content_type: "application/octet-stream",
+                content: pprof.as_slice(),
+            },
         ]);
 
         let raw = decode_multipart(&query, body).await;
@@ -830,7 +843,11 @@ mod tests {
     async fn decode_multipart_folded_groups_profile_part() {
         let query = parse_ingest_query("name=myapp{env=\"prod\"}").unwrap();
         let folded = "main;work 7\nmain;idle 3\n";
-        let body = multipart_form(&[(r#"name="profile""#, "text/plain", folded.as_bytes())]);
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="profile""#,
+            content_type: "text/plain",
+            content: folded.as_bytes(),
+        }]);
 
         let raw = decode_multipart(&query, body).await;
 
@@ -851,7 +868,11 @@ mod tests {
     async fn decode_multipart_folded_groups_ignores_query_units() {
         let query = parse_ingest_query("name=myapp&units=bytes").unwrap();
         let folded = "main;work 7\n";
-        let body = multipart_form(&[(r#"name="profile""#, "text/plain", folded.as_bytes())]);
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="profile""#,
+            content_type: "text/plain",
+            content: folded.as_bytes(),
+        }]);
 
         let raw = decode_multipart(&query, body).await;
 
@@ -964,7 +985,11 @@ mod tests {
         let query =
             parse_ingest_query("name=myapp&from=1699999999000&until=1700000000000").unwrap();
         let folded = "main;work 7\n";
-        let body = multipart_form(&[(r#"name="profile""#, "text/plain", folded.as_bytes())]);
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="profile""#,
+            content_type: "text/plain",
+            content: folded.as_bytes(),
+        }]);
 
         let raw = decode_multipart(&query, body).await;
 
@@ -978,12 +1003,16 @@ mod tests {
             "java.lang.Thread.run;app.Worker.loop 11\njava.lang.Thread.run;app.Worker.idle 2\n";
         let labels = r#"{"service_name":"payments","region":"us-east"}"#;
         let body = multipart_form(&[
-            (r#"name="labels""#, "application/json", labels.as_bytes()),
-            (
-                r#"name="jfr"; filename="profile.jfr""#,
-                "application/octet-stream",
-                folded.as_bytes(),
-            ),
+            FormPart {
+                disposition: r#"name="labels""#,
+                content_type: "application/json",
+                content: labels.as_bytes(),
+            },
+            FormPart {
+                disposition: r#"name="jfr"; filename="profile.jfr""#,
+                content_type: "application/octet-stream",
+                content: folded.as_bytes(),
+            },
         ]);
 
         let raw = decode_multipart(&query, body).await;
@@ -1006,11 +1035,11 @@ mod tests {
     async fn decode_multipart_jfr_binary_execution_samples() {
         let query = parse_ingest_query("name=myapp&format=jfr").unwrap();
         let jfr = include_bytes!("../../tests/fixtures/profiler-wall.jfr");
-        let body = multipart_form(&[(
-            r#"name="jfr"; filename="profile.jfr""#,
-            "application/octet-stream",
-            jfr.as_slice(),
-        )]);
+        let body = multipart_form(&[FormPart {
+            disposition: r#"name="jfr"; filename="profile.jfr""#,
+            content_type: "application/octet-stream",
+            content: jfr.as_slice(),
+        }]);
 
         let raw = decode_multipart(&query, body).await;
 

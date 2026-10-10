@@ -30,6 +30,13 @@ mod wal_topic;
 const UNREACHABLE_FLUSH_RECORDS: usize = 10_000;
 const UNREACHABLE_FLUSH_MAX_AGE: Time = hours(24);
 
+/// The consumer a simulated restart joins the WAL topic as.
+#[derive(Clone, Copy)]
+pub struct RestartConsumer<'a> {
+    pub group_id: &'a str,
+    pub client_id: &'a str,
+}
+
 /// A broker with the profiles WAL topic and one record in it.
 pub struct OneRecordBroker {
     _broker: BrokerHandle,
@@ -78,9 +85,13 @@ impl OneRecordBroker {
         (config, metrics)
     }
 
-    /// What a restart in consumer group `group_id` would be handed. An
-    /// uncommitted offset replays the record; a committed one does not.
-    pub async fn replayed_records(&self, group_id: &str, client_id: &str) -> usize {
+    /// What a restart as `restart` would be handed. An uncommitted offset
+    /// replays the record; a committed one does not.
+    pub async fn replayed_records(&self, restart: RestartConsumer<'_>) -> usize {
+        let RestartConsumer {
+            group_id,
+            client_id,
+        } = restart;
         let mut consumer = Consumer::builder()
             .bootstrap(&self.bootstrap)
             .group_id(group_id)

@@ -1230,7 +1230,7 @@ use run_compactor::run_compactor;
 use run_distributor::run_distributor;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
-use run_read_role::{ReadRole, run_read_role};
+use run_read_role::{ReadRole, ReadRoleInputs, run_read_role};
 use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;

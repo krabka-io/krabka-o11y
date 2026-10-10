@@ -7,18 +7,31 @@ use super::{
 };
 use crate::ingest::RawProfile;
 
+/// One Connect ingest request.
+pub(crate) struct ConnectIngest<'a, D> {
+    pub(crate) state: &'a DistributorState,
+    pub(crate) principal: &'a Principal,
+    pub(crate) headers: &'a HeaderMap,
+    /// The request payload size. The Connect codec exposes no raw body, so
+    /// callers pass the decoded message size as a faithful proxy.
+    pub(crate) bytes: u64,
+    /// Decodes the request's profiles.
+    pub(crate) decode: D,
+}
+
 /// Runs one Connect ingest request: resolves and authorizes the tenant,
 /// decodes the profiles with `decode`, and appends them to the WAL.
-///
-/// `bytes` is the request payload size. The Connect codec exposes no raw
-/// body, so callers pass the decoded message size as a faithful proxy.
-pub(crate) async fn connect_ingest(
-    state: &DistributorState,
-    principal: &Principal,
-    headers: &HeaderMap,
-    bytes: u64,
-    decode: impl FnOnce() -> Result<Vec<RawProfile>, ProfilesError>,
-) -> Result<(), ConnectError> {
+pub(crate) async fn connect_ingest<D>(request: ConnectIngest<'_, D>) -> Result<(), ConnectError>
+where
+    D: FnOnce() -> Result<Vec<RawProfile>, ProfilesError>,
+{
+    let ConnectIngest {
+        state,
+        principal,
+        headers,
+        bytes,
+        decode,
+    } = request;
     let start = std::time::Instant::now();
     let tenant = tenant_from_headers(headers, &state.tenant_policy);
     // ONE server span per ingest request (not per sample).

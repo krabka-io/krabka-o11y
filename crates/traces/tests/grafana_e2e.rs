@@ -97,7 +97,7 @@ mod span_store;
 mod thrift_fixture;
 
 use self::{
-    metrics_span::metrics_span,
+    metrics_span::MetricsSpan,
     span_store::{resource_attr, span_store_from_records},
     thrift_fixture::{
         encode_binary_sample_batch, write_field_header, write_i64_field, write_key_value_bool,
@@ -1513,22 +1513,24 @@ async fn grafana_e2e_service_graph(
     // Only the WAL consumer is mocked (MockSpanSource).
     let source = Arc::new(MockSpanSource::default());
     source.push_batch(vec![
-        metrics_span(
-            "checkout-frontend",
-            [0x0A; 8],
-            [0; 8],
-            MetricsSpanKind::Client,
-            MetricsStatusCode::Ok,
-            20_000_000,
-        ),
-        metrics_span(
-            "cart-backend",
-            [0x0B; 8],
-            [0x0A; 8],
-            MetricsSpanKind::Server,
-            MetricsStatusCode::Ok,
-            15_000_000,
-        ),
+        MetricsSpan {
+            service: "checkout-frontend",
+            span_id: [0x0A; 8],
+            parent: [0; 8],
+            kind: MetricsSpanKind::Client,
+            status: MetricsStatusCode::Ok,
+            duration_ns: 20_000_000,
+        }
+        .record(),
+        MetricsSpan {
+            service: "cart-backend",
+            span_id: [0x0B; 8],
+            parent: [0x0A; 8],
+            kind: MetricsSpanKind::Server,
+            status: MetricsStatusCode::Ok,
+            duration_ns: 15_000_000,
+        }
+        .record(),
     ]);
     let sink = Arc::new(PrometheusRemoteWriteSink::new(
         rw_url,

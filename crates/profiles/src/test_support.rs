@@ -12,18 +12,19 @@ use crate::{
     wire::pb::otlp_profiles::{Function, Line, Location, ProfilesDictionary, Stack, ValueType},
 };
 
-/// Writes `records` as one profile block for tenant `t`, partition 0.
+/// Writes `records`, all read at WAL offset `wal_offset`, as one profile
+/// block for tenant `t`, partition 0.
 pub async fn build_test_block(
     store: &Arc<dyn ObjectStore>,
     records: &[ProfileRecord],
-    offset_range: (i64, i64),
+    wal_offset: i64,
 ) -> BlockMeta {
     build_block(
         store,
         "t",
         0,
         records,
-        offset_range,
+        (wal_offset, wal_offset),
         &ObjectStoreMetrics::unregistered(),
     )
     .await

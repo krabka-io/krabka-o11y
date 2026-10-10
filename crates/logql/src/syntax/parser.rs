@@ -17,6 +17,16 @@ use super::{
 
 const EXPECTED_METRIC_EXPRESSION: &str = "expected metric expression";
 
+/// The error messages `Parser::scan_metric_argument` reports when a metric
+/// argument cannot be scanned.
+#[derive(Clone, Copy)]
+struct ScanErrors<'m> {
+    /// Reported at a `)` that closes no open parenthesis.
+    unbalanced_close: &'m str,
+    /// Reported when the input ends before the argument does.
+    end_of_input: &'m str,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Parser<'a> {
     pub(crate) input: &'a str,
@@ -214,7 +224,11 @@ impl<'a> Parser<'a> {
     ) -> Result<String, ParseError> {
         self.skip_ws();
         let message = format!("expected {function_name} metric query argument");
-        self.scan_metric_argument(&message, &message, |parser, start, ch| {
+        let errors = ScanErrors {
+            unbalanced_close: &message,
+            end_of_input: &message,
+        };
+        self.scan_metric_argument(errors, |parser, start, ch| {
             (ch == ',').then(|| parser.trimmed_metric_argument(start, &message))
         })
     }
@@ -385,8 +399,10 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn parse_metric_expression_argument(&mut self) -> Result<String, ParseError> {
         self.scan_metric_argument(
-            EXPECTED_METRIC_EXPRESSION,
-            "expected metric comparison operator",
+            ScanErrors {
+                unbalanced_close: EXPECTED_METRIC_EXPRESSION,
+                end_of_input: "expected metric comparison operator",
+            },
             |parser, start, ch| {
                 matches!(ch, '>' | '<' | '=' | '!')
                     .then(|| parser.trimmed_metric_argument(start, EXPECTED_METRIC_EXPRESSION))
@@ -398,8 +414,10 @@ impl<'a> Parser<'a> {
         &mut self,
     ) -> Result<(String, MetricScalarArithmeticOp), ParseError> {
         self.scan_metric_argument(
-            EXPECTED_METRIC_EXPRESSION,
-            "expected metric arithmetic operator",
+            ScanErrors {
+                unbalanced_close: EXPECTED_METRIC_EXPRESSION,
+                end_of_input: "expected metric arithmetic operator",
+            },
             |parser, start, ch| {
                 matches!(ch, '+' | '-' | '*' | '/' | '%' | '^').then(|| {
                     let metric_query =
@@ -417,8 +435,10 @@ impl<'a> Parser<'a> {
         &mut self,
     ) -> Result<(String, MetricBinarySetOp), ParseError> {
         self.scan_metric_argument(
-            EXPECTED_METRIC_EXPRESSION,
-            "expected metric set operator",
+            ScanErrors {
+                unbalanced_close: EXPECTED_METRIC_EXPRESSION,
+                end_of_input: "expected metric set operator",
+            },
             |parser, start, _| {
                 let (keyword_len, op) = parser.match_metric_set_op_at(parser.pos)?;
                 Some(
@@ -439,8 +459,7 @@ impl<'a> Parser<'a> {
     /// and that character; `Some` ends the scan with its result.
     fn scan_metric_argument<T>(
         &mut self,
-        unbalanced_close: &str,
-        end_of_input: &str,
+        errors: ScanErrors<'_>,
         mut at_top_level: impl FnMut(&mut Self, usize, char) -> Option<Result<T, ParseError>>,
     ) -> Result<T, ParseError> {
         let start = self.pos;
@@ -471,7 +490,7 @@ impl<'a> Parser<'a> {
                 }
                 ')' => {
                     let Some(next_depth) = depth.checked_sub(1) else {
-                        return Err(self.error(unbalanced_close));
+                        return Err(self.error(errors.unbalanced_close));
                     };
                     depth = next_depth;
                     self.pos = self.pos.saturating_add(ch.len_utf8());
@@ -487,7 +506,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        Err(self.error(end_of_input))
+        Err(self.error(errors.end_of_input))
     }
 
     /// Returns the trimmed input from `start` to the current position, or an

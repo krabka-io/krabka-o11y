@@ -9,7 +9,7 @@ use axum::{
     routing::get,
 };
 use base64::Engine;
-use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy};
+use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy, TimeRange};
 use krabka_observability::{
     RoleReadiness,
     server_security::{Principal, authorize_tenant},
@@ -420,7 +420,7 @@ mod tests {
     use super::*;
     use crate::querier::store::{
         KrabkaSpanStore, SharedTraceIndex,
-        test_support::{versioned_block_properties, write_row_group_block},
+        test_support::{RowGroupBlock, versioned_block_properties, write_row_group_block},
     };
 
     // Every query route reads its principal from the request extensions,
@@ -817,9 +817,11 @@ mod tests {
         let second = encode_span_rows(&[block_span_row(2, 2, "second-rg")]).unwrap();
         write_row_group_block(
             &object_store,
-            "blocks/row-groups.parquet",
-            span_block_schema(),
-            &[first, second],
+            RowGroupBlock {
+                key: "blocks/row-groups.parquet",
+                schema: span_block_schema(),
+                batches: &[first, second],
+            },
         )
         .await;
 
@@ -3980,7 +3982,7 @@ use merge_static_scope::merge_static_scope;
 use metric_label_json::metric_label_json;
 use metric_prom_labels::metric_prom_labels;
 use metrics_query_param::metrics_query_param;
-pub(crate) use metrics_request::metrics_request;
+pub(crate) use metrics_request::{TenantRequest, metrics_request};
 use nested_attribute_key_matches::nested_attribute_key_matches;
 use optional_seconds_param::optional_seconds_param;
 use optional_time_bounds::optional_time_bounds;
@@ -4030,12 +4032,12 @@ use search_query::search_query;
 use search_span_json::search_span_json;
 use search_stream::search_stream;
 use search_tag_values::search_tag_values;
-use search_tag_values_inner::search_tag_values_inner;
+use search_tag_values_inner::{TagValuesRequest, search_tag_values_inner};
 use search_tag_values_json::search_tag_values_json;
 use search_tag_values_v2::search_tag_values_v2;
 use search_tag_values_v2_json::search_tag_values_v2_json;
 use search_tags::search_tags;
-use search_tags_inner::search_tags_inner;
+use search_tags_inner::{TagsRequest, search_tags_inner};
 use search_tags_json::search_tags_json;
 use search_tags_v2::search_tags_v2;
 use search_tags_v2_json::search_tags_v2_json;
@@ -4050,7 +4052,7 @@ use tag_values_from_traces::tag_values_from_traces;
 use tags_to_traceql::tags_to_traceql;
 use tempo_tag_alias::tempo_tag_alias;
 use trace_by_id::trace_by_id;
-use trace_by_id_inner::trace_by_id_inner;
+use trace_by_id_inner::{TraceByIdRequest, TraceEncoding, trace_by_id_inner};
 use trace_by_id_response::TraceByIdResponse;
 use trace_by_id_response_protobuf::trace_by_id_response_protobuf;
 use trace_by_id_v1::trace_by_id_v1;
@@ -4063,7 +4065,7 @@ use trace_span_json::trace_span_json;
 use trace_traces_data::trace_traces_data;
 use traceql_query_error_response::traceql_query_error_response;
 use traceql_tag_field::traceql_tag_field;
-use traces_matching_filter::traces_matching_filter;
+use traces_matching_filter::{TagFilter, traces_matching_filter};
 use typed_traceql_value::typed_traceql_value;
 pub(crate) use wants_json::wants_json;
 use wants_protobuf::wants_protobuf;

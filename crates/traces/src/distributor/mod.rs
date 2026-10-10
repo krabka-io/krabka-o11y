@@ -917,7 +917,7 @@ pub use otlp_grpc_service::OtlpGrpcService;
 use otlp_push::otlp_push;
 use otlp_success_response::otlp_success_response;
 pub use produce_spans::produce_spans;
-use push_spans::push_spans;
+use push_spans::{SpanPush, push_spans};
 use record_ingest_response::record_ingest_response;
 use request_principal::request_principal;
 use require_content_type::require_content_type;

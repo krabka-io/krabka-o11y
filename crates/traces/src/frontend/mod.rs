@@ -80,7 +80,14 @@ mod orch_tests {
     }
 
     fn block(id: &str, start: i64, end: i64, rgs: &[u64]) -> BlockMetaInfo {
-        BlockMetaInfo::with_row_groups(id, start, end, rgs)
+        BlockMetaInfo::with_row_groups(
+            id,
+            krabka_blockstore::TimeRange {
+                start_ns: start,
+                end_ns: end,
+            },
+            rgs,
+        )
     }
 
     fn one_trace(tid: &str, start: u64) -> SearchPartial {

@@ -1,8 +1,8 @@
 use super::{
     AppState, HeaderMap, IntoResponse, Json, Principal, QueryEnforcer, Response, SpanStore,
-    StatusCode, UnixNano, Uri, exemplar_selection, filter_metrics_exemplars, limit_error_response,
-    metrics_request, required_time_range, scan_options_param, step_param, tempo_metric_bounds,
-    trace_metrics_json,
+    StatusCode, TenantRequest, UnixNano, Uri, exemplar_selection, filter_metrics_exemplars,
+    limit_error_response, metrics_request, required_time_range, scan_options_param, step_param,
+    tempo_metric_bounds, trace_metrics_json,
 };
 
 pub(crate) async fn query_range_inner<S>(
@@ -14,8 +14,12 @@ pub(crate) async fn query_range_inner<S>(
 where
     S: SpanStore + 'static,
 {
-    let (tenant, query) = match metrics_request(&headers, principal, &state.cfg.tenant_policy, &uri)
-    {
+    let (tenant, query) = match metrics_request(TenantRequest {
+        headers: &headers,
+        principal,
+        policy: &state.cfg.tenant_policy,
+        uri: &uri,
+    }) {
         Ok(request) => request,
         Err(rejection) => return *rejection,
     };

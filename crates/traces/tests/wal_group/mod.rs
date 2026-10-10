@@ -27,9 +27,22 @@ pub async fn create_topic(client: &krabka_client_core::Client, name: &str) {
     check!(created.error_code == 0);
 }
 
+/// The producer `fill` writes with, and the topic it writes to.
+#[derive(Clone, Copy)]
+pub struct WalFillProducer<'a> {
+    pub bootstrap: &'a str,
+    pub topic: &'a str,
+    pub client_id: &'a str,
+}
+
 // Writes the same record count to every partition, pinned by index so the
 // assertions do not depend on the producer's partitioner.
-pub async fn fill(bootstrap: &str, topic: &str, client_id: &str) {
+pub async fn fill(producer: WalFillProducer<'_>) {
+    let WalFillProducer {
+        bootstrap,
+        topic,
+        client_id,
+    } = producer;
     let producer = Producer::builder()
         .bootstrap(bootstrap.to_owned())
         .client_id(client_id)

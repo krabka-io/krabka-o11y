@@ -19,7 +19,7 @@ use krabka_traces::{
 };
 use object_store::{ObjectStore, memory::InMemory, path::Path};
 
-use self::span_fixture::span;
+use self::span_fixture::FixtureSpan;
 
 /// The input keys and the output key of the compaction production would plan
 /// over `inputs`.
@@ -92,7 +92,13 @@ fn a_compacted_key_escapes_the_tenant_into_one_segment_that_reads_back() {
 fn rec(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> SpanRecord {
     SpanRecord {
         tenant: "tenant-a".into(),
-        span: span(trace_id, span_id, parent, start_ns),
+        span: FixtureSpan {
+            trace_id,
+            span_id,
+            parent,
+            start_ns,
+        }
+        .build(),
     }
 }
 

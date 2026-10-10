@@ -154,13 +154,13 @@ pub(crate) async fn run_querier(
             }
         }
     });
-    serve_role_router(
-        "traces querier",
+    serve_role_router(RoleServer {
+        role: "traces querier",
         listener,
         router,
         security,
         tasks,
         shutdown,
-    )
+    })
     .await
 }

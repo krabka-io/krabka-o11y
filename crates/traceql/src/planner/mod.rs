@@ -56,13 +56,39 @@ mod tests {
 
     const CACHE_SPAN_NAMES: [&str; 3] = ["cache-a", "cache-b", "cache-c"];
 
-    fn svc_span(id: u8, name: &str, duration_nanos: i64, svc: &str) -> InputSpan {
-        span(
-            id,
-            name,
-            duration_nanos,
-            vec![("svc", AttrValue::Str(svc.into()))],
-        )
+    /// A root span carrying one `svc` attribute. The default is span 1 of
+    /// trace `[1; 16]` in service `api`.
+    struct SvcSpan {
+        id: u8,
+        trace: u8,
+        name: &'static str,
+        duration_nanos: i64,
+        svc: &'static str,
+    }
+
+    impl Default for SvcSpan {
+        fn default() -> Self {
+            Self {
+                id: 1,
+                trace: 1,
+                name: "api-a",
+                duration_nanos: 0,
+                svc: "api",
+            }
+        }
+    }
+
+    impl SvcSpan {
+        fn build(self) -> InputSpan {
+            span_with_parent(
+                self.id,
+                None,
+                [self.trace; 16],
+                self.name,
+                self.duration_nanos,
+                vec![("svc", AttrValue::Str(self.svc.into()))],
+            )
+        }
     }
 
     fn store_with_traces(traces: Vec<Vec<InputSpan>>) -> InMemorySpanStore {
@@ -73,42 +99,96 @@ mod tests {
         store
     }
 
-    // Two `api` spans and one `db` span in one trace.
-    fn api_db_store() -> InMemorySpanStore {
-        store_with_traces(vec![vec![
-            svc_span(1, "api-a", 20, "api"),
-            svc_span(2, "api-b", 40, "api"),
-            svc_span(3, "db-a", 200, "db"),
-        ]])
+    // Two `api` spans and one `db` span.
+    fn api_db_spans() -> Vec<InputSpan> {
+        vec![
+            SvcSpan {
+                id: 1,
+                name: "api-a",
+                duration_nanos: 20,
+                svc: "api",
+                ..SvcSpan::default()
+            }
+            .build(),
+            SvcSpan {
+                id: 2,
+                name: "api-b",
+                duration_nanos: 40,
+                svc: "api",
+                ..SvcSpan::default()
+            }
+            .build(),
+            SvcSpan {
+                id: 3,
+                name: "db-a",
+                duration_nanos: 200,
+                svc: "db",
+                ..SvcSpan::default()
+            }
+            .build(),
+        ]
     }
 
-    // `api_db_store` plus three 10ns `cache` spans in the same trace.
+    // `api_db_spans` in one trace.
+    fn api_db_store() -> InMemorySpanStore {
+        store_with_traces(vec![api_db_spans()])
+    }
+
+    // `api_db_spans` plus three 10ns `cache` spans in the same trace.
     fn api_db_cache_store() -> InMemorySpanStore {
-        store_with_traces(vec![vec![
-            svc_span(1, "api-a", 20, "api"),
-            svc_span(2, "api-b", 40, "api"),
-            svc_span(3, "db-a", 200, "db"),
-            svc_span(4, "cache-a", 10, "cache"),
-            svc_span(5, "cache-b", 10, "cache"),
-            svc_span(6, "cache-c", 10, "cache"),
-        ]])
+        let mut spans = api_db_spans();
+        spans.extend((4..).zip(CACHE_SPAN_NAMES).map(|(id, name)| {
+            SvcSpan {
+                id,
+                name,
+                duration_nanos: 10,
+                svc: "cache",
+                ..SvcSpan::default()
+            }
+            .build()
+        }));
+        store_with_traces(vec![spans])
     }
 
     // A fast `api` trace (20ns, 40ns) and a slow one (200ns, 400ns).
     fn fast_slow_store() -> InMemorySpanStore {
-        let api_span = |id, trace: u8, name, duration_nanos| {
-            span_with_parent(
-                id,
-                None,
-                [trace; 16],
-                name,
-                duration_nanos,
-                vec![("svc", AttrValue::Str("api".into()))],
-            )
-        };
         store_with_traces(vec![
-            vec![api_span(1, 1, "fast-a", 20), api_span(2, 1, "fast-b", 40)],
-            vec![api_span(3, 2, "slow-a", 200), api_span(4, 2, "slow-b", 400)],
+            vec![
+                SvcSpan {
+                    id: 1,
+                    trace: 1,
+                    name: "fast-a",
+                    duration_nanos: 20,
+                    ..SvcSpan::default()
+                }
+                .build(),
+                SvcSpan {
+                    id: 2,
+                    trace: 1,
+                    name: "fast-b",
+                    duration_nanos: 40,
+                    ..SvcSpan::default()
+                }
+                .build(),
+            ],
+            vec![
+                SvcSpan {
+                    id: 3,
+                    trace: 2,
+                    name: "slow-a",
+                    duration_nanos: 200,
+                    ..SvcSpan::default()
+                }
+                .build(),
+                SvcSpan {
+                    id: 4,
+                    trace: 2,
+                    name: "slow-b",
+                    duration_nanos: 400,
+                    ..SvcSpan::default()
+                }
+                .build(),
+            ],
         ])
     }
 

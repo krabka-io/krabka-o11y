@@ -26,14 +26,31 @@ pub(crate) struct ExemplarRow {
     pub trace_id: String,
 }
 
+/// How `bucket_exemplars` reads a scan's exemplars and groups them.
+pub(crate) struct BucketExemplars<'a, B, X> {
+    pub(crate) scan: &'a krabka_pprof::ProfileScan,
+    pub(crate) source: ExemplarSource,
+    /// Assigns a timestamp its bucket, or `None` to drop the exemplar.
+    pub(crate) bucket: B,
+    /// Builds the output exemplar from a row.
+    pub(crate) exemplar: X,
+}
+
 /// Reads the exemplars of `scan` and groups them by the bucket that
 /// `bucket` assigns to their timestamp, dropping those it assigns none.
-pub(crate) async fn bucket_exemplars<E>(
-    scan: &krabka_pprof::ProfileScan,
-    source: ExemplarSource,
-    bucket: impl Fn(i64) -> Option<i64>,
-    exemplar: impl Fn(ExemplarRow) -> E,
-) -> Result<BTreeMap<i64, Vec<E>>, ProfileError> {
+pub(crate) async fn bucket_exemplars<E, B, X>(
+    request: BucketExemplars<'_, B, X>,
+) -> Result<BTreeMap<i64, Vec<E>>, ProfileError>
+where
+    B: Fn(i64) -> Option<i64>,
+    X: Fn(ExemplarRow) -> E,
+{
+    let BucketExemplars {
+        scan,
+        source,
+        bucket,
+        exemplar,
+    } = request;
     let sql = match source {
         ExemplarSource::Profiles => format!(
             "SELECT {timestamp}, MAX({total}) AS total \

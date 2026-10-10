@@ -515,11 +515,14 @@ impl<S: ProfileStore> QuerierState<S> {
     /// selector matches, with the selector's matchers.
     async fn heatmap_exemplar_series(
         &self,
-        target: QueryTarget<'_>,
-        range: QueryRange,
+        query: HeatmapExemplarQuery<'_>,
     ) -> Result<(Vec<LabelMatcher>, Vec<Vec<(String, String)>>), ProfileError> {
-        let (tenant, _, label_selector) = target;
-        let (start_ms, end_ms) = range;
+        let HeatmapExemplarQuery {
+            tenant,
+            label_selector,
+            start_ms,
+            end_ms,
+        } = query;
         self.validate_query_range(tenant, start_ms, end_ms)?;
         let base_matchers = parse_label_selector(label_selector)?;
         let groups = self
@@ -536,9 +539,16 @@ impl<S: ProfileStore> QuerierState<S> {
         range: QueryRange,
         step_ms: i64,
     ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, _) = target;
+        let (tenant, profile_type, label_selector) = target;
         let (start_ms, end_ms) = range;
-        let (base_matchers, groups) = self.heatmap_exemplar_series(target, range).await?;
+        let (base_matchers, groups) = self
+            .heatmap_exemplar_series(HeatmapExemplarQuery {
+                tenant,
+                label_selector,
+                start_ms,
+                end_ms,
+            })
+            .await?;
         let mut out = BTreeMap::new();
         for labels in groups {
             let matchers = series_matchers(&base_matchers, &labels);
@@ -576,9 +586,16 @@ impl<S: ProfileStore> QuerierState<S> {
         range: QueryRange,
         step_ms: i64,
     ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, _) = target;
+        let (tenant, profile_type, label_selector) = target;
         let (start_ms, end_ms) = range;
-        let (base_matchers, groups) = self.heatmap_exemplar_series(target, range).await?;
+        let (base_matchers, groups) = self
+            .heatmap_exemplar_series(HeatmapExemplarQuery {
+                tenant,
+                label_selector,
+                start_ms,
+                end_ms,
+            })
+            .await?;
         let mut out: HeatmapSpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
             let Some(profile_id) = profile_id_of(&labels) else {
@@ -719,6 +736,16 @@ impl<S: ProfileStore> QuerierState<S> {
 }
 
 /// The selector's matchers narrowed to the one series that `labels` names.
+/// The series a heatmap exemplar query reads: those of `tenant` that
+/// `label_selector` matches in `[start_ms, end_ms]`.
+#[derive(Clone, Copy)]
+struct HeatmapExemplarQuery<'a> {
+    tenant: &'a TenantId,
+    label_selector: &'a str,
+    start_ms: i64,
+    end_ms: i64,
+}
+
 fn series_matchers(base: &[LabelMatcher], labels: &[(String, String)]) -> Vec<LabelMatcher> {
     let mut matchers = base.to_vec();
     matchers.extend(

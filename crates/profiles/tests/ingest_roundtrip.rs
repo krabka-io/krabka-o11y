@@ -39,7 +39,7 @@ use tower::ServiceExt as _;
 
 use self::{
     render_roundtrip::{flame_names, flame_ticks, gzip_bytes},
-    synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, synthetic_cpu_pprof},
+    synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, SyntheticCpuProfile},
     wal_topic::create_wal_topic,
 };
 
@@ -336,10 +336,12 @@ fn push_body() -> Value {
                 { "name": "service_name", "value": SERVICE }
             ],
             "samples": [{
-                "rawProfile": BASE64.encode(gzip_bytes(&synthetic_cpu_pprof(
-                    PROFILE_TIME_NANOS,
-                    [LEAF_VALUE, SELF_VALUE],
-                ))),
+                "rawProfile": BASE64.encode(gzip_bytes(&SyntheticCpuProfile {
+                    time_nanos: PROFILE_TIME_NANOS,
+                    hot_value: LEAF_VALUE,
+                    work_value: SELF_VALUE,
+                }
+                .encode())),
                 "ID": PROFILE_ID
             }]
         }]

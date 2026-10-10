@@ -19,7 +19,14 @@ use krabka_traces::frontend::{
 use krabka_units::{ByteSize, convert::ByteSizeExt as _, millis};
 
 fn block(id: &str, start: i64, end: i64, rgs: &[u64]) -> BlockMetaInfo {
-    BlockMetaInfo::with_row_groups(id, start, end, rgs)
+    BlockMetaInfo::with_row_groups(
+        id,
+        krabka_blockstore::TimeRange {
+            start_ns: start,
+            end_ns: end,
+        },
+        rgs,
+    )
 }
 
 fn trace_with_spans(tid: &str, start: u64, span_ids: &[&str]) -> TraceJson {

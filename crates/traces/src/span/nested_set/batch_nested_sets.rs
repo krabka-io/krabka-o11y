@@ -14,17 +14,27 @@ pub(crate) struct BatchNestedSets {
     pub children: BTreeMap<usize, Vec<usize>>,
 }
 
+/// The id columns of one span batch.
+#[derive(Clone, Copy)]
+pub(crate) struct SpanIdColumns<'a> {
+    pub trace: &'a FixedSizeBinaryArray,
+    pub span: &'a FixedSizeBinaryArray,
+    pub parent_span: &'a FixedSizeBinaryArray,
+}
+
 /// Number the rows of a batch from its id columns, walking each trace's
 /// parent links from its roots.
-pub(crate) fn batch_nested_sets(
-    trace_ids: &FixedSizeBinaryArray,
-    span_ids: &FixedSizeBinaryArray,
-    parent_span_ids: &FixedSizeBinaryArray,
-) -> BatchNestedSets {
+pub(crate) fn batch_nested_sets(columns: SpanIdColumns<'_>) -> BatchNestedSets {
     enum Frame {
         Enter { row: usize, parent_left: i32 },
         Exit { row: usize },
     }
+
+    let SpanIdColumns {
+        trace: trace_ids,
+        span: span_ids,
+        parent_span: parent_span_ids,
+    } = columns;
 
     let num_rows = trace_ids.len();
     let mut by_trace: BTreeMap<[u8; 16], Vec<usize>> = BTreeMap::new();

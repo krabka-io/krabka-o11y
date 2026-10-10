@@ -2555,7 +2555,7 @@ use run_live_store::run_live_store;
 use run_metrics_generator::run_metrics_generator;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
-use serve_role_router::serve_role_router;
+use serve_role_router::{RoleServer, serve_role_router};
 use shared_object_store::SharedObjectStore;
 use target::Target;
 use u64_limit_from_usize::u64_limit_from_usize;

@@ -3,7 +3,7 @@ use super::{
     SCOL_PARENT_SPAN_ID, SCOL_SPAN_ID, SCOL_TRACE_ID, TracesError, fixed_column,
     replace_int32_columns,
 };
-use crate::span::nested_set::{BatchNestedSets, batch_nested_sets};
+use crate::span::nested_set::{BatchNestedSets, SpanIdColumns, batch_nested_sets};
 
 pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, TracesError> {
     let BatchNestedSets {
@@ -11,11 +11,11 @@ pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, 
         right,
         parent_id,
         children,
-    } = batch_nested_sets(
-        fixed_column(batch, SCOL_TRACE_ID, 16)?,
-        fixed_column(batch, SCOL_SPAN_ID, 8)?,
-        fixed_column(batch, SCOL_PARENT_SPAN_ID, 8)?,
-    );
+    } = batch_nested_sets(SpanIdColumns {
+        trace: fixed_column(batch, SCOL_TRACE_ID, 16)?,
+        span: fixed_column(batch, SCOL_SPAN_ID, 8)?,
+        parent_span: fixed_column(batch, SCOL_PARENT_SPAN_ID, 8)?,
+    });
     // Only a parent the walk reaches is credited with its children, and each
     // trace's children are its own: the `left` numbering restarts at 1 for
     // every trace, so counting from it would credit one trace's root with

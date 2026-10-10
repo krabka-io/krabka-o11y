@@ -1,6 +1,6 @@
 use super::{
-    Arc, Bytes, DistributorState, Extension, HeaderMap, Principal, Response, State, decode_zipkin,
-    push_spans,
+    Arc, Bytes, DistributorState, Extension, HeaderMap, Principal, Response, SpanPush, State,
+    decode_zipkin, push_spans,
 };
 
 pub(crate) async fn zipkin_push(
@@ -9,13 +9,13 @@ pub(crate) async fn zipkin_push(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    push_spans(
-        &state,
-        &principal,
-        &headers,
-        &body,
-        &["application/json"],
-        decode_zipkin,
-    )
+    push_spans(SpanPush {
+        state: &state,
+        principal: &principal,
+        headers: &headers,
+        body: &body,
+        content_types: &["application/json"],
+        decode: decode_zipkin,
+    })
     .await
 }

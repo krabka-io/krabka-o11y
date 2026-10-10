@@ -1,6 +1,7 @@
 use super::{
-    T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE, T_BYTE, T_DOUBLE, T_I16, T_I32, T_I64, T_LIST, T_MAP,
-    T_SET, T_STOP, T_STRUCT, WireError, check_collection_header, take_bytes, utf8_string,
+    CollectionHeader, T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE, T_BYTE, T_DOUBLE, T_I16, T_I32, T_I64,
+    T_LIST, T_MAP, T_SET, T_STOP, T_STRUCT, WireError, check_collection_header, take_bytes,
+    utf8_string,
 };
 
 pub(crate) struct CompactInput<'a> {
@@ -76,7 +77,11 @@ impl<'a> CompactInput<'a> {
     /// not a value type at all -- it terminates a struct -- and is the one
     /// element type whose skip would consume nothing.
     fn check_collection_header(&self, element_type: u8, len: usize) -> Result<(), WireError> {
-        check_collection_header(self.bytes, self.pos, T_STOP, element_type, len)
+        check_collection_header(
+            CollectionHeader { element_type, len },
+            T_STOP,
+            self.bytes.len().saturating_sub(self.pos),
+        )
     }
 
     pub(crate) fn read_map_header(&mut self) -> Result<(u8, u8, usize), WireError> {

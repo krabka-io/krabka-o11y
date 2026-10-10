@@ -1,4 +1,5 @@
 use futures::StreamExt as _;
+use krabka_blockstore::TimeRange;
 use krabka_query_frontend::{AdmissionController, AdmissionError, AdmissionPermit};
 use krabka_units::convert::ByteSizeExt as _;
 use tokio::sync::mpsc;
@@ -159,15 +160,13 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         })
     }
 
-    /// Plan the shards for a window, and place each on a ready querier.
-    /// Plan `tenant`'s shards over the window, run `run_job` on each under the
+    /// Plan `tenant`'s shards over `window`, run `run_job` on each under the
     /// tenant's admission, and return the partials with the job and block
     /// counts and the pool's warnings.
     async fn run_shard_jobs<P, F, Fut>(
         &self,
         tenant: &TenantId,
-        start_ns: i64,
-        end_ns: i64,
+        window: TimeRange,
         run_job: F,
     ) -> Result<(Vec<P>, u64, u64, Vec<String>), BackendError>
     where
@@ -176,7 +175,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     {
         let snapshot = self.ready_pool()?;
         let (assigned, total_blocks, planned_live) = self
-            .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
+            .plan_and_assign(tenant, window.start_ns, window.end_ns, &snapshot)
             .await?;
         let total_jobs = assigned.len() as u64;
         let _permit = self.admit(tenant, assigned.len()).await?;
@@ -448,17 +447,21 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     ) -> Result<(Vec<krabka_traceql::ScopedTag>, Metrics, Vec<String>), BackendError> {
         let tenant_id = tenant.clone();
         let (partials, total_jobs, total_blocks, warnings) = self
-            .run_shard_jobs(tenant, start_ns, end_ns, move |backend, job| {
-                let req = TagNamesJobRequest {
-                    tenant: tenant_id.clone(),
-                    scope,
-                    start_ns,
-                    end_ns,
-                    shard: job.shard,
-                    querier: job.querier,
-                };
-                async move { backend.tag_names_job(&req).await }
-            })
+            .run_shard_jobs(
+                tenant,
+                TimeRange { start_ns, end_ns },
+                move |backend, job| {
+                    let req = TagNamesJobRequest {
+                        tenant: tenant_id.clone(),
+                        scope,
+                        start_ns,
+                        end_ns,
+                        shard: job.shard,
+                        querier: job.querier,
+                    };
+                    async move { backend.tag_names_job(&req).await }
+                },
+            )
             .await?;
         let (tags, mut metrics) = merge::merge_tag_names(partials);
         metrics.total_jobs = total_jobs;
@@ -481,17 +484,21 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         let tenant_id = tenant.clone();
         let tag_s = tag.to_string();
         let (partials, total_jobs, total_blocks, warnings) = self
-            .run_shard_jobs(tenant, start_ns, end_ns, move |backend, job| {
-                let req = TagValuesJobRequest {
-                    tenant: tenant_id.clone(),
-                    tag: tag_s.clone(),
-                    start_ns,
-                    end_ns,
-                    shard: job.shard,
-                    querier: job.querier,
-                };
-                async move { backend.tag_values_job(&req).await }
-            })
+            .run_shard_jobs(
+                tenant,
+                TimeRange { start_ns, end_ns },
+                move |backend, job| {
+                    let req = TagValuesJobRequest {
+                        tenant: tenant_id.clone(),
+                        tag: tag_s.clone(),
+                        start_ns,
+                        end_ns,
+                        shard: job.shard,
+                        querier: job.querier,
+                    };
+                    async move { backend.tag_values_job(&req).await }
+                },
+            )
             .await?;
         let (values, mut metrics) = merge::merge_tag_values(partials);
         metrics.total_jobs = total_jobs;

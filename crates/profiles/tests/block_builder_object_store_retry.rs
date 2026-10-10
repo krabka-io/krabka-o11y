@@ -25,7 +25,9 @@ use object_store::{
     PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
 };
 
-use self::block_builder_support::{ConsumedBuilder, OneRecordBroker, indexed_block_count};
+use self::block_builder_support::{
+    ConsumedBuilder, OneRecordBroker, RestartConsumer, indexed_block_count,
+};
 
 mod block_builder_support;
 
@@ -225,7 +227,10 @@ impl TestBroker {
     /// not.
     async fn replayed_records(&self) -> usize {
         self.broker
-            .replayed_records(&self.group_id, "profiles-block-builder-retry-restart")
+            .replayed_records(RestartConsumer {
+                group_id: &self.group_id,
+                client_id: "profiles-block-builder-retry-restart",
+            })
             .await
     }
 }

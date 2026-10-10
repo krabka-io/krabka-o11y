@@ -387,12 +387,16 @@ mod tests {
         );
     }
 
+    /// Where `span_profile_engine` places its second sample.
+    #[derive(Clone, Copy)]
+    struct SecondSample {
+        timestamp_ms: i64,
+        span_id: u64,
+    }
+
     // Two samples of the same series: stack `a` (6 of 10) at 0 ms under span
-    // 111, and stack `b` (4 of 10) at the given timestamp and span.
-    fn span_profile_engine(
-        second_timestamp_ms: i64,
-        second_span_id: u64,
-    ) -> FlameEngine<InMemoryProfileStore> {
+    // 111, and stack `b` (4 of 10) at `second`.
+    fn span_profile_engine(second: SecondSample) -> FlameEngine<InMemoryProfileStore> {
         let mut store = InMemoryProfileStore::new();
         let (stack_a, stack_b) = {
             let db = store.symbols_mut();
@@ -413,15 +417,18 @@ mod tests {
             vec![("svc".to_string(), "x".to_string())],
             (0, stack_b),
             (4, 10),
-            second_timestamp_ms,
-            second_span_id,
+            second.timestamp_ms,
+            second.span_id,
         );
         FlameEngine::new(Arc::new(store), EngineOpts::default())
     }
 
     #[tokio::test]
     async fn span_profile_filters_by_span_id() {
-        let engine = span_profile_engine(0, 222);
+        let engine = span_profile_engine(SecondSample {
+            timestamp_ms: 0,
+            span_id: 222,
+        });
 
         let fg = engine
             .select_merge_span_profile(("tenant-a", PT, "{}"), &[111], (0, 60_000), 0)
@@ -439,7 +446,10 @@ mod tests {
 
     #[tokio::test]
     async fn sharded_span_profile_matches_whole_range() {
-        let engine = span_profile_engine(30_000, 111);
+        let engine = span_profile_engine(SecondSample {
+            timestamp_ms: 30_000,
+            span_id: 111,
+        });
         let whole = engine
             .select_merge_span_profile(("tenant-a", PT, "{}"), &[111], (0, 60_000), 0)
             .await

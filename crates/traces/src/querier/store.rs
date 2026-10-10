@@ -68,14 +68,21 @@ pub(crate) mod test_support {
         ]))
     }
 
-    // Write `batches` to `key` as one versioned block that holds one row
-    // group per row.
-    pub async fn write_row_group_block(
-        object_store: &Arc<InMemory>,
-        key: &str,
-        schema: SchemaRef,
-        batches: &[RecordBatch],
-    ) {
+    /// A block `write_row_group_block` writes: `batches` under `key`.
+    pub struct RowGroupBlock<'a> {
+        pub key: &'a str,
+        pub schema: SchemaRef,
+        pub batches: &'a [RecordBatch],
+    }
+
+    // Write `block` to `object_store` as one versioned block that holds one
+    // row group per row.
+    pub async fn write_row_group_block(object_store: &Arc<InMemory>, block: RowGroupBlock<'_>) {
+        let RowGroupBlock {
+            key,
+            schema,
+            batches,
+        } = block;
         let props = versioned_block_properties()
             .set_max_row_group_row_count(Some(1))
             .set_write_batch_size(1)
@@ -724,7 +731,9 @@ mod tests {
         livestore::LiveStore,
         querier::{
             live::LiveSource,
-            store::test_support::{versioned_block_properties, write_row_group_block},
+            store::test_support::{
+                RowGroupBlock, versioned_block_properties, write_row_group_block,
+            },
         },
         span::{
             AttrValue as SpanAttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind,
@@ -1644,17 +1653,41 @@ mod tests {
             .collect()
     }
 
-    // Write `batch` as the block `key` holding `trace_ids`, and return the
-    // block store with an index that names the block under `tag_names` and
-    // `tag_values`.
-    async fn write_indexed_block(
-        key: &str,
+    /// A block `write_indexed_block` writes: `batch` under `key`, holding
+    /// `trace_ids`, and indexed under `tag_names` and `tag_values`.
+    struct IndexedBlock<'a> {
+        key: &'a str,
         schema: SchemaRef,
         batch: RecordBatch,
-        trace_ids: &[[u8; 16]],
+        trace_ids: &'a [[u8; 16]],
         tag_names: BTreeSet<String>,
         tag_values: BTreeMap<String, BTreeSet<String>>,
-    ) -> (Arc<BlockStore>, TraceIndex) {
+    }
+
+    impl Default for IndexedBlock<'_> {
+        /// An empty span block with no tags.
+        fn default() -> Self {
+            Self {
+                key: "blocks/block.parquet",
+                schema: span_block_schema(),
+                batch: RecordBatch::new_empty(span_block_schema()),
+                trace_ids: &[],
+                tag_names: BTreeSet::new(),
+                tag_values: BTreeMap::new(),
+            }
+        }
+    }
+
+    // Write `block`, and return the block store with an index that names it.
+    async fn write_indexed_block(block: IndexedBlock<'_>) -> (Arc<BlockStore>, TraceIndex) {
+        let IndexedBlock {
+            key,
+            schema,
+            batch,
+            trace_ids,
+            tag_names,
+            tag_values,
+        } = block;
         let object_store = Arc::new(InMemory::new());
         let blocks = Arc::new(BlockStore::new(
             object_store.clone(),
@@ -1692,38 +1725,22 @@ mod tests {
         (blocks, index)
     }
 
-    // A store over one indexed block that holds `span_with_nested_refs`,
-    // with `tag_names` and `tag_values` as its index entry.
-    async fn nested_refs_block_store(
-        key: &str,
-        tag_names: BTreeSet<String>,
-        tag_values: BTreeMap<String, BTreeSet<String>>,
-    ) -> KrabkaSpanStore {
-        let span = span_with_nested_refs();
-        let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(
-            key,
-            span_block_schema(),
-            batch,
-            &[span.trace_id],
-            tag_names,
-            tag_values,
-        )
-        .await;
-        KrabkaSpanStore::new(blocks, shared(index), None)
-    }
-
     #[tokio::test]
     async fn tag_discovery_unions_cold_index_values() {
-        let store = nested_refs_block_store(
-            "blocks/tags.parquet",
-            BTreeSet::from(["service.name".to_string()]),
-            BTreeMap::from([(
+        let span = span_with_nested_refs();
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/tags.parquet",
+            batch: span_batch(std::slice::from_ref(&span)).unwrap(),
+            trace_ids: &[span.trace_id],
+            tag_names: BTreeSet::from(["service.name".to_string()]),
+            tag_values: BTreeMap::from([(
                 "service.name".to_string(),
                 BTreeSet::from(["api".to_string()]),
             )]),
-        )
+            ..IndexedBlock::default()
+        })
         .await;
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
         assert2::assert!(
             store.tag_names("tenant", None, 0, 10_000).await.unwrap()[0]
                 .tags
@@ -1745,13 +1762,12 @@ mod tests {
     async fn cold_attribute_tag_values_preserve_static_types() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/typed-tags.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/typed-tags.parquet",
             batch,
-            &[span.trace_id],
-            BTreeSet::from(["http.status_code".to_string(), "retryable".to_string()]),
-            BTreeMap::from([
+            trace_ids: &[span.trace_id],
+            tag_names: BTreeSet::from(["http.status_code".to_string(), "retryable".to_string()]),
+            tag_values: BTreeMap::from([
                 (
                     "http.status_code".to_string(),
                     BTreeSet::from(["504".to_string()]),
@@ -1761,7 +1777,8 @@ mod tests {
                     BTreeSet::from(["true".to_string()]),
                 ),
             ]),
-        )
+            ..IndexedBlock::default()
+        })
         .await;
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
@@ -1794,17 +1811,17 @@ mod tests {
     async fn cold_nested_tag_values_scan_event_and_link_attributes() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/nested-tag-values.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/nested-tag-values.parquet",
             batch,
-            &[span.trace_id],
-            BTreeSet::from(["exception.type".into(), "link.kind".into()]),
-            BTreeMap::from([
+            trace_ids: &[span.trace_id],
+            tag_names: BTreeSet::from(["exception.type".into(), "link.kind".into()]),
+            tag_values: BTreeMap::from([
                 ("exception.type".into(), BTreeSet::from(["timeout".into()])),
                 ("link.kind".into(), BTreeSet::from(["retry".into()])),
             ]),
-        )
+            ..IndexedBlock::default()
+        })
         .await;
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
@@ -1847,14 +1864,13 @@ mod tests {
     async fn cold_nested_tag_names_scan_event_and_link_attributes() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/nested-tag-names.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/nested-tag-names.parquet",
             batch,
-            &[span.trace_id],
-            BTreeSet::from(["exception.type".into(), "link.kind".into()]),
-            BTreeMap::new(),
-        )
+            trace_ids: &[span.trace_id],
+            tag_names: BTreeSet::from(["exception.type".into(), "link.kind".into()]),
+            ..IndexedBlock::default()
+        })
         .await;
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
@@ -2056,9 +2072,11 @@ mod tests {
         .unwrap();
         write_row_group_block(
             &object_store,
-            "blocks/row-groups.parquet",
-            span_block_schema(),
-            &[first, second],
+            RowGroupBlock {
+                key: "blocks/row-groups.parquet",
+                schema: span_block_schema(),
+                batches: &[first, second],
+            },
         )
         .await;
 
@@ -2148,9 +2166,11 @@ mod tests {
         .unwrap();
         write_row_group_block(
             &object_store,
-            "blocks/promoted-row-groups.parquet",
-            span_block_schema_with_promoted_attrs(&promoted),
-            &[first, second],
+            RowGroupBlock {
+                key: "blocks/promoted-row-groups.parquet",
+                schema: span_block_schema_with_promoted_attrs(&promoted),
+                batches: &[first, second],
+            },
         )
         .await;
 
@@ -2549,14 +2569,12 @@ mod tests {
     async fn cold_trace_by_id_projects_events_and_links_from_span_blocks() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/spans.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/spans.parquet",
             batch,
-            &[span.trace_id],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+            trace_ids: &[span.trace_id],
+            ..IndexedBlock::default()
+        })
         .await;
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
@@ -2674,14 +2692,12 @@ mod tests {
     async fn trace_by_id_deduplicates_spans_present_in_cold_and_live_tiers() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/dedup.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/dedup.parquet",
             batch,
-            &[span.trace_id],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+            trace_ids: &[span.trace_id],
+            ..IndexedBlock::default()
+        })
         .await;
         let live = LiveTier::new(Arc::new(FakeLiveSource {
             trace: Some(TraceSpans {
@@ -2721,14 +2737,12 @@ mod tests {
         child.parent_span_id = Some(root.span_id);
         child.start_ns = root.start_ns + 10;
         let batch = span_batch(std::slice::from_ref(&root)).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/split-trace-root.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/split-trace-root.parquet",
             batch,
-            &[root.trace_id],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+            trace_ids: &[root.trace_id],
+            ..IndexedBlock::default()
+        })
         .await;
         let live = LiveTier::new(Arc::new(FakeLiveSource {
             trace: Some(TraceSpans {
@@ -2781,14 +2795,12 @@ mod tests {
         child.parent_span_id = Some(root.span_id);
         child.start_ns = 5_000;
         let batch = span_batch(&[root.clone(), child.clone()]).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/straddle.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/straddle.parquet",
             batch,
-            &[root.trace_id],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+            trace_ids: &[root.trace_id],
+            ..IndexedBlock::default()
+        })
         .await;
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
@@ -2820,14 +2832,12 @@ mod tests {
         child.start_ns = root.start_ns + 10;
 
         let cold_batch = span_batch(std::slice::from_ref(&root)).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/split-trace-search-root.parquet",
-            span_block_schema(),
-            cold_batch,
-            &[root.trace_id],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/split-trace-search-root.parquet",
+            batch: cold_batch,
+            trace_ids: &[root.trace_id],
+            ..IndexedBlock::default()
+        })
         .await;
         let live = LiveTier::new(Arc::new(FakeLiveSource {
             trace: None,
@@ -2882,14 +2892,13 @@ mod tests {
         child.start_ns = root.start_ns + 10;
 
         let cold = span_batch_with_promoted_attrs(std::slice::from_ref(&root), &promoted).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/promoted-cold.parquet",
-            span_block_schema_with_promoted_attrs(&promoted),
-            cold,
-            &[root.trace_id],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/promoted-cold.parquet",
+            schema: span_block_schema_with_promoted_attrs(&promoted),
+            batch: cold,
+            trace_ids: &[root.trace_id],
+            ..IndexedBlock::default()
+        })
         .await;
         let live = LiveTier::new(Arc::new(FakeLiveSource {
             trace: None,
@@ -3215,19 +3224,17 @@ mod tests {
             no_event.clone(),
         ])
         .unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/search-events.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/search-events.parquet",
             batch,
-            &[
+            trace_ids: &[
                 matching.trace_id,
                 other.trace_id,
                 split_events.trace_id,
                 no_event.trace_id,
             ],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+            ..IndexedBlock::default()
+        })
         .await;
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
@@ -3441,14 +3448,12 @@ mod tests {
             value: SpanAttrValue::Str("DELETE".into()),
         });
         let batch = span_batch(&[repeated.clone(), other.clone()]).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/search-array-attrs.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/search-array-attrs.parquet",
             batch,
-            &[repeated.trace_id, other.trace_id],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+            trace_ids: &[repeated.trace_id, other.trace_id],
+            ..IndexedBlock::default()
+        })
         .await;
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
@@ -3476,14 +3481,12 @@ mod tests {
             value: SpanAttrValue::Str("us-east-1".into()),
         });
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/search-resource-scope.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/search-resource-scope.parquet",
             batch,
-            &[span.trace_id],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+            trace_ids: &[span.trace_id],
+            ..IndexedBlock::default()
+        })
         .await;
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
@@ -3649,14 +3652,12 @@ mod tests {
             ),
         ];
         let batch = encode_span_rows(&rows).unwrap();
-        let (blocks, index) = write_indexed_block(
-            "blocks/search-block-array-attrs.parquet",
-            span_block_schema(),
+        let (blocks, index) = write_indexed_block(IndexedBlock {
+            key: "blocks/search-block-array-attrs.parquet",
             batch,
-            &[[1; 16], [3; 16]],
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
+            trace_ids: &[[1; 16], [3; 16]],
+            ..IndexedBlock::default()
+        })
         .await;
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());

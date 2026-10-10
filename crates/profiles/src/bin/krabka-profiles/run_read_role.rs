@@ -16,11 +16,19 @@ pub(crate) enum ReadRole {
     QueryFrontend,
 }
 
+/// What a read role runs with.
+pub(crate) struct ReadRoleInputs {
+    pub(crate) cli: Cli,
+    pub(crate) metrics: ServiceMetrics,
+    pub(crate) readiness: RoleReadiness,
+    pub(crate) shutdown: CancellationToken,
+    /// Sets the TLS and authentication of `--listen`, and the TLS and SASL of
+    /// the WAL tail.
+    pub(crate) security: ProcessSecurity,
+}
+
 /// Answers a query from the WAL tail this role keeps and the blocks its index
 /// names, executing it as `role` does.
-///
-/// `security` sets the TLS and authentication of `--listen`, and the TLS and
-/// SASL of the WAL tail.
 ///
 /// # Errors
 /// Returns an error when the object store or the block index cannot be
@@ -28,12 +36,15 @@ pub(crate) enum ReadRole {
 /// before the role was asked to stop.
 pub(crate) async fn run_read_role(
     role: ReadRole,
-    cli: Cli,
-    metrics: ServiceMetrics,
-    readiness: RoleReadiness,
-    shutdown: CancellationToken,
-    security: ProcessSecurity,
+    inputs: ReadRoleInputs,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let ReadRoleInputs {
+        cli,
+        metrics,
+        readiness,
+        shutdown,
+        security,
+    } = inputs;
     let object_store_gate = readiness.gate("object-store");
     let profile_index_gate = readiness.gate("profile-index");
     let overrides =

@@ -22,7 +22,7 @@ use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 use krabka_traces::blockbuilder::{BlockBuilderConsumer, WalConsumerPoll as _};
 use krabka_units::millis;
 
-use self::wal_group::{PARTITIONS, RECORDS_PER_PARTITION, create_topic, fill};
+use self::wal_group::{PARTITIONS, RECORDS_PER_PARTITION, WalFillProducer, create_topic, fill};
 
 const DEADLINE: Duration = Duration::from_mins(1);
 
@@ -36,7 +36,12 @@ async fn a_second_group_member_takes_partitions_and_the_watch_reports_it() {
     let proc = support::start().await;
     let topic = "__traces_rebalance_reported_wal";
     create_topic(&proc.client, topic).await;
-    fill(&proc.bootstrap, topic, "krabka-traces-rebalance-producer").await;
+    fill(WalFillProducer {
+        bootstrap: &proc.bootstrap,
+        topic,
+        client_id: "krabka-traces-rebalance-producer",
+    })
+    .await;
 
     let metrics = WalConsumerMetrics::unregistered();
     let mut first = BlockBuilderConsumer::new(
@@ -75,7 +80,12 @@ async fn the_group_reads_the_first_members_polled_records_again() {
     let proc = support::start().await;
     let topic = "__traces_rebalance_replay_wal";
     create_topic(&proc.client, topic).await;
-    fill(&proc.bootstrap, topic, "krabka-traces-rebalance-producer").await;
+    fill(WalFillProducer {
+        bootstrap: &proc.bootstrap,
+        topic,
+        client_id: "krabka-traces-rebalance-producer",
+    })
+    .await;
 
     let metrics = WalConsumerMetrics::unregistered();
     let mut first = BlockBuilderConsumer::new(

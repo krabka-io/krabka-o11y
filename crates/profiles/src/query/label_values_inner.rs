@@ -1,6 +1,7 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataScope,
-    Principal, ProfileStore, QuerierState, connect_error, is_internal_label, metadata_scope, pb,
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataRequest,
+    MetadataScope, Principal, ProfileStore, QuerierState, connect_error, is_internal_label,
+    metadata_scope, pb,
 };
 
 pub(crate) async fn label_values_inner<S>(
@@ -18,10 +19,13 @@ where
         range,
     } = metadata_scope(
         &state,
-        &principal,
-        &headers,
-        &req.0.matchers,
-        (req.0.start, req.0.end),
+        MetadataRequest {
+            principal: &principal,
+            headers: &headers,
+            matchers: &req.0.matchers,
+            start_ms: req.0.start,
+            end_ms: req.0.end,
+        },
     )?;
     if is_internal_label(&req.0.name) {
         return Ok(ConnectResponse::new(pb::querier::v1::LabelValuesResponse {

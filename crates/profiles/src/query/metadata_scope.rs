@@ -12,15 +12,30 @@ pub(crate) struct MetadataScope {
     pub(crate) range: MetadataRange,
 }
 
+/// The caller and the fields every label-metadata request carries.
+#[derive(Clone, Copy)]
+pub(crate) struct MetadataRequest<'r> {
+    pub(crate) principal: &'r Principal,
+    pub(crate) headers: &'r HeaderMap,
+    pub(crate) matchers: &'r [String],
+    /// Unix milliseconds; `start_ms == end_ms == 0` means an omitted range.
+    pub(crate) start_ms: i64,
+    pub(crate) end_ms: i64,
+}
+
 /// Resolves and authorizes the request's tenant, then parses `matchers` and
 /// validates the `start`/`end` range of a label-metadata request.
 pub(crate) fn metadata_scope<S: ProfileStore>(
     state: &QuerierState<S>,
-    principal: &Principal,
-    headers: &HeaderMap,
-    matchers: &[String],
-    (start_ms, end_ms): (i64, i64),
+    request: MetadataRequest<'_>,
 ) -> Result<MetadataScope, ConnectError> {
+    let MetadataRequest {
+        principal,
+        headers,
+        matchers,
+        start_ms,
+        end_ms,
+    } = request;
     let tenant = tenant_from_headers(headers, &state.tenant_policy)
         .map_err(|error| tenant_connect_error(&error))?;
     authorize_tenant(principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;

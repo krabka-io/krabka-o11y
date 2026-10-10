@@ -126,14 +126,39 @@ mod tests {
         }
     }
 
-    fn state_with_ingestion(rate: f64, burst: u64, max_tenants: usize) -> Arc<DistributorState> {
-        Arc::new(DistributorState {
-max_tracked_tenants: max_tenants,
-..test_state(Arc::new(RecordingSink(Mutex::default())), OverridesProvider::from_yaml(&format!(
-                "overrides:\n  tenant-a:\n    ingestion_rate_profiles_per_sec: {rate}\n    ingestion_burst_profiles: {burst}\n"
-            ))
-            .expect("the overrides parse"))
-})
+    /// A distributor whose `tenant-a` override sets an ingestion rate and
+    /// burst.
+    struct IngestionFixture {
+        rate_profiles_per_sec: f64,
+        burst_profiles: u64,
+        max_tracked_tenants: usize,
+    }
+
+    impl Default for IngestionFixture {
+        fn default() -> Self {
+            Self {
+                rate_profiles_per_sec: 1_000_000.0,
+                burst_profiles: 0,
+                max_tracked_tenants: 4096,
+            }
+        }
+    }
+
+    impl IngestionFixture {
+        fn state(self) -> Arc<DistributorState> {
+            let yaml = format!(
+                "overrides:\n  tenant-a:\n    ingestion_rate_profiles_per_sec: {}\n    \
+                 ingestion_burst_profiles: {}\n",
+                self.rate_profiles_per_sec, self.burst_profiles,
+            );
+            Arc::new(DistributorState {
+                max_tracked_tenants: self.max_tracked_tenants,
+                ..test_state(
+                    Arc::new(RecordingSink(Mutex::default())),
+                    OverridesProvider::from_yaml(&yaml).expect("the overrides parse"),
+                )
+            })
+        }
     }
 
     /// A burst cap rejects an over-sized batch outright, before the token
@@ -148,7 +173,11 @@ max_tracked_tenants: max_tenants,
     /// and the boundary, where a batch of exactly the burst is allowed.
     #[test]
     fn a_burst_cap_rejects_an_over_sized_batch_before_the_bucket() {
-        let state = state_with_ingestion(1_000_000.0, 2, 4096);
+        let state = IngestionFixture {
+            burst_profiles: 2,
+            ..IngestionFixture::default()
+        }
+        .state();
 
         check!(
             super::enforce_ingestion_rate(&state, &tenant("tenant-a"), 2).is_ok(),
@@ -161,7 +190,7 @@ max_tracked_tenants: max_tenants,
 
         // A zero burst means "no burst cap", not "reject everything", so the
         // guard must be `> 0` rather than a plain non-zero test.
-        let unlimited = state_with_ingestion(1_000_000.0, 0, 4096);
+        let unlimited = IngestionFixture::default().state();
         check!(super::enforce_ingestion_rate(&unlimited, &tenant("tenant-a"), 5_000).is_ok());
 
         // A tenant with no override of its own is gated by the defaults, so a
@@ -183,7 +212,11 @@ max_tracked_tenants: max_tenants,
     /// tenant to still be present.
     #[test]
     fn the_bucket_map_evicts_before_admitting_a_tenant_past_its_cap() {
-        let state = state_with_ingestion(1_000_000.0, 0, 2);
+        let state = IngestionFixture {
+            max_tracked_tenants: 2,
+            ..IngestionFixture::default()
+        }
+        .state();
         let rate = krabka_units::Frequency::from_per_sec_u64(10);
         let buckets = |state: &DistributorState| {
             state
@@ -1593,7 +1626,7 @@ mod wal_sink;
 
 use client_facing_message::client_facing_message;
 use connect_error::connect_error;
-use connect_ingest::connect_ingest;
+use connect_ingest::{ConnectIngest, connect_ingest};
 pub(crate) use distributor_state::CumulativeProfileCache;
 pub use distributor_state::DistributorState;
 use enforce_and_reserve_max_series::enforce_and_reserve_max_series;

@@ -961,9 +961,11 @@ async fn start_krabka_pair_with_architecture(
     start_krabka_pair_with_query_options(
         sink,
         store,
-        architecture,
-        architecture == query::PyroscopeQueryArchitecture::V2,
-        true,
+        QuerierQueryMode {
+            architecture,
+            async_queries_enabled: architecture == query::PyroscopeQueryArchitecture::V2,
+            query_analysis_series_enabled: true,
+        },
     )
     .await
 }
@@ -999,15 +1001,23 @@ async fn start_distributor(
     Ok((distributor_addr, distributor_shutdown))
 }
 
-/// A querier over the hot `store` in front of `cold`, with no per-query range
-/// cap. The differential / e2e corpus intentionally queries the full
-/// `[0, i64::MAX]` range to compare against real Pyroscope.
-fn unbounded_querier_state(
-    store: WalTailProfileStore,
+/// The hot store a querier reads in front of its cold one.
+struct ProfileTiers {
+    hot: WalTailProfileStore,
     cold: WalTailProfileStore,
+}
+
+/// A querier over `tiers`, with no per-query range cap. The differential /
+/// e2e corpus intentionally queries the full `[0, i64::MAX]` range to compare
+/// against real Pyroscope.
+fn unbounded_querier_state(
+    tiers: ProfileTiers,
 ) -> QuerierState<UnionProfileStore<WalTailProfileStore, WalTailProfileStore>> {
     QuerierState::new_with_limits(
-        Arc::new(UnionProfileStore::new(Arc::new(store), Arc::new(cold))),
+        Arc::new(UnionProfileStore::new(
+            Arc::new(tiers.hot),
+            Arc::new(tiers.cold),
+        )),
         krabka_profiles::limits::Limits {
             max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
             ..Default::default()
@@ -1015,22 +1025,28 @@ fn unbounded_querier_state(
     )
 }
 
+/// How a Krabka querier answers queries.
+#[derive(Clone, Copy)]
+struct QuerierQueryMode {
+    architecture: query::PyroscopeQueryArchitecture,
+    async_queries_enabled: bool,
+    query_analysis_series_enabled: bool,
+}
+
 async fn start_krabka_pair_with_query_options(
     sink: CapturingSink,
     store: WalTailProfileStore,
-    architecture: query::PyroscopeQueryArchitecture,
-    async_enabled: bool,
-    analysis_enabled: bool,
+    query_mode: QuerierQueryMode,
 ) -> TestResult<KrabkaPair> {
     let cold = sink.cold.clone();
     let (distributor_addr, distributor_shutdown) = start_distributor(sink).await?;
 
     let (querier_shutdown, querier_rx) = oneshot::channel();
     let querier_state = Arc::new(
-        unbounded_querier_state(store, cold)
-            .with_query_architecture(architecture)
-            .with_async_queries_enabled(async_enabled)
-            .with_query_analysis_series_enabled(analysis_enabled),
+        unbounded_querier_state(ProfileTiers { hot: store, cold })
+            .with_query_architecture(query_mode.architecture)
+            .with_async_queries_enabled(query_mode.async_queries_enabled)
+            .with_query_analysis_series_enabled(query_mode.query_analysis_series_enabled),
     );
     let querier_addr = query::serve(
         "127.0.0.1:0".parse()?,
@@ -1071,15 +1087,25 @@ fn timestamp_goroutine_profile(compressed: &[u8], timestamp_nanos: i64) -> TestR
     gzip_bytes(&PprofProfile::from(profile).encode())
 }
 
-/// Posts a `push.v1` JSON `body` to `base`, under `tenant` when one is given,
-/// and fails unless it is accepted. `what` names the push in the error.
-async fn post_push_json(
-    client: &reqwest::Client,
-    base: &str,
-    tenant: Option<&str>,
-    body: &Value,
-    what: &str,
-) -> TestResult {
+/// A `push.v1` JSON push.
+#[derive(Clone, Copy)]
+struct PushJson<'a> {
+    base: &'a str,
+    /// Sent as `X-Scope-OrgID` when given.
+    tenant: Option<&'a str>,
+    body: &'a Value,
+    /// Names the push in the error.
+    what: &'a str,
+}
+
+/// Posts `push` and fails unless it is accepted.
+async fn post_push_json(client: &reqwest::Client, push: PushJson<'_>) -> TestResult {
+    let PushJson {
+        base,
+        tenant,
+        body,
+        what,
+    } = push;
     let mut request = client
         .post(format!("{base}/push.v1.PusherService/Push"))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -1115,7 +1141,16 @@ async fn post_push_profile(
             }]
         }]
     });
-    post_push_json(client, base, tenant, &body, "profile push").await
+    post_push_json(
+        client,
+        PushJson {
+            base,
+            tenant,
+            body: &body,
+            what: "profile push",
+        },
+    )
+    .await
 }
 
 async fn render_any(
@@ -2986,9 +3021,15 @@ fn synthetic_cpu_pprof(time_nanos: i64) -> TestResult<Vec<u8>> {
 }
 
 fn synthetic_cpu_pprof_with_values(time_nanos: i64, values: [i64; 2]) -> TestResult<Vec<u8>> {
-    gzip_bytes(&synthetic_cpu_profile::synthetic_cpu_pprof(
-        time_nanos, values,
-    ))
+    let [hot_value, work_value] = values;
+    gzip_bytes(
+        &synthetic_cpu_profile::SyntheticCpuProfile {
+            time_nanos,
+            hot_value,
+            work_value,
+        }
+        .encode(),
+    )
 }
 
 fn gzip_bytes(bytes: &[u8]) -> TestResult<Vec<u8>> {
@@ -3026,7 +3067,16 @@ async fn post_cpu_profile_with_id(
             }]
         }]
     });
-    post_push_json(client, base, tenant, &body, "cpu profile").await
+    post_push_json(
+        client,
+        PushJson {
+            base,
+            tenant,
+            body: &body,
+            what: "cpu profile",
+        },
+    )
+    .await
 }
 
 struct KrabkaPublic {
@@ -3058,7 +3108,7 @@ async fn start_krabka_public(
     let (distributor_addr, distributor_shutdown) = start_distributor(sink).await?;
 
     let (querier_shutdown, querier_rx) = oneshot::channel();
-    let querier_state = Arc::new(unbounded_querier_state(store, cold));
+    let querier_state = Arc::new(unbounded_querier_state(ProfileTiers { hot: store, cold }));
     let querier_addr = query::serve(
         "0.0.0.0:0".parse()?,
         querier_state,
@@ -3833,7 +3883,16 @@ async fn post_push_typed(
             }]
         }]
     });
-    post_push_json(client, base, tenant, &body, case.name).await
+    post_push_json(
+        client,
+        PushJson {
+            base,
+            tenant,
+            body: &body,
+            what: case.name,
+        },
+    )
+    .await
 }
 
 // -- OTLP `v1development` differential ------------------------------------
@@ -4209,10 +4268,12 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
     compare_populated_diffs(
         evidence,
         &client,
-        &pyroscope_base,
-        &krabka.querier_base,
-        &store,
-        fixture_timestamp,
+        PopulatedBackends {
+            oracle_base: &pyroscope_base,
+            krabka_base: &krabka.querier_base,
+            store: &store,
+            fixture_timestamp,
+        },
     )
     .await?;
 
@@ -4276,16 +4337,29 @@ async fn start_sharded_frontend(
     Ok((format!("http://{frontend}"), shutdown))
 }
 
+/// The two backends of a populated comparison, and the store and fixture
+/// timestamp behind the Krabka one.
+#[derive(Clone, Copy)]
+struct PopulatedBackends<'a> {
+    oracle_base: &'a str,
+    krabka_base: &'a str,
+    store: &'a UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
+    fixture_timestamp: i64,
+}
+
 async fn compare_populated_diffs(
     evidence: &mut Value,
     client: &reqwest::Client,
-    oracle_base: &str,
-    krabka_base: &str,
-    store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
-    fixture_timestamp: i64,
+    backends: PopulatedBackends<'_>,
 ) -> TestResult {
     use pb::querier::v1::{DiffRequest, DiffResponse, SelectMergeStacktracesRequest};
 
+    let PopulatedBackends {
+        oracle_base,
+        krabka_base,
+        store,
+        fixture_timestamp,
+    } = backends;
     let (frontend_base, shutdown) = start_sharded_frontend(store).await?;
     let side = |timestamp| SelectMergeStacktracesRequest {
         profile_type_id: CPU_PROFILE_TYPE.to_string(),
@@ -5875,9 +5949,11 @@ async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> T
         let candidate = start_krabka_pair_with_query_options(
             sink.clone(),
             store.clone(),
-            architecture,
-            false,
-            false,
+            QuerierQueryMode {
+                architecture,
+                async_queries_enabled: false,
+                query_analysis_series_enabled: false,
+            },
         )
         .await?;
         for (service, values) in [

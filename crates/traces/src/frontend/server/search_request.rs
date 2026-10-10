@@ -1,16 +1,19 @@
 use super::{
-    HeaderMap, IntoResponse, Principal, Response, StatusCode, TenantId, TenantPolicy, Uri,
-    request_tenant, required_time_bounds, search_query,
+    IntoResponse, Response, StatusCode, TenantId, TenantRequest, request_tenant,
+    required_time_bounds, search_query,
 };
 
 /// The tenant, the `TraceQL` query, and the time window a search names, or
 /// the response that rejects the search.
 pub(crate) fn search_request(
-    headers: &HeaderMap,
-    principal: &Principal,
-    policy: &TenantPolicy,
-    uri: &Uri,
+    request: TenantRequest<'_>,
 ) -> Result<(TenantId, String, i64, i64), Box<Response>> {
+    let TenantRequest {
+        headers,
+        principal,
+        policy,
+        uri,
+    } = request;
     let tenant = request_tenant(headers, principal, policy)?;
     let query = match search_query(uri) {
         Ok(Some(query)) => query,

@@ -39,7 +39,7 @@ use super::{
     Cli,
     render_roundtrip::{flame_names, flame_ticks, gzip_bytes},
     run,
-    synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, synthetic_cpu_pprof},
+    synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, SyntheticCpuProfile},
     wal_topic::create_wal_topic,
 };
 
@@ -436,13 +436,18 @@ fn push_body(series: &[(&str, i64)]) -> Value {
     let series: Vec<Value> = series
         .iter()
         .map(|(service, at_ms)| {
+            let profile = SyntheticCpuProfile {
+                time_nanos: at_ms * 1_000_000,
+                hot_value: LEAF_VALUE,
+                work_value: SELF_VALUE,
+            };
             json!({
                 "labels": [
                     { "name": "__name__", "value": PROFILE_NAME },
                     { "name": "service_name", "value": service }
                 ],
                 "samples": [{
-                    "rawProfile": BASE64.encode(gzip_bytes(&synthetic_cpu_pprof(at_ms * 1_000_000, [LEAF_VALUE, SELF_VALUE]))),
+                    "rawProfile": BASE64.encode(gzip_bytes(&profile.encode())),
                     "ID": format!("krabka-all-in-one-{service}")
                 }]
             })

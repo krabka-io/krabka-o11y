@@ -32,16 +32,14 @@ pub(crate) fn parse_selected_json_fields(
             .enumerate()
             .filter_map(|(index, extraction)| {
                 let matched = extraction.evaluate(value)?;
-                matched.value.map(|value| {
-                    (
-                        matched.position,
-                        index,
-                        selected_json_value_to_string(value),
-                    )
+                matched.value.map(|matched_json| SelectedField {
+                    position: matched.position,
+                    extraction: index,
+                    extracted_text: selected_json_value_to_string(matched_json),
                 })
             })
             .collect();
-        insert_selected_fields(fields, config, selected, &has_existing);
+        SelectedFields(selected).insert_into(fields, config, &has_existing);
         return;
     }
 
@@ -75,26 +73,49 @@ pub(crate) fn parse_selected_json_fields(
         .values
         .into_iter()
         .enumerate()
-        .filter_map(|(index, value)| value.map(|(position, value)| (position, index, value)))
+        .filter_map(|(index, selected_text)| {
+            selected_text.map(|(position, extracted_text)| SelectedField {
+                position,
+                extraction: index,
+                extracted_text,
+            })
+        })
         .collect();
-    insert_selected_fields(fields, config, selected, &has_existing);
+    SelectedFields(selected).insert_into(fields, config, &has_existing);
 }
 
-/// Inserts the selected values in document order, then fills every requested
-/// destination that is still absent with an empty value.
-fn insert_selected_fields<P: Ord + Copy>(
-    fields: &mut Labels,
-    config: &JsonParserConfig,
-    mut selected: Vec<(P, usize, String)>,
-    has_existing: &impl Fn(&str) -> bool,
-) {
-    selected.sort_by_key(|(position, index, _)| (*position, *index));
-    for (_, index, value) in selected {
-        fields.insert(config.extractions()[index].destination().into(), value);
-    }
-    for extraction in config.extractions() {
-        if !has_existing(extraction.destination()) {
-            insert_raw_parsed_field(fields, extraction.destination(), String::new());
+/// One extracted value, at `position` in the document.
+struct SelectedField<P> {
+    position: P,
+    /// The index of the extraction in the parser config.
+    extraction: usize,
+    extracted_text: String,
+}
+
+/// The values a JSON parser selected from one line.
+struct SelectedFields<P>(Vec<SelectedField<P>>);
+
+impl<P: Ord + Copy> SelectedFields<P> {
+    /// Inserts the selected values in document order, then fills every
+    /// requested destination that is still absent with an empty value.
+    fn insert_into(
+        self,
+        fields: &mut Labels,
+        config: &JsonParserConfig,
+        has_existing: &impl Fn(&str) -> bool,
+    ) {
+        let Self(mut selected) = self;
+        selected.sort_by_key(|field| (field.position, field.extraction));
+        for field in selected {
+            fields.insert(
+                config.extractions()[field.extraction].destination().into(),
+                field.extracted_text,
+            );
+        }
+        for extraction in config.extractions() {
+            if !has_existing(extraction.destination()) {
+                insert_raw_parsed_field(fields, extraction.destination(), String::new());
+            }
         }
     }
 }

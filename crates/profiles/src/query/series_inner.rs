@@ -1,7 +1,7 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataScope,
-    Principal, ProfileStore, QuerierState, client_allows_utf8_label_names, connect_error,
-    is_internal_label, is_legacy_label_name, label_pairs, metadata_scope, pb,
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataRequest,
+    MetadataScope, Principal, ProfileStore, QuerierState, client_allows_utf8_label_names,
+    connect_error, is_internal_label, is_legacy_label_name, label_pairs, metadata_scope, pb,
 };
 
 pub(crate) async fn series_inner<S>(
@@ -24,10 +24,13 @@ where
         range,
     } = metadata_scope(
         &state,
-        &principal,
-        &headers,
-        &req.0.matchers,
-        (req.0.start, req.0.end),
+        MetadataRequest {
+            principal: &principal,
+            headers: &headers,
+            matchers: &req.0.matchers,
+            start_ms: req.0.start,
+            end_ms: req.0.end,
+        },
     )?;
     let mut label_names = req.0.label_names.clone();
     if label_names.is_empty() {

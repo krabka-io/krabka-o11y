@@ -50,7 +50,7 @@ mod metrics_span;
 mod span_store;
 
 use self::{
-    metrics_span::metrics_span,
+    metrics_span::MetricsSpan,
     span_store::{span_store_from_records, traceql_attr},
 };
 
@@ -1309,17 +1309,34 @@ async fn compare_live_numeric_metrics(
     }
 }
 
+/// A set of checkout span searches to run against Tempo and Krabka.
+struct CheckoutSpanSearches<'a> {
+    oracle: &'a str,
+    candidate: &'a str,
+    query_range: &'a str,
+    /// Prefixes each case's stable id in the artifact.
+    case_prefix: &'a str,
+    /// The file name the cases are written to.
+    artifact: &'a str,
+    /// Each case's stable id, its predicate, and the span IDs it must select.
+    search_cases: Vec<(&'a str, &'a str, Vec<&'a str>)>,
+}
+
 // Search Tempo and Krabka for the checkout spans each case's predicate
 // selects, write every case to `artifact` among the undeclared test outputs,
 // and fail when either side does not return exactly the expected span IDs.
 async fn compare_checkout_span_searches(
     client: &reqwest::Client,
-    (oracle, candidate): (&str, &str),
-    query_range: &str,
-    case_prefix: &str,
-    artifact: &str,
-    search_cases: Vec<(&str, &str, Vec<&str>)>,
+    searches: CheckoutSpanSearches<'_>,
 ) -> TestResult {
+    let CheckoutSpanSearches {
+        oracle,
+        candidate,
+        query_range,
+        case_prefix,
+        artifact,
+        search_cases,
+    } = searches;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
     for (stableid, predicate, expected_span_ids) in search_cases {
@@ -1385,32 +1402,35 @@ async fn compare_live_field_arithmetic(
     // predicates provide excluded witnesses for each arithmetic expression.
     compare_checkout_span_searches(
         client,
-        (oracle, candidate),
-        query_range,
-        "tempo-live-arithmetic",
-        "tempo-field-arithmetic-conformance.json",
-        vec![
-            (
-                "multiply-duration",
-                "duration * 2 > duration && name != \"GET /checkout\"",
-                vec![CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-            ),
-            (
-                "divide-duration",
-                "duration / 2 < duration && name = \"SELECT cart\"",
-                vec![CHILD_SPAN_ID_HEX],
-            ),
-            (
-                "add-duration",
-                "duration + duration >= duration && name != \"charge card\"",
-                vec!["0202020202020202", CHILD_SPAN_ID_HEX],
-            ),
-            (
-                "negate-duration",
-                "-duration < 0s && name = \"charge card\"",
-                vec![ERROR_SPAN_ID_HEX],
-            ),
-        ],
+        CheckoutSpanSearches {
+            oracle,
+            candidate,
+            query_range,
+            case_prefix: "tempo-live-arithmetic",
+            artifact: "tempo-field-arithmetic-conformance.json",
+            search_cases: vec![
+                (
+                    "multiply-duration",
+                    "duration * 2 > duration && name != \"GET /checkout\"",
+                    vec![CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "divide-duration",
+                    "duration / 2 < duration && name = \"SELECT cart\"",
+                    vec![CHILD_SPAN_ID_HEX],
+                ),
+                (
+                    "add-duration",
+                    "duration + duration >= duration && name != \"charge card\"",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+                ),
+                (
+                    "negate-duration",
+                    "-duration < 0s && name = \"charge card\"",
+                    vec![ERROR_SPAN_ID_HEX],
+                ),
+            ],
+        },
     )
     .await
 }
@@ -1789,72 +1809,75 @@ async fn compare_live_supported_scopes(
 ) -> TestResult {
     compare_checkout_span_searches(
         client,
-        (oracle, candidate),
-        query_range,
-        "tempo-live-supported",
-        "tempo-supported-scopes-conformance.json",
-        vec![
-            (
-                "event-arithmetic-types",
-                "event.cost + 1 = span.limit",
-                vec!["0202020202020202"],
-            ),
-            (
-                "event-field-comparison",
-                "event.peer = name",
-                vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-            ),
-            (
-                "instrumentation-event-composition",
-                "instrumentation.cost + event.cost > span.limit",
-                vec!["0202020202020202", CHILD_SPAN_ID_HEX],
-            ),
-            (
-                "instrumentation-intrinsic",
-                "instrumentation:name = instrumentation.peer",
-                vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-            ),
-            (
-                "event-time-intrinsic",
-                "event:timeSinceStart * 2 < duration && event:name = name",
-                vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-            ),
-            (
-                "link-arithmetic",
-                "link.cost * 2 = span.limit + 1",
-                vec!["0202020202020202"],
-            ),
-            (
-                "id-intrinsic-composition",
-                "span:id = link:spanID && trace:id = link:traceID",
-                vec!["0202020202020202", CHILD_SPAN_ID_HEX],
-            ),
-            (
-                "trace-child-intrinsic",
-                "trace:duration >= duration && span:childCount + 1 > 2",
-                vec!["0202020202020202"],
-            ),
-            (
-                "trace-root-intrinsic",
-                "trace:rootName = name",
-                vec!["0202020202020202"],
-            ),
-            (
-                "integer-power-outside-range",
-                "span.exponent ^ span.base < 0",
-                vec!["0202020202020202", ERROR_SPAN_ID_HEX],
-            ),
-            (
-                "array-scalar-ordering",
-                "span.numbers > span.limit",
-                vec!["0202020202020202", ERROR_SPAN_ID_HEX],
-            ),
-            (
-                "scalar-array-ordering",
-                "span.limit < span.numbers && name != \"GET /checkout\"",
-                vec![ERROR_SPAN_ID_HEX],
-            ),
-        ],
+        CheckoutSpanSearches {
+            oracle,
+            candidate,
+            query_range,
+            case_prefix: "tempo-live-supported",
+            artifact: "tempo-supported-scopes-conformance.json",
+            search_cases: vec![
+                (
+                    "event-arithmetic-types",
+                    "event.cost + 1 = span.limit",
+                    vec!["0202020202020202"],
+                ),
+                (
+                    "event-field-comparison",
+                    "event.peer = name",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "instrumentation-event-composition",
+                    "instrumentation.cost + event.cost > span.limit",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+                ),
+                (
+                    "instrumentation-intrinsic",
+                    "instrumentation:name = instrumentation.peer",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "event-time-intrinsic",
+                    "event:timeSinceStart * 2 < duration && event:name = name",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "link-arithmetic",
+                    "link.cost * 2 = span.limit + 1",
+                    vec!["0202020202020202"],
+                ),
+                (
+                    "id-intrinsic-composition",
+                    "span:id = link:spanID && trace:id = link:traceID",
+                    vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+                ),
+                (
+                    "trace-child-intrinsic",
+                    "trace:duration >= duration && span:childCount + 1 > 2",
+                    vec!["0202020202020202"],
+                ),
+                (
+                    "trace-root-intrinsic",
+                    "trace:rootName = name",
+                    vec!["0202020202020202"],
+                ),
+                (
+                    "integer-power-outside-range",
+                    "span.exponent ^ span.base < 0",
+                    vec!["0202020202020202", ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "array-scalar-ordering",
+                    "span.numbers > span.limit",
+                    vec!["0202020202020202", ERROR_SPAN_ID_HEX],
+                ),
+                (
+                    "scalar-array-ordering",
+                    "span.limit < span.numbers && name != \"GET /checkout\"",
+                    vec![ERROR_SPAN_ID_HEX],
+                ),
+            ],
+        },
     )
     .await
 }
@@ -2523,22 +2546,24 @@ async fn grafana_service_graph_prometheus_datasource_and_series() -> TestResult 
 /// `GET /checkout` → `SELECT cart` models.
 fn service_graph_series_for_seed_edge() -> Vec<Series> {
     let mut store = EdgeStore::new(&MetricsGenConfig::default());
-    let client = metrics_span(
-        "checkout-frontend",
-        [0xA; 8],
-        [0; 8],
-        MetricsSpanKind::Client,
-        MetricsStatusCode::Ok,
-        10_000_000,
-    );
-    let server = metrics_span(
-        "cart-backend",
-        [0xB; 8],
-        [0xA; 8],
-        MetricsSpanKind::Server,
-        MetricsStatusCode::Ok,
-        8_000_000,
-    );
+    let client = MetricsSpan {
+        service: "checkout-frontend",
+        span_id: [0xA; 8],
+        parent: [0; 8],
+        kind: MetricsSpanKind::Client,
+        status: MetricsStatusCode::Ok,
+        duration_ns: 10_000_000,
+    }
+    .record();
+    let server = MetricsSpan {
+        service: "cart-backend",
+        span_id: [0xB; 8],
+        parent: [0xA; 8],
+        kind: MetricsSpanKind::Server,
+        status: MetricsStatusCode::Ok,
+        duration_ns: 8_000_000,
+    }
+    .record();
     assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
     assert2::assert!(store.record_span(&server, 1) == RecordOutcome::Completed);
     store.drain(1_000)

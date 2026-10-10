@@ -38,7 +38,7 @@ use tokio_util::sync::CancellationToken;
 
 use self::{
     hooked_store::{HookedStore, StoreHooks},
-    span_fixture::span,
+    span_fixture::FixtureSpan,
 };
 
 fn rec(
@@ -50,7 +50,13 @@ fn rec(
 ) -> SpanRecord {
     SpanRecord {
         tenant: tenant.into(),
-        span: span(trace_id, span_id, parent, start_ns),
+        span: FixtureSpan {
+            trace_id,
+            span_id,
+            parent,
+            start_ns,
+        }
+        .build(),
     }
 }
 
@@ -861,15 +867,25 @@ fn recording_store() -> (EventLog, Arc<dyn ObjectStore>) {
     (events, store)
 }
 
-// Run the block builder over one poll of two `tenant-a` spans of one trace,
-// below the flush threshold, so the only flush is the shutdown drain. Returns
-// the run's result and the count of its offset commits.
-async fn run_two_span_poll(
+/// What `run_two_span_poll` runs the block builder with.
+struct TwoSpanPoll<'a> {
     writer: BlockWriter,
     index: Arc<Mutex<TraceIndex>>,
     object_store: Arc<dyn ObjectStore>,
-    events: &EventLog,
-) -> (Result<(), TracesError>, Arc<AtomicUsize>) {
+    /// Where the consumer records its commits.
+    events: &'a EventLog,
+}
+
+// Run the block builder over one poll of two `tenant-a` spans of one trace,
+// below the flush threshold, so the only flush is the shutdown drain. Returns
+// the run's result and the count of its offset commits.
+async fn run_two_span_poll(poll: TwoSpanPoll<'_>) -> (Result<(), TracesError>, Arc<AtomicUsize>) {
+    let TwoSpanPoll {
+        writer,
+        index,
+        object_store,
+        events,
+    } = poll;
     let shutdown = CancellationToken::new();
     let commit_calls = Arc::new(AtomicUsize::new(0));
     let batch = vec![
@@ -903,8 +919,13 @@ async fn run_commits_offsets_only_after_a_durable_block_write() {
 
     // One poll of two spans for the same trace, well below the flush threshold,
     // so the only flush+commit happens on the shutdown drain.
-    let (result, commit_calls) =
-        run_two_span_poll(writer, Arc::clone(&index), object_store.clone(), &events).await;
+    let (result, commit_calls) = run_two_span_poll(TwoSpanPoll {
+        writer,
+        index: Arc::clone(&index),
+        object_store: object_store.clone(),
+        events: &events,
+    })
+    .await;
     result.unwrap();
 
     // Commit happened exactly once.
@@ -1014,8 +1035,13 @@ async fn run_commits_exactly_once_after_the_object_store_recovers() {
         BlockWriter::with_retry_policy(object_store.clone(), ObjectStoreRetryPolicy::immediate(4));
     let index = Arc::new(Mutex::new(TraceIndex::new()));
 
-    let (result, commit_calls) =
-        run_two_span_poll(writer, Arc::clone(&index), object_store.clone(), &events).await;
+    let (result, commit_calls) = run_two_span_poll(TwoSpanPoll {
+        writer,
+        index: Arc::clone(&index),
+        object_store: object_store.clone(),
+        events: &events,
+    })
+    .await;
     result.expect("the flush rides out the transient failures");
 
     // The write really was attempted more than once ...

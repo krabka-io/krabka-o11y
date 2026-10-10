@@ -398,7 +398,7 @@ mod tests {
         let mut input_keys = Vec::new();
         for (offset, value) in [(0, 5), (1, 7)] {
             let rec = record("t", "api", vec![0], value);
-            let meta = build_test_block(&store, std::slice::from_ref(&rec), (offset, offset)).await;
+            let meta = build_test_block(&store, std::slice::from_ref(&rec), offset).await;
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
             index
                 .add_series("t", labels.fingerprint(), &labels)
@@ -469,8 +469,8 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec_a = record("t", "api", vec![0], 5);
         let rec_b = record("t", "api", vec![0], 7);
-        let meta_a = build_test_block(&store, std::slice::from_ref(&rec_a), (0, 0)).await;
-        let meta_b = build_test_block(&store, std::slice::from_ref(&rec_b), (1, 1)).await;
+        let meta_a = build_test_block(&store, std::slice::from_ref(&rec_a), 0).await;
+        let meta_b = build_test_block(&store, std::slice::from_ref(&rec_b), 1).await;
         let index = index_with_series([&rec_a], &[&meta_a, &meta_b]);
         let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
         let engine = FlameEngine::new(cold, EngineOpts::default());
@@ -486,7 +486,7 @@ mod tests {
 
     async fn single_block_cold_store(records: &[ProfileRecord]) -> ColdProfileStore {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let meta = build_test_block(&store, records, (0, 0)).await;
+        let meta = build_test_block(&store, records, 0).await;
         let index = index_with_series(records, &[&meta]);
         ColdProfileStore::new(store, Arc::new(index))
     }
@@ -557,8 +557,8 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let early = record_at("t", "api", vec![0], 5, 1_000_000_000); // 1000 ms
         let late = record_at("t", "worker", vec![0], 7, 5_000_000_000); // 5000 ms
-        let meta_early = build_test_block(&store, std::slice::from_ref(&early), (0, 0)).await;
-        let meta_late = build_test_block(&store, std::slice::from_ref(&late), (1, 1)).await;
+        let meta_early = build_test_block(&store, std::slice::from_ref(&early), 0).await;
+        let meta_late = build_test_block(&store, std::slice::from_ref(&late), 1).await;
         assert!(meta_early.min_ts == 1000 && meta_early.max_ts == 1000);
         assert!(meta_late.min_ts == 5000 && meta_late.max_ts == 5000);
         let index = index_with_series([&early, &late], &[&meta_early, &meta_late]);
@@ -718,7 +718,7 @@ mod tests {
         let api = record_at("t", "api", vec![0], 5, 1_000_000_000);
         let worker = record_at("t", "worker", vec![0], 7, 3_000_000_000);
         let records = vec![api.clone(), worker.clone()];
-        let meta = build_test_block(&store, &records, (0, 0)).await;
+        let meta = build_test_block(&store, &records, 0).await;
         let index = index_with_series(&records, &[&meta]);
         store
             .delete(&Path::from(meta.object_key.clone()))

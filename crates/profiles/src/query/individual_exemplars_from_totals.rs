@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, ExemplarSource, ProfileError, Time, bucket_exemplars, pb, step_bucket_ms,
-    types_label_pairs,
+    BTreeMap, BucketExemplars, ExemplarRow, ExemplarSource, ProfileError, Time, bucket_exemplars,
+    pb, step_bucket_ms, types_label_pairs,
 };
 
 pub(crate) async fn individual_exemplars_from_totals(
@@ -10,11 +10,11 @@ pub(crate) async fn individual_exemplars_from_totals(
     profile_id: &str,
 ) -> Result<BTreeMap<i64, Vec<pb::types::v1::Exemplar>>, ProfileError> {
     let label_pairs = types_label_pairs(labels.to_vec());
-    bucket_exemplars(
+    bucket_exemplars(BucketExemplars {
         scan,
-        ExemplarSource::Profiles,
-        |timestamp| Some(step_bucket_ms(timestamp, step)),
-        |row| pb::types::v1::Exemplar {
+        source: ExemplarSource::Profiles,
+        bucket: |timestamp| Some(step_bucket_ms(timestamp, step)),
+        exemplar: |row: ExemplarRow| pb::types::v1::Exemplar {
             timestamp: row.timestamp,
             profile_id: profile_id.to_string(),
             span_id: row.span_id,
@@ -22,6 +22,6 @@ pub(crate) async fn individual_exemplars_from_totals(
             value: row.value,
             labels: label_pairs.clone(),
         },
-    )
+    })
     .await
 }
