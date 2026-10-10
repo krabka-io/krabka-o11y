@@ -1535,3 +1535,34 @@ use RAM to fit this VM's disk capacity; they are removed or moved to verified
 disk artifacts before timing. Successful test executables are hashed and
 removed, with compiler commands and logs retained. Fixture and WAL storage
 remain unchanged; a fresh native upstream comparison remains unfinished.
+
+## Filesystem scope and explicit workspace repeat
+
+The frontend timing runners above did not set `TMPDIR`. This VM's default
+temporary directory resolves to `/tmp`, mounted as tmpfs. Ambient `TMPDIR`
+was not recorded for each earlier process, so those timings must be treated
+as warmed tmpfs Parquet rather than disk-backed storage. CPU and allocation
+runners explicitly used the workspace on the root overlay filesystem.
+The tracked frontend records now qualify that distinction. Frozen raw files
+and their hashes remain unchanged, including earlier annotations that
+incorrectly called the timed fixtures disk-backed. Native WAL locations and
+Loki's default disk guard were unaffected.
+
+The [explicit workspace repeat](../qualification/disk-frontend-scope-2026-10-10.json)
+sets and records `TMPDIR=/workspace/scratch/disk-frontend-fixtures`, verifies
+the overlay mount, and compares the same three retained executables at one
+million rows. Nine complete response checks pass. Each version occupies
+each order position once across three triples; fixture construction and
+ledger verification precede timing and warm the files.
+
+| Retained version | Median broad request | Median paired ratio |
+| --- | --- | --- |
+| Before response copying optimization | 13.574 s | Reference |
+| Owned response values | 11.164 s | 0.8224 versus reference |
+| Owned values plus limit fast path | 10.801 s | 0.9287 versus owned values; 0.7980 versus reference |
+
+Both changes improve in every triple, with disjoint ranges between adjacent
+versions. This supports the retained optimizations on explicitly selected,
+warmed workspace storage. Three observations per version do not qualify
+cold storage, network I/O, concurrent ingest, sharded requests, or native
+upstream parity. No new CPU or allocation captures are taken in this repeat.

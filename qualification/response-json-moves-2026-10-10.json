@@ -558,5 +558,14 @@
     "bytes": 822860429,
     "scope": "Every file in this evidence directory except manifest; baseline executable and build proof remain in separately frozen single-shard evidence"
   },
-  "decision": "Retain: both largest broad cases improve in every pair with disjoint ranges; allocation calls fall. Small overlapping control regressions remain explicit; no fresh native upstream comparison."
+  "decision": "Retain: both largest broad cases improve in every pair with disjoint ranges; allocation calls fall. Small overlapping control regressions remain explicit; no fresh native upstream comparison.",
+  "filesystem_scope": {
+    "correction_date": "2026-10-10",
+    "timing_fixture": "Default std::env::temp_dir; runners do not set TMPDIR. Current VM environment resolves /tmp on tmpfs, so earlier timings are treated as warmed tmpfs Parquet, not disk-backed storage. Ambient TMPDIR was not captured per process.",
+    "profile_fixture": "CPU/allocation runners explicitly use workspace TMPDIR on the root overlay filesystem",
+    "unchanged": "Both timing variants share the same runner environment; no fixture or WAL relocation occurred during these experiments",
+    "limitation": "Timing and profiling fixture filesystems differ; do not use these timings to qualify disk latency or native upstream parity",
+    "disk_repeat": "qualification/disk-frontend-scope-2026-10-10.json",
+    "raw_preservation": "Frozen raw records and hashes are unchanged, including earlier source-state annotations that incorrectly describe timed fixtures as on disk"
+  }
 }
