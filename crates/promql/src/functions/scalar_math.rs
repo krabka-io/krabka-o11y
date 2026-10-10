@@ -208,6 +208,7 @@ mod tests {
 }
 
 mod clamp_float;
+mod prometheus_sgn;
 mod register_scalar_math_udfs;
 mod round_to_nearest;
 mod scalar_math_op;
@@ -215,6 +216,7 @@ mod scalar_math_udf;
 mod scalar_math_udfs;
 
 pub(crate) use clamp_float::clamp_float;
+pub(crate) use prometheus_sgn::prometheus_sgn;
 pub use register_scalar_math_udfs::register_scalar_math_udfs;
 use round_to_nearest::round_to_nearest;
 pub use scalar_math_op::ScalarMathOp;

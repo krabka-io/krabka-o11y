@@ -4,15 +4,7 @@ use super::*;
 pub(crate) fn histogram_cell_matches_get_over_a_pre_sliced_backing_array() {
     let rows = native_histogram_rows();
     let batch = encode_native_histograms(&rows).unwrap();
-    let histograms = Arc::new(StructArray::from(
-        batch
-            .schema()
-            .fields()
-            .iter()
-            .cloned()
-            .zip(batch.columns().iter().cloned())
-            .collect::<Vec<_>>(),
-    )) as ArrayRef;
+    let histograms = native_histogram_struct_array(&batch);
     let sliced = histograms.slice(1, 2);
     let range_array = RangeArray::from_ranges(sliced, [(0_u32, 1_u32), (1, 1)]).unwrap();
 

@@ -1,19 +1,13 @@
 //! `SeriesNormalize`: applies the offset, sorts by timestamp, and drops stale values.
 
-use std::{fmt, sync::Arc};
-
-use arrow::{array::Float64Array, record_batch::RecordBatch};
-use datafusion::{
-    common::{DataFusionError, Result as DfResult},
-    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
-};
-
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use assert2::check;
     use datafusion::{
         logical_expr::{Extension, LogicalPlan, UserDefinedLogicalNodeCore, col},
-        physical_plan::display::DisplayableExecutionPlan,
+        physical_plan::{ExecutionPlan, display::DisplayableExecutionPlan},
     };
 
     use super::*;

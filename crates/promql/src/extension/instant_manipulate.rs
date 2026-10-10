@@ -1,20 +1,15 @@
 //! `InstantManipulate`: step-grid instant-vector lookback selection.
 
-use std::{fmt, sync::Arc};
-
-use arrow::{array::Float64Array, record_batch::RecordBatch};
-use datafusion::{
-    common::{DataFusionError, Result as DfResult},
-    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
-};
-
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use arrow::record_batch::RecordBatch;
     use assert2::check;
     use datafusion::{
         datasource::memory::MemorySourceConfig,
         logical_expr::{Extension, LogicalPlan, UserDefinedLogicalNodeCore, col},
-        physical_plan::{collect, display::DisplayableExecutionPlan},
+        physical_plan::{ExecutionPlan, collect, display::DisplayableExecutionPlan},
         prelude::SessionContext,
     };
 

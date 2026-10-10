@@ -2,7 +2,6 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{
     extract::{RawQuery, State},
-    http::HeaderMap,
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
@@ -10,7 +9,7 @@ use serde_json::{Value, json};
 use url::form_urlencoded;
 
 use super::{
-    ApiError, Extension, Principal, PrometheusApiState, Rejection, RequestAuth, apply_limit,
+    ApiError, PrometheusApiState, Rejection, RequestAuth, RequestCaller, apply_limit,
     parse_limit_parameter, success_data_response,
 };
 use crate::{MetricStore, store::MetadataRecord};

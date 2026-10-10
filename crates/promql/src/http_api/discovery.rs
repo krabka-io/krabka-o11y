@@ -2,16 +2,16 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{
     body::Bytes,
-    extract::{Path, RawQuery, State},
+    extract::{Path, State},
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
 
 use super::{
-    ApiError, DiscoveryParams, Extension, Principal, PrometheusApiState, Rejection, RequestAuth,
-    apply_limit, discovery_matchers, discovery_window, enforce_query_range_limit,
-    enforce_selected_series_limit, labels_json, labels_key, parse_discovery_form,
-    parse_discovery_params, record_query_response, success_data_response,
+    ApiError, DiscoveryParams, Extension, ParsedQuery, Principal, PrometheusApiState, Rejection,
+    RequestAuth, RequestCaller, apply_limit, discovery_matchers, discovery_window,
+    enforce_query_range_limit, enforce_selected_series_limit, labels_json, labels_key,
+    parse_discovery_form, record_query_response, success_data_response,
 };
 use crate::MetricStore;
 
@@ -30,7 +30,7 @@ mod series_dispatch;
 mod series_inner;
 mod series_post;
 
-use discovery_scope::{DiscoveryLimits, DiscoveryScope, discovery_scope, limit_discovery_results};
+use discovery_scope::{discovery_response, discovery_scope, limit_discovery_results};
 pub(super) use label_values::label_values;
 use label_values_dispatch::label_values_dispatch;
 use label_values_inner::label_values_inner;

@@ -1,7 +1,12 @@
-use super::{
-    Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, Float64Array,
-    NanSamples, PlanProperties, RecordBatch, SeriesNormalizeSettings, fmt,
+use std::{fmt, sync::Arc};
+
+use arrow::{array::Float64Array, record_batch::RecordBatch};
+use datafusion::{
+    common::{DataFusionError, Result as DfResult},
+    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
 };
+
+use super::{NanSamples, SeriesNormalizeSettings};
 use crate::extension::{RowSelection, TimeColumn, take_rows_with_timestamps};
 
 /// Physical node that normalizes single-series batches.

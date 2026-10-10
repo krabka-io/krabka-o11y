@@ -29,4 +29,4 @@ mod typed_accessor_matches_get_over_a_pre_sliced_backing_array;
 mod value_slice_reads_typed_float_cells;
 mod windows_slice_the_backing_array;
 
-use native_histogram_rows::native_histogram_rows;
+use native_histogram_rows::{native_histogram_rows, native_histogram_struct_array};

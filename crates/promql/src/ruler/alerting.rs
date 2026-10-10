@@ -24,8 +24,7 @@ mod expand_alert_label_map;
 mod labels_to_map;
 mod template_query_value;
 
-use evaluate_alerting_rule_with_state_and_sink::evaluate_alerting_rule_with_state_and_sink;
-pub(crate) use evaluate_alerting_rule_with_state_and_sink::evaluate_and_persist_alerting_rule_with_state_and_wal;
+pub(crate) use evaluate_alerting_rule_with_state_and_sink::evaluate_alerting_rule_with_state_and_sink;
 pub use evaluate_and_dispatch_alerting_rule::evaluate_and_dispatch_alerting_rule;
 pub use evaluate_and_dispatch_alerting_rule_group::evaluate_and_dispatch_alerting_rule_group;
 pub use evaluate_and_dispatch_alerting_rule_with_state::evaluate_and_dispatch_alerting_rule_with_state;

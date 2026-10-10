@@ -48,6 +48,25 @@ macro_rules! single_input_exec_plumbing {
 /// new child, and maps each input batch through `self.$transform_batch`. Like
 /// [`single_input_exec_plumbing`], it is a macro because it writes trait
 /// methods.
+/// Expands to the `UserDefinedLogicalNodeCore` methods a single-input logical
+/// node shares when it passes its `input` schema through unchanged and takes
+/// no expressions.
+macro_rules! pass_through_logical_node_plumbing {
+    () => {
+        fn inputs(&self) -> Vec<&::datafusion::logical_expr::LogicalPlan> {
+            vec![&self.input]
+        }
+
+        fn schema(&self) -> &::datafusion::common::DFSchemaRef {
+            self.input.schema()
+        }
+
+        fn expressions(&self) -> Vec<::datafusion::logical_expr::Expr> {
+            vec![]
+        }
+    };
+}
+
 macro_rules! settings_batch_exec_methods {
     ($transform_batch:ident) => {
         fn maintains_input_order(&self) -> Vec<bool> {
@@ -99,5 +118,5 @@ mod test_support;
 
 pub(crate) use batch_rows::{RowSelection, TimeColumn, map_batches, take_rows_with_timestamps};
 pub(crate) use is_stale_nan::is_stale_nan;
-pub(crate) use only_child::only_child;
+pub(crate) use only_child::{only_child, only_logical_input};
 pub(crate) use stale_nan_bits::STALE_NAN_BITS;

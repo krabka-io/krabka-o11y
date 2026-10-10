@@ -40,6 +40,7 @@ mod store_with_labeled_series;
 mod store_with_series;
 mod store_with_series_multi;
 mod tenant;
+mod tenant_cardinality;
 mod tenant_id;
 
 pub(crate) use eval_instant::eval_instant;
@@ -51,4 +52,5 @@ use spans_and_counts::spans_and_counts;
 pub(crate) use store_with_series::store_with_series;
 pub(crate) use store_with_series_multi::store_with_series_multi;
 use tenant::TENANT;
+pub(crate) use tenant_cardinality::{ExpectedCardinality, assert_tenant_cardinality};
 pub(crate) use tenant_id::tenant_id;

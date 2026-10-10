@@ -435,6 +435,7 @@ mod apply_histogram_reduction;
 mod bucket_overlap_fraction;
 mod classic_bucket;
 mod classic_bucket_bound;
+mod classic_bucket_groups;
 mod classic_histogram_buckets;
 mod classic_histogram_fraction;
 mod classic_histogram_quantile;
@@ -486,6 +487,9 @@ use apply_histogram_reduction::{HistogramReducers, apply_histogram_reduction};
 use bucket_overlap_fraction::bucket_overlap_fraction;
 use classic_bucket::ClassicBucket;
 use classic_bucket_bound::classic_bucket_bound;
+use classic_bucket_groups::{
+    ClassicBucketGroups, find_mixed_histogram_keys, group_classic_bucket_sample,
+};
 use classic_histogram_buckets::classic_histogram_buckets;
 use classic_histogram_fraction::classic_histogram_fraction;
 use classic_histogram_quantile::classic_histogram_quantile;

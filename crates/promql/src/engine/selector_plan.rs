@@ -14,7 +14,7 @@ use crate::{
     error::Result,
     functions::OverTimeFamily,
     planner::{
-        RangeWindowGrid, StepGrid,
+        LabeledSeries, RangeWindowGrid, StepGrid,
         leaf::{InstantSelectorPlan, plan_instant_vector_selector},
         over_time_range::{OverTimeFold, OverTimeRangePlan, plan_over_time_range_selector},
         rate_range::{RateRangePlan, RateUdfKind, plan_rate_range_selector},
@@ -170,36 +170,15 @@ impl<S: MetricStore> PromqlEngine<S> {
         at: MatrixSelectorAt<'_>,
         kind: RateUdfKind,
     ) -> Result<PlannedInstant> {
-        let MatrixSelectorAt { selector, time_ms } = at;
         // Inside a range query this leaf is planned once over the whole step
         // grid; see `plan_instant_selector`.
         if let Some(samples) = self.grid_rate_vector(tenant, at, kind).await? {
             return Ok(PlannedInstant::Precomputed(samples));
         }
-        let range = selector_duration(selector.range)?;
-        let eval_end_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.vs.at.as_ref(),
-            selector.vs.offset.as_ref(),
-            None,
-        )?;
-        let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
-        let matcher_sets = label_matcher_sets(&selector.vs);
-        // Stale-NaN markers are dropped over the exact range window, matching
-        // `eval_matrix_selector`; genuine NaN is carried through (the operator
-        // chain does not filter NaN), as the interpreter does.
-        let samples = self
-            .labeled_series_sets(LabeledSeriesScan {
-                tenant,
-                matcher_sets: &matcher_sets,
-                after_ms: range_start_ms,
-                through_ms: eval_end_ms,
-                stale_markers: StaleMarkers::Drop,
-            })
-            .await?;
+        let MatrixRangeScan { series, window } = self.scan_matrix_range(tenant, at).await?;
 
         if matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
-            for series in samples.iter().filter(|series| series.samples.len() >= 2) {
+            for series in series.iter().filter(|series| series.samples.len() >= 2) {
                 emit_metric_might_not_be_counter_info(
                     &series.labels,
                     TypeAndUnitLabels::from_engine_opts(&self.opts),
@@ -211,15 +190,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             ctx,
             plan,
             labels_by_fp,
-        } = plan_rate_range_selector(
-            samples,
-            RangeWindowGrid {
-                grid: StepGrid::instant(eval_end_ms, range.millis_i64()),
-                range,
-            },
-            kind,
-        )
-        .await?;
+        } = plan_rate_range_selector(series, window, kind).await?;
         Ok(PlannedInstant::operator(
             ctx,
             plan,
@@ -242,47 +213,18 @@ impl<S: MetricStore> PromqlEngine<S> {
         at: MatrixSelectorAt<'_>,
         over_time: OverTimeFold,
     ) -> Result<PlannedInstant> {
-        let MatrixSelectorAt { selector, time_ms } = at;
         // Inside a range query this leaf is planned once over the whole step
         // grid; see `plan_instant_selector`.
         if let Some(samples) = self.grid_over_time_vector(tenant, at, over_time).await? {
             return Ok(PlannedInstant::Precomputed(samples));
         }
-        let range = selector_duration(selector.range)?;
-        let eval_end_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.vs.at.as_ref(),
-            selector.vs.offset.as_ref(),
-            None,
-        )?;
-        let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
-        let matcher_sets = label_matcher_sets(&selector.vs);
-        // Stale-NaN markers are dropped over the exact range window, matching
-        // `eval_matrix_selector`; genuine NaN is carried through, as the
-        // interpreter does.
-        let samples = self
-            .labeled_series_sets(LabeledSeriesScan {
-                tenant,
-                matcher_sets: &matcher_sets,
-                after_ms: range_start_ms,
-                through_ms: eval_end_ms,
-                stale_markers: StaleMarkers::Drop,
-            })
-            .await?;
+        let MatrixRangeScan { series, window } = self.scan_matrix_range(tenant, at).await?;
 
         let OverTimeRangePlan {
             ctx,
             plan,
             labels_by_fp,
-        } = plan_over_time_range_selector(
-            samples,
-            RangeWindowGrid {
-                grid: StepGrid::instant(eval_end_ms, range.millis_i64()),
-                range,
-            },
-            over_time,
-        )
-        .await?;
+        } = plan_over_time_range_selector(series, window, over_time).await?;
         Ok(PlannedInstant::operator(
             ctx,
             plan,
@@ -349,5 +291,53 @@ impl<S: MetricStore> PromqlEngine<S> {
         Ok(PlannedInstant::Precomputed(apply_outer_range_fn(
             range, outer, time_ms,
         )))
+    }
+}
+
+/// The series a matrix selector reads over one instant's range window.
+struct MatrixRangeScan {
+    /// The matched series, stale markers dropped.
+    series: Vec<LabeledSeries>,
+    /// The single-step window the series were scanned over.
+    window: RangeWindowGrid,
+}
+
+impl<S: MetricStore> PromqlEngine<S> {
+    /// Scans a matrix selector over exactly `(eval_time - range, eval_time]`.
+    ///
+    /// Stale-NaN markers are dropped over the exact range window, matching
+    /// `eval_matrix_selector`; genuine NaN is carried through (the operator
+    /// chain does not filter NaN), as the interpreter does.
+    async fn scan_matrix_range(
+        &self,
+        tenant: &str,
+        at: MatrixSelectorAt<'_>,
+    ) -> Result<MatrixRangeScan> {
+        let MatrixSelectorAt { selector, time_ms } = at;
+        let range = selector_duration(selector.range)?;
+        let eval_end_ms = apply_selector_time_modifier(
+            time_ms,
+            selector.vs.at.as_ref(),
+            selector.vs.offset.as_ref(),
+            None,
+        )?;
+        let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
+        let matcher_sets = label_matcher_sets(&selector.vs);
+        let series = self
+            .labeled_series_sets(LabeledSeriesScan {
+                tenant,
+                matcher_sets: &matcher_sets,
+                after_ms: range_start_ms,
+                through_ms: eval_end_ms,
+                stale_markers: StaleMarkers::Drop,
+            })
+            .await?;
+        Ok(MatrixRangeScan {
+            series,
+            window: RangeWindowGrid {
+                grid: StepGrid::instant(eval_end_ms, range.millis_i64()),
+                range,
+            },
+        })
     }
 }

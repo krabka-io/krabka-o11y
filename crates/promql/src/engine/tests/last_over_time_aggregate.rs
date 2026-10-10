@@ -758,6 +758,38 @@ async fn last_over_time_aggregate_accepts_nonreserved_and_unicode_label_names() 
     }
 }
 
+/// What a one-series aggregate answers at 2ms under a two-sample cap.
+#[derive(Clone, Copy)]
+enum CappedOutcome {
+    /// The aggregate fits the cap and answers this unnamed value.
+    Value(f64),
+    /// The query reads three samples and exceeds the cap of two.
+    SamplesPerQueryExceeded,
+}
+
+/// Checks that `query` for tenant `t` at 2ms answers `outcome`.
+async fn check_capped_aggregate<S: crate::MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+    outcome: CappedOutcome,
+) {
+    let actual = engine
+        .query_instant_with_annotations(&tenant_id("t"), query, 2)
+        .await;
+    match outcome {
+        CappedOutcome::Value(value) => assert2::assert!(
+            actual.unwrap() == (vector(2, &[(&[], value)]), Annotations::default())
+        ),
+        CappedOutcome::SamplesPerQueryExceeded => assert2::assert!(matches!(
+            actual,
+            Err(PromqlError::Limit(LimitError::SamplesPerQueryExceeded {
+                limit: 2,
+                observed: 3
+            }))
+        )),
+    }
+}
+
 #[tokio::test]
 async fn last_over_time_aggregate_preserves_duplicate_stale_history_and_raw_caps() {
     let mut hot = InMemoryMetricStore::new();
@@ -776,22 +808,9 @@ async fn last_over_time_aggregate_preserves_duplicate_stale_history_and_raw_caps
             },
         );
         for query in ["sum(last_over_time(m[2ms]))", "avg(last_over_time(m[2ms]))"] {
-            let actual = engine
-                .query_instant_with_annotations(&tenant_id("t"), query, 2)
-                .await;
-            if let Some(value) = expected {
-                assert2::assert!(
-                    actual.unwrap() == (vector(2, &[(&[], value)]), Annotations::default())
-                );
-            } else {
-                assert2::assert!(matches!(
-                    actual,
-                    Err(PromqlError::Limit(LimitError::SamplesPerQueryExceeded {
-                        limit: 2,
-                        observed: 3
-                    }))
-                ));
-            }
+            let outcome =
+                expected.map_or(CappedOutcome::SamplesPerQueryExceeded, CappedOutcome::Value);
+            check_capped_aggregate(&engine, query, outcome).await;
         }
     }
     // The production merged scan chooses the first hot duplicate, and its
@@ -816,22 +835,12 @@ async fn last_over_time_aggregate_preserves_duplicate_stale_history_and_raw_caps
             ("sum(last_over_time(m[2ms]))", 13.0),
             ("avg(last_over_time(m[2ms]))", 6.5),
         ] {
-            let actual = engine
-                .query_instant_with_annotations(&tenant_id("t"), query, 2)
-                .await;
-            if accepted {
-                assert2::assert!(
-                    actual.unwrap() == (vector(2, &[(&[], value)]), Annotations::default())
-                );
+            let outcome = if accepted {
+                CappedOutcome::Value(value)
             } else {
-                assert2::assert!(matches!(
-                    actual,
-                    Err(PromqlError::Limit(LimitError::SamplesPerQueryExceeded {
-                        limit: 2,
-                        observed: 3
-                    }))
-                ));
-            }
+                CappedOutcome::SamplesPerQueryExceeded
+            };
+            check_capped_aggregate(&engine, query, outcome).await;
         }
     }
 }

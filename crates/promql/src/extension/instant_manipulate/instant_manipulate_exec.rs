@@ -1,7 +1,12 @@
-use super::{
-    Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, Float64Array,
-    InstantManipulateSettings, PlanProperties, RecordBatch, fmt,
+use std::{fmt, sync::Arc};
+
+use arrow::{array::Float64Array, record_batch::RecordBatch};
+use datafusion::{
+    common::{DataFusionError, Result as DfResult},
+    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
 };
+
+use super::InstantManipulateSettings;
 use crate::extension::{RowSelection, TimeColumn, take_rows_with_timestamps};
 
 /// Physical node that emits one selected sample per valid grid step.

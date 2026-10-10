@@ -8,20 +8,19 @@ use std::{
 };
 
 use axum::{
-    Extension, Json, Router,
+    Json, Router,
     body::Bytes,
     extract::{Path, RawQuery, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
-use krabka_observability::server_security::Principal;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use xxhash_rust::xxh64::xxh64;
 
-use super::{MetricStore, PrometheusApiState, authorized_tenant_from_headers};
+use super::{MetricStore, PrometheusApiState, RequestCaller, authorized_tenant_from_headers};
 
 static NEXT_SILENCE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -61,20 +60,16 @@ pub fn mimir_alertmanager_router<S: MetricStore + 'static>(
         .with_state(state)
 }
 
-fn tenant(
-    headers: &HeaderMap,
-    principal: &Principal,
-) -> Result<krabka_blockstore::TenantId, Box<Response>> {
-    authorized_tenant_from_headers(headers, principal)
+fn tenant(caller: &RequestCaller) -> Result<krabka_blockstore::TenantId, Box<Response>> {
+    authorized_tenant_from_headers(&caller.headers, &caller.principal)
         .map_err(|error| Box::new(error.into_response()))
 }
 
 async fn get_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -98,11 +93,10 @@ async fn get_config<S: MetricStore>(
 
 async fn set_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     body: Bytes,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -139,10 +133,9 @@ async fn set_config<S: MetricStore>(
 
 async fn delete_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -164,10 +157,9 @@ async fn delete_config<S: MetricStore>(
 
 async fn status<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -182,10 +174,9 @@ async fn status<S: MetricStore>(
 
 async fn receivers<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -218,11 +209,10 @@ async fn receivers<S: MetricStore>(
 
 async fn alerts<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -249,11 +239,10 @@ fn filtered_tenant_alerts<S: MetricStore>(
 
 async fn set_alerts<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     Json(mut new_alerts): Json<Vec<Value>>,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -290,11 +279,10 @@ async fn set_alerts<S: MetricStore>(
 
 async fn alert_groups<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -312,11 +300,10 @@ async fn alert_groups<S: MetricStore>(
 
 async fn silences<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -339,11 +326,10 @@ async fn silences<S: MetricStore>(
 
 async fn set_silence<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     Json(mut silence): Json<Value>,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -377,11 +363,10 @@ async fn set_silence<S: MetricStore>(
 
 async fn silence<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     Path(id): Path<String>,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };
@@ -402,11 +387,10 @@ async fn silence<S: MetricStore>(
 
 async fn delete_silence<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     Path(id): Path<String>,
 ) -> Response {
-    let tenant = match tenant(&headers, &principal) {
+    let tenant = match tenant(&caller) {
         Ok(tenant) => tenant,
         Err(response) => return *response,
     };

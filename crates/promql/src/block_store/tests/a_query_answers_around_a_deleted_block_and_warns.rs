@@ -4,16 +4,10 @@ use super::*;
 pub(crate) async fn a_query_answers_around_a_deleted_block_and_warns() {
     let (block_store, kept_series) = deleted_api_block_store().await;
 
-    let store = MetricBlockStore::new(block_store);
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let (result, annotations) = engine
-        .query_instant_with_annotations(&tenant_id("tenant-a"), "up", 1_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected instant vector");
-    };
+    let InstantUpQuery {
+        samples,
+        annotations,
+    } = instant_up_query(block_store).await;
     assert2::assert!(
         samples
             == vec![InstantSample {

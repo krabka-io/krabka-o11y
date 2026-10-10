@@ -172,13 +172,10 @@ pub(crate) async fn simple_aggregate_planner_path_matches_interpreter() {
     ];
 
     for (query, time_ms) in queries {
-        let (via_operators, via_interpreter) =
-            planned_and_interpreted(&engine, query, time_ms).await;
-
-        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
-
-        let via_interpreter = normalize(via_interpreter);
-        let via_operators = normalize(via_operators);
+        let SortedParity {
+            via_operators,
+            via_interpreter,
+        } = sorted_planned_and_interpreted(&engine, query, time_ms).await;
         assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
 
         // Pin the staleness semantics through the aggregate: the genuine NaN

@@ -172,6 +172,7 @@ mod label_ops_planner_path_matches_interpreter;
 mod labels;
 mod last_over_time_aggregate;
 mod limit_ratio_over_bound_emits_capping_warning;
+mod lone_matrix_series;
 mod matching_on_a_metadata_label_keeps_it_out_of_the_result;
 mod memory_bytes_engine;
 mod mixed_histogram_store;
@@ -189,6 +190,7 @@ mod plan_instant_expr_is_total_over_construct_sweep;
 mod planned_and_interpreted;
 mod quantile_out_of_range_phi_returns_signed_inf_with_warning;
 mod query_results_match;
+mod queue_depth_engine;
 mod range_at_start_end_selector_planner_matches_interpreter;
 mod range_bare_selector_lookback_boundary_matches_prometheus;
 mod range_duration_expression_helpers_return_query_range_and_step_seconds;
@@ -203,6 +205,7 @@ mod range_selector_at_start_and_end_use_query_bounds;
 mod range_selector_offset_shifts_matrix_window_backwards;
 mod range_selector_returns_samples_in_each_step_window;
 mod rate_range_planner_path_matches_interpreter;
+mod region_info_engine;
 mod resets_counts_a_drop_in_any_native_histogram_component;
 mod sample_instances;
 mod scalar_binary_arithmetic_returns_scalar;
@@ -248,6 +251,7 @@ mod vector_vector_group_left_carries_labels_from_one_side;
 mod vector_vector_group_left_fill_right_preserves_unmatched_many_side;
 mod vector_vector_group_right_carries_labels_from_one_side;
 mod vector_vector_group_right_fill_left_preserves_unmatched_many_side;
+mod zoned_queue_depth_engine;
 
 use approx_eq::approx_eq;
 use assert_aggregate_nan_staleness::assert_aggregate_nan_staleness;
@@ -255,7 +259,7 @@ use assert_filled_many_side::assert_filled_many_side;
 use assert_minmax_nan_ignoring::assert_minmax_nan_ignoring;
 use assert_one_unnamed_float::{ExpectedLabel, assert_one_unnamed_float};
 use assert_single_float_sample::assert_single_float_sample;
-use assert_single_on_x_float_sample::assert_single_on_x_float_sample;
+use assert_single_on_x_float_sample::{OnXHistogramStats, assert_on_x_histogram_stats};
 use assert_sparse_aggregate_excludes_no_value::assert_sparse_aggregate_excludes_no_value;
 use case_values::{
     CaseQuery, CaseValue, assert_case_values, assert_signed_temperature_cases, push_cases,
@@ -263,8 +267,9 @@ use case_values::{
 use classic_bucket_store::classic_bucket_store;
 use float_value::float_value;
 use instant_samples_match::instant_samples_match;
-use instant_vector::{assert_lone_value, instant_vector};
+use instant_vector::{LoneValueQuery, assert_lone_value, assert_lone_value_at, instant_vector};
 use labels::labels;
+use lone_matrix_series::{ExpectedPoint, check_series_points, lone_matrix_series};
 use memory_bytes_engine::{
     JobInstanceSample, has_job_memory_bytes_sample, job_memory_bytes_engine, memory_bytes_engine,
 };
@@ -276,10 +281,13 @@ use native_histogram_store::{
     native_histogram_store, signed_bucket_histogram_engine, two_bucket_histogram_store,
 };
 use planned_and_interpreted::{
-    annotated_planned_and_interpreted, fingerprint_sorted, planned_and_interpreted,
+    SortedParity, annotated_planned_and_interpreted, fingerprint_sorted, planned_and_interpreted,
+    sorted_planned_and_interpreted,
 };
 use query_results_match::query_results_match;
+use queue_depth_engine::queue_depth_engine;
 use range_matrices_match::range_matrices_match;
+use region_info_engine::{InstanceRequests, region_info_engine};
 #[cfg(feature = "experimental-functions")]
 use sample_instances::{sample_instances, selected_memory_instances};
 use series_store::SeriesFixture;
@@ -287,4 +295,5 @@ use set_op_store::set_op_store;
 use short_lookback_up_engine::short_lookback_up_engine;
 use sort_instant_result::sort_instant_result;
 use stale_nan::stale_nan;
-use target_info_engine::target_info_engine;
+use target_info_engine::{info_metrics_engine, target_info_engine};
+use zoned_queue_depth_engine::{ZonedQueueDepth, zoned_queue_depth_engine};

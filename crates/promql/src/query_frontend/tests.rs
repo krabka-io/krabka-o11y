@@ -40,11 +40,7 @@ mod range_query_plan_aligns_subranges_to_absolute_split_grid;
 mod range_query_plan_allows_resolution_at_point_cap_boundary;
 mod range_query_plan_expands_each_split_across_mimir_query_shards;
 mod range_query_plan_rejects_resolution_over_point_cap;
-mod range_query_plan_shards_avg_for_partial_sum_count_reduction;
-mod range_query_plan_shards_group_aggregate_reducer;
-mod range_query_plan_shards_min_and_max_aggregate_reducers;
-mod range_query_plan_shards_stddev_and_stdvar_for_moment_reduction;
-mod range_query_plan_shards_topk_and_bottomk_for_final_rank_reduction;
+mod range_query_plan_shards_every_shardable_aggregate;
 mod range_query_plan_skips_nested_avg_until_rewrite_is_aggregate_aware;
 mod range_query_plan_skips_shards_for_unsupported_aggregate_reducers;
 mod range_query_plan_splits_on_step_grid_without_duplicate_steps;
@@ -59,7 +55,7 @@ mod unannotated;
 mod warning_executor;
 
 use avg_partial_recording_executor::AvgPartialRecordingExecutor;
-use cached_up_matrix::{one_sample_matrix, up_range_query};
+use cached_up_matrix::{FloatPoint, one_sample_matrix, up_api_matrix, up_range_query};
 use concurrency_probe_executor::ConcurrencyProbeExecutor;
 use labels::labels;
 use manual_clock::ManualClock;
@@ -68,5 +64,5 @@ use native_histogram_with_positive_buckets::native_histogram_with_positive_bucke
 use rank_recording_executor::RankRecordingExecutor;
 use recording_executor::RecordingExecutor;
 use shard_calls::{on_both_shards, shard_calls};
-use unannotated::unannotated;
+use unannotated::{unannotated, unlabeled_partial};
 use warning_executor::WarningExecutor;

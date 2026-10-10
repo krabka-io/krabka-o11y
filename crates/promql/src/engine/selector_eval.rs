@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::{NativeHistogram, ResetHint};
@@ -13,11 +13,11 @@ use super::{
     histogram_stats_enabled,
     planner_support::validate_extended_selector_modifier,
     range_functions::{align_subquery_start, instant_smoothed_boundary_value},
-    row_cache::HistogramRow,
+    row_cache::{FloatRow, HistogramRow},
     selector::{apply_selector_time_modifier, label_matcher_sets, selector_duration},
 };
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
     extension::is_stale_nan,
     planner::{ExtendedSelectorExpr, ExtendedSelectorModifier, TimedValue},
@@ -76,16 +76,20 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Ok(QueryResult::InstantVector(samples));
         }
 
-        let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, matcher_sets, start_ms, eval_time_ms)
+        let SelectorScanRows {
+            labels_by_fp,
+            float_rows: rows,
+            histogram_rows: hist_rows,
+        } = self
+            .scan_selector_rows(
+                tenant,
+                matcher_sets,
+                ScanWindowMs {
+                    start_ms,
+                    end_ms: eval_time_ms,
+                },
+            )
             .await?;
-        let rows = self
-            .scan_float_row_sets(tenant, matcher_sets, start_ms, eval_time_ms)
-            .await?;
-        let mut hist_rows = self
-            .scan_histogram_row_sets(tenant, matcher_sets, start_ms, eval_time_ms)
-            .await?;
-        recompute_histogram_stats(&mut hist_rows);
 
         let mut latest_by_fp: BTreeMap<SeriesFingerprint, (i64, SampleValue)> = BTreeMap::new();
         for row in rows {
@@ -149,17 +153,20 @@ impl<S: MetricStore> PromqlEngine<S> {
         let scan_end_ms = eval_time_ms.saturating_add(self.opts.lookback_delta.millis_i64());
         let default_matchers = label_matcher_sets(selector);
         let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
-        let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
+        let SelectorScanRows {
+            labels_by_fp,
+            float_rows: rows,
+            histogram_rows: hist_rows,
+        } = self
+            .scan_selector_rows(
+                tenant,
+                matcher_sets,
+                ScanWindowMs {
+                    start_ms: scan_start_ms,
+                    end_ms: scan_end_ms,
+                },
+            )
             .await?;
-        let rows = self
-            .scan_float_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
-            .await?;
-
-        let mut hist_rows = self
-            .scan_histogram_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
-            .await?;
-        recompute_histogram_stats(&mut hist_rows);
         let mut rows_by_fp: BTreeMap<SeriesFingerprint, Vec<(i64, SampleValue)>> = BTreeMap::new();
         for row in rows {
             if row.ts_ms > scan_start_ms && row.ts_ms <= scan_end_ms && !is_stale_nan(row.value) {
@@ -306,16 +313,20 @@ impl<S: MetricStore> PromqlEngine<S> {
         };
         let default_matchers = label_matcher_sets(&selector.vs);
         let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
-        let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
+        let SelectorScanRows {
+            labels_by_fp,
+            float_rows: rows,
+            histogram_rows: hist_rows,
+        } = self
+            .scan_selector_rows(
+                tenant,
+                matcher_sets,
+                ScanWindowMs {
+                    start_ms: scan_start_ms,
+                    end_ms: scan_end_ms,
+                },
+            )
             .await?;
-        let rows = self
-            .scan_float_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
-            .await?;
-        let mut hist_rows = self
-            .scan_histogram_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
-            .await?;
-        recompute_histogram_stats(&mut hist_rows);
 
         let mut float_samples_by_fp: BTreeMap<SeriesFingerprint, Vec<TimedValue>> = BTreeMap::new();
         for row in rows {
@@ -536,5 +547,49 @@ fn recompute_histogram_stats(rows: &mut [HistogramRow]) {
             });
         }
         previous.insert(row.fp, row.hist.clone());
+    }
+}
+
+/// A selector scan window, `(start_ms, end_ms]`, in epoch milliseconds.
+#[derive(Clone, Copy)]
+struct ScanWindowMs {
+    start_ms: i64,
+    end_ms: i64,
+}
+
+/// The labels, float rows and histogram rows of one selector scan.
+struct SelectorScanRows {
+    labels_by_fp: Arc<BTreeMap<SeriesFingerprint, Arc<Labels>>>,
+    float_rows: Vec<FloatRow>,
+    /// Histogram rows in `(fingerprint, timestamp)` order, with their
+    /// statistics recomputed.
+    histogram_rows: Vec<HistogramRow>,
+}
+
+impl<S: MetricStore> PromqlEngine<S> {
+    /// Scans the series labels, float rows and histogram rows that
+    /// `matcher_sets` select over `window`.
+    async fn scan_selector_rows(
+        &self,
+        tenant: &str,
+        matcher_sets: &[Vec<crate::PromqlMatcher>],
+        window: ScanWindowMs,
+    ) -> Result<SelectorScanRows> {
+        let ScanWindowMs { start_ms, end_ms } = window;
+        let labels_by_fp = self
+            .labels_by_fingerprint_sets(tenant, matcher_sets, start_ms, end_ms)
+            .await?;
+        let float_rows = self
+            .scan_float_row_sets(tenant, matcher_sets, start_ms, end_ms)
+            .await?;
+        let mut histogram_rows = self
+            .scan_histogram_row_sets(tenant, matcher_sets, start_ms, end_ms)
+            .await?;
+        recompute_histogram_stats(&mut histogram_rows);
+        Ok(SelectorScanRows {
+            labels_by_fp,
+            float_rows,
+            histogram_rows,
+        })
     }
 }

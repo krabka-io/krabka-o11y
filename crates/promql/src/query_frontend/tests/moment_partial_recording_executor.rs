@@ -31,11 +31,6 @@ impl RangeQueryExecutor for MomentPartialRecordingExecutor {
                 )));
             }
         };
-        Ok(unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-            drop_name: false,
-            start_timestamps_ms: std::collections::BTreeMap::new(),
-            labels: labels(&[]).into(),
-            samples: vec![(query.start_ms, SampleValue::Float(value))],
-        }])))
+        Ok(unlabeled_partial(query, value))
     }
 }

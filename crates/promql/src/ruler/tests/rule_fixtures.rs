@@ -13,6 +13,28 @@ pub(crate) fn up_api_engine(sample_times_ms: &[i64]) -> PromqlEngine<InMemoryMet
     PromqlEngine::new(Arc::new(store), EngineOpts::default())
 }
 
+/// One `up{job}` sample of `tenant-a`.
+#[derive(Clone, Copy)]
+pub(crate) struct UpSample<'a> {
+    pub(crate) job: &'a str,
+    pub(crate) ts_ms: i64,
+    pub(crate) value: f64,
+}
+
+/// An engine over `tenant-a`'s `up` series holding `samples`.
+pub(crate) fn up_samples_engine(samples: &[UpSample<'_>]) -> PromqlEngine<InMemoryMetricStore> {
+    let mut store = InMemoryMetricStore::new();
+    for sample in samples {
+        store.push_float(
+            "tenant-a",
+            labels("up", sample.job),
+            sample.ts_ms,
+            sample.value,
+        );
+    }
+    PromqlEngine::new(Arc::new(store), EngineOpts::default())
+}
+
 /// The firing `InstanceUp{job="api"}` alert active since `starts_at_ms`.
 pub(crate) fn instance_up_alert(starts_at_ms: i64) -> super::super::AlertmanagerAlert {
     super::super::AlertmanagerAlert {
@@ -116,6 +138,28 @@ pub(crate) fn group_state(last_evals: &[GroupLastEval]) -> super::super::RulerGr
             }),
     );
     state
+}
+
+/// The group state of the sharded-scheduling tests: `team-a/not-yet` last
+/// evaluated at 120s, `team-b/due` at 60s and `team-c/also-due` at 90s.
+pub(crate) fn staggered_group_state() -> super::super::RulerGroupState {
+    group_state(&[
+        GroupLastEval {
+            namespace: "team-a",
+            group: "not-yet",
+            last_eval_ms: 120_000,
+        },
+        GroupLastEval {
+            namespace: "team-b",
+            group: "due",
+            last_eval_ms: 60_000,
+        },
+        GroupLastEval {
+            namespace: "team-c",
+            group: "also-due",
+            last_eval_ms: 90_000,
+        },
+    ])
 }
 
 /// The sinks an `up > 0` recording-and-alerting evaluation wrote to.

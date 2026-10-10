@@ -64,7 +64,6 @@ mod over_time_mad;
 mod over_time_mean;
 mod over_time_sample_from_series;
 mod over_time_sum;
-mod over_time_variance;
 mod predict_linear;
 mod predict_linear_sample_from_series;
 mod quantile_over_time_sample_from_series;
@@ -122,7 +121,6 @@ use over_time_mad::over_time_mad;
 pub(crate) use over_time_mean::over_time_mean;
 use over_time_sample_from_series::over_time_sample_from_series;
 pub(super) use over_time_sum::over_time_sum;
-use over_time_variance::over_time_variance;
 use predict_linear::predict_linear;
 use predict_linear_sample_from_series::predict_linear_sample_from_series;
 use quantile_over_time_sample_from_series::quantile_over_time_sample_from_series;
@@ -137,4 +135,4 @@ use regression_slope_and_intercept::regression_slope_and_intercept;
 #[cfg(feature = "experimental-functions")]
 pub(super) use validate_smoothing_factor::validate_smoothing_factor;
 
-use crate::functions::extrapolate::start_timestamp_reset;
+use crate::functions::{extrapolate::start_timestamp_reset, over_time::over_time_variance};

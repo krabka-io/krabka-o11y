@@ -15,7 +15,7 @@ mod schedule;
 #[cfg(test)]
 pub(crate) use alerting::expand_alert_label_map;
 pub(crate) use alerting::{
-    alert_template_variables, evaluate_and_persist_alerting_rule_with_state_and_wal,
+    alert_template_variables, evaluate_alerting_rule_with_state_and_sink,
     expand_alert_label_map_async, template_sample_value,
 };
 pub use alerting::{

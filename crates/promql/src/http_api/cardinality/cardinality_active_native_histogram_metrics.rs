@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
 
 use axum::{
-    Extension,
     body::Bytes,
-    extract::{RawQuery, State},
-    http::{HeaderMap, StatusCode, header},
+    extract::State,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use krabka_blockstore::SeriesFingerprint;
@@ -12,10 +11,9 @@ use num_traits::ToPrimitive;
 use serde::Serialize;
 
 use super::{
-    ApiError, Arc, CardinalityParams, MetricStore, Principal, PrometheusApiState, RequestAuth,
-    authorized_cardinality_series, decode_float_samples, decode_native_histograms,
-    enforce_selected_series_limit, parse_cardinality_form, parse_cardinality_params,
-    selector_matchers,
+    ApiError, Arc, CardinalityParams, MetricStore, ParsedQuery, PrometheusApiState, RequestAuth,
+    RequestCaller, authorized_cardinality_series, decode_float_samples, decode_native_histograms,
+    enforce_selected_series_limit, parse_cardinality_form, selector_matchers,
 };
 
 #[derive(Serialize)]
@@ -52,44 +50,22 @@ struct LatestHistogram {
 
 pub(crate) async fn cardinality_active_native_histogram_metrics<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    RawQuery(raw_query): RawQuery,
+    caller: RequestCaller,
+    ParsedQuery(params): ParsedQuery<CardinalityParams>,
 ) -> Response {
-    let params = match parse_cardinality_params(raw_query.as_deref()) {
-        Ok(params) => params,
-        Err(error) => return error.into_response(),
-    };
-    cardinality_active_native_histogram_metrics_inner(
-        &state,
-        RequestAuth {
-            headers: &headers,
-            principal: &principal,
-        },
-        params,
-    )
-    .await
+    cardinality_active_native_histogram_metrics_inner(&state, caller.auth(), params).await
 }
 
 pub(crate) async fn cardinality_active_native_histogram_metrics_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    caller: RequestCaller,
     body: Bytes,
 ) -> Response {
     let params = match parse_cardinality_form(&body) {
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    cardinality_active_native_histogram_metrics_inner(
-        &state,
-        RequestAuth {
-            headers: &headers,
-            principal: &principal,
-        },
-        params,
-    )
-    .await
+    cardinality_active_native_histogram_metrics_inner(&state, caller.auth(), params).await
 }
 
 async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(

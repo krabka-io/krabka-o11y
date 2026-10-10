@@ -1,25 +1,12 @@
 use super::{
-    Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState, RawQuery,
-    RequestAuth, Response, State, labels_inner, parse_discovery_params,
+    Arc, DiscoveryParams, MetricStore, ParsedQuery, PrometheusApiState, RequestCaller, Response,
+    State, labels_inner,
 };
 
 pub(crate) async fn labels<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    RawQuery(raw_query): RawQuery,
+    caller: RequestCaller,
+    ParsedQuery(params): ParsedQuery<DiscoveryParams>,
 ) -> Response {
-    let params = match parse_discovery_params(raw_query.as_deref()) {
-        Ok(params) => params,
-        Err(error) => return error.into_response(),
-    };
-    labels_inner(
-        &state,
-        RequestAuth {
-            headers: &headers,
-            principal: &principal,
-        },
-        params,
-    )
-    .await
+    labels_inner(&state, caller.auth(), params).await
 }

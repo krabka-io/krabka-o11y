@@ -604,6 +604,7 @@ mod template_json_value_to_string;
 mod template_json_value_truthy;
 mod template_parse_error;
 mod template_part;
+mod template_quote_scanner;
 mod template_range;
 mod template_range_binding;
 mod template_render_context;

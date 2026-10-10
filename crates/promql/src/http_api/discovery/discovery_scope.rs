@@ -1,8 +1,10 @@
 use krabka_blockstore::TenantId;
+use serde::Serialize;
 
 use super::{
-    Arc, DiscoveryParams, MetricStore, PrometheusApiState, Rejection, RequestAuth, apply_limit,
-    discovery_matchers, discovery_window, enforce_query_range_limit, enforce_selected_series_limit,
+    Arc, DiscoveryParams, IntoResponse, MetricStore, PrometheusApiState, Rejection, RequestAuth,
+    Response, apply_limit, discovery_matchers, discovery_window, enforce_query_range_limit,
+    enforce_selected_series_limit, success_data_response,
 };
 use crate::PromqlMatcher as LabelMatcher;
 
@@ -35,6 +37,16 @@ pub(crate) fn discovery_scope<S: MetricStore>(
     })
 }
 
+impl DiscoveryScope {
+    /// The result caps for this scope's tenant and the request's `limit`.
+    pub(crate) fn limits(&self, discovery_params: &DiscoveryParams) -> DiscoveryLimits<'_> {
+        DiscoveryLimits {
+            tenant: &self.tenant,
+            limit: discovery_params.limit,
+        }
+    }
+}
+
 /// The caps on how many results a discovery request returns.
 #[derive(Clone, Copy)]
 pub(crate) struct DiscoveryLimits<'a> {
@@ -54,4 +66,13 @@ pub(crate) fn limit_discovery_results<S: MetricStore, T>(
     enforce_selected_series_limit(state, limits.tenant, results.len()).map_err(Rejection::of)?;
     apply_limit(results, limits.limit);
     Ok(())
+}
+
+/// Answers a discovery request with its found results, or with the rejection
+/// that ended it.
+pub(crate) fn discovery_response(found: Result<impl Serialize, Rejection>) -> Response {
+    match found {
+        Ok(found) => success_data_response(found),
+        Err(rejection) => rejection.into_response(),
+    }
 }

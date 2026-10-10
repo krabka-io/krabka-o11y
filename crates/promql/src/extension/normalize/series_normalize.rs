@@ -1,6 +1,11 @@
-use datafusion::logical_expr::{Expr, LogicalPlan, UserDefinedLogicalNodeCore};
+use std::fmt;
 
-use super::{DataFusionError, DfResult, fmt};
+use datafusion::{
+    common::Result as DfResult,
+    logical_expr::{Expr, LogicalPlan, UserDefinedLogicalNodeCore},
+};
+
+use crate::extension::only_logical_input;
 
 /// Whether series normalization keeps or drops samples whose value is NaN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd)]
@@ -35,17 +40,7 @@ impl UserDefinedLogicalNodeCore for SeriesNormalize {
         "SeriesNormalize"
     }
 
-    fn inputs(&self) -> Vec<&LogicalPlan> {
-        vec![&self.input]
-    }
-
-    fn schema(&self) -> &datafusion::common::DFSchemaRef {
-        self.input.schema()
-    }
-
-    fn expressions(&self) -> Vec<Expr> {
-        vec![]
-    }
+    pass_through_logical_node_plumbing!();
 
     fn fmt_for_explain(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -57,19 +52,11 @@ impl UserDefinedLogicalNodeCore for SeriesNormalize {
         )
     }
 
-    fn with_exprs_and_inputs(
-        &self,
-        exprs: Vec<Expr>,
-        mut inputs: Vec<LogicalPlan>,
-    ) -> DfResult<Self> {
-        if !exprs.is_empty() || inputs.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "SeriesNormalize expects no expressions and one input".to_string(),
-            ));
-        }
+    fn with_exprs_and_inputs(&self, exprs: Vec<Expr>, inputs: Vec<LogicalPlan>) -> DfResult<Self> {
+        let input = only_logical_input(&exprs, inputs, "SeriesNormalize")?;
         Ok(Self {
             settings: self.settings.clone(),
-            input: inputs.swap_remove(0),
+            input,
         })
     }
 }

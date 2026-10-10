@@ -3,18 +3,18 @@ use std::{collections::BTreeMap, sync::Arc};
 use axum::{
     Json,
     body::Bytes,
-    extract::{RawQuery, State},
+    extract::State,
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
 use krabka_metrics::{decode_float_samples, decode_native_histograms};
 
 use super::{
-    ApiError, CardinalityParams, Extension, Principal, PrometheusApiState, Rejection, RequestAuth,
-    active_series_response, apply_limit, authorized_tenant_from_headers,
-    cardinality_label_names_response, cardinality_label_values_response,
-    enforce_selected_series_limit, labels_key, parse_cardinality_form, parse_cardinality_params,
-    selector_matchers,
+    ApiError, CardinalityParams, Extension, ParsedQuery, Principal, PrometheusApiState, Rejection,
+    RequestAuth, RequestCaller, active_series_response, apply_limit,
+    authorized_tenant_from_headers, cardinality_label_names_response,
+    cardinality_label_values_response, enforce_selected_series_limit, labels_key,
+    parse_cardinality_form, selector_matchers,
 };
 use crate::{MetricStore, PromqlLabels as Labels};
 

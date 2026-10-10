@@ -70,3 +70,16 @@ pub(crate) fn native_histogram_rows() -> Vec<(u64, i64, NativeHistogram)> {
         ),
     ]
 }
+
+/// The columns of an encoded native-histogram `batch`, as one struct array.
+pub(crate) fn native_histogram_struct_array(batch: &RecordBatch) -> ArrayRef {
+    Arc::new(StructArray::from(
+        batch
+            .schema()
+            .fields()
+            .iter()
+            .cloned()
+            .zip(batch.columns().iter().cloned())
+            .collect::<Vec<_>>(),
+    ))
+}

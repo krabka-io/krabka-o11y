@@ -2736,65 +2736,51 @@ fn parses_bytes_rate_metric_query() {
 }
 
 #[test]
-fn parses_sum_over_time_unwrap_metric_query() {
-    let query = parse_metric_query(
-        r#"sum_over_time({app="api"} | logfmt | unwrap cost | __error__ = "" [30s])"#,
-    )
-    .unwrap();
+fn parses_sum_over_time_unwrap_metric_queries() {
+    struct UnwrapCase {
+        query: &'static str,
+        unwrap: UnwrapExpression,
+    }
 
-    check!(
-        query
-            == MetricQuery {
-                aggregation: RangeAggregation::SumOverTime,
-                vector_aggregation: None,
-                range_grouping: None,
-                stream: StreamQuery {
-                    matchers: vec![LabelMatcher::new("app", MatchOp::Equal, "api").unwrap()],
-                    pipeline: vec![
-                        PipelineStage::Parser(ParserStage::Logfmt),
-                        PipelineStage::Unwrap(UnwrapExpression::new("cost").unwrap()),
-                        PipelineStage::FieldFilter(FieldFilter::new(
-                            "__error__",
-                            ComparisonOp::Equal,
-                            FieldValue::String(String::new())
-                        )),
-                    ],
+    let cases = [
+        UnwrapCase {
+            query: r#"sum_over_time({app="api"} | logfmt | unwrap cost | __error__ = "" [30s])"#,
+            unwrap: UnwrapExpression::new("cost").unwrap(),
+        },
+        UnwrapCase {
+            query: r#"sum_over_time({app="api"} | logfmt | unwrap bytes(size) | __error__ = "" [30s])"#,
+            unwrap: UnwrapExpression::bytes("size").unwrap(),
+        },
+    ];
+
+    for case in cases {
+        let query = parse_metric_query(case.query).unwrap();
+
+        check!(
+            query
+                == MetricQuery {
+                    aggregation: RangeAggregation::SumOverTime,
+                    vector_aggregation: None,
+                    range_grouping: None,
+                    stream: StreamQuery {
+                        matchers: vec![LabelMatcher::new("app", MatchOp::Equal, "api").unwrap()],
+                        pipeline: vec![
+                            PipelineStage::Parser(ParserStage::Logfmt),
+                            PipelineStage::Unwrap(case.unwrap),
+                            PipelineStage::FieldFilter(FieldFilter::new(
+                                "__error__",
+                                ComparisonOp::Equal,
+                                FieldValue::String(String::new())
+                            )),
+                        ],
+                    },
+                    range_ns: DurationNanos(30_000_000_000),
+                    offset_ns: OffsetNanos(0),
                 },
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
-    );
-}
-
-#[test]
-fn parses_sum_over_time_unwrap_bytes_metric_query() {
-    let query = parse_metric_query(
-        r#"sum_over_time({app="api"} | logfmt | unwrap bytes(size) | __error__ = "" [30s])"#,
-    )
-    .unwrap();
-
-    check!(
-        query
-            == MetricQuery {
-                aggregation: RangeAggregation::SumOverTime,
-                vector_aggregation: None,
-                range_grouping: None,
-                stream: StreamQuery {
-                    matchers: vec![LabelMatcher::new("app", MatchOp::Equal, "api").unwrap()],
-                    pipeline: vec![
-                        PipelineStage::Parser(ParserStage::Logfmt),
-                        PipelineStage::Unwrap(UnwrapExpression::bytes("size").unwrap()),
-                        PipelineStage::FieldFilter(FieldFilter::new(
-                            "__error__",
-                            ComparisonOp::Equal,
-                            FieldValue::String(String::new())
-                        )),
-                    ],
-                },
-                range_ns: DurationNanos(30_000_000_000),
-                offset_ns: OffsetNanos(0),
-            }
-    );
+            "{}",
+            case.query
+        );
+    }
 }
 
 #[test]

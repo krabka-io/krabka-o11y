@@ -209,6 +209,17 @@ mod tests {
     }
 
     /// Checks that `sum by (group)` over `leaf` yields one group whose sum is NaN.
+    /// Runs `op` grouped `by (group)` over a selector-like leaf of `rows`.
+    async fn aggregate_by_group(
+        op: SimpleAggregateOp,
+        rows: &[LeafRow<'_>],
+    ) -> Vec<(Vec<(String, String)>, f64)> {
+        let ctx = SessionContext::new();
+        let leaf = selector_like_leaf(&ctx, rows).await;
+        let plan = plan_simple_aggregate(leaf, op, &Grouping::By(vec!["group".into()])).unwrap();
+        run(plan, &ctx).await
+    }
+
     async fn assert_sum_by_group_is_nan(leaf: LogicalPlan, ctx: &SessionContext) {
         let plan = plan_simple_aggregate(
             leaf,
@@ -279,11 +290,7 @@ mod tests {
             ),
         ];
         for (op, rows, want) in cases {
-            let ctx = SessionContext::new();
-            let leaf = selector_like_leaf(&ctx, &rows).await;
-            let plan =
-                plan_simple_aggregate(leaf, op, &Grouping::By(vec!["group".into()])).unwrap();
-            let got = run(plan, &ctx).await;
+            let got = aggregate_by_group(op, &rows).await;
             assert2::assert!(got == want);
         }
     }
@@ -337,9 +344,8 @@ mod tests {
             (SimpleAggregateOp::Min, 1.0_f64),
             (SimpleAggregateOp::Max, 3.0_f64),
         ] {
-            let ctx = SessionContext::new();
-            let leaf = selector_like_leaf(
-                &ctx,
+            let got = aggregate_by_group(
+                op,
                 &[
                     LeafRow::group("prod").job("api").sample(f64::NAN),
                     LeafRow::group("prod").job("db").sample(3.0),
@@ -348,9 +354,6 @@ mod tests {
                 ],
             )
             .await;
-            let plan =
-                plan_simple_aggregate(leaf, op, &Grouping::By(vec!["group".into()])).unwrap();
-            let got = run(plan, &ctx).await;
             assert2::assert!(got.len() == 1);
             assert2::assert!(got[0].1.to_bits() == want.to_bits());
         }
@@ -361,18 +364,14 @@ mod tests {
         // Every sample in the group is NaN: Prometheus keeps the series with a
         // NaN result (it does not drop the group).
         for op in [SimpleAggregateOp::Min, SimpleAggregateOp::Max] {
-            let ctx = SessionContext::new();
-            let leaf = selector_like_leaf(
-                &ctx,
+            let got = aggregate_by_group(
+                op,
                 &[
                     LeafRow::group("prod").job("api").sample(f64::NAN),
                     LeafRow::group("prod").job("db").sample(f64::NAN),
                 ],
             )
             .await;
-            let plan =
-                plan_simple_aggregate(leaf, op, &Grouping::By(vec!["group".into()])).unwrap();
-            let got = run(plan, &ctx).await;
             assert2::assert!(got.len() == 1);
             assert2::assert!(got[0].1.is_nan());
         }

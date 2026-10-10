@@ -188,10 +188,10 @@ mod tests {
 
     #[test]
     fn variance_uses_compensated_welford_terms() {
-        let small = over_time_variance(&[1.0, 1e-16, 1e-16, 1e-16]);
+        let small = over_time_variance([1.0, 1e-16, 1e-16, 1e-16]);
         assert2::assert!(small.to_bits() == 0x3fc7_ffff_ffff_fffe);
 
-        let large = over_time_variance(&[1e-16, 1e16, 1e16, 5.0, 1e8, -1e8]);
+        let large = over_time_variance([1e-16, 1e16, 1e16, 5.0, 1e8, -1e8]);
         assert2::assert!(large.to_bits() == 0x4671_87bd_f63d_b730);
     }
 
@@ -553,7 +553,7 @@ use over_time_sum::over_time_sum;
 #[cfg(test)]
 use over_time_udf::OverTimeUdf;
 pub use over_time_udf::over_time_udf;
-use over_time_variance::over_time_variance;
+pub(crate) use over_time_variance::over_time_variance;
 use quantile_value::quantile_value;
 pub use register_over_time_udfs::register_over_time_udfs;
 

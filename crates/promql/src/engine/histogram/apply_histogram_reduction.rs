@@ -1,7 +1,7 @@
 use super::{
-    BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, NativeHistogram, Result, SampleValue,
-    classic_bucket_bound, float_sample_value, labels_key, labels_without_label,
-    labels_without_metric_name, record_metric_name, warn_mixed_histograms,
+    BTreeMap, ClassicBucket, ClassicBucketGroups, InstantSample, NativeHistogram, Result,
+    SampleValue, find_mixed_histogram_keys, group_classic_bucket_sample, labels_key,
+    labels_without_metric_name, record_metric_name,
 };
 
 /// How [`apply_histogram_reduction`] folds each histogram to a float.
@@ -41,7 +41,7 @@ where
         native,
         mut classic,
     } = reducers;
-    let mut groups: BTreeMap<String, (Labels, Vec<ClassicBucket>)> = BTreeMap::new();
+    let mut groups = ClassicBucketGroups::new();
     let mut native_samples = BTreeMap::new();
     let mut metric_names: BTreeMap<String, String> = BTreeMap::new();
     for sample in samples {
@@ -68,26 +68,10 @@ where
             );
             continue;
         }
-        let Some(upper_bound) = classic_bucket_bound(&sample.labels) else {
-            continue;
-        };
-        let count = float_sample_value(&sample)?;
-        let labels = labels_without_label(&labels_without_metric_name(&sample.labels), "le");
-        let key = labels_key(&labels);
-        record_metric_name(&mut metric_names, &key, &sample.labels);
-        groups
-            .entry(key)
-            .or_insert_with(|| (labels, Vec::new()))
-            .1
-            .push(ClassicBucket { upper_bound, count });
+        group_classic_bucket_sample(&mut groups, &mut metric_names, &sample)?;
     }
 
-    let mixed_histogram_keys = native_samples
-        .keys()
-        .filter(|key| groups.contains_key(*key))
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    warn_mixed_histograms(&mixed_histogram_keys, &metric_names);
+    let mixed_histogram_keys = find_mixed_histogram_keys(&native_samples, &groups, &metric_names);
     let mut out = native_samples
         .into_iter()
         .filter_map(|(key, sample)| (!mixed_histogram_keys.contains(&key)).then_some(sample))

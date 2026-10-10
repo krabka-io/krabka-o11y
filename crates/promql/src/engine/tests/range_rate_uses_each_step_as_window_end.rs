@@ -26,17 +26,18 @@ pub(crate) async fn range_rate_uses_each_step_as_window_end() {
         .await
         .unwrap();
 
-    let QueryResult::RangeMatrix(series) = result else {
-        panic!("expected matrix");
-    };
-    check!(series.len() == 1);
-    check!(series[0].samples.len() == 2);
-    for (sample, (want_ts, want)) in series[0]
-        .samples
-        .iter()
-        .zip([(240_000, 4.0 / 300.0), (300_000, 5.0 / 300.0)])
-    {
-        check!(sample.0 == want_ts);
-        check!(approx_eq(float_value(&sample.1), want), "at ts {want_ts}");
-    }
+    let series = lone_matrix_series(&result);
+    check_series_points(
+        series,
+        &[
+            ExpectedPoint {
+                ts_ms: 240_000,
+                value: 4.0 / 300.0,
+            },
+            ExpectedPoint {
+                ts_ms: 300_000,
+                value: 5.0 / 300.0,
+            },
+        ],
+    );
 }

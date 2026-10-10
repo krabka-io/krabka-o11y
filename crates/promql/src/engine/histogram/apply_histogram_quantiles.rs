@@ -1,11 +1,10 @@
 #[cfg(feature = "experimental-functions")]
 use super::{
-    BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
-    classic_bucket_bound, classic_histogram_quantile,
-    emit_histogram_quantile_forced_monotonicity_info, emit_warning, float_sample_value,
-    format_quantile_label, invalid_quantile_warning, is_valid_quantile, labels_key,
-    labels_without_label, labels_without_metric_name, native_histogram_quantile,
-    record_metric_name, warn_mixed_histograms,
+    BTreeMap, ClassicBucketGroups, InstantSample, Result, SampleValue, classic_histogram_quantile,
+    emit_histogram_quantile_forced_monotonicity_info, emit_warning, find_mixed_histogram_keys,
+    format_quantile_label, group_classic_bucket_sample, invalid_quantile_warning,
+    is_valid_quantile, labels_key, labels_without_metric_name, native_histogram_quantile,
+    record_metric_name,
 };
 
 /// Applies the experimental `histogram_quantiles(label, v, phi...)` fold.
@@ -40,7 +39,7 @@ pub(crate) fn apply_histogram_quantiles(
             emit_warning(invalid_quantile_warning(*quantile));
         }
     }
-    let mut groups: BTreeMap<String, (Labels, Vec<ClassicBucket>)> = BTreeMap::new();
+    let mut groups = ClassicBucketGroups::new();
     let mut native_samples = BTreeMap::new();
     let mut metric_names = BTreeMap::new();
     for sample in samples {
@@ -53,25 +52,10 @@ pub(crate) fn apply_histogram_quantiles(
             );
             continue;
         }
-        let Some(upper_bound) = classic_bucket_bound(&sample.labels) else {
-            continue;
-        };
-        let count = float_sample_value(&sample)?;
-        let labels = labels_without_label(&labels_without_metric_name(&sample.labels), "le");
-        record_metric_name(&mut metric_names, &labels_key(&labels), &sample.labels);
-        groups
-            .entry(labels_key(&labels))
-            .or_insert_with(|| (labels, Vec::new()))
-            .1
-            .push(ClassicBucket { upper_bound, count });
+        group_classic_bucket_sample(&mut groups, &mut metric_names, &sample)?;
     }
 
-    let mixed_histogram_keys = native_samples
-        .keys()
-        .filter(|key| groups.contains_key(*key))
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    warn_mixed_histograms(&mixed_histogram_keys, &metric_names);
+    let mixed_histogram_keys = find_mixed_histogram_keys(&native_samples, &groups, &metric_names);
     let mut out = Vec::new();
     for (key, (labels, ts_ms, histogram)) in native_samples {
         if mixed_histogram_keys.contains(&key) {

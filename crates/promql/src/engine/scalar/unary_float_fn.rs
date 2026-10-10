@@ -27,6 +27,9 @@ pub(crate) enum UnaryFloatFn {
 }
 
 #[cfg(test)]
+use crate::functions::scalar_math::prometheus_sgn;
+
+#[cfg(test)]
 impl UnaryFloatFn {
     pub(crate) fn apply(self, value: f64) -> f64 {
         match self {
@@ -52,17 +55,7 @@ impl UnaryFloatFn {
             Self::Atanh => value.atanh(),
             Self::Deg => value.to_degrees(),
             Self::Rad => value.to_radians(),
-            Self::Sgn => {
-                if value.is_nan() {
-                    f64::NAN
-                } else if value > 0.0 {
-                    1.0
-                } else if value < 0.0 {
-                    -1.0
-                } else {
-                    0.0
-                }
-            }
+            Self::Sgn => prometheus_sgn(value),
         }
     }
 }

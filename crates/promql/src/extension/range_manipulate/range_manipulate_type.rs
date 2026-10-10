@@ -1,7 +1,7 @@
 use super::{
-    Arc, DataFusionError, DfResult, Expr, LogicalPlan, UserDefinedLogicalNodeCore,
-    build_extended_range_schema, fmt,
+    Arc, DfResult, Expr, LogicalPlan, UserDefinedLogicalNodeCore, build_extended_range_schema, fmt,
 };
+use crate::extension::only_logical_input;
 
 /// The step grid, window and columns a range-vector materialization reads,
 /// shared by the logical [`RangeManipulate`] node and its physical
@@ -116,16 +116,8 @@ impl UserDefinedLogicalNodeCore for RangeManipulate {
         )
     }
 
-    fn with_exprs_and_inputs(
-        &self,
-        exprs: Vec<Expr>,
-        mut inputs: Vec<LogicalPlan>,
-    ) -> DfResult<Self> {
-        if !exprs.is_empty() || inputs.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "RangeManipulate expects no expressions and one input".to_string(),
-            ));
-        }
-        Self::new(self.settings.clone(), inputs.swap_remove(0))
+    fn with_exprs_and_inputs(&self, exprs: Vec<Expr>, inputs: Vec<LogicalPlan>) -> DfResult<Self> {
+        let input = only_logical_input(&exprs, inputs, "RangeManipulate")?;
+        Self::new(self.settings.clone(), input)
     }
 }

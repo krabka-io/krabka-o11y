@@ -1,9 +1,9 @@
 use super::{
     AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
     RulerAlertState, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupEvaluationStatus,
-    RulerRuleEvaluationStatus, RulerStateSink, TenantId, evaluate_and_append_recording_rule,
-    evaluate_and_persist_alerting_rule_with_state_and_wal, yaml_optional_string,
-    yaml_required_string, yaml_string_map,
+    RulerRuleEvaluationStatus, RulerStateSink, TenantId,
+    evaluate_alerting_rule_with_state_and_sink, evaluate_and_append_recording_rule,
+    yaml_optional_string, yaml_required_string, yaml_string_map,
 };
 
 /// Evaluates one mixed ruler rule group and persists alert state records.
@@ -79,7 +79,7 @@ where
                 Err(error) => Err(error),
             }
         } else if yaml_optional_string(rule, "alert").is_some() {
-            evaluate_and_persist_alerting_rule_with_state_and_wal(
+            evaluate_alerting_rule_with_state_and_sink(
                 engine,
                 (wal_sink, alert_sink, state_sink),
                 alert_state,

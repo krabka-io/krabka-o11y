@@ -24,23 +24,7 @@ rules:
             .or_insert_with(BTreeMap::new)
             .insert(group_name.to_string(), group);
     }
-    let mut group_state = group_state(&[
-        GroupLastEval {
-            namespace: "team-a",
-            group: "not-yet",
-            last_eval_ms: 120_000,
-        },
-        GroupLastEval {
-            namespace: "team-b",
-            group: "due",
-            last_eval_ms: 60_000,
-        },
-        GroupLastEval {
-            namespace: "team-c",
-            group: "also-due",
-            last_eval_ms: 90_000,
-        },
-    ]);
+    let mut group_state = staggered_group_state();
     let shard = super::super::RulerShard::new(1, 2).expect("ruler shard");
     let expected = super::super::filter_ruler_rule_set_for_shard_due_for_eval(
         "tenant-a",

@@ -54,7 +54,7 @@ mod wal_head_delegates_metadata_cardinality_stats_and_blocks;
 mod wal_head_delete_tenant;
 
 use assert_query_shard_selects::assert_query_shard_selects;
-use count_rows::count_rows;
+use count_rows::{count_rows, count_up_float_rows};
 use expected_label_memory_stats::expected_label_memory_stats;
 use expected_label_name_cardinality::expected_label_name_cardinality;
 use expected_label_pair_stats::expected_label_pair_stats;

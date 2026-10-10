@@ -13,11 +13,18 @@ annotations:
 ",
     )
     .expect("alerting rule yaml");
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels("up", "api"), 60_000, 1.0);
-    store.push_float("tenant-a", labels("up", "web"), 60_000, 0.0);
-    let store = Arc::new(store);
-    let engine = PromqlEngine::new(store, EngineOpts::default());
+    let engine = up_samples_engine(&[
+        UpSample {
+            job: "api",
+            ts_ms: 60_000,
+            value: 1.0,
+        },
+        UpSample {
+            job: "web",
+            ts_ms: 60_000,
+            value: 0.0,
+        },
+    ]);
     let sink = RecordingAlertmanagerSink::default();
 
     let dispatched = super::super::evaluate_and_dispatch_alerting_rule(

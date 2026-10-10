@@ -24,23 +24,7 @@ pub(crate) fn ruler_rule_set_filter_combines_shard_ownership_and_due_evaluation(
             interval: "30s",
         },
     ]);
-    let state = group_state(&[
-        GroupLastEval {
-            namespace: "team-a",
-            group: "not-yet",
-            last_eval_ms: 120_000,
-        },
-        GroupLastEval {
-            namespace: "team-b",
-            group: "due",
-            last_eval_ms: 60_000,
-        },
-        GroupLastEval {
-            namespace: "team-c",
-            group: "also-due",
-            last_eval_ms: 90_000,
-        },
-    ]);
+    let state = staggered_group_state();
     let shard = super::super::RulerShard::new(1, 2).expect("ruler shard");
 
     let sharded = super::super::filter_ruler_rule_set_for_shard("tenant-a", &rules, shard);

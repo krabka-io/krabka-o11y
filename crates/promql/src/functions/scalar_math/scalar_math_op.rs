@@ -1,4 +1,4 @@
-use super::{clamp_float, round_to_nearest};
+use super::{clamp_float, prometheus_sgn, round_to_nearest};
 
 /// Which per-row scalar function a [`ScalarMathUdf`] evaluates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -121,17 +121,7 @@ impl ScalarMathOp {
             Self::Atanh => value.atanh(),
             Self::Deg => value.to_degrees(),
             Self::Rad => value.to_radians(),
-            Self::Sgn => {
-                if value.is_nan() {
-                    f64::NAN
-                } else if value > 0.0 {
-                    1.0
-                } else if value < 0.0 {
-                    -1.0
-                } else {
-                    0.0
-                }
-            }
+            Self::Sgn => prometheus_sgn(value),
             // `round(v / to_nearest + 0.5).floor() * to_nearest`, matching
             // `round_to_nearest` (the `.5`-rounds-up direction included).
             Self::Round => round_to_nearest(value, params[0]),

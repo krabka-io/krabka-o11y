@@ -1,5 +1,5 @@
 use super::{
-    Array, AsArray, Float64Type, FloatRow, Int64Type, Result, SessionContext, UInt64Type,
+    FLOAT_ROW_COLUMNS, FloatRow, FloatRowColumns, Result, SessionContext,
     samples_per_query_exceeded,
 };
 
@@ -15,18 +15,13 @@ pub(crate) async fn collect_float_rows(
     // single block answers the scan. A global sort here would re-order the same
     // rows a second time, and would do it before the rows are narrowed.
     let dataframe = ctx
-        .sql(&format!(
-            "SELECT series_fingerprint, timestamp, value, start_timestamp_ms FROM {table}"
-        ))
+        .sql(&format!("SELECT {FLOAT_ROW_COLUMNS} FROM {table}"))
         .await?;
     let batches = dataframe.collect().await?;
 
     let mut rows = Vec::new();
     for batch in batches {
-        let fps = batch.column(0).as_primitive::<UInt64Type>();
-        let timestamps = batch.column(1).as_primitive::<Int64Type>();
-        let values = batch.column(2).as_primitive::<Float64Type>();
-        let start_timestamps = batch.column(3).as_primitive::<Int64Type>();
+        let columns = FloatRowColumns::from_batch(&batch);
         for row in 0..batch.num_rows() {
             // The cap trips on the row that would take the count past it, so the
             // count this row would produce is what the tenant is told.
@@ -36,13 +31,7 @@ pub(crate) async fn collect_float_rows(
                     rows.len().saturating_add(1),
                 ));
             }
-            rows.push(FloatRow {
-                fp: fps.value(row),
-                ts_ms: timestamps.value(row),
-                value: values.value(row),
-                start_timestamp_ms: (!start_timestamps.is_null(row))
-                    .then(|| start_timestamps.value(row)),
-            });
+            rows.push(columns.row(row));
         }
     }
     Ok(rows)

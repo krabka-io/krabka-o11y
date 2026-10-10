@@ -71,6 +71,58 @@ fn api_state<S: MetricStore + 'static>(store: S) -> Arc<PrometheusApiState<S>> {
     ))
 }
 
+/// `up{job="api"}` = 1 at 10s.
+fn up_api_at_10() -> TenantFloats {
+    TenantFloats::new().sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+}
+
+/// Checks a successful instant-query body whose first sample is the
+/// [`up_api_at_10`] value: `1` at 10s.
+async fn up_api_at_10_body(response: axum::response::Response) -> Value {
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "vector");
+    assert2::assert!(
+        // Prometheus MarshalTimestamp emits whole seconds as a bare JSON integer.
+        body["data"]["result"][0]["value"][0].as_i64() == Some(10)
+    );
+    assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
+    body
+}
+
+/// Queries `request_duration_seconds` at 10s from a store that holds only
+/// `histogram` as `request_duration_seconds{job="api"}` at 10s, and returns
+/// the successful body.
+async fn request_duration_query_body(histogram: NativeHistogram) -> Value {
+    let mut store = InMemoryMetricStore::new();
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
+        10_000,
+        histogram,
+    );
+    let app = prometheus_router(api_state(store));
+    let response = get(&app, "/api/v1/query?query=request_duration_seconds&time=10").await;
+    json_with_status(response, StatusCode::OK).await
+}
+
+/// Checks a successful body whose `data` holds two entries, one with job
+/// `api` and one with job `web`, reading each entry's job at `job_pointer`.
+fn assert_api_and_web_jobs(body: &Value, job_pointer: &str) {
+    assert2::assert!(body["status"] == "success");
+    let data = body["data"].as_array().expect("data array");
+    assert2::assert!(data.len() == 2);
+    let jobs = data
+        .iter()
+        .map(|entry| {
+            entry
+                .pointer(job_pointer)
+                .and_then(Value::as_str)
+                .expect("job")
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert2::assert!(jobs == std::collections::BTreeSet::from(["api", "web"]));
+}
+
 /// `up{job="api"}` at 60s (value 1) and 120s (value 2).
 fn up_api_at_60_and_120() -> TenantFloats {
     TenantFloats::new()
@@ -102,6 +154,19 @@ fn up_api_a_and_web_b() -> TenantFloats {
         )
 }
 
+/// Checks a Mimir `/cardinality/active_series` response that lists only the
+/// `job="api"` series of [`up_api_a_and_web_b`].
+async fn assert_only_active_up_api_a(response: axum::response::Response) {
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert2::assert!(body.get("status").is_none());
+    assert2::assert!(
+        body["data"].clone()
+            == serde_json::json!([
+                {"__name__": "up", "instance": "a", "job": "api"},
+            ])
+    );
+}
+
 /// `up{job="api",instance="a"}` at 10s (value 1) and 20s (value 2).
 fn up_api_a_at_10_and_20() -> TenantFloats {
     TenantFloats::new()
@@ -114,6 +179,21 @@ fn up_api_a_at_10_and_20() -> TenantFloats {
             labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
             20_000,
             2.0,
+        )
+}
+
+/// `up{job="api",instance="a"}` and `errors_total{job="api"}`, both 1 at 10s.
+fn up_api_a_and_api_errors() -> TenantFloats {
+    TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "errors_total"), ("job", "api")]),
+            10_000,
+            1.0,
         )
 }
 
@@ -139,6 +219,20 @@ fn assert_only_up_api_a_series(body: &Value) {
     assert2::assert!(body["data"][0]["__name__"] == "up");
     assert2::assert!(body["data"][0]["job"] == "api");
     assert2::assert!(body["data"][0]["instance"] == "a");
+}
+
+/// Checks a successful `/query_exemplars` body that holds one series, the
+/// `job="api"` series of [`api_exemplar_store`] with its `trace_id="abc"`
+/// exemplar at 10.5s first, and returns that series.
+async fn only_api_exemplar_series(response: axum::response::Response) -> Value {
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert2::assert!(body["status"].as_str() == Some("success"));
+    assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
+    let series = body["data"][0].clone();
+    assert2::assert!(series["seriesLabels"]["job"].as_str() == Some("api"));
+    assert2::assert!(series["exemplars"][0]["labels"]["trace_id"].as_str() == Some("abc"));
+    assert2::assert!(series["exemplars"][0]["timestamp"].as_f64() == Some(10.5));
+    series
 }
 
 /// `http_requests_total{job="api"}` = 1 at 10s, with the exemplar
@@ -266,6 +360,24 @@ async fn configure_team_a_rules(app: &axum::Router, yaml: &'static str) {
     assert2::assert!(response.status() == StatusCode::ACCEPTED);
 }
 
+/// A `team-a` rule group whose `InstanceDown` alert fires on `up > 0` after 5m.
+const INSTANCE_DOWN_FOR_5M_GROUP: &str = "
+name: availability
+rules:
+  - alert: InstanceDown
+    expr: up > 0
+    for: 5m
+";
+
+/// Reads `/prometheus/api/v1/alerts` and returns its only alert.
+async fn only_alert(app: &axum::Router) -> Value {
+    let response = get(app, "/prometheus/api/v1/alerts").await;
+    let body = json_with_status(response, StatusCode::OK).await;
+    let alerts = body["data"]["alerts"].as_array().unwrap();
+    assert2::assert!(alerts.len() == 1);
+    alerts[0].clone()
+}
+
 /// Sends `request` to `/api/v1/read` as a snappy-compressed `tenant-a` protobuf body.
 async fn remote_read(
     app: &axum::Router,
@@ -343,6 +455,51 @@ async fn decode_read_response(response: axum::response::Response) -> pb::v1::Rea
         .decompress_vec(&bytes)
         .expect("snappy response");
     pb::v1::ReadResponse::decode(decoded.as_slice()).expect("remote read response")
+}
+
+/// A remote-read request for `query` that accepts streamed XOR chunks first
+/// and sampled responses second.
+fn streamed_or_samples_request(query: pb::v1::Query) -> pb::v1::ReadRequest {
+    pb::v1::ReadRequest {
+        queries: vec![query],
+        accepted_response_types: vec![
+            pb::v1::ResponseType::StreamedXorChunks as i32,
+            pb::v1::ResponseType::Samples as i32,
+        ],
+    }
+}
+
+/// Checks a successful streamed remote-read `response` and decodes its first
+/// chunked frame.
+async fn first_chunked_read_response(
+    response: axum::response::Response,
+) -> pb::v1::ChunkedReadResponse {
+    assert2::assert!(response.status() == StatusCode::OK);
+    assert2::assert!(
+        response.headers()["Content-Type"]
+            == "application/x-streamed-protobuf; proto=prometheus.ChunkedReadResponse"
+    );
+    let bytes = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("response body");
+    pb::v1::ChunkedReadResponse::decode(first_streamed_payload(&bytes))
+        .expect("streamed remote read response")
+}
+
+/// Sends `request` to `/api/v1/read`, checks it succeeds, and decodes the
+/// response.
+async fn ok_remote_read(app: &axum::Router, request: &pb::v1::ReadRequest) -> pb::v1::ReadResponse {
+    let response = remote_read(app, request).await;
+    assert2::assert!(response.status() == StatusCode::OK);
+    decode_read_response(response).await
+}
+
+/// Each of `labels` as its name and value, in order.
+fn label_pairs(labels: &[pb::v1::Label]) -> Vec<(&str, &str)> {
+    labels
+        .iter()
+        .map(|label| (label.name.as_str(), label.value.as_str()))
+        .collect()
 }
 
 async fn json_with_status(response: axum::response::Response, status: StatusCode) -> Value {
@@ -478,58 +635,35 @@ async fn response_text(response: axum::response::Response) -> String {
 
 #[tokio::test]
 async fn query_endpoint_returns_prometheus_vector_envelope() {
-    let app = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
-        .app();
+    let app = up_api_at_10().app();
 
     let response = get(&app, "/api/v1/query?query=up&time=10").await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert_result_type(&body, "vector");
+    let body = up_api_at_10_body(response).await;
     assert2::assert!(body["data"]["result"][0]["metric"]["__name__"].as_str() == Some("up"));
     assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
-    assert2::assert!(
-        // Prometheus MarshalTimestamp emits whole seconds as a bare JSON integer.
-        body["data"]["result"][0]["value"][0].as_i64() == Some(10)
-    );
-    assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
 }
 
 #[tokio::test]
 async fn query_endpoint_accepts_rfc3339_time_parameter() {
-    let app = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
-        .app();
+    let app = up_api_at_10().app();
 
     let response = get(&app, "/api/v1/query?query=up&time=1970-01-01T00%3A00%3A10Z").await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert_result_type(&body, "vector");
-    assert2::assert!(body["data"]["result"][0]["value"][0].as_i64() == Some(10));
-    assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
+    up_api_at_10_body(response).await;
 }
 
 #[tokio::test]
 async fn query_endpoint_returns_native_histogram_envelope() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_histogram(
-        "tenant-a",
-        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
-        10_000,
-        {
-            let mut histogram = float_histogram(HistogramTotals {
-                count: 4.0,
-                sum: 10.0,
-            });
-            histogram.zero_count = -1.0;
-            histogram
-        },
-    );
-    let app = prometheus_router(api_state(store));
-
-    let response = get(&app, "/api/v1/query?query=request_duration_seconds&time=10").await;
-
-    let body = json_with_status(response, StatusCode::OK).await;
+    let body = request_duration_query_body({
+        let mut histogram = float_histogram(HistogramTotals {
+            count: 4.0,
+            sum: 10.0,
+        });
+        histogram.zero_count = -1.0;
+        histogram
+    })
+    .await;
     assert_result_type(&body, "vector");
     assert2::assert!(body["data"]["result"][0].get("value").is_none());
     assert2::assert!(
@@ -548,36 +682,26 @@ async fn query_endpoint_returns_native_histogram_envelope() {
 
 #[tokio::test]
 async fn query_endpoint_returns_native_histogram_buckets() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_histogram(
-        "tenant-a",
-        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
-        10_000,
-        {
-            let mut histogram = float_histogram(HistogramTotals {
-                count: 10.0,
-                sum: 7.0,
-            });
-            histogram.zero_threshold = 0.25;
-            histogram.zero_count = 3.0;
-            histogram.positive_spans = vec![BucketSpan {
-                offset: 0,
-                length: 4,
-            }];
-            histogram.positive_counts = vec![2.0, 0.0, -1.0, 4.0];
-            histogram.negative_spans = vec![BucketSpan {
-                offset: 0,
-                length: 1,
-            }];
-            histogram.negative_counts = vec![1.0];
-            histogram
-        },
-    );
-    let app = prometheus_router(api_state(store));
-
-    let response = get(&app, "/api/v1/query?query=request_duration_seconds&time=10").await;
-
-    let body = json_with_status(response, StatusCode::OK).await;
+    let body = request_duration_query_body({
+        let mut histogram = float_histogram(HistogramTotals {
+            count: 10.0,
+            sum: 7.0,
+        });
+        histogram.zero_threshold = 0.25;
+        histogram.zero_count = 3.0;
+        histogram.positive_spans = vec![BucketSpan {
+            offset: 0,
+            length: 4,
+        }];
+        histogram.positive_counts = vec![2.0, 0.0, -1.0, 4.0];
+        histogram.negative_spans = vec![BucketSpan {
+            offset: 0,
+            length: 1,
+        }];
+        histogram.negative_counts = vec![1.0];
+        histogram
+    })
+    .await;
     assert2::assert!(
         body["data"]["result"][0]["histogram"][1]["buckets"]
             == serde_json::json!([
@@ -592,31 +716,21 @@ async fn query_endpoint_returns_native_histogram_buckets() {
 
 #[tokio::test]
 async fn query_endpoint_returns_native_histogram_custom_buckets() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_histogram(
-        "tenant-a",
-        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
-        10_000,
-        {
-            let mut histogram = float_histogram(HistogramTotals {
-                count: 6.0,
-                sum: 2.3,
-            });
-            histogram.schema = -53;
-            histogram.positive_spans = vec![BucketSpan {
-                offset: 0,
-                length: 3,
-            }];
-            histogram.positive_counts = vec![1.0, 2.0, 3.0];
-            histogram.custom_values = Some(vec![0.1, 0.5]);
-            histogram
-        },
-    );
-    let app = prometheus_router(api_state(store));
-
-    let response = get(&app, "/api/v1/query?query=request_duration_seconds&time=10").await;
-
-    let body = json_with_status(response, StatusCode::OK).await;
+    let body = request_duration_query_body({
+        let mut histogram = float_histogram(HistogramTotals {
+            count: 6.0,
+            sum: 2.3,
+        });
+        histogram.schema = -53;
+        histogram.positive_spans = vec![BucketSpan {
+            offset: 0,
+            length: 3,
+        }];
+        histogram.positive_counts = vec![1.0, 2.0, 3.0];
+        histogram.custom_values = Some(vec![0.1, 0.5]);
+        histogram
+    })
+    .await;
     assert2::assert!(
         body["data"]["result"][0]["histogram"][1]["buckets"]
             == serde_json::json!([
@@ -629,17 +743,12 @@ async fn query_endpoint_returns_native_histogram_custom_buckets() {
 
 #[tokio::test]
 async fn query_endpoint_accepts_post_form_body() {
-    let app = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
-        .app();
+    let app = up_api_at_10().app();
 
     let response = post_form(&app, "/api/v1/query", "query=up&time=10").await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert_result_type(&body, "vector");
+    let body = up_api_at_10_body(response).await;
     assert2::assert!(body["data"]["result"][0]["metric"]["__name__"].as_str() == Some("up"));
-    assert2::assert!(body["data"]["result"][0]["value"][0].as_i64() == Some(10));
-    assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
 }
 
 #[tokio::test]
@@ -1142,14 +1251,7 @@ async fn series_endpoint_accepts_or_label_matchers() {
     .await;
 
     let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"] == "success");
-    let data = body["data"].as_array().expect("data array");
-    assert2::assert!(data.len() == 2);
-    let jobs = data
-        .iter()
-        .map(|series| series["job"].as_str().expect("job"))
-        .collect::<std::collections::BTreeSet<_>>();
-    assert2::assert!(jobs == std::collections::BTreeSet::from(["api", "web"]));
+    assert_api_and_web_jobs(&body, "/job");
 }
 
 #[tokio::test]
@@ -1216,18 +1318,7 @@ async fn series_endpoint_rejects_end_before_start() {
 
 #[tokio::test]
 async fn labels_endpoint_returns_label_names_for_matchers() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "errors_total"), ("job", "api")]),
-            10_000,
-            1.0,
-        )
-        .app();
+    let app = up_api_a_and_api_errors().app();
 
     let response = get(&app, "/api/v1/labels?match%5B%5D=up&start=10&end=10").await;
 
@@ -1238,18 +1329,7 @@ async fn labels_endpoint_returns_label_names_for_matchers() {
 
 #[tokio::test]
 async fn labels_endpoint_accepts_post_form_body() {
-    let app = TenantFloats::new()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            10_000,
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "errors_total"), ("job", "api")]),
-            10_000,
-            1.0,
-        )
-        .app();
+    let app = up_api_a_and_api_errors().app();
 
     let response = post_form(&app, "/api/v1/labels", "match%5B%5D=up&start=10&end=10").await;
 
@@ -1779,17 +1859,7 @@ async fn alerts_endpoint_marks_for_duration_alerts_pending() {
         )
         .app();
 
-    configure_team_a_rules(
-        &app,
-        "
-name: availability
-rules:
-  - alert: InstanceDown
-    expr: up > 0
-    for: 5m
-",
-    )
-    .await;
+    configure_team_a_rules(&app, INSTANCE_DOWN_FOR_5M_GROUP).await;
 
     let response = get(&app, "/prometheus/api/v1/alerts").await;
 
@@ -1820,34 +1890,18 @@ async fn alerts_endpoint_fires_for_duration_alerts_after_active_duration() {
     let state = api_state(store);
     let app = prometheus_router(Arc::clone(&state));
 
-    configure_team_a_rules(
-        &app,
-        "
-name: availability
-rules:
-  - alert: InstanceDown
-    expr: up > 0
-    for: 5m
-",
-    )
-    .await;
+    configure_team_a_rules(&app, INSTANCE_DOWN_FOR_5M_GROUP).await;
 
-    let response = get(&app, "/prometheus/api/v1/alerts").await;
-    let body = json_with_status(response, StatusCode::OK).await;
-    let alerts = body["data"]["alerts"].as_array().unwrap();
-    assert2::assert!(alerts.len() == 1);
-    assert2::assert!(alerts[0]["state"].as_str() == Some("pending"));
-    assert2::assert!(alerts[0]["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
+    let alert = only_alert(&app).await;
+    assert2::assert!(alert["state"].as_str() == Some("pending"));
+    assert2::assert!(alert["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
 
     state.set_ruler_evaluation_time_ms(300_000);
-    let response = get(&app, "/prometheus/api/v1/alerts").await;
-    let body = json_with_status(response, StatusCode::OK).await;
-    let alerts = body["data"]["alerts"].as_array().unwrap();
-    assert2::assert!(alerts.len() == 1);
-    assert2::assert!(alerts[0]["duration"].as_i64() == Some(300));
-    assert2::assert!(alerts[0]["state"].as_str() == Some("firing"));
-    assert2::assert!(alerts[0]["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
-    assert2::assert!(alerts[0]["value"].as_str() == Some("1"));
+    let alert = only_alert(&app).await;
+    assert2::assert!(alert["duration"].as_i64() == Some(300));
+    assert2::assert!(alert["state"].as_str() == Some("firing"));
+    assert2::assert!(alert["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
+    assert2::assert!(alert["value"].as_str() == Some("1"));
 }
 
 #[tokio::test]
@@ -1863,17 +1917,7 @@ async fn alerts_endpoint_replays_compacted_alert_state() {
     state.set_ruler_evaluation_time_ms(300_000);
     let app = prometheus_router(Arc::clone(&state));
 
-    configure_team_a_rules(
-        &app,
-        "
-name: availability
-rules:
-  - alert: InstanceDown
-    expr: up > 0
-    for: 5m
-",
-    )
-    .await;
+    configure_team_a_rules(&app, INSTANCE_DOWN_FOR_5M_GROUP).await;
 
     let alert_labels = BTreeMap::from([
         ("alertname".to_string(), "InstanceDown".to_string()),
@@ -1888,13 +1932,9 @@ rules:
         keep_firing_until_ms: None,
     });
 
-    let response = get(&app, "/prometheus/api/v1/alerts").await;
-
-    let body = json_with_status(response, StatusCode::OK).await;
-    let alerts = body["data"]["alerts"].as_array().unwrap();
-    assert2::assert!(alerts.len() == 1);
-    assert2::assert!(alerts[0]["state"].as_str() == Some("firing"));
-    assert2::assert!(alerts[0]["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
+    let alert = only_alert(&app).await;
+    assert2::assert!(alert["state"].as_str() == Some("firing"));
+    assert2::assert!(alert["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
 }
 
 #[tokio::test]
@@ -2166,17 +2206,10 @@ async fn query_exemplars_endpoint_returns_matching_exemplars() {
     )
     .await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
-    assert2::assert!(
-        body["data"][0]["seriesLabels"]["__name__"].as_str() == Some("http_requests_total")
-    );
-    assert2::assert!(body["data"][0]["seriesLabels"]["job"].as_str() == Some("api"));
-    assert2::assert!(body["data"][0]["exemplars"][0]["labels"]["trace_id"].as_str() == Some("abc"));
-    assert2::assert!(body["data"][0]["exemplars"][0]["labels"]["span_id"].as_str() == Some("def"));
-    assert2::assert!(body["data"][0]["exemplars"][0]["value"].as_str() == Some("7"));
-    assert2::assert!(body["data"][0]["exemplars"][0]["timestamp"].as_f64() == Some(10.5));
+    let series = only_api_exemplar_series(response).await;
+    assert2::assert!(series["seriesLabels"]["__name__"].as_str() == Some("http_requests_total"));
+    assert2::assert!(series["exemplars"][0]["labels"]["span_id"].as_str() == Some("def"));
+    assert2::assert!(series["exemplars"][0]["value"].as_str() == Some("7"));
 }
 
 #[tokio::test]
@@ -2208,14 +2241,7 @@ async fn query_exemplars_endpoint_accepts_or_label_matchers() {
     let response = get(&app, "/api/v1/query_exemplars?query=http_requests_total%7Bjob%3D%22api%22%20or%20job%3D%22web%22%7D&start=10&end=11").await;
 
     let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"] == "success");
-    let data = body["data"].as_array().expect("data array");
-    assert2::assert!(data.len() == 2);
-    let jobs = data
-        .iter()
-        .map(|series| series["seriesLabels"]["job"].as_str().expect("job"))
-        .collect::<std::collections::BTreeSet<_>>();
-    assert2::assert!(jobs == std::collections::BTreeSet::from(["api", "web"]));
+    assert_api_and_web_jobs(&body, "/seriesLabels/job");
 }
 
 #[tokio::test]
@@ -2229,12 +2255,7 @@ async fn query_exemplars_endpoint_accepts_post_form_body() {
     )
     .await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
-    assert2::assert!(body["data"][0]["seriesLabels"]["job"].as_str() == Some("api"));
-    assert2::assert!(body["data"][0]["exemplars"][0]["labels"]["trace_id"].as_str() == Some("abc"));
-    assert2::assert!(body["data"][0]["exemplars"][0]["timestamp"].as_f64() == Some(10.5));
+    only_api_exemplar_series(response).await;
 }
 
 #[tokio::test]
@@ -2401,20 +2422,12 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
         .collect(),
         accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
     };
-    let response = remote_read(&app, &request).await;
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let read_response = decode_read_response(response).await;
+    let read_response = ok_remote_read(&app, &request).await;
     let series = &read_response.results[0].timeseries[0];
     assert2::assert!(read_response.results.len() == 6);
     assert2::assert!(read_response.results[0].timeseries.len() == 1);
     assert2::assert!(
-        series
-            .labels
-            .iter()
-            .map(|label| (label.name.as_str(), label.value.as_str()))
-            .collect::<Vec<_>>()
-            == vec![("__name__", "up"), ("instance", "a"), ("job", "api")]
+        label_pairs(&series.labels) == vec![("__name__", "up"), ("instance", "a"), ("job", "api")]
     );
     assert2::assert!(
         read_response
@@ -2510,21 +2523,13 @@ async fn remote_read_endpoint_returns_matching_exemplars() {
         )],
         accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
     };
-    let response = remote_read(&app, &request).await;
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let read_response = decode_read_response(response).await;
+    let read_response = ok_remote_read(&app, &request).await;
     let series = &read_response.results[0].timeseries[0];
     assert2::assert!(series.exemplars.len() == 1);
     assert2::assert!(series.exemplars[0].timestamp == 10_500);
     assert2::assert!((series.exemplars[0].value - 7.0).abs() < f64::EPSILON);
     assert2::assert!(
-        series.exemplars[0]
-            .labels
-            .iter()
-            .map(|label| (label.name.as_str(), label.value.as_str()))
-            .collect::<Vec<_>>()
-            == vec![("span_id", "def"), ("trace_id", "abc")]
+        label_pairs(&series.exemplars[0].labels) == vec![("span_id", "def"), ("trace_id", "abc")]
     );
 }
 
@@ -2542,31 +2547,16 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
     );
     let state = api_state(store);
     let app = prometheus_router(Arc::clone(&state));
-    let request = pb::v1::ReadRequest {
-        queries: vec![read_query(
-            MillisRange {
-                start_ms: 10_000,
-                end_ms: 10_000,
-            },
-            vec![eq_matcher("__name__", "request_duration_seconds")],
-        )],
-        accepted_response_types: vec![
-            pb::v1::ResponseType::StreamedXorChunks as i32,
-            pb::v1::ResponseType::Samples as i32,
-        ],
-    };
+    let request = streamed_or_samples_request(read_query(
+        MillisRange {
+            start_ms: 10_000,
+            end_ms: 10_000,
+        },
+        vec![eq_matcher("__name__", "request_duration_seconds")],
+    ));
     let response = remote_read(&app, &request).await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    assert2::assert!(
-        response.headers()["Content-Type"]
-            == "application/x-streamed-protobuf; proto=prometheus.ChunkedReadResponse"
-    );
-    let bytes = to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("response body");
-    let streamed = pb::v1::ChunkedReadResponse::decode(first_streamed_payload(&bytes))
-        .expect("streamed remote read response");
+    let streamed = first_chunked_read_response(response).await;
     let chunk = &streamed.chunked_series[0].chunks[0];
     assert2::assert!(chunk.r#type == pb::v1::chunk::Encoding::FloatHistogram as i32);
     assert2::assert!(chunk.min_time_ms == 10_000);
@@ -2621,32 +2611,17 @@ async fn remote_read_endpoint_streams_prometheus_xor_frames() {
             12_000.0,
         )
         .app();
-    let request = pb::v1::ReadRequest {
-        queries: vec![read_query(
-            MillisRange {
-                start_ms: 7_200_000,
-                end_ms: 7_200_000,
-            },
-            vec![eq_matcher("__name__", "up")],
-        )],
-        accepted_response_types: vec![
-            pb::v1::ResponseType::StreamedXorChunks as i32,
-            pb::v1::ResponseType::Samples as i32,
-        ],
-    };
+    let request = streamed_or_samples_request(read_query(
+        MillisRange {
+            start_ms: 7_200_000,
+            end_ms: 7_200_000,
+        },
+        vec![eq_matcher("__name__", "up")],
+    ));
     let response = remote_read(&app, &request).await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    assert2::assert!(
-        response.headers()["Content-Type"].to_str().unwrap()
-            == "application/x-streamed-protobuf; proto=prometheus.ChunkedReadResponse"
-    );
     assert2::assert!(response.headers().get("Content-Encoding").is_none());
-    let body = to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("streamed response");
-    let payload = first_streamed_payload(&body);
-    let response = pb::v1::ChunkedReadResponse::decode(payload).expect("chunked read response");
+    let response = first_chunked_read_response(response).await;
     assert2::assert!(response.query_index == 0);
     assert2::assert!(response.chunked_series.len() == 1);
     let series = &response.chunked_series[0];
@@ -2848,14 +2823,7 @@ async fn cardinality_active_series_endpoint_filters_selector_parameter() {
     )
     .await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body.get("status").is_none());
-    assert2::assert!(
-        body["data"].clone()
-            == serde_json::json!([
-                {"__name__": "up", "instance": "a", "job": "api"},
-            ])
-    );
+    assert_only_active_up_api_a(response).await;
 }
 
 #[tokio::test]
@@ -2880,14 +2848,7 @@ async fn cardinality_active_series_endpoint_accepts_post_form_body() {
     )
     .await;
 
-    let body = json_with_status(response, StatusCode::OK).await;
-    assert2::assert!(body.get("status").is_none());
-    assert2::assert!(
-        body["data"].clone()
-            == serde_json::json!([
-                {"__name__": "up", "instance": "a", "job": "api"},
-            ])
-    );
+    assert_only_active_up_api_a(response).await;
 }
 
 #[tokio::test]

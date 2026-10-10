@@ -23,6 +23,26 @@ pub(crate) async fn planned_and_interpreted<S: crate::MetricStore>(
     )
 }
 
+/// Both paths' vector samples for one query, each sorted by series fingerprint.
+pub(crate) struct SortedParity {
+    pub(crate) via_operators: Vec<crate::InstantSample>,
+    pub(crate) via_interpreter: Vec<crate::InstantSample>,
+}
+
+/// Like [`planned_and_interpreted`], with each path's vector sorted by
+/// [`fingerprint_sorted`].
+pub(crate) async fn sorted_planned_and_interpreted<S: crate::MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+    time_ms: i64,
+) -> SortedParity {
+    let (via_operators, via_interpreter) = planned_and_interpreted(engine, query, time_ms).await;
+    SortedParity {
+        via_operators: fingerprint_sorted(via_operators, query),
+        via_interpreter: fingerprint_sorted(via_interpreter, query),
+    }
+}
+
 /// Like [`planned_and_interpreted`], with the annotations each path raised.
 pub(crate) async fn annotated_planned_and_interpreted<S: crate::MetricStore>(
     engine: &PromqlEngine<S>,

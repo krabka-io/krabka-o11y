@@ -33,14 +33,6 @@ pub(crate) async fn histogram_quantile_interpolates_each_kind_of_native_bucket()
         (0.9, 2.639_015_821_545_789_3),
     ] {
         let query = format!("histogram_quantile({quantile}, h)");
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), &query, 10_000)
-            .await
-            .unwrap_or_else(|error| panic!("{query}: {error}"));
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected a vector for {query}");
-        };
-        assert2::assert!(samples.len() == 1, "{query}");
-        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+        assert_lone_value(&engine, &query, want).await;
     }
 }
