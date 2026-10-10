@@ -24,9 +24,11 @@ use tower::ServiceExt as _;
 use crate::log_queries::{LogQueryFixture, POINTS_PER_STREAM};
 
 /// Requests that distinguish preparation cost from broad result construction.
-pub const CASES: [&str; 7] = [
+pub const CASES: [&str; 9] = [
     "all",
     "all_sharded",
+    "all_limited",
+    "all_sharded_limited",
     "sparse",
     "rare",
     "single",
@@ -34,6 +36,7 @@ pub const CASES: [&str; 7] = [
     "label_values",
 ];
 const TENANT: &str = "log-query-bench";
+const TRUNCATED_LIMIT: usize = 100;
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
 struct FixtureRoot(PathBuf);
@@ -142,7 +145,9 @@ impl LogFrontendFixture {
     /// Panics for an unknown case or an invalid fixture request URI.
     pub async fn execute(&self, name: &str) -> Result<Bytes, String> {
         let selector = match name {
-            "all" | "all_sharded" => "%7Bapp%21%3D%22%22%7D",
+            "all" | "all_sharded" | "all_limited" | "all_sharded_limited" => {
+                "%7Bapp%21%3D%22%22%7D"
+            }
             "sparse" => "%7Bapp%3D%22api%22%7D",
             "rare" => "%7Bbucket%3D%22rare%22%7D",
             "single" => "%7Bseries%3D%2200000000%22%7D",
@@ -150,25 +155,30 @@ impl LogFrontendFixture {
             "label_values" => "",
             _ => panic!("unknown frontend case"),
         };
+        let limit = if matches!(name, "all_limited" | "all_sharded_limited") {
+            TRUNCATED_LIMIT
+        } else {
+            self.limit
+        };
         let uri = if name == "label_values" {
             "/loki/api/v1/label/app/values?start=0.000000000&end=0.000000010".to_string()
         } else {
             format!(
-                "/loki/api/v1/query_range?query={selector}&start=0.000000000&end=0.000000010&direction=forward&limit={}",
-                self.limit,
+                "/loki/api/v1/query_range?query={selector}&start=0.000000000&end=0.000000010&direction=forward&limit={limit}",
             )
         };
-        let response = self.routers[usize::from(name == "all_sharded")]
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header("X-Scope-OrgID", TENANT)
-                    .body(Body::empty())
-                    .expect("a fixture request builds"),
-            )
-            .await
-            .expect("a fixture request executes");
+        let response = self.routers
+            [usize::from(matches!(name, "all_sharded" | "all_sharded_limited"))]
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header("X-Scope-OrgID", TENANT)
+                .body(Body::empty())
+                .expect("a fixture request builds"),
+        )
+        .await
+        .expect("a fixture request executes");
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
@@ -201,6 +211,7 @@ impl LogFrontendFixture {
         }
         let expected = match name {
             "all" | "all_sharded" => self.queries.case("all_exact").expected,
+            "all_limited" | "all_sharded_limited" => self.expected_limited(),
             "sparse" | "rare" | "single" => self.queries.case(name).expected,
             "none" => json!({"status":"success", "data":{"resultType":"streams", "result":[]}}),
             "label_values" => json!({"status":"success", "data":["api", "worker"]}),
@@ -210,5 +221,28 @@ impl LogFrontendFixture {
             return Err("the complete frontend response differs from the input ledger".to_string());
         }
         Ok(())
+    }
+
+    fn expected_limited(&self) -> Value {
+        let mut expected = self.queries.case("all_exact").expected;
+        let streams = expected["data"]["result"].as_array_mut().unwrap();
+        let mut counts = vec![0; streams.len()];
+        let mut remaining = TRUNCATED_LIMIT;
+        // Every generated stream has one row at each timestamp. Walk those
+        // input points in time/label order without using production selection.
+        'points: for _ in 0..POINTS_PER_STREAM {
+            for count in &mut counts {
+                if remaining == 0 {
+                    break 'points;
+                }
+                *count += 1;
+                remaining -= 1;
+            }
+        }
+        for (stream, count) in streams.iter_mut().zip(counts) {
+            stream["values"].as_array_mut().unwrap().truncate(count);
+        }
+        streams.retain(|stream| !stream["values"].as_array().unwrap().is_empty());
+        expected
     }
 }

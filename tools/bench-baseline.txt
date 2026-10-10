@@ -298,3 +298,11 @@ log_query_frontend/shards_all/100000 unseeded
 log_query_frontend/shards_rare/100000 unseeded
 log_query_frontend/shards_single/100000 unseeded
 log_query_frontend/shards_none/100000 unseeded
+log_query_frontend/all_limited/1000 unseeded
+log_query_frontend/all_sharded_limited/1000 unseeded
+log_query_frontend/all_limited/5000 unseeded
+log_query_frontend/all_sharded_limited/5000 unseeded
+log_query_frontend/all_limited/20000 unseeded
+log_query_frontend/all_sharded_limited/20000 unseeded
+log_query_frontend/all_limited/100000 unseeded
+log_query_frontend/all_sharded_limited/100000 unseeded

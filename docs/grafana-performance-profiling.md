@@ -1737,3 +1737,79 @@ all 587 tests and strict lint passed for that source. Benchmark IDs, historical
 budgets, WAL locations and default disk guards remain unchanged. The next
 investigation needs to explain row disposal and allocation behavior or measure
 complete HTTP processing; this experiment does not qualify upstream parity.
+
+## Finite-limit complete HTTP qualification
+
+The [finite-limit frontend record](../qualification/limited-log-frontend-2026-10-10.json)
+compares the preserved production libraries immediately before and after the
+retained partial-selection change. Both executables use the same new fixture,
+compiler options, dependency graph and CPU affinity. Requests include
+preparation, planning, actual warmed Parquet reads, serialization and complete
+body consumption. Result caching is disabled. Fixture construction and an
+independent generated-input ledger check precede each process's timer.
+
+These measurements explicitly put fixture files on the workspace overlay;
+the two executables reside in RAM during measurement. All work runs on this
+VM with the demo paused and restored healthy afterward. Three alternating
+pairs cover 1,000–100,000 streams, ten rows per stream, manifest and shard
+requests limited to 100 entries, and the existing complete-result control.
+All 72 primary response checks pass. Selected primary results are:
+
+| Input rows | Request | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- | --- |
+| 10,000 | Manifest, limit 100 | 39.894 ms | 44.251 ms | 1.1092 |
+| 10,000 | Sharded, limit 100 | 45.017 ms | 47.340 ms | 1.0516 |
+| 50,000 | Manifest, limit 100 | 160.296 ms | 160.779 ms | 1.0030 |
+| 50,000 | Sharded, limit 100 | 238.087 ms | 247.746 ms | 1.0067 |
+| 200,000 | Manifest, limit 100 | 824.634 ms | 874.448 ms | 1.0584 |
+| 200,000 | Sharded, limit 100 | 1.084 s | 0.977 s | 0.9624 |
+| 1,000,000 | Manifest, limit 100 | 5.133 s | 5.158 s | 1.0010 |
+| 1,000,000 | Sharded, limit 100 | 7.021 s | 6.379 s | 0.8972 |
+
+Every primary case has overlapping ranges, including the complete-result
+controls preserved in the record. The two manifest cases slower in every
+initial pair receive twelve longer verified observations, with 100 iterations
+at 10,000 rows and twenty at 200,000 rows. Their paired median ratios become
+1.0050 and 0.9987, with overlapping ranges. Preserve both rounds separately:
+the complete request results are mixed and do not qualify a consistent
+general HTTP gain from the roughly twofold helper improvement above.
+
+Four whole-process CPU captures at 200,000 rows include construction, the
+independent oracle, verification, three timed requests and disposal. Actual
+sample counts are 865/878 for manifest requests and 959/997 for shard requests,
+with zero lost samples. The global JSON limit helper does not appear above
+the reports' 0.5% threshold; that does not establish zero cost. Production
+call chains instead include timestamp parsing during record sorting and
+`trim_multiple_streams_before_encoding`. Label comparisons and hashing have
+multiple callers, including the fixture oracle, and need caller attribution
+before choosing another production change. Two allocation captures at
+50,000 rows include setup, verification and one timed request. Calls are
+3,949,866/3,949,879, peak heap is 66.08 MB in both, and instrumented RSS is
+185.89/186.61 MB. No memory advantage is qualified.
+
+The initial fixture lint fails on a positional format argument, and the shell
+launcher incorrectly continues into timing. Both measured executables share
+that captured source and each independently verifies its complete response.
+The correction uses the named format argument with the same URI. A separate
+validation build passes strict fixture/driver lint, lists all 52 frontend
+Criterion IDs, and verifies twenty boundary responses across 1, 9, 10, 99
+and 100 streams with both manifest and shard requests. Its results are not
+pooled into timings. Managed formatting passes. Production remains the
+previously tested implementation with 587 passing tests. Eight new IDs are
+unseeded; all 85 historical numeric budgets remain unchanged.
+
+Full symbolized reports are preserved with lossless gzip verification, along
+with raw CPU/allocation captures, source snapshots and exact commands.
+Build dependencies are removed before timing. After reports and controls,
+the two measured executables are hashed and removed without an ELF archive;
+re-symbolizing raw CPU data requires rebuilding from the retained library
+archives and fixture source. This limitation is explicit in the record.
+
+Pinned [Loki ReadBatch](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L681)
+stops an ordered iterator at the requested count. Krabka already merges
+per-stream heads with a heap before encoding these finite-limit responses,
+although it still materializes and sorts entries and repeatedly parses
+timestamp strings. That earlier stage explains why optimizing the later
+global JSON selection need not improve this workload. Timestamp handling
+in actual sort/trim callers is the next profiling target; no new production
+change or native upstream comparison is claimed by this qualification.
