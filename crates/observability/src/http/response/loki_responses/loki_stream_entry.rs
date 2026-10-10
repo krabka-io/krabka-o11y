@@ -1,6 +1,6 @@
 use serde::{Serialize, Serializer, ser::SerializeSeq as _};
 
-use super::{Labels, Value, json};
+use super::{Labels, LokiTimestamp, Value, json};
 
 /// One entry of a Loki `streams` result, with its labels kept apart by origin.
 ///
@@ -21,7 +21,7 @@ use super::{Labels, Value, json};
 /// builder folds or splits accordingly.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LokiStreamEntry {
-    pub(crate) timestamp_ns: String,
+    pub(crate) timestamp_ns: LokiTimestamp,
     pub(crate) line: String,
     pub(crate) source_labels: Labels,
     pub(crate) structured_metadata: Labels,
@@ -37,7 +37,7 @@ impl LokiStreamEntry {
         parsed: Labels,
     ) -> Self {
         Self {
-            timestamp_ns: timestamp_ns.to_string(),
+            timestamp_ns: timestamp_ns.into(),
             line,
             source_labels: Labels::new(),
             structured_metadata,
@@ -47,7 +47,7 @@ impl LokiStreamEntry {
 
     /// The entry's timestamp, or `None` when it is not a decimal integer.
     pub(crate) fn parsed_timestamp_ns(&self) -> Option<i64> {
-        self.timestamp_ns.parse::<i64>().ok()
+        self.timestamp_ns.parsed()
     }
 
     /// The entry under the `categorize-labels` encoding: three elements, the

@@ -1813,3 +1813,57 @@ timestamp strings. That earlier stage explains why optimizing the later
 global JSON selection need not improve this workload. Timestamp handling
 in actual sort/trim callers is the next profiling target; no new production
 change or native upstream comparison is claimed by this qualification.
+
+## Numeric log timestamps: draft progress
+
+The [numeric timestamp progress record](../qualification/numeric-log-timestamp-2026-10-10.json)
+follows the sort/trim callers identified above. Log entries now retain canonical
+nanoseconds as integers until JSON encoding, avoiding decimal parsing during
+sorting and selection. Both encodings still emit timestamp strings. Malformed
+and noncanonical input strings retain their exact spelling and deduplication
+identity. Pinned Loki compares typed timestamps through `UnixNano`; its ordered
+iterator still avoids materialization that this change does not remove.
+
+Measurements run on this VM against source `45b254287a49cda79bbea61e447bb2580c7033a2`.
+The component harness uses the actual entry, sort, trim and encoding modules,
+with storage-related type stand-ins. It times construction, sorting, selection
+and complete serialization; fixture setup, an independent full-payload oracle
+and final buffer disposal precede or follow the timer. These measurements do
+not cover HTTP or storage. Four balanced pairs share one fixture and executable;
+CPU includes process user and system time, with 10 ms tick resolution.
+
+| Rows | Points per stream | Folded response | Median candidate / baseline CPU |
+| --- | --- | --- | --- |
+| 1,000,000 | 10 | Complete | 0.9038 |
+| 1,000,000 | 10 | Limit 100 | 0.8598 |
+| 2,000,000 | 10 | Limit 100 | 0.8474 |
+
+Every pair in those cases improves. Fixtures deliberately include tied minimum
+and maximum signed timestamps, representing 40% of ten-row streams; results
+should not be generalized to every timestamp distribution. Million-row cases
+with 1,000 points per stream are mixed. The categorized case includes a 1.2294
+CPU ratio in one pair. A longer repeat has a 1.0002 median ratio and overlaps
+managed formatting, so it remains diagnostic. Interrupted cohorts and one
+orphan observation are retained separately, without pooling across VM boots.
+
+Six CPU and six allocation captures include fixture construction, verification,
+timed processing and disposal. Repeated parsing falls in the flat CPU reports,
+but those percentages are not normalized pipeline CPU measurements. The first
+serializer version removes 218,900 of 3,539,681 allocation calls in the
+20,000-row finite-limit capture. Its categorized capture adds 440 temporary
+allocations; production now dispatches serialization directly to the integer
+or text value. A targeted repeat verifies complete payloads and removes those
+extra temporaries: both variants have 642 temporary allocations. It removes
+220,000 of 11,766,918 total calls with unchanged 87.08 MB peak heap. Compilation
+runs concurrently with this allocation-only repeat; its timings and RSS do not
+qualify an advantage. No general memory improvement is qualified.
+
+Managed formatting, standalone exact-wire/identity checks and the actual
+production build pass. All 589 scoped unit/integration tests and strict Clippy
+on production and full unit-test source pass using the captured cached build
+graph. Complete HTTP validation remains pending. Native Loki has not been
+rerun because this VM lacks the existing WAL disk headroom. Benchmark budgets
+and disk guards are unchanged; this progress does not establish a native
+performance ratio. The local raw progress snapshot has a checksum manifest;
+component executables are retained, while the production build library stays
+in volatile RAM and requires rebuilding after a VM restart.

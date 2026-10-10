@@ -8,7 +8,7 @@ use super::*;
 #[test]
 pub(crate) fn loki_stream_values_sort_numerically_not_lexicographically() {
     let entry = |timestamp: &str| LokiStreamEntry {
-        timestamp_ns: timestamp.to_string(),
+        timestamp_ns: timestamp.into(),
         line: "line".to_string(),
         source_labels: Labels::default(),
         structured_metadata: Labels::default(),
@@ -32,7 +32,7 @@ pub(crate) fn loki_stream_values_sort_numerically_not_lexicographically() {
 
     let order = streams[&labels]
         .iter()
-        .map(|entry| entry.timestamp_ns.as_str())
+        .map(|entry| entry.timestamp_ns.to_string())
         .collect::<Vec<_>>();
     check!(
         order == vec!["2", "999", "1000", "10000", "nonsense"],

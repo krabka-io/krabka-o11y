@@ -88,7 +88,7 @@ impl StreamScanOptions {
                 })
             })
             .filter(|(labels, entry)| {
-                seen.insert((*labels, entry.timestamp_ns.as_str(), entry.line.as_str()))
+                seen.insert((*labels, &entry.timestamp_ns, entry.line.as_str()))
             })
             .take(limit)
             .count()
@@ -111,7 +111,7 @@ impl StreamScanOptions {
                 let mut seen = HashSet::new();
                 entries
                     .iter()
-                    .map(|entry| seen.insert((entry.timestamp_ns.as_str(), entry.line.as_str())))
+                    .map(|entry| seen.insert((&entry.timestamp_ns, entry.line.as_str())))
                     .collect::<Vec<_>>()
             }
             .into_iter();
