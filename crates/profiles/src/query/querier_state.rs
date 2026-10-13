@@ -479,7 +479,7 @@ impl<S: ProfileStore> QuerierState<S> {
     /// Validates a series exemplar query and parses its selector.
     fn series_exemplar_scan(
         &self,
-        query: SeriesExemplarQuery<'_>,
+        query: &SeriesExemplarQuery<'_>,
     ) -> Result<SeriesExemplarScan, ProfileError> {
         let QueryTarget {
             tenant,
@@ -496,30 +496,43 @@ impl<S: ProfileStore> QuerierState<S> {
         })
     }
 
-    pub(crate) async fn select_series_span_exemplars(
+    async fn series_exemplar_groups(
         &self,
-        query: SeriesExemplarQuery<'_>,
-    ) -> Result<SpanExemplarsBySeries, ProfileError> {
+        query: &SeriesExemplarQuery<'_>,
+        group_by: &[String],
+        empty_group_for_ungrouped: bool,
+    ) -> Result<(SeriesExemplarScan, Vec<Vec<ProfileLabel>>), ProfileError> {
         let plan = self.series_exemplar_scan(query)?;
-        let QueryTarget {
-            tenant,
-            profile_type,
-            ..
-        } = query.target;
-        let end_ms = query.range.end_ms;
-        let groups = if query.group_by.is_empty() {
+        let QueryTarget { tenant, .. } = query.target;
+        let groups = if empty_group_for_ungrouped && query.group_by.is_empty() {
             vec![Vec::new()]
         } else {
             self.store
                 .series(
                     tenant.as_str(),
                     &plan.base_matchers,
-                    query.group_by,
+                    group_by,
                     plan.scan_start,
-                    end_ms,
+                    query.range.end_ms,
                 )
                 .await?
         };
+        Ok((plan, groups))
+    }
+
+    pub(crate) async fn select_series_span_exemplars(
+        &self,
+        query: SeriesExemplarQuery<'_>,
+    ) -> Result<SpanExemplarsBySeries, ProfileError> {
+        let (plan, groups) = self
+            .series_exemplar_groups(&query, query.group_by, true)
+            .await?;
+        let QueryTarget {
+            tenant,
+            profile_type,
+            ..
+        } = query.target;
+        let end_ms = query.range.end_ms;
         let mut out = BTreeMap::new();
         for labels in groups {
             let matchers = series_matchers(&plan.base_matchers, &labels);
@@ -557,23 +570,13 @@ impl<S: ProfileStore> QuerierState<S> {
         &self,
         query: SeriesExemplarQuery<'_>,
     ) -> Result<SpanExemplarsBySeries, ProfileError> {
-        let plan = self.series_exemplar_scan(query)?;
+        let (plan, groups) = self.series_exemplar_groups(&query, &[], false).await?;
         let QueryTarget {
             tenant,
             profile_type,
             ..
         } = query.target;
         let end_ms = query.range.end_ms;
-        let groups = self
-            .store
-            .series(
-                tenant.as_str(),
-                &plan.base_matchers,
-                &[],
-                plan.scan_start,
-                end_ms,
-            )
-            .await?;
         let mut out: SpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
             let Some(profile_id) = profile_id_of(&labels) else {

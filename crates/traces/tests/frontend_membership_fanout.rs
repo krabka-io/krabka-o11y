@@ -47,6 +47,8 @@ use krabka_units::{
 };
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
+#[path = "support/complete_trace_response.rs"]
+mod complete_trace_response;
 
 /// Every query string one stub querier was asked, in arrival order.
 type Log = Arc<Mutex<Vec<String>>>;
@@ -173,20 +175,7 @@ async fn spawn_querier_holding(
                         .body(axum::body::Body::from("trace not found"))
                         .unwrap();
                 }
-                axum::Json(json!({
-                    "trace": {
-                        "resourceSpans": [{
-                            "resource": { "attributes": [] },
-                            "scopeSpans": [{
-                                "scope": {},
-                                "spans": [{ "spanId": "BgYGBgYGBgY=", "name": "op" }]
-                            }]
-                        }]
-                    },
-                    "status": "COMPLETE",
-                    "message": ""
-                }))
-                .into_response()
+                complete_trace_response::complete_trace_response()
             }),
         )
         .with_state(state.clone());

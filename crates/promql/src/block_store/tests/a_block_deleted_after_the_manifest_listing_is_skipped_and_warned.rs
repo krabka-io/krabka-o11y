@@ -21,22 +21,16 @@ async fn write_blocks(object_store: &Arc<dyn ObjectStore>, offsets: &[i64]) {
             crate::test_support::TestLabelPair::new("__name__", "soak_metric"),
             crate::test_support::TestLabelPair::new("block", &offset.to_string()),
         ]);
-        let mut series_labels = std::collections::BTreeMap::new();
-        series_labels.insert(series.fingerprint(), series.clone().into());
-        let rows = TenantCompactionRows {
-            tenant: "tenant-a".to_string(),
-            series_labels,
-            float_rows: vec![FloatRow {
+        let rows = compaction_rows_for_series(
+            &series,
+            vec![FloatRow {
                 fingerprint: series.fingerprint(),
                 timestamp_ms: 90_000,
                 value: 1.0,
                 start_timestamp_ms: None,
             }],
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
-            metadata_rows: Vec::new(),
-            clock_rows: Vec::new(),
-        };
+            Vec::new(),
+        );
         write_compacted_tenant_blocks(&writer, &sink, &rows, offset, offset)
             .await
             .unwrap();

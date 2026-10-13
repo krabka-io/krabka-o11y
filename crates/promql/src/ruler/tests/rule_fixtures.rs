@@ -53,6 +53,22 @@ pub(crate) fn up_samples_engine(samples: &[UpSample<'_>]) -> PromqlEngine<InMemo
     PromqlEngine::new(Arc::new(store), EngineOpts::default())
 }
 
+/// Two same-time `up` series for rule-label merge and collision cases.
+pub(crate) fn two_job_up_engine() -> PromqlEngine<InMemoryMetricStore> {
+    up_samples_engine(&[
+        UpSample {
+            job: "api",
+            ts_ms: 60_000,
+            value: 1.0,
+        },
+        UpSample {
+            job: "web",
+            ts_ms: 60_000,
+            value: 1.0,
+        },
+    ])
+}
+
 /// The firing `InstanceUp{job="api"}` alert active since `starts_at_ms`.
 pub(crate) fn instance_up_alert(starts_at_ms: i64) -> super::super::AlertmanagerAlert {
     let mut labels = BTreeMap::new();

@@ -1,7 +1,6 @@
 use super::{
-    Array, BTreeMap, BTreeSet, RecordBatch, SCOL_LINKS, TagCatalog, TracesError,
-    collect_nested_attrs, collect_nested_metadata, optional_list_column, struct_fixed_field,
-    struct_list_field,
+    Array, BTreeMap, BTreeSet, RecordBatch, SCOL_LINKS, TracesError, collect_nested_attrs,
+    collect_nested_column_metadata, struct_fixed_field, struct_list_field,
 };
 
 pub(crate) fn collect_link_metadata(
@@ -9,14 +8,7 @@ pub(crate) fn collect_link_metadata(
     tag_names: &mut BTreeSet<String>,
     tag_values: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), TracesError> {
-    let mut catalog = TagCatalog {
-        names: tag_names,
-        values: tag_values,
-    };
-    let Some(links) = optional_list_column(batch, SCOL_LINKS)? else {
-        return Ok(());
-    };
-    collect_nested_metadata(links, |link| {
+    collect_nested_column_metadata(batch, SCOL_LINKS, tag_names, tag_values, |link, catalog| {
         let trace_ids = struct_fixed_field(link, 0)?;
         let span_ids = struct_fixed_field(link, 1)?;
         let keys = struct_list_field(link, 2)?;

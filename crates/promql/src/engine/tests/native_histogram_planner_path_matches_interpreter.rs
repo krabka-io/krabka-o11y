@@ -17,19 +17,6 @@ struct ClassicBucketSample {
 pub(crate) async fn native_histogram_planner_path_matches_interpreter() {
     use crate::{DurationExprContext, parse_promql_with_duration_context};
 
-    // Build a non-trivial native histogram (schema 0, two positive buckets
-    // [1,2] and [2,4] carrying counts 1 and 3) with a real count/sum so the
-    // quantile, fraction, and stddev/stdvar folds all produce finite values.
-    fn seed_histogram(count: f64, sum: f64) -> NativeHistogram {
-        let mut histogram = native_histogram(count, sum);
-        histogram.positive_spans = vec![BucketSpan {
-            offset: 0,
-            length: 2,
-        }];
-        histogram.positive_counts = vec![1.0, 3.0];
-        histogram
-    }
-
     // Two native-histogram groups (job=api / job=db) so multi-series output and
     // the `__name__` drop are both observable, plus a classic `cls_bucket{le}`
     // float histogram to exercise the classic+native co-routing inside the
@@ -42,7 +29,7 @@ pub(crate) async fn native_histogram_planner_path_matches_interpreter() {
             crate::test_support::TestLabelPair::new("job", "api"),
         ]),
         300_000,
-        seed_histogram(4.0, 6.5),
+        two_positive_bucket_histogram(4.0, 6.5),
     );
     store.push_histogram(
         "t",
@@ -51,7 +38,7 @@ pub(crate) async fn native_histogram_planner_path_matches_interpreter() {
             crate::test_support::TestLabelPair::new("job", "db"),
         ]),
         300_000,
-        seed_histogram(8.0, 20.0),
+        two_positive_bucket_histogram(8.0, 20.0),
     );
     for bucket in [
         ClassicBucketSample::builder()

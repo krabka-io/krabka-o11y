@@ -288,16 +288,18 @@ mod tests {
     #[test]
     fn samples_batch_matches_profile_schema() {
         let batch = samples_batch(&[BuiltSample {
-            series_fingerprint: 1,
             timestamp_ns: 100,
-            profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
-            stacktrace_id: 7,
-            value: 5,
-            stacktrace_partition: 0,
-            total_value: 5,
-            span_id: None,
-            trace_id: None,
-            wal_sample_ids: Vec::new(),
+            fields: krabka_blockstore::ProfileSampleFields {
+                series_fingerprint: 1,
+                profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
+                stacktrace_id: 7,
+                value: 5,
+                stacktrace_partition: 0,
+                total_value: 5,
+                span_id: None,
+                trace_id: None,
+                wal_sample_ids: Vec::new(),
+            },
         }])
         .unwrap();
 

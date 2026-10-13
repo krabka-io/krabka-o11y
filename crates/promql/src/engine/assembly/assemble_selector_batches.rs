@@ -22,12 +22,7 @@ pub(crate) fn assemble_selector_batches(
             .ok_or_else(|| {
                 PromqlError::Exec("planner leaf missing Int64 sample-timestamp column".to_string())
             })?;
-        let values = batch
-            .column_by_name(leaf::VALUE_COLUMN)
-            .and_then(|column| column.as_any().downcast_ref::<Float64Array>())
-            .ok_or_else(|| {
-                PromqlError::Exec("planner leaf missing Float64 value column".to_string())
-            })?;
+        let values = super::float64_value_column(batch)?;
         for row in 0..batch.num_rows() {
             let fp = labels_from_batch(batch, row).fingerprint();
             let ts_ms = sample_timestamps.value(row);

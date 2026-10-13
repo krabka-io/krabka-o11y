@@ -66,13 +66,7 @@ mod tests {
         call_args.push(ColumnarValue::Array(value_col));
         arg_fields.push(Arc::new(Field::new("value", DataType::Float64, true)));
 
-        let args = ScalarFunctionArgs {
-            args: call_args,
-            arg_fields,
-            number_rows: rows,
-            return_field: Arc::new(Field::new("out", DataType::Float64, true)),
-            config_options: Arc::new(datafusion::config::ConfigOptions::default()),
-        };
+        let args = scalar_math_args(call_args, arg_fields, rows);
         let out = udf.invoke_with_args(args).unwrap();
         let array = out.into_array(rows).unwrap();
         let floats = array.as_any().downcast_ref::<Float64Array>().unwrap();
@@ -88,13 +82,21 @@ mod tests {
         let arg_fields = (0..call_args.len())
             .map(|index| Arc::new(Field::new(format!("arg_{index}"), DataType::Float64, true)))
             .collect();
-        udf.invoke_with_args(ScalarFunctionArgs {
-            args: call_args,
+        udf.invoke_with_args(scalar_math_args(call_args, arg_fields, rows))
+    }
+
+    fn scalar_math_args(
+        args: Vec<ColumnarValue>,
+        arg_fields: Vec<Arc<Field>>,
+        rows: usize,
+    ) -> ScalarFunctionArgs {
+        ScalarFunctionArgs {
+            args,
             arg_fields,
             number_rows: rows,
             return_field: Arc::new(Field::new("out", DataType::Float64, true)),
             config_options: Arc::new(datafusion::config::ConfigOptions::default()),
-        })
+        }
     }
 
     fn bits_eq(left: f64, right: f64) -> bool {

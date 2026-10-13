@@ -1,8 +1,14 @@
 /// One flattened profile sample row.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, derive_more::Deref)]
 pub struct ProfileSampleRow {
-    pub series_fingerprint: u64,
     pub timestamp: i64,
+    #[deref]
+    pub fields: ProfileSampleFields,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileSampleFields {
+    pub series_fingerprint: u64,
     pub profile_type: String,
     pub stacktrace_id: u64,
     pub value: i64,

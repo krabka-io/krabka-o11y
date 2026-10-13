@@ -1,19 +1,19 @@
+use krabka_observability::tenant_overrides::TenantOverrides;
+
 use super::{
     HashMap, Limits, OverridesError, RetentionWindows, RuntimeFile, Time, TimeExt, merge_limits,
 };
 
 #[derive(Clone, Debug)]
 pub struct OverridesProvider {
-    pub(crate) defaults: Limits,
-    pub(crate) per_tenant: HashMap<String, Limits>,
+    pub(crate) tenant_overrides: TenantOverrides<Limits>,
 }
 
 impl OverridesProvider {
     #[must_use]
     pub fn new(defaults: Limits) -> Self {
         Self {
-            defaults,
-            per_tenant: HashMap::new(),
+            tenant_overrides: TenantOverrides::new(defaults),
         }
     }
 
@@ -33,14 +33,13 @@ impl OverridesProvider {
             per_tenant.insert(entry.0, merge_limits(&defaults, &entry.1));
         }
         Ok(Self {
-            defaults,
-            per_tenant,
+            tenant_overrides: TenantOverrides::from_resolved(defaults, per_tenant),
         })
     }
 
     #[must_use]
     pub fn for_tenant(&self, tenant: &str) -> &Limits {
-        self.per_tenant.get(tenant).unwrap_or(&self.defaults)
+        self.tenant_overrides.for_tenant(tenant)
     }
 
     /// Whether any tenant's blocks can ever expire.
@@ -51,9 +50,8 @@ impl OverridesProvider {
     /// over the bucket on every interval.
     #[must_use]
     pub fn expires_any_blocks(&self) -> bool {
-        [&self.defaults]
-            .into_iter()
-            .chain(self.per_tenant.values())
+        self.tenant_overrides
+            .values()
             .any(|limits| limits.compactor_blocks_retention_period > Time::ZERO)
     }
 }

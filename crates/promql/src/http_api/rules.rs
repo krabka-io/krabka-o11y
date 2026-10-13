@@ -37,6 +37,59 @@ pub(super) struct RuleGroupPath {
     pub(super) group_name: String,
 }
 
+pub(super) struct RulerConfigRequest<S: MetricStore> {
+    state: axum::extract::State<Arc<PrometheusApiState<S>>>,
+    principal: Extension<Principal>,
+    peer: Option<Extension<ConnectInfo<PeerAddr>>>,
+    headers: HeaderMap,
+    namespace: Path<String>,
+}
+
+impl<S: MetricStore> axum::extract::FromRequestParts<Arc<PrometheusApiState<S>>>
+    for RulerConfigRequest<S>
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        router_state: &Arc<PrometheusApiState<S>>,
+    ) -> Result<Self, Self::Rejection> {
+        use axum::extract::FromRequestParts;
+
+        let state = State::from_request_parts(parts, router_state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        let principal = Extension::from_request_parts(parts, router_state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        let peer =
+            Option::<Extension<ConnectInfo<PeerAddr>>>::from_request_parts(parts, router_state)
+                .await
+                .map_err(IntoResponse::into_response)?;
+        let headers = HeaderMap::from_request_parts(parts, router_state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        let namespace = Path::from_request_parts(parts, router_state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+
+        Ok(Self {
+            state,
+            principal,
+            peer,
+            headers,
+            namespace,
+        })
+    }
+}
+
+pub(super) fn authorize_config_tenant(
+    headers: &HeaderMap,
+    principal: &Principal,
+) -> Result<TenantId, Response> {
+    authorized_tenant_from_headers(headers, principal).map_err(IntoResponse::into_response)
+}
+
 mod accepted_response;
 mod alerts;
 mod delete_ruler_config_group;

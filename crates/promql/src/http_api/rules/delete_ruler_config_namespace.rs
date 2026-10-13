@@ -1,22 +1,23 @@
 use std::collections::BTreeMap;
 
 use super::{
-    ApiError, Arc, ConnectInfo, Extension, HeaderMap, IntoResponse, MetricStore,
-    OPERATION_RULE_NAMESPACE_DELETE, Path, PeerAddr, Principal, PrometheusApiState,
-    RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT, Response, State, StatusCode, accepted_response,
-    authorized_tenant_from_headers, record_ruler_config_change, resource, response_with_status,
+    ApiError, IntoResponse, MetricStore, OPERATION_RULE_NAMESPACE_DELETE, RESOURCE_RULE_NAMESPACE,
+    RESOURCE_TENANT, Response, RulerConfigRequest, StatusCode, accepted_response,
+    authorize_config_tenant, record_ruler_config_change, resource, response_with_status,
 };
 
 pub(crate) async fn delete_ruler_config_namespace<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    peer: Option<Extension<ConnectInfo<PeerAddr>>>,
-    headers: HeaderMap,
-    Path(namespace): Path<String>,
+    RulerConfigRequest {
+        state: super::State(state),
+        principal: super::Extension(principal),
+        peer,
+        headers,
+        namespace: super::Path(namespace),
+    }: RulerConfigRequest<S>,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
+    let tenant = match authorize_config_tenant(&headers, &principal) {
         Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
+        Err(response) => return response,
     };
     let mut response = match state.ruler_rules.write() {
         Ok(mut rules) => {

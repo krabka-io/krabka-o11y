@@ -62,10 +62,14 @@ pub fn plan_compactions(
         let group = entry.0;
         let mut blocks = entry.1;
         blocks.sort_by(|left, right| {
-            left.min_ts
-                .cmp(&right.min_ts)
-                .then_with(|| left.max_ts.cmp(&right.max_ts))
-                .then_with(|| left.object_key.cmp(&right.object_key))
+            crate::compare_block_span(
+                left.min_ts,
+                left.max_ts,
+                &left.object_key,
+                right.min_ts,
+                right.max_ts,
+                &right.object_key,
+            )
         });
         let row_counts = blocks
             .iter()

@@ -31,6 +31,13 @@ pub(crate) fn single_bucket_instance_histogram(
 pub(crate) fn store_with_request_duration_histogram(
     histogram: NativeHistogram,
 ) -> InMemoryMetricStore {
+    store_with_request_duration_histogram_at(histogram, 10_000)
+}
+
+pub(crate) fn store_with_request_duration_histogram_at(
+    histogram: NativeHistogram,
+    timestamp_ms: i64,
+) -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
@@ -38,7 +45,7 @@ pub(crate) fn store_with_request_duration_histogram(
             crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
             crate::test_support::TestLabelPair::new("job", "api"),
         ]),
-        10_000,
+        timestamp_ms,
         histogram,
     );
     store

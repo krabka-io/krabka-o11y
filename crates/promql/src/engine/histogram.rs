@@ -558,6 +558,19 @@ use native_histogram_quantile::native_histogram_quantile;
 use native_histogram_stdvar::native_histogram_stdvar;
 pub(super) use native_histograms_are_range_compatible::native_histograms_are_range_compatible;
 use native_quantile_bucket::NativeQuantileBucket;
+
+fn observed_histogram_count(
+    walked_count: f64,
+    buckets: &[NativeQuantileBucket],
+    walked: usize,
+) -> f64 {
+    walked_count
+        + buckets
+            .iter()
+            .skip(walked + 1)
+            .map(|bucket| bucket.count)
+            .sum::<f64>()
+}
 use normalized_classic_histogram_buckets::normalized_classic_histogram_buckets;
 use parse_classic_bucket_bound::parse_classic_bucket_bound;
 pub(super) use reconcile_native_histogram_layouts::reconcile_native_histogram_layouts;

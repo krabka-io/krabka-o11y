@@ -17,22 +17,14 @@ use super::{
 /// required background task stops unexpectedly.
 pub fn serve(
     cli: Cli,
-    metrics: ServiceMetrics,
-    readiness: RoleReadiness,
-    security: ServerSecurity,
-    wal_security: Option<ClientSecurity>,
-    stopping: CancellationToken,
+    runtime: WriterRuntime,
 ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
     serve_writer(
         WriterLaunch {
             target: cli.target,
             config: cli.writer,
         },
-        metrics,
-        readiness,
-        security,
-        wal_security,
-        stopping,
+        runtime,
     )
 }
 
@@ -42,18 +34,30 @@ pub struct WriterLaunch {
     pub config: WriterConfig,
 }
 
+/// Process controls shared by the writer role runners.
+pub struct WriterRuntime {
+    pub metrics: ServiceMetrics,
+    pub readiness: RoleReadiness,
+    pub security: ServerSecurity,
+    pub wal_security: Option<ClientSecurity>,
+    pub stopping: CancellationToken,
+}
+
 /// Runs an embedded writer role with its caller's process controls.
 /// Registers startup before the returned future is polled.
 /// # Errors
 /// Returns a topic, startup, I/O or supervision error.
 pub fn serve_writer(
     launch: WriterLaunch,
-    metrics: ServiceMetrics,
-    readiness: RoleReadiness,
-    security: ServerSecurity,
-    wal_security: Option<ClientSecurity>,
-    stopping: CancellationToken,
+    runtime: WriterRuntime,
 ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
+    let WriterRuntime {
+        metrics,
+        readiness,
+        security,
+        wal_security,
+        stopping,
+    } = runtime;
     let WriterLaunch {
         target,
         config: cli,

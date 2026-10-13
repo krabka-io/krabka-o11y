@@ -3,6 +3,7 @@
 pub mod ids;
 pub mod metrics;
 pub mod persisted_format;
+pub mod tenant_overrides;
 
 use std::{
     cmp::Ordering,

@@ -46,6 +46,10 @@ pub(crate) async fn manifest_store(block: ManifestBlock) -> MetricBlockStore {
 
 /// The `job="api"` exemplars `store` holds for `tenant-a` over `[10s, 11s]`.
 pub(crate) async fn api_exemplars(store: &MetricBlockStore) -> Vec<crate::ExemplarRecord> {
+    api_exemplar_scan(store).await.exemplars
+}
+
+pub(crate) async fn api_exemplar_scan(store: &MetricBlockStore) -> crate::store::ExemplarScan {
     store
         .exemplars(
             "tenant-a",
@@ -59,7 +63,6 @@ pub(crate) async fn api_exemplars(store: &MetricBlockStore) -> Vec<crate::Exempl
         )
         .await
         .unwrap()
-        .exemplars
 }
 
 /// Checks that the instant query `up` at 1s over `store` answers exactly the

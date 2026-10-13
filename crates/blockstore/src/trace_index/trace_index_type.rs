@@ -420,10 +420,14 @@ impl TraceIndex {
                 continue;
             }
             blocks.sort_by(|left, right| {
-                left.min_ts
-                    .cmp(&right.min_ts)
-                    .then_with(|| left.max_ts.cmp(&right.max_ts))
-                    .then_with(|| left.object_key.cmp(&right.object_key))
+                crate::compare_block_span(
+                    left.min_ts,
+                    left.max_ts,
+                    &left.object_key,
+                    right.min_ts,
+                    right.max_ts,
+                    &right.object_key,
+                )
             });
             let bytes = encode_trace_shard(tenant, &blocks);
             merge.publish(range, bytes).await?;

@@ -18,6 +18,10 @@ fn text_response(status: StatusCode, body: impl Into<String>) -> Response {
     response
 }
 
+fn require_ruler_admin(principal: &Principal) -> Result<(), Response> {
+    authorize_admin(principal).map_err(|error| error.into_response())
+}
+
 /// Builds Mimir's tenant-wide ruler inspection and deletion routes.
 pub fn mimir_ruler_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>) -> Router {
     Router::new()
@@ -38,8 +42,8 @@ async fn all_rule_groups<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     Extension(principal): Extension<Principal>,
 ) -> Response {
-    if let Err(error) = authorize_admin(&principal) {
-        return error.into_response();
+    if let Err(response) = require_ruler_admin(&principal) {
+        return response;
     }
     let rules = match state.ruler_rules.read() {
         Ok(rules) => {
@@ -75,8 +79,8 @@ async fn ruler_tenants<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     Extension(principal): Extension<Principal>,
 ) -> Response {
-    if let Err(error) = authorize_admin(&principal) {
-        return error.into_response();
+    if let Err(response) = require_ruler_admin(&principal) {
+        return response;
     }
     let rows = state
         .ruler_tenants()
@@ -96,8 +100,8 @@ async fn tenant_rule_groups<S: MetricStore>(
     Extension(principal): Extension<Principal>,
     Path(tenant): Path<String>,
 ) -> Response {
-    if let Err(error) = authorize_admin(&principal) {
-        return error.into_response();
+    if let Err(response) = require_ruler_admin(&principal) {
+        return response;
     }
     let groups = state
         .ruler_rules

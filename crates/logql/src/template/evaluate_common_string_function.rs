@@ -2,24 +2,8 @@ use super::*;
 
 pub(crate) fn evaluate_common_string_function(name: &str, args: &[String]) -> Option<String> {
     let rendered = match name {
-        "alignLeft" => {
-            if args.len() < 2 {
-                return Some(String::new());
-            }
-            let Ok(width) = args[0].parse::<usize>() else {
-                return Some(String::new());
-            };
-            align_left_template_string(width, &args[1])
-        }
-        "alignRight" => {
-            if args.len() < 2 {
-                return Some(String::new());
-            }
-            let Ok(width) = args[0].parse::<usize>() else {
-                return Some(String::new());
-            };
-            align_right_template_string(width, &args[1])
-        }
+        "alignLeft" => align_template_string(args, align_left_template_string)?,
+        "alignRight" => align_template_string(args, align_right_template_string)?,
         "b64enc" => args
             .first()
             .map_or_else(String::new, |value| BASE64_STANDARD.encode(value)),
@@ -69,4 +53,17 @@ pub(crate) fn evaluate_common_string_function(name: &str, args: &[String]) -> Op
         _ => return None,
     };
     Some(rendered)
+}
+
+fn align_template_string(
+    args: &[String],
+    align: impl FnOnce(usize, &str) -> String,
+) -> Option<String> {
+    let [width, text, ..] = args else {
+        return Some(String::new());
+    };
+    let Ok(width) = width.parse::<usize>() else {
+        return Some(String::new());
+    };
+    Some(align(width, text))
 }

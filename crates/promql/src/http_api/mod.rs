@@ -54,6 +54,19 @@ mod rules;
 mod search;
 mod status;
 
+pub(crate) fn parse_query_pairs(
+    raw_query: Option<&str>,
+    mut apply: impl FnMut(String, String) -> Result<(), ApiError>,
+) -> Result<(), ApiError> {
+    let Some(raw_query) = raw_query else {
+        return Ok(());
+    };
+    for (name, value) in url::form_urlencoded::parse(raw_query.as_bytes()) {
+        apply(name.into_owned(), value.into_owned())?;
+    }
+    Ok(())
+}
+
 fn request_content_type(headers: &HeaderMap) -> &str {
     headers
         .get(header::CONTENT_TYPE)

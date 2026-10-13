@@ -59,7 +59,9 @@ use deleted_api_block_store::deleted_api_block_store;
 use exemplar_batch::exemplar_batch;
 use expected_stats::{ExpectedStat, expected_stats};
 use instant_up_query::{InstantUpQuery, instant_up_query};
-use manifest_store::{ManifestBlock, api_exemplars, assert_up_is_one, manifest_store};
+use manifest_store::{
+    ManifestBlock, api_exemplar_scan, api_exemplars, assert_up_is_one, manifest_store,
+};
 use memory_block_store_fixture::MemoryBlockStoreFixture;
 use request_counts::RequestCounts;
 use sidecar_manifest::sidecar_manifest;
@@ -93,4 +95,22 @@ pub(crate) fn up_api_sample_batch(samples: &[(i64, f64)]) -> RecordBatch {
         .map(|&(timestamp_ms, value)| float_sample_row(fingerprint, timestamp_ms, value, None))
         .collect::<Vec<_>>();
     encode_float_samples(&rows).expect("valid up sample rows")
+}
+
+pub(crate) fn compaction_rows_for_series(
+    series: &Labels,
+    float_rows: Vec<krabka_metrics::FloatRow>,
+    histogram_rows: Vec<krabka_metrics::NativeHistogramRow>,
+) -> krabka_metrics::TenantCompactionRows {
+    let mut series_labels = std::collections::BTreeMap::new();
+    series_labels.insert(series.fingerprint(), series.clone().into());
+    krabka_metrics::TenantCompactionRows {
+        tenant: "tenant-a".to_string(),
+        series_labels,
+        float_rows,
+        histogram_rows,
+        exemplar_rows: Vec::new(),
+        metadata_rows: Vec::new(),
+        clock_rows: Vec::new(),
+    }
 }

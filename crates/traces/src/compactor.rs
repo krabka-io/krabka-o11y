@@ -518,42 +518,16 @@ mod tests {
     async fn compacted_block_recomputes_tag_metadata_from_rows() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store.clone());
-        let batch = span_batch(&[span()]).unwrap();
-        let input = writer
-            .write_block_with_decl(
-                "tenant",
-                "input.parquet",
-                span_block_schema(),
-                &[batch],
-                &span_block_decl(),
-                SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
-            )
-            .await
-            .unwrap();
-
-        let mut bloom = ShardedTraceBloom::with_tempo_defaults(1);
-        bloom.insert(&[1; 16]);
         let mut index = TraceIndex::new();
-        index.add_trace_block(
-            "tenant",
-            TraceBlockStats {
-                object_key: input.object_key.clone(),
-                min_ts: input.min_ts,
-                max_ts: input.max_ts,
-                bloom,
-                tag_names: BTreeSet::new(),
-                tag_values: BTreeMap::new(),
-                row_count: 0,
-                level: BlockLevel::INGESTED,
-            },
-        );
+        let input_key = "input.parquet".to_string();
+        write_indexed_block(&writer, &mut index, "tenant", &input_key).await;
 
         compact_block_keys(
             store,
             &writer,
             &mut index,
             "tenant",
-            std::slice::from_ref(&input.object_key),
+            std::slice::from_ref(&input_key),
             "compacted.parquet",
         )
         .await
@@ -791,6 +765,7 @@ mod collect_attr_metadata;
 mod collect_event_metadata;
 mod collect_link_metadata;
 mod collect_nested_attrs;
+mod collect_nested_column_metadata;
 mod collect_nested_metadata;
 mod collect_string_column_metadata;
 mod compact_block_keys;
@@ -832,6 +807,7 @@ use collect_attr_metadata::collect_attr_metadata;
 use collect_event_metadata::collect_event_metadata;
 use collect_link_metadata::collect_link_metadata;
 use collect_nested_attrs::collect_nested_attrs;
+use collect_nested_column_metadata::collect_nested_column_metadata;
 use collect_nested_metadata::collect_nested_metadata;
 use collect_string_column_metadata::collect_string_column_metadata;
 pub use compact_block_keys::compact_block_keys;

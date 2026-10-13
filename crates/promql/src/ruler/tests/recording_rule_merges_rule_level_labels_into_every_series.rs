@@ -7,18 +7,7 @@ struct ExpectedLabel {
 
 #[tokio::test]
 pub(crate) async fn recording_rule_merges_rule_level_labels_into_every_series() {
-    let engine = up_samples_engine(&[
-        UpSample {
-            job: "api",
-            ts_ms: 60_000,
-            value: 1.0,
-        },
-        UpSample {
-            job: "web",
-            ts_ms: 60_000,
-            value: 1.0,
-        },
-    ]);
+    let engine = two_job_up_engine();
     let mut rule_labels = BTreeMap::new();
     rule_labels.insert("env".to_string(), "prod".to_string());
     rule_labels.insert("team".to_string(), "sre".to_string());

@@ -6,7 +6,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use url::form_urlencoded;
 
 use super::{
     ApiError, PrometheusApiState, Rejection, RequestAuth, RequestCaller, apply_limit,

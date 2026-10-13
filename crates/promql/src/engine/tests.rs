@@ -358,6 +358,17 @@ use mixed_histogram_store::{
     MixedMetricFloatSample, mixed_api_group_store, mixed_histogram_store, mixed_metric_store,
 };
 use native_histogram::native_histogram;
+
+pub(crate) fn two_positive_bucket_histogram(count: f64, sum: f64) -> NativeHistogram {
+    let mut histogram = native_histogram(count, sum);
+    histogram.positive_spans = vec![BucketSpan {
+        offset: 0,
+        length: 2,
+    }];
+    histogram.positive_counts = vec![1.0, 3.0];
+    histogram
+}
+
 pub(crate) fn single_bucket_native_histogram(
     count: f64,
     sum: f64,
@@ -443,7 +454,8 @@ pub(crate) fn push_metadata_sample(store: &mut InMemoryMetricStore, instance: &s
 
 use native_histogram_store::{
     InstanceHistograms, assert_histogram_series_reduction, instance_histogram_store,
-    native_histogram_store, signed_bucket_histogram_engine, two_bucket_histogram_store,
+    native_histogram_store, signed_bucket_histogram_engine,
+    store_with_request_duration_histogram_at, two_bucket_histogram_store,
 };
 use planned_and_interpreted::{
     SortedParity, annotated_planned_and_interpreted, fingerprint_sorted, planned_and_interpreted,

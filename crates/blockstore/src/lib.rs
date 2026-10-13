@@ -8,6 +8,20 @@
 
 #![forbid(unsafe_code)]
 
+pub(crate) fn compare_block_span(
+    left_min_ts: i64,
+    left_max_ts: i64,
+    left_object_key: &str,
+    right_min_ts: i64,
+    right_max_ts: i64,
+    right_object_key: &str,
+) -> std::cmp::Ordering {
+    left_min_ts
+        .cmp(&right_min_ts)
+        .then_with(|| left_max_ts.cmp(&right_max_ts))
+        .then_with(|| left_object_key.cmp(right_object_key))
+}
+
 #[cfg(test)]
 mod awkward_tenants;
 mod block;
@@ -137,7 +151,7 @@ pub use path_escape::{escape_object_path_segment, unescape_object_path_segment};
 pub use persisted_format::{
     PERSISTED_BLOCK_FORMAT_KEY, PERSISTED_BLOCK_FORMAT_VERSION, validate_persisted_block_format,
 };
-pub use profile_block::{ProfileSampleRow, encode_profile_samples};
+pub use profile_block::{ProfileSampleFields, ProfileSampleRow, encode_profile_samples};
 pub use profile_index::{
     LABEL_PROFILE_TYPE, MAX_PROFILE_INDEX_SNAPSHOT_BYTES, ProfileBlockRegistration, ProfileIndex,
 };

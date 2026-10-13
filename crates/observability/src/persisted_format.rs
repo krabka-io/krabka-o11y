@@ -1,8 +1,24 @@
+use axum::body::Bytes;
 use krabka_client_consumer::ConsumerRecord;
+use krabka_client_producer::{Header, ProducerRecord};
 
 /// Kafka header carried by every Krabka-owned durable record.
 pub const PERSISTED_FORMAT_HEADER: &str = "krabka-format-version";
 pub const PERSISTED_FORMAT_VERSION: &[u8] = b"1";
+
+pub fn keyed_persisted_record(topic: String, key: Bytes, value: Vec<u8>) -> ProducerRecord {
+    ProducerRecord {
+        topic,
+        partition: None,
+        key: Some(key),
+        value: Some(Bytes::from(value)),
+        headers: vec![Header {
+            key: PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(Bytes::from_static(PERSISTED_FORMAT_VERSION)),
+        }],
+        ..Default::default()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PersistedHeader<'a> {

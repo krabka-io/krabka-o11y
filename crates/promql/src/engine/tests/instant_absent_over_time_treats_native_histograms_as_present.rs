@@ -2,16 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_absent_over_time_treats_native_histograms_as_present() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-        ]),
-        90_000,
-        native_histogram(4.0, 10.0),
-    );
+    let store = store_with_request_duration_histogram_at(native_histogram(4.0, 10.0), 90_000);
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine

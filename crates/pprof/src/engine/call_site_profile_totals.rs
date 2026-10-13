@@ -76,7 +76,7 @@ pub async fn call_site_profile_totals(
             });
         }
         let symbols = Arc::clone(&scan.symbols);
-        let resolved = tokio::task::spawn_blocking(move || {
+        let resolved = super::symbolization_worker(move || {
             rows.into_iter()
                 .map(|row| ResolvedCallSiteSample {
                     timestamp_ms: row.timestamp_ms,
@@ -86,8 +86,7 @@ pub async fn call_site_profile_totals(
                 })
                 .collect::<Vec<_>>()
         })
-        .await
-        .map_err(|err| ProfileError::Symbolize(format!("symbolization worker failed: {err}")))?;
+        .await?;
         for sample in resolved {
             if stack_matches_call_sites(&sample.frames, call_sites) {
                 *per_profile

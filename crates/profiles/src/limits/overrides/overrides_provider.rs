@@ -1,4 +1,5 @@
 use krabka_blockstore::RetentionWindows;
+use krabka_observability::tenant_overrides::TenantOverrides;
 use krabka_units::Time;
 
 use super::{HashMap, Limits, OverridesError, RuntimeFile, TenantId};
@@ -6,16 +7,14 @@ use super::{HashMap, Limits, OverridesError, RuntimeFile, TenantId};
 /// Pyroscope-style runtime overrides resolved into full per-tenant limits.
 #[derive(Clone, Debug)]
 pub struct OverridesProvider {
-    pub(crate) defaults: Limits,
-    pub(crate) per_tenant: HashMap<String, Limits>,
+    pub(crate) tenant_overrides: TenantOverrides<Limits>,
 }
 
 impl OverridesProvider {
     #[must_use]
     pub fn new(defaults: Limits) -> Self {
         Self {
-            defaults,
-            per_tenant: HashMap::new(),
+            tenant_overrides: TenantOverrides::new(defaults),
         }
     }
 
@@ -49,8 +48,7 @@ impl OverridesProvider {
             per_tenant.insert(tenant, partial.merge_over(&defaults));
         }
         Ok(Self {
-            defaults,
-            per_tenant,
+            tenant_overrides: TenantOverrides::from_resolved(defaults, per_tenant),
         })
     }
 
@@ -58,9 +56,7 @@ impl OverridesProvider {
     /// lists no entry for it.
     #[must_use]
     pub fn for_tenant(&self, tenant: &TenantId) -> &Limits {
-        self.per_tenant
-            .get(tenant.as_str())
-            .unwrap_or(&self.defaults)
+        self.tenant_overrides.for_tenant(tenant.as_str())
     }
 }
 
@@ -70,9 +66,8 @@ impl RetentionWindows for OverridesProvider {
     // and a tenant that failed to parse here would silently keep its blocks
     // forever.
     fn block_retention(&self, tenant: &str) -> Time {
-        self.per_tenant
-            .get(tenant)
-            .unwrap_or(&self.defaults)
+        self.tenant_overrides
+            .for_tenant(tenant)
             .compactor_blocks_retention_period
     }
 }

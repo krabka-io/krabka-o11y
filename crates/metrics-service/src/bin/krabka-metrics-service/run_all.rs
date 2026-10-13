@@ -169,11 +169,13 @@ pub async fn serve_all(
             move |token| {
                 serve_writer(
                     WriterLaunch { target, config },
-                    metrics,
-                    role_readiness,
-                    role_security,
-                    wal,
-                    token,
+                    krabka_metrics::runtime::WriterRuntime {
+                        metrics,
+                        readiness: role_readiness,
+                        security: role_security,
+                        wal_security: wal,
+                        stopping: token,
+                    },
                 )
             },
         );
@@ -200,11 +202,13 @@ pub async fn serve_all(
                 target: compactor.target,
                 config: writer,
             },
-            compactor.metrics,
-            role_readiness,
-            compactor_security,
-            None,
-            token,
+            krabka_metrics::runtime::WriterRuntime {
+                metrics: compactor.metrics,
+                readiness: role_readiness,
+                security: compactor_security,
+                wal_security: None,
+                stopping: token,
+            },
         )
     });
     let admin = krabka_telemetry::profiling::spawn_admin_with_config(

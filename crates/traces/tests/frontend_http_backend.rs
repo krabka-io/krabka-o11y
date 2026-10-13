@@ -22,6 +22,8 @@ use krabka_traces::frontend::{
     http_backend::HttpQuerier,
     job::JobShard,
 };
+#[path = "support/complete_trace_response.rs"]
+mod complete_trace_response;
 
 type Log = Arc<Mutex<Vec<String>>>;
 
@@ -157,21 +159,7 @@ async fn http_querier_by_id_404_is_empty_partial() {
 async fn http_querier_by_id_parses_v2_envelope() {
     let app = Router::new().route(
         "/api/v2/traces/{trace_id}",
-        get(|| async {
-            axum::Json(serde_json::json!({
-                "trace": {
-                    "resourceSpans": [{
-                        "resource": { "attributes": [] },
-                        "scopeSpans": [{
-                            "scope": {},
-                            "spans": [{ "spanId": "BgYGBgYGBgY=", "name": "op" }]
-                        }]
-                    }]
-                },
-                "status": "COMPLETE",
-                "message": ""
-            }))
-        }),
+        get(|| async { complete_trace_response::complete_trace_response() }),
     );
     let addr = spawn(app).await;
     let backend = plain_http_querier();

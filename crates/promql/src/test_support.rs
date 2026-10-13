@@ -77,7 +77,7 @@ mod tenant_id;
 pub(crate) use eval_instant::eval_instant;
 pub(crate) use eval_instant_err::eval_instant_err;
 pub(crate) use instant_sample_ext::InstantSampleExt;
-pub(crate) use labels::labels;
+pub(crate) use labels::{labels, up_instance_labels};
 pub(crate) use metric_store_with_empty_lookups::metric_store_with_empty_lookups;
 pub(crate) use nh::{nh, two_sided_histogram};
 pub(crate) use query_result_ext::QueryResultExt;

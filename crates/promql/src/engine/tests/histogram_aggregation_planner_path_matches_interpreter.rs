@@ -32,18 +32,6 @@ struct AggregationQueryCase {
 pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
     use crate::{DurationExprContext, parse_promql_with_duration_context};
 
-    // A native histogram with two positive buckets so the merge / quantile
-    // folds produce non-trivial structure.
-    fn seed_histogram(count: f64, sum: f64) -> NativeHistogram {
-        let mut histogram = native_histogram(count, sum);
-        histogram.positive_spans = vec![BucketSpan {
-            offset: 0,
-            length: 2,
-        }];
-        histogram.positive_counts = vec![1.0, 3.0];
-        histogram
-    }
-
     let mut store = InMemoryMetricStore::new();
     // Group g="hist": TWO compatible native histograms (so sum/avg actually
     // merge), across an `instance` dimension so `without (instance)` collapses
@@ -56,7 +44,7 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
             crate::test_support::TestLabelPair::new("instance", "0"),
         ]),
         300_000,
-        seed_histogram(4.0, 6.0),
+        two_positive_bucket_histogram(4.0, 6.0),
     );
     store.push_histogram(
         "t",
@@ -66,7 +54,7 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
             crate::test_support::TestLabelPair::new("instance", "1"),
         ]),
         300_000,
-        seed_histogram(8.0, 20.0),
+        two_positive_bucket_histogram(8.0, 20.0),
     );
     // Group g="float": TWO float members (so the float aggregations reduce a
     // real group and `count`/`group` see floats).
@@ -113,7 +101,7 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
             crate::test_support::TestLabelPair::new("instance", "1"),
         ]),
         300_000,
-        seed_histogram(2.0, 3.0),
+        two_positive_bucket_histogram(2.0, 3.0),
     );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 

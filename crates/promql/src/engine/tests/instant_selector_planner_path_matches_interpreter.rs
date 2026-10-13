@@ -12,6 +12,17 @@ struct SelectorCase {
     timestamp_ms: i64,
 }
 
+fn up_sample(job: &str, timestamp_ms: i64, value: f64) -> SelectorSample {
+    SelectorSample::builder()
+        .labels(labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", job),
+        ]))
+        .timestamp_ms(timestamp_ms)
+        .value(value)
+        .build()
+}
+
 #[tokio::test]
 pub(crate) async fn instant_selector_planner_path_matches_interpreter() {
     use promql_parser::parser::Expr;
@@ -27,63 +38,14 @@ pub(crate) async fn instant_selector_planner_path_matches_interpreter() {
     let mut store = InMemoryMetricStore::new();
     let stale_bits = stale_nan();
     for sample in [
-        SelectorSample::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "up"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-            ]))
-            .timestamp_ms(0)
-            .value(1.0)
-            .build(),
-        SelectorSample::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "up"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-            ]))
-            .timestamp_ms(60_000)
-            .value(2.0)
-            .build(),
-        SelectorSample::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "up"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-            ]))
-            .timestamp_ms(120_000)
-            .value(3.0)
-            .build(),
-        SelectorSample::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "up"),
-                crate::test_support::TestLabelPair::new("job", "db"),
-            ]))
-            .timestamp_ms(60_000)
-            .value(9.0)
-            .build(),
-        SelectorSample::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "up"),
-                crate::test_support::TestLabelPair::new("job", "db"),
-            ]))
-            .timestamp_ms(120_000)
-            .value(stale_bits)
-            .build(),
+        up_sample("api", 0, 1.0),
+        up_sample("api", 60_000, 2.0),
+        up_sample("api", 120_000, 3.0),
+        up_sample("db", 60_000, 9.0),
+        up_sample("db", 120_000, stale_bits),
         // Genuine NaN as the latest in-window sample: kept as a NaN value.
-        SelectorSample::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "up"),
-                crate::test_support::TestLabelPair::new("job", "nan"),
-            ]))
-            .timestamp_ms(60_000)
-            .value(5.0)
-            .build(),
-        SelectorSample::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "up"),
-                crate::test_support::TestLabelPair::new("job", "nan"),
-            ]))
-            .timestamp_ms(120_000)
-            .value(f64::NAN)
-            .build(),
+        up_sample("nan", 60_000, 5.0),
+        up_sample("nan", 120_000, f64::NAN),
         SelectorSample::builder()
             .labels(labels(&[
                 crate::test_support::TestLabelPair::new("__name__", "down"),

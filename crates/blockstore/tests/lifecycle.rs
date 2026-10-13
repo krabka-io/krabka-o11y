@@ -21,6 +21,9 @@ use object_store::{
     ObjectStore, ObjectStoreExt as _, PutPayload, local::LocalFileSystem, memory::InMemory,
     path::Path,
 };
+use storage_fixtures::listed_keys;
+
+mod storage_fixtures;
 
 const CPU_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 
@@ -91,16 +94,6 @@ async fn put_all(store: &dyn ObjectStore, keys: &[&str]) {
             .await
             .unwrap();
     }
-}
-
-async fn listed_keys(store: &dyn ObjectStore) -> Vec<String> {
-    let mut keys = store
-        .list(None)
-        .map(|meta| meta.unwrap().location.to_string())
-        .collect::<Vec<_>>()
-        .await;
-    keys.sort();
-    keys
 }
 
 /// The merge that publishes a trace index is a union, so a removal has to be

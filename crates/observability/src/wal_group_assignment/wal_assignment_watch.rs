@@ -7,6 +7,18 @@ use crate::ReadinessGate;
 /// The longest a poll loop waits for one broker query about the log end.
 const LOG_END_QUERY_TIMEOUT: Time = secs(5);
 
+async fn observed_assignments(consumer: &Consumer) -> Vec<WalPartitionAssignment> {
+    consumer
+        .assignment()
+        .await
+        .iter()
+        .map(|assignment| WalPartitionAssignment {
+            topic: assignment.0.clone(),
+            partition: assignment.1,
+        })
+        .collect()
+}
+
 /// Whether the position of every partition in `assigned` has reached its end
 /// offset.
 ///
@@ -241,14 +253,7 @@ impl WalAssignmentWatch {
         consumer: &Consumer,
         has_records: bool,
     ) -> WalAssignmentChange {
-        let assigned = consumer.assignment().await;
-        let observed_assignments = assigned
-            .iter()
-            .map(|assignment| WalPartitionAssignment {
-                topic: assignment.0.clone(),
-                partition: assignment.1,
-            })
-            .collect::<Vec<_>>();
+        let observed_assignments = observed_assignments(consumer).await;
         let change = self.observe(&observed_assignments);
         let mut at_log_end = self.at_log_end(consumer, &observed_assignments).await;
         self.caught_up_after_apply |=
@@ -272,14 +277,7 @@ impl WalAssignmentWatch {
     /// Marks every record observed since the last call as successfully
     /// applied, then refreshes recovery readiness from the consumer.
     pub async fn observe_applied(&mut self, consumer: &Consumer) {
-        let assigned = consumer.assignment().await;
-        let observed_assignments = assigned
-            .iter()
-            .map(|assignment| WalPartitionAssignment {
-                topic: assignment.0.clone(),
-                partition: assignment.1,
-            })
-            .collect::<Vec<_>>();
+        let observed_assignments = observed_assignments(consumer).await;
         let at_log_end = self.at_log_end(consumer, &observed_assignments).await;
         self.record_applied(&observed_assignments, at_log_end);
     }

@@ -113,16 +113,18 @@ pub(crate) fn downsample_batches(
             let key = entry.0;
             let sample = entry.1;
             ProfileSampleRow {
-                series_fingerprint: key.series_fingerprint,
                 timestamp: key.timestamp,
-                profile_type: key.profile_type,
-                stacktrace_id: key.stacktrace_id,
-                value: sample.value,
-                stacktrace_partition: key.stacktrace_partition,
-                total_value: sample.total_value,
-                span_id: key.span_id,
-                trace_id: key.trace_id,
-                wal_sample_ids: sample.wal_sample_ids,
+                fields: krabka_blockstore::ProfileSampleFields {
+                    series_fingerprint: key.series_fingerprint,
+                    profile_type: key.profile_type,
+                    stacktrace_id: key.stacktrace_id,
+                    value: sample.value,
+                    stacktrace_partition: key.stacktrace_partition,
+                    total_value: sample.total_value,
+                    span_id: key.span_id,
+                    trace_id: key.trace_id,
+                    wal_sample_ids: sample.wal_sample_ids,
+                },
             }
         })
         .collect::<Vec<_>>();

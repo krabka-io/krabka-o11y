@@ -2,10 +2,37 @@
 
 use std::sync::Arc;
 
-use arrow::array::{Array, ArrayRef, Float64Array, Int64Array};
+use arrow::{
+    array::{Array, ArrayRef, Float64Array, Int64Array},
+    datatypes::{DataType, Field},
+};
 use datafusion::logical_expr::ColumnarValue;
 
 use crate::range_array::RangeArray;
+
+pub(crate) fn range_argument_fields(
+    eval_col: &ArrayRef,
+    ts_dict: &ArrayRef,
+    val_dict: &ArrayRef,
+) -> Vec<Arc<Field>> {
+    vec![
+        Arc::new(Field::new(
+            "eval_timestamp",
+            eval_col.data_type().clone(),
+            false,
+        )),
+        Arc::new(Field::new(
+            "timestamp_range",
+            ts_dict.data_type().clone(),
+            false,
+        )),
+        Arc::new(Field::new(
+            "value_range",
+            val_dict.data_type().clone(),
+            false,
+        )),
+    ]
+}
 
 /// One evaluation step of a range UDF: its eval timestamp and its window's
 /// samples.

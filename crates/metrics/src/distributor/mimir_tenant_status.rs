@@ -167,18 +167,11 @@ pub(crate) async fn runtime_config(
         return error.into_response();
     }
     let mut overrides = BTreeMap::new();
-    for tenant in state.overrides.per_tenant.keys() {
-        overrides.insert(
-            tenant.as_str(),
-            state
-                .overrides
-                .per_tenant
-                .get(tenant)
-                .expect("tenant key exists"),
-        );
+    for (tenant, limits) in state.overrides.tenant_overrides.entries() {
+        overrides.insert(tenant, limits);
     }
     let output = RuntimeConfig {
-        defaults: &state.overrides.defaults,
+        defaults: state.overrides.tenant_overrides.defaults(),
         overrides,
     };
     let output = if query.mode.as_deref() == Some("diff") && output.overrides.is_empty() {

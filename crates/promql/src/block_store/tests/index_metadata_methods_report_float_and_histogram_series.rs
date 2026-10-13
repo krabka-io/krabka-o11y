@@ -1,6 +1,7 @@
 use super::*;
 use crate::test_support::{
-    ExpectedCardinality, ExpectedLabelNameCount, ExpectedLabelValueCount, assert_tenant_cardinality,
+    ExpectedCardinality, ExpectedLabelNameCount, ExpectedLabelValueCount,
+    assert_tenant_cardinality, up_instance_labels,
 };
 
 #[tokio::test]
@@ -10,11 +11,7 @@ pub(crate) async fn index_metadata_methods_report_float_and_histogram_series() {
     let mut floats = BlockStore::new(object_store.clone(), base.clone());
     let mut histograms = BlockStore::new(object_store, base);
 
-    let up = labels(&[
-        crate::test_support::TestLabelPair::new("__name__", "up"),
-        crate::test_support::TestLabelPair::new("instance", "a"),
-        crate::test_support::TestLabelPair::new("job", "api"),
-    ]);
+    let up = up_instance_labels("a");
     let latency = labels(&[
         crate::test_support::TestLabelPair::new("__name__", "http_request_duration_seconds"),
         crate::test_support::TestLabelPair::new("instance", "b"),

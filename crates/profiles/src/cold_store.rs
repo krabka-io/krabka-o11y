@@ -912,62 +912,70 @@ mod tests {
 
     #[test]
     fn filter_and_remap_batch_selects_and_remaps_in_one_pass() {
-        use krabka_blockstore::{ProfileSampleRow, encode_profile_samples};
+        use krabka_blockstore::{ProfileSampleFields, ProfileSampleRow, encode_profile_samples};
 
         let fp_keep = 7_u64;
         let fp_drop = 99_u64;
         let rows = vec![
             // keep: matching fp, type, in range; partition 0
             ProfileSampleRow {
-                series_fingerprint: fp_keep,
                 timestamp: 1_000,
-                profile_type: PT.to_string(),
-                stacktrace_id: 1,
-                value: 10,
-                stacktrace_partition: 0,
-                total_value: 10,
-                span_id: None,
-                trace_id: None,
-                wal_sample_ids: Vec::new(),
+                fields: ProfileSampleFields {
+                    series_fingerprint: fp_keep,
+                    profile_type: PT.to_string(),
+                    stacktrace_id: 1,
+                    value: 10,
+                    stacktrace_partition: 0,
+                    total_value: 10,
+                    span_id: None,
+                    trace_id: None,
+                    wal_sample_ids: Vec::new(),
+                },
             },
             // drop: wrong fingerprint
             ProfileSampleRow {
-                series_fingerprint: fp_drop,
                 timestamp: 1_000,
-                profile_type: PT.to_string(),
-                stacktrace_id: 2,
-                value: 5,
-                stacktrace_partition: 0,
-                total_value: 5,
-                span_id: None,
-                trace_id: None,
-                wal_sample_ids: Vec::new(),
+                fields: ProfileSampleFields {
+                    series_fingerprint: fp_drop,
+                    profile_type: PT.to_string(),
+                    stacktrace_id: 2,
+                    value: 5,
+                    stacktrace_partition: 0,
+                    total_value: 5,
+                    span_id: None,
+                    trace_id: None,
+                    wal_sample_ids: Vec::new(),
+                },
             },
             // drop: out of time range
             ProfileSampleRow {
-                series_fingerprint: fp_keep,
                 timestamp: 9_999,
-                profile_type: PT.to_string(),
-                stacktrace_id: 3,
-                value: 5,
-                stacktrace_partition: 0,
-                total_value: 5,
-                span_id: None,
-                trace_id: None,
-                wal_sample_ids: Vec::new(),
+                fields: ProfileSampleFields {
+                    series_fingerprint: fp_keep,
+                    profile_type: PT.to_string(),
+                    stacktrace_id: 3,
+                    value: 5,
+                    stacktrace_partition: 0,
+                    total_value: 5,
+                    span_id: None,
+                    trace_id: None,
+                    wal_sample_ids: Vec::new(),
+                },
             },
             // keep: matching, distinct partition 1 to verify per-row remap
             ProfileSampleRow {
-                series_fingerprint: fp_keep,
                 timestamp: 2_000,
-                profile_type: PT.to_string(),
-                stacktrace_id: 4,
-                value: 20,
-                stacktrace_partition: 1,
-                total_value: 20,
-                span_id: None,
-                trace_id: None,
-                wal_sample_ids: Vec::new(),
+                fields: ProfileSampleFields {
+                    series_fingerprint: fp_keep,
+                    profile_type: PT.to_string(),
+                    stacktrace_id: 4,
+                    value: 20,
+                    stacktrace_partition: 1,
+                    total_value: 20,
+                    span_id: None,
+                    trace_id: None,
+                    wal_sample_ids: Vec::new(),
+                },
             },
         ];
         let batch = encode_profile_samples(&rows).unwrap();

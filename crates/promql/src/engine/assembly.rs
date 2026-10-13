@@ -38,3 +38,10 @@ pub(super) use assemble_selector_grid::assemble_selector_grid;
 use labels_from_batch::labels_from_batch;
 use labels_from_rate_batch::labels_from_rate_batch;
 use row_fingerprints::row_fingerprints;
+
+fn float64_value_column(batch: &RecordBatch) -> Result<&Float64Array> {
+    batch
+        .column_by_name(leaf::VALUE_COLUMN)
+        .and_then(|column| column.as_any().downcast_ref::<Float64Array>())
+        .ok_or_else(|| PromqlError::Exec("planner leaf missing Float64 value column".to_string()))
+}

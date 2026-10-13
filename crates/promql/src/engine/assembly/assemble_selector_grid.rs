@@ -31,12 +31,7 @@ pub(crate) fn assemble_selector_grid(
     for batch in batches {
         let grid_timestamps = int64_column(batch, leaf::TIME_COLUMN)?;
         let sample_timestamps = int64_column(batch, leaf::SAMPLE_TIME_COLUMN)?;
-        let values = batch
-            .column_by_name(leaf::VALUE_COLUMN)
-            .and_then(|column| column.as_any().downcast_ref::<Float64Array>())
-            .ok_or_else(|| {
-                PromqlError::Exec("planner leaf missing Float64 value column".to_string())
-            })?;
+        let values = super::float64_value_column(batch)?;
         let fingerprints = row_fingerprints(batch, labels_from_batch);
         for row in 0..fingerprints.len() {
             let fp = fingerprints[row];

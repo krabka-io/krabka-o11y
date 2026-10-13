@@ -1,21 +1,22 @@
 use super::{
-    Arc, Bytes, ConnectInfo, Extension, HeaderMap, IntoResponse, MetricStore,
-    OPERATION_RULE_GROUP_SET, Path, PeerAddr, Principal, PrometheusApiState, RESOURCE_RULE_GROUP,
-    RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT, Response, State, authorized_tenant_from_headers,
+    Bytes, MetricStore, OPERATION_RULE_GROUP_SET, RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE,
+    RESOURCE_TENANT, Response, RulerConfigRequest, authorize_config_tenant,
     record_ruler_config_change, resource, store_ruler_config_group,
 };
 
 pub(crate) async fn set_ruler_config_group<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    peer: Option<Extension<ConnectInfo<PeerAddr>>>,
-    headers: HeaderMap,
-    Path(namespace): Path<String>,
+    RulerConfigRequest {
+        state: super::State(state),
+        principal: super::Extension(principal),
+        peer,
+        headers,
+        namespace: super::Path(namespace),
+    }: RulerConfigRequest<S>,
     body: Bytes,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
+    let tenant = match authorize_config_tenant(&headers, &principal) {
         Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
+        Err(response) => return response,
     };
     let mut resources = vec![
         resource(RESOURCE_TENANT, tenant.as_str()),

@@ -51,6 +51,16 @@ impl ErasureFixture {
     }
 }
 
+async fn one_erasure_request(
+    store: &Arc<dyn object_store::ObjectStore>,
+) -> Vec<krabka_blockstore::ErasureRequest> {
+    let requests = list_erasure_requests(store, ERASURE_REQUEST_PREFIX)
+        .await
+        .unwrap();
+    check!(requests.len() == 1);
+    requests
+}
+
 #[tokio::test]
 async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
     let mut metric_store = InMemoryMetricStore::new();
@@ -91,10 +101,7 @@ async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
         .await
         .unwrap();
     check!(response.status() == StatusCode::NO_CONTENT);
-    let requests = list_erasure_requests(&erasure_store, ERASURE_REQUEST_PREFIX)
-        .await
-        .unwrap();
-    check!(requests.len() == 1);
+    let requests = one_erasure_request(&erasure_store).await;
     check!(requests[0].tenant == "tenant-a");
     check!(requests[0].selector == "{user=\"7\"}");
     check!(requests[0].matcher_sets.len() == 1);
@@ -116,10 +123,7 @@ async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
         .await
         .unwrap();
     check!(response.status() == StatusCode::NO_CONTENT);
-    let requests = list_erasure_requests(&erasure_store, ERASURE_REQUEST_PREFIX)
-        .await
-        .unwrap();
-    check!(requests.len() == 1);
+    let _requests = one_erasure_request(&erasure_store).await;
 }
 
 #[tokio::test]

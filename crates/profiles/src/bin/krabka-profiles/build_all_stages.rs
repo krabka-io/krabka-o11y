@@ -9,6 +9,21 @@ use super::{
     debuginfod_config, load_profiles_limits_overrides_config, read_path_stage, symbolizer_stage,
 };
 
+fn configure_querier_state<S: krabka_pprof::ProfileStore>(
+    state: QuerierState<S>,
+    admin_store: Arc<dyn object_store::ObjectStore>,
+    cli: &Cli,
+    metrics: &ServiceMetrics,
+) -> QuerierState<S> {
+    state
+        .with_admin_store(admin_store)
+        .with_query_architecture(cli.query_architecture)
+        .with_async_queries_enabled(cli.async_queries_enabled)
+        .with_query_analysis_series_enabled(cli.query_analysis_series_enabled)
+        .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
+        .with_metrics(metrics.clone())
+}
+
 /// Builds every role `--target all` runs, and every listener it binds, before
 /// a single one of them is started.
 ///
@@ -103,30 +118,24 @@ pub(crate) async fn build_all_stages(
     // one snapshot meets both gates.
     frontend_index_gate.mark_ready();
 
-    let frontend_state = Arc::new(
+    let frontend_state = Arc::new(configure_querier_state(
         QuerierState::new_frontend_with_overrides(
             Arc::clone(&read.union),
             FrontendConfig {
                 shard_width: cli.query_frontend_shard_width,
             },
             overrides.clone(),
-        )
-        .with_admin_store(Arc::clone(&store))
-        .with_query_architecture(cli.query_architecture)
-        .with_async_queries_enabled(cli.async_queries_enabled)
-        .with_query_analysis_series_enabled(cli.query_analysis_series_enabled)
-        .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
-        .with_metrics(metrics.clone()),
-    );
-    let querier_state = Arc::new(
-        QuerierState::new_with_overrides(Arc::clone(&read.union), overrides.clone())
-            .with_admin_store(Arc::clone(&store))
-            .with_query_architecture(cli.query_architecture)
-            .with_async_queries_enabled(cli.async_queries_enabled)
-            .with_query_analysis_series_enabled(cli.query_analysis_series_enabled)
-            .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
-            .with_metrics(metrics.clone()),
-    );
+        ),
+        Arc::clone(&store),
+        cli,
+        metrics,
+    ));
+    let querier_state = Arc::new(configure_querier_state(
+        QuerierState::new_with_overrides(Arc::clone(&read.union), overrides.clone()),
+        Arc::clone(&store),
+        cli,
+        metrics,
+    ));
 
     // Pyroscope serves ingest and query on one port, and so does this. The
     // distributor's routes and the query routes are disjoint -- `/ingest`,

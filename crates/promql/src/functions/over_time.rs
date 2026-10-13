@@ -317,19 +317,9 @@ mod tests {
         val_dict: ArrayRef,
     ) -> DfResult<ColumnarValue> {
         let return_field = Arc::new(Field::new("out", DataType::Float64, true));
-        let arg_fields = vec![
-            Arc::new(Field::new("eval_timestamp", DataType::Int64, false)),
-            Arc::new(Field::new(
-                "timestamp_range",
-                ts_dict.data_type().clone(),
-                false,
-            )),
-            Arc::new(Field::new(
-                "value_range",
-                val_dict.data_type().clone(),
-                false,
-            )),
-        ];
+        let arg_fields = crate::functions::udf_test_support::range_argument_fields(
+            &eval_col, &ts_dict, &val_dict,
+        );
         let args = ScalarFunctionArgs {
             args: vec![
                 ColumnarValue::Array(eval_col),

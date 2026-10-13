@@ -34,6 +34,15 @@ mod tests {
         .input_span()
     }
 
+    fn four_spans() -> Vec<InputSpan> {
+        vec![
+            span(1, None),
+            span(2, Some(1)),
+            span(3, Some(1)),
+            span(4, Some(3)),
+        ]
+    }
+
     fn idx(spans: &[InputSpan], id: u8) -> usize {
         spans.iter().position(|s| s.span_id == sid(id)).unwrap()
     }
@@ -78,12 +87,7 @@ mod tests {
 
     #[test]
     fn nested_set_parent_id_is_parent_left() {
-        let spans = vec![
-            span(1, None),
-            span(2, Some(1)),
-            span(3, Some(1)),
-            span(4, Some(3)),
-        ];
+        let spans = four_spans();
         let ns = assign_nested_set(&spans);
         let root_left = ns[idx(&spans, 1)].left;
         check!(ns[idx(&spans, 1)].parent_id == -1); // root: Tempo nestedSetParent sentinel
@@ -94,12 +98,7 @@ mod tests {
 
     #[test]
     fn nested_set_intervals_identify_ancestors() {
-        let spans = vec![
-            span(1, None),
-            span(2, Some(1)),
-            span(3, Some(1)),
-            span(4, Some(3)),
-        ];
+        let spans = four_spans();
         let ns = assign_nested_set(&spans);
         let root = ns[idx(&spans, 1)];
         let peer = ns[idx(&spans, 2)];

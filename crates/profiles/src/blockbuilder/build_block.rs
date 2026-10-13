@@ -94,16 +94,18 @@ async fn write_block(
             min_ts = min_ts.min(timestamp_ms);
             max_ts = max_ts.max(timestamp_ms);
             rows.push(BuiltSample {
-                series_fingerprint: fp,
                 timestamp_ns: timestamp_ms,
-                profile_type: rec.profile_type.clone(),
-                stacktrace_id: u64::from(stack_id),
-                value: sample.value,
-                stacktrace_partition: STACKTRACE_PARTITION,
-                total_value,
-                span_id: sample.span_id,
-                trace_id: sample.trace_id.clone(),
-                wal_sample_ids: super::wal_sample_ids(position, ordinal)?,
+                fields: krabka_blockstore::ProfileSampleFields {
+                    series_fingerprint: fp,
+                    profile_type: rec.profile_type.clone(),
+                    stacktrace_id: u64::from(stack_id),
+                    value: sample.value,
+                    stacktrace_partition: STACKTRACE_PARTITION,
+                    total_value,
+                    span_id: sample.span_id,
+                    trace_id: sample.trace_id.clone(),
+                    wal_sample_ids: super::wal_sample_ids(position, ordinal)?,
+                },
             });
         }
     }

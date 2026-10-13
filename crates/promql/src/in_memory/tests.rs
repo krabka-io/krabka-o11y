@@ -73,6 +73,13 @@ pub(crate) struct HeadWithUpSeries {
     pub(crate) series: Labels,
 }
 
+pub(crate) fn up_series() -> Labels {
+    lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ])
+}
+
 pub(crate) fn head_with_initial_up_sample() -> HeadWithUpSeries {
     let head = WalHead::new();
     let series = lbls(&[

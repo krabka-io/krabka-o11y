@@ -35,13 +35,10 @@ fn histogram(count: f64) -> NativeHistogram {
 /// compactor writes them, so no float block exists.
 async fn histogram_only_store(series: &Labels) -> MetricBlockStore {
     let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let mut series_labels = std::collections::BTreeMap::new();
-    series_labels.insert(series.fingerprint(), series.clone().into());
-    let rows = TenantCompactionRows {
-        tenant: "tenant-a".to_string(),
-        series_labels,
-        float_rows: Vec::new(),
-        histogram_rows: [
+    let rows = compaction_rows_for_series(
+        series,
+        Vec::new(),
+        [
             HistogramPoint {
                 timestamp_ms: 30_000,
                 count: 1.0,
@@ -62,10 +59,7 @@ async fn histogram_only_store(series: &Labels) -> MetricBlockStore {
             hist: histogram(point.count),
         })
         .collect(),
-        exemplar_rows: Vec::new(),
-        metadata_rows: Vec::new(),
-        clock_rows: Vec::new(),
-    };
+    );
     write_compacted_tenant_blocks(
         &krabka_blockstore::BlockWriter::new(Arc::clone(&object_store)),
         &ObjectStoreCompactionIndexSink::new(Arc::clone(&object_store)),

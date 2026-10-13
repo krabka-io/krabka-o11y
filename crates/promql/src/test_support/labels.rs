@@ -9,3 +9,11 @@ pub(crate) fn labels(pairs: &[TestLabelPair<'_>]) -> Labels {
     }
     labels
 }
+
+pub(crate) fn up_instance_labels(instance: &str) -> Labels {
+    labels(&[
+        TestLabelPair::new("__name__", "up"),
+        TestLabelPair::new("instance", instance),
+        TestLabelPair::new("job", "api"),
+    ])
+}

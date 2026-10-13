@@ -68,11 +68,13 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         });
         let serve_role = serve(
             cli,
-            metrics,
-            readiness,
-            server_security,
-            wal_security,
-            stopping.clone(),
+            super::WriterRuntime {
+                metrics,
+                readiness,
+                security: server_security,
+                wal_security,
+                stopping: stopping.clone(),
+            },
         );
         tokio::pin!(serve_role);
         let outcome: Result<(), Box<dyn std::error::Error>> = tokio::select! {

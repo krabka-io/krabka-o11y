@@ -94,7 +94,7 @@ use self::cli::Cli;
 pub use self::cli::Cli as RuntimeConfig;
 pub use self::{
     run::run,
-    serve::{WriterLaunch, serve, serve_writer},
+    serve::{WriterLaunch, WriterRuntime, serve, serve_writer},
     target::Target as WriterTarget,
     writer_config::WriterConfig,
 };

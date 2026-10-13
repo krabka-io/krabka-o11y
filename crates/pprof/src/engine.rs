@@ -21,6 +21,17 @@ use crate::{
     series::{fold_bucket, step_bucket_ms, validated_step},
 };
 
+async fn symbolization_worker<T>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ProfileError>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|err| ProfileError::Symbolize(format!("symbolization worker failed: {err}")))
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub enum SampleSelector<'a> {
     #[default]

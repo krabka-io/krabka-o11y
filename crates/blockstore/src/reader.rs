@@ -603,3 +603,24 @@ pub(crate) use row_group_metadata::row_group_metadata;
 use same_object::same_object;
 use to_parquet_error::to_parquet_error;
 use unreadable::unreadable;
+
+async fn collect_block_batches(
+    reader: ObjectStoreReader,
+    object_key: &str,
+    row_groups: Option<&[usize]>,
+) -> Result<Vec<RecordBatch>> {
+    let builder = ParquetRecordBatchStreamBuilder::new(reader)
+        .await
+        .map_err(|error| unreadable(object_key, error))?;
+    crate::validate_persisted_block_format(builder.metadata())
+        .map_err(crate::BlockStoreError::InvalidBlock)?;
+    let stream = match row_groups {
+        Some(row_groups) => builder.with_row_groups(row_groups.to_vec()).build(),
+        None => builder.build(),
+    }
+    .map_err(|error| unreadable(object_key, error))?;
+    stream
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|error| unreadable(object_key, error))
+}

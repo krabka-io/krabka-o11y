@@ -100,24 +100,10 @@ mod tests {
         rows: usize,
     ) -> ScalarFunctionArgs {
         let return_field = Arc::new(Field::new("out", DataType::Float64, true));
-        let arg_fields = vec![
-            Arc::new(Field::new(
-                "eval_timestamp",
-                eval_col.data_type().clone(),
-                false,
-            )),
-            Arc::new(Field::new(
-                "timestamp_range",
-                ts_dict.data_type().clone(),
-                false,
-            )),
-            Arc::new(Field::new(
-                "value_range",
-                val_dict.data_type().clone(),
-                false,
-            )),
-            Arc::new(Field::new("range_ms", DataType::Int64, false)),
-        ];
+        let mut arg_fields = crate::functions::udf_test_support::range_argument_fields(
+            &eval_col, &ts_dict, &val_dict,
+        );
+        arg_fields.push(Arc::new(Field::new("range_ms", DataType::Int64, false)));
         ScalarFunctionArgs {
             args: vec![
                 ColumnarValue::Array(eval_col),

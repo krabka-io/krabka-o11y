@@ -377,16 +377,8 @@ async fn inject_index_fault(
                     &log_manifest("t"),
                 )];
             }
-            let snapshots =
-                keys_under(store, &index_key(signal).replace(".json", "/snapshots")).await;
-            let latest = snapshots.last().unwrap();
-            put_bytes(store, latest, b"{").await;
-            vec![finding(
-                StorageFindingKind::UnreadableManifest,
-                signal,
-                None,
-                latest,
-            )]
+            corrupt_latest_snapshot(store, signal, b"{", StorageFindingKind::UnreadableManifest)
+                .await
         }
         Fault::UnsupportedManifest => {
             if signal == StorageSignal::Logs {
@@ -403,16 +395,13 @@ async fn inject_index_fault(
                     &log_manifest("t"),
                 )];
             }
-            let snapshots =
-                keys_under(store, &index_key(signal).replace(".json", "/snapshots")).await;
-            let latest = snapshots.last().unwrap();
-            put_bytes(store, latest, br#"{"v":99,"t":{}}"#).await;
-            vec![finding(
-                StorageFindingKind::UnsupportedFormat,
+            corrupt_latest_snapshot(
+                store,
                 signal,
-                None,
-                latest,
-            )]
+                br#"{"v":99,"t":{}}"#,
+                StorageFindingKind::UnsupportedFormat,
+            )
+            .await
         }
         Fault::NoIndex => {
             if signal == StorageSignal::Logs {
@@ -462,6 +451,18 @@ async fn inject_index_fault(
         }
         _ => unreachable!("{fault:?} is not an index fault"),
     }
+}
+
+async fn corrupt_latest_snapshot(
+    store: &Arc<dyn ObjectStore>,
+    signal: StorageSignal,
+    content: &[u8],
+    kind: StorageFindingKind,
+) -> Vec<StorageFinding> {
+    let snapshots = keys_under(store, &index_key(signal).replace(".json", "/snapshots")).await;
+    let latest = snapshots.last().unwrap();
+    put_bytes(store, latest, content).await;
+    vec![finding(kind, signal, None, latest)]
 }
 
 struct AuditFaultCase {

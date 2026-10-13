@@ -29,7 +29,7 @@ pub(crate) async fn merge_scan_to_pprof(
         };
         let rows = selected_sample_rows(&batch, trace_ids)?;
         let symbols = Arc::clone(&scan.symbols);
-        let resolved = tokio::task::spawn_blocking(move || {
+        let resolved = super::symbolization_worker(move || {
             rows.into_iter()
                 .map(|row| ResolvedSampleLocations {
                     locations: symbols.resolve_locations(row.partition, row.stacktrace_id),
@@ -37,8 +37,7 @@ pub(crate) async fn merge_scan_to_pprof(
                 })
                 .collect::<Vec<_>>()
         })
-        .await
-        .map_err(|err| ProfileError::Symbolize(format!("symbolization worker failed: {err}")))?;
+        .await?;
         for sample in resolved {
             let frames = sample
                 .locations

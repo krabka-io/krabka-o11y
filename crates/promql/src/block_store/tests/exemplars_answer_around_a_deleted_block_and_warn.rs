@@ -61,19 +61,7 @@ pub(crate) async fn exemplars_answer_around_a_deleted_block_and_warn() {
 
     let store =
         MetricBlockStore::from_compaction_manifests(fixture.reader(), None, &[deleted, kept]);
-    let scan = store
-        .exemplars(
-            "tenant-a",
-            &[crate::PromqlMatcher {
-                name: "job".to_string(),
-                op: krabka_blockstore::MatchOp::Eq,
-                value: "api".to_string().into(),
-            }],
-            10_000,
-            11_000,
-        )
-        .await
-        .unwrap();
+    let scan = api_exemplar_scan(&store).await;
 
     check!(scan.exemplars.len() == 1);
     check!(scan.exemplars[0].series_labels == kept_series);

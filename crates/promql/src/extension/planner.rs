@@ -49,15 +49,12 @@ mod tests {
     };
 
     use super::*;
-
-    #[derive(Debug, PartialEq)]
-    struct PlannerSample {
-        job: String,
-        value: f64,
-    }
-    use crate::extension::{
-        instant_manipulate::InstantManipulate, normalize::SeriesNormalize,
-        series_divide::SeriesDivide,
+    use crate::{
+        extension::{
+            instant_manipulate::InstantManipulate, normalize::SeriesNormalize,
+            series_divide::SeriesDivide,
+        },
+        planner::{JobValue as PlannerSample, job_values},
     };
 
     #[tokio::test]
@@ -118,35 +115,7 @@ mod tests {
             }),
         });
 
-        let batches = ctx
-            .execute_logical_plan(instant)
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-
-        let mut got = Vec::new();
-        for batch in &batches {
-            let job = batch
-                .column_by_name("job")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap();
-            let value = batch
-                .column_by_name("value")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap();
-            for row in 0..batch.num_rows() {
-                got.push(PlannerSample {
-                    job: job.value(row).to_string(),
-                    value: value.value(row),
-                });
-            }
-        }
+        let mut got = job_values(&ctx, instant, "value").await;
         got.sort_by(|left, right| left.job.cmp(&right.job));
 
         // At grid step 120_000 within a 300_000 lookback, the latest sample for

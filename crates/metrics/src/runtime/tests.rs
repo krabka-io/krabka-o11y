@@ -884,11 +884,13 @@ async fn shared_compactor_registers_startup_before_its_stage_runs_and_drains() {
     drain.stage("compactor", move |token| {
         let role = serve(
             cli,
-            ServiceMetrics::new(),
-            role_readiness,
-            security,
-            None,
-            token,
+            super::WriterRuntime {
+                metrics: ServiceMetrics::new(),
+                readiness: role_readiness,
+                security,
+                wal_security: None,
+                stopping: token,
+            },
         );
         async move {
             role.await.expect("the real compactor drains successfully");
@@ -932,11 +934,13 @@ async fn distributor_writes_all_records_with_default_and_small_frames() {
         let stopping = krabka_observability::CancellationToken::new();
         let role = tokio::spawn(serve(
             cli,
-            ServiceMetrics::new(),
-            RoleReadiness::new(),
-            ServerSecurity::default(),
-            None,
-            stopping.clone(),
+            super::WriterRuntime {
+                metrics: ServiceMetrics::new(),
+                readiness: RoleReadiness::new(),
+                security: ServerSecurity::default(),
+                wal_security: None,
+                stopping: stopping.clone(),
+            },
         ));
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))

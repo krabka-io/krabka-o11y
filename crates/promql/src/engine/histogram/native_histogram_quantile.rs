@@ -95,12 +95,7 @@ pub(crate) fn native_histogram_quantile(
     };
 
     if hist.sum.is_nan() {
-        let observed: f64 = count
-            + buckets
-                .iter()
-                .skip(walked + 1)
-                .map(|bucket| bucket.count)
-                .sum::<f64>();
+        let observed = super::observed_histogram_count(count, &buckets, walked);
         if observed < hist.count {
             emit_info(native_histogram_quantile_nan_skew_info(metric));
         }

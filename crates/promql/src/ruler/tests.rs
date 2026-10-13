@@ -51,7 +51,8 @@ use recording_sink::RecordingSink;
 use rule_fixtures::{
     GroupLastEval, UpRuleSinks, UpSample, assert_up_rules_fired_at_six_minutes, group_state,
     instance_up_alert, job_up_current_record, mixed_rule_group, namespaced_rule_set,
-    staggered_group_state, standard_due_interval_rule_set, up_api_engine, up_samples_engine,
+    staggered_group_state, standard_due_interval_rule_set, two_job_up_engine, up_api_engine,
+    up_samples_engine,
 };
 
 fn recording_sinks_and_alert_state() -> (

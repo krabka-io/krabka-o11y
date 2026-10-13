@@ -390,7 +390,7 @@ pub async fn healthy(
     blocks.into_iter().flatten().collect()
 }
 
-pub async fn listed_keys(store: &Arc<dyn ObjectStore>) -> Vec<String> {
+pub async fn listed_keys(store: &dyn ObjectStore) -> Vec<String> {
     let mut keys = store
         .list(None)
         .map(|meta| meta.unwrap().location.to_string())
