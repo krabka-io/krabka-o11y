@@ -13,12 +13,10 @@ pub(crate) fn up_range_query(end_ms: i64, shard: Option<QueryShard>) -> Frontend
 
 /// A one-series matrix result of `series`, holding the float 1 at 0.
 pub(crate) fn one_sample_matrix(series: Labels) -> AnnotatedQueryResult {
-    unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-        drop_name: false,
-        start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: series.into(),
-        samples: vec![RangeSeriesSample::new(0, SampleValue::Float(1.0))],
-    }]))
+    unannotated(QueryResult::RangeMatrix(vec![range_series(
+        series,
+        vec![RangeSeriesSample::new(0, SampleValue::Float(1.0))],
+    )]))
 }
 
 /// One float point of an expected matrix series.
@@ -35,19 +33,16 @@ pub(crate) fn up_api_matrix(points: &[FloatPoint]) -> AnnotatedQueryResult {
 
 /// A `up{job="api"}` range series containing the supplied points.
 pub(crate) fn up_api_series(points: &[FloatPoint]) -> RangeSeries {
-    RangeSeries {
-        drop_name: false,
-        start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: labels(&[
+    range_series(
+        labels(&[
             crate::test_support::TestLabelPair::new("__name__", "up"),
             crate::test_support::TestLabelPair::new("job", "api"),
-        ])
-        .into(),
-        samples: points
+        ]),
+        points
             .iter()
             .map(|point| RangeSeriesSample::new(point.ts_ms, SampleValue::Float(point.value)))
             .collect(),
-    }
+    )
 }
 
 /// A one-sample matrix result for `up{job="api"}`.

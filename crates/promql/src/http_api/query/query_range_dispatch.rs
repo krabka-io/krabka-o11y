@@ -4,9 +4,9 @@ use super::{
     ApiError, Arc, ERASURE_REQUEST_PREFIX, EvaluatedQuery, FrontendRangeRequest, HeaderMap,
     IntoResponse, MetricStore, PerStepSampleStats, Principal, PrometheusApiState,
     QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, StepGrid, TimeExt,
-    authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
-    duration_param, enforce_query_range_limit, evaluated_query_response,
-    execute_range_query_frontend, has_erasure_requests, timestamp_ms, validate_timestamp_range,
+    authorized_query_tenant, check_range_resolution, collect_query_sample_stats, duration_param,
+    enforce_query_range_limit, evaluated_query_response, execute_range_query_frontend,
+    has_erasure_requests, timestamp_ms, validate_timestamp_range,
 };
 
 pub(crate) async fn query_range_dispatch<S: MetricStore>(
@@ -17,9 +17,9 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
     timing: QueryRequestTiming,
 ) -> Response {
     let preparation_started = std::time::Instant::now();
-    let tenant = match authorized_tenant_from_headers(headers, principal) {
+    let tenant = match authorized_query_tenant(headers, principal) {
         Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
+        Err(response) => return response,
     };
     let start_ms = match timestamp_ms(&params.start) {
         Ok(value) => value,

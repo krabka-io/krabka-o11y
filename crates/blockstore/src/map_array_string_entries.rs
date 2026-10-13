@@ -30,11 +30,9 @@ pub fn map_array_string_entries<E>(
         .ok_or_else(|| invalid_column("structured_metadata.value", "Utf8"))?;
 
     Ok((0..entries.len())
-        .map(|index| {
-            StringMapEntry {
-                key: keys.value(index).to_string(),
-                value: values.value(index).to_string(),
-            }
+        .map(|index| StringMapEntry {
+            key: keys.value(index).to_string(),
+            value: values.value(index).to_string(),
         })
         .collect())
 }

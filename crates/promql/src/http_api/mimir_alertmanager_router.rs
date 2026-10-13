@@ -27,6 +27,15 @@ use super::{
 
 static NEXT_SILENCE_ID: AtomicU64 = AtomicU64::new(1);
 
+macro_rules! tenant_or_return {
+    ($caller:expr) => {
+        match tenant(&$caller) {
+            Ok(tenant) => tenant,
+            Err(response) => return *response,
+        }
+    };
+}
+
 fn text_response(status: StatusCode, body: impl Into<String>) -> Response {
     let body: String = body.into();
     let mut response = Response::new(body.into());
@@ -79,10 +88,7 @@ async fn get_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     match state.alertmanager_configs.read() {
         Ok(configs) => match configs.get(&tenant) {
             Some(config) => {
@@ -107,10 +113,7 @@ async fn set_config<S: MetricStore>(
     caller: RequestCaller,
     body: Bytes,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let body = match String::from_utf8(body.to_vec()) {
         Ok(body) => body,
         Err(error) => return text_response(StatusCode::BAD_REQUEST, error.to_string()),
@@ -146,10 +149,7 @@ async fn delete_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let deleted = match state.alertmanager_configs.write() {
         Ok(mut configs) => {
             configs.remove(&tenant);
@@ -170,10 +170,7 @@ async fn status<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let config = state
         .alertmanager_configs
         .read()
@@ -187,10 +184,7 @@ async fn receivers<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let names = alertmanager_config_yaml(&state, &tenant)
         .and_then(|config| {
             config
@@ -261,10 +255,7 @@ async fn set_alerts<S: MetricStore>(
     caller: RequestCaller,
     Json(mut new_alerts): Json<Vec<Value>>,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let receiver = default_receiver(&state, &tenant);
     for alert in &mut new_alerts {
         enrich_alert(alert, receiver.as_deref());
@@ -325,10 +316,7 @@ async fn silences<S: MetricStore>(
     caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let silences = state
         .alertmanager_silences
         .read()
@@ -351,10 +339,7 @@ async fn set_silence<S: MetricStore>(
     caller: RequestCaller,
     Json(mut silence): Json<Value>,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let id = silence
         .get("id")
         .and_then(Value::as_str)

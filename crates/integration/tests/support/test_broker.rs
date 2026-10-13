@@ -14,5 +14,9 @@ pub async fn start_broker() -> StartedBroker {
         .await
         .expect("broker start");
     let bootstrap = broker.listen_addr().to_string();
-    StartedBroker { broker, tempdir, bootstrap }
+    StartedBroker {
+        broker,
+        tempdir,
+        bootstrap,
+    }
 }

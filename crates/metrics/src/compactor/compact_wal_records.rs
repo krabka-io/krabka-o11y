@@ -11,15 +11,7 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
         let fingerprint = record.series_fingerprint();
         let rows = tenants
             .entry(record.tenant.clone())
-            .or_insert_with(|| TenantCompactionRows {
-                tenant: record.tenant.clone(),
-                series_labels: BTreeMap::new(),
-                float_rows: Vec::new(),
-                histogram_rows: Vec::new(),
-                exemplar_rows: Vec::new(),
-                metadata_rows: Vec::new(),
-                clock_rows: Vec::new(),
-            });
+            .or_insert_with(|| TenantCompactionRows::empty(record.tenant.as_str()));
         rows.series_labels
             .entry(fingerprint)
             .or_insert_with(|| record.labels());

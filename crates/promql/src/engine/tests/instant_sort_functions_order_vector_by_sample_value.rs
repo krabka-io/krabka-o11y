@@ -7,23 +7,7 @@ struct SortOrderExpectation {
 
 #[tokio::test]
 pub(crate) async fn instant_sort_functions_order_vector_by_sample_value() {
-    let engine = zoned_queue_depth_engine(&[
-        ZonedQueueDepth {
-            instance: "api-b",
-            zone: "us-west-2b",
-            depth: 3.0,
-        },
-        ZonedQueueDepth {
-            instance: "api-a",
-            zone: "us-east-1a",
-            depth: 1.0,
-        },
-        ZonedQueueDepth {
-            instance: "api-c",
-            zone: "us-east-1a",
-            depth: 2.0,
-        },
-    ]);
+    let engine = zoned_queue_depth_engine(&standard_zoned_queue_depth_series());
     for expectation in [
         SortOrderExpectation {
             query: "sort(queue_depth)",

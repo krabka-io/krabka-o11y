@@ -11,9 +11,9 @@ use crate::result::{AttrValue, EventRef, LinkRef};
 mod tests {
     use arrow::datatypes::DataType;
     use assert2::{assert, check};
-    use krabka_units::nanos;
 
     use super::*;
+    use crate::testkit::span::SpanFixture;
 
     struct SchemaColumn {
         name: &'static str,
@@ -25,22 +25,13 @@ mod tests {
     }
 
     fn span(id: u8, parent: Option<u8>) -> InputSpan {
-        InputSpan {
-            trace_id: [7; 16],
-            span_id: sid(id),
-            parent_span_id: parent.map(sid),
-            name: format!("span-{id}"),
-            kind: 0,
-            start_unix_nano: i64::from(id) * 100,
-            duration: nanos(10),
-            status_code: 0,
-            status_message: String::new(),
-            instrumentation_name: String::new(),
-            instrumentation_version: String::new(),
-            attrs: vec![],
-            events: Vec::new(),
-            links: Vec::new(),
+        SpanFixture {
+            trace: 7,
+            id,
+            parent,
+            ..SpanFixture::default()
         }
+        .input_span()
     }
 
     fn idx(spans: &[InputSpan], id: u8) -> usize {

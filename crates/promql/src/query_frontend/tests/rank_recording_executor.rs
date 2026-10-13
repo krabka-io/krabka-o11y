@@ -1,16 +1,13 @@
 use super::*;
 
 pub(super) fn ranked_series(name: &str, value: f64) -> RangeSeries {
-    RangeSeries {
-        drop_name: false,
-        start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: labels(&[
+    range_series(
+        labels(&[
             crate::test_support::TestLabelPair::new("__name__", "up"),
             crate::test_support::TestLabelPair::new("series", name),
-        ])
-        .into(),
-        samples: vec![RangeSeriesSample::new(0, SampleValue::Float(value))],
-    }
+        ]),
+        vec![RangeSeriesSample::new(0, SampleValue::Float(value))],
+    )
 }
 
 #[derive(Default)]

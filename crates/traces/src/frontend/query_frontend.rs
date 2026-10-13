@@ -56,6 +56,13 @@ struct JobAssignment {
     planned_live: bool,
 }
 
+struct PlannedSearch {
+    snapshot: Arc<Membership>,
+    assignment: JobAssignment,
+    total_jobs: u64,
+    permit: AdmissionPermit,
+}
+
 pub struct TraceByIdResult {
     pub trace: Option<TraceByIdResponseJson>,
     pub metrics: Metrics,
@@ -261,6 +268,23 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         })
     }
 
+    async fn prepare_search(
+        &self,
+        tenant: &TenantId,
+        window: TimeRange,
+    ) -> Result<PlannedSearch, BackendError> {
+        let snapshot = self.ready_pool()?;
+        let assignment = self.plan_and_assign(tenant, window, &snapshot).await?;
+        let total_jobs = assignment.jobs.len() as u64;
+        let permit = self.admit(tenant, assignment.jobs.len()).await?;
+        Ok(PlannedSearch {
+            snapshot,
+            assignment,
+            total_jobs,
+            permit,
+        })
+    }
+
     /// Run a `TraceQL` `/api/search` through the full pipeline.
     ///
     /// Search shards **partition** the data across the live tier and disjoint
@@ -284,16 +308,19 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         limit: usize,
         spss: usize,
     ) -> Result<SearchResponseJson, BackendError> {
-        let snapshot = self.ready_pool()?;
-        let JobAssignment {
-            jobs: assigned,
-            total_blocks,
-            planned_live,
+        let PlannedSearch {
+            snapshot,
+            assignment:
+                JobAssignment {
+                    jobs: assigned,
+                    total_blocks,
+                    planned_live,
+                },
+            total_jobs,
+            permit: _permit,
         } = self
-            .plan_and_assign(tenant, TimeRange { start_ns, end_ns }, &snapshot)
+            .prepare_search(tenant, TimeRange { start_ns, end_ns })
             .await?;
-        let total_jobs = assigned.len() as u64;
-        let _permit = self.admit(tenant, assigned.len()).await?;
 
         let backend = Arc::clone(&self.backend);
         let tenant = tenant.clone();
@@ -338,16 +365,19 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         limit: usize,
         spss: usize,
     ) -> Result<mpsc::Receiver<Result<SearchResponseJson, BackendError>>, BackendError> {
-        let snapshot = self.ready_pool()?;
-        let JobAssignment {
-            jobs: assigned,
-            total_blocks,
-            planned_live,
+        let PlannedSearch {
+            snapshot,
+            assignment:
+                JobAssignment {
+                    jobs: assigned,
+                    total_blocks,
+                    planned_live,
+                },
+            total_jobs,
+            permit,
         } = self
-            .plan_and_assign(tenant, TimeRange { start_ns, end_ns }, &snapshot)
+            .prepare_search(tenant, TimeRange { start_ns, end_ns })
             .await?;
-        let total_jobs = assigned.len() as u64;
-        let permit = self.admit(tenant, assigned.len()).await?;
         let backend = Arc::clone(&self.backend);
         let tenant = tenant.clone();
         let query = query.to_string();

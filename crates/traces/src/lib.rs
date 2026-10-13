@@ -60,6 +60,7 @@ pub mod blockbuilder;
 pub mod compactor;
 pub mod distributor;
 pub mod error;
+mod float_json;
 pub mod frontend;
 pub mod ids;
 pub mod limits;

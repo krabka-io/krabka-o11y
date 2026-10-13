@@ -12,13 +12,20 @@ use url::form_urlencoded;
 
 use super::{
     ApiError, ERASURE_REQUEST_PREFIX, Extension, Principal, PrometheusApiState, QueryResponseStats,
-    RequestAuth, acquire_query_permit, apply_result_limit, authorized_tenant_from_headers,
-    check_range_resolution, duration_param, enforce_query_range_limit, exemplar_key,
-    exemplars_json, has_erasure_requests, optional_timestamp_ms, parse_limit_parameter,
-    query_timeout, record_query_response, required_form_param, selector_matchers,
-    success_data_response, success_response, success_response_with_stats, timestamp_ms,
-    validate_timestamp_range,
+    RequestAuth, TenantId, acquire_query_permit, apply_result_limit,
+    authorized_tenant_from_headers, check_range_resolution, duration_param,
+    enforce_query_range_limit, exemplar_key, exemplars_json, has_erasure_requests,
+    optional_timestamp_ms, parse_limit_parameter, query_timeout, record_query_response,
+    required_form_param, selector_matchers, success_data_response, success_response,
+    success_response_with_stats, timestamp_ms, validate_timestamp_range,
 };
+
+fn authorized_query_tenant(
+    headers: &HeaderMap,
+    principal: &Principal,
+) -> Result<TenantId, Response> {
+    authorized_tenant_from_headers(headers, principal).map_err(IntoResponse::into_response)
+}
 use crate::{
     AnnotatedQueryResult, MetricStore,
     engine::{PerStepSampleStats, collect_query_sample_stats, query_stats_step},

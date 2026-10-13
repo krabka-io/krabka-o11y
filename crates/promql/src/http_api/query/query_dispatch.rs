@@ -3,7 +3,7 @@ use krabka_observability::service_metrics::RequestOutcome;
 use super::{
     Arc, EvaluatedQuery, HeaderMap, InstantQueryParams, IntoResponse, MetricStore,
     PerStepSampleStats, Principal, PrometheusApiState, QueryRequestTiming, Response,
-    StdDurationExt, StepGrid, authorized_tenant_from_headers, collect_query_sample_stats,
+    StdDurationExt, StepGrid, authorized_query_tenant, collect_query_sample_stats,
     enforce_query_range_limit, evaluated_query_response, optional_timestamp_ms, query_stats_step,
 };
 
@@ -15,9 +15,9 @@ pub(crate) async fn query_dispatch<S: MetricStore>(
     timing: QueryRequestTiming,
 ) -> Response {
     let preparation_started = std::time::Instant::now();
-    let tenant = match authorized_tenant_from_headers(headers, principal) {
+    let tenant = match authorized_query_tenant(headers, principal) {
         Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
+        Err(response) => return response,
     };
     let time_ms = match optional_timestamp_ms(params.time.as_deref()) {
         Ok(time_ms) => time_ms,

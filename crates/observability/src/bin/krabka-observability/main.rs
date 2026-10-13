@@ -14,13 +14,13 @@ use krabka_units::{ByteSize, parse};
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use assert2::{assert, check};
     use clap::Parser as _;
     use krabka_broker::{Broker, BrokerConfig};
-    use krabka_client_admin::{AdminClient, CreateTopicSpec};
-    use krabka_observability::{Role, topic_contract::LOGS_WAL_TOPIC};
+    use krabka_observability::{
+        Role,
+        topic_contract::{LOGS_TOPICS, LOGS_WAL_TOPIC, TopicSettings, provision_topics},
+    };
 
     use super::{Cli, ServiceConfig, require_role_topics};
 
@@ -198,26 +198,14 @@ mod tests {
     }
 
     async fn create_logs_wal_topic(bootstrap: &str) {
-        let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-            .await
-            .expect("admin connect");
-        admin
-            .create_topics(
-                &[CreateTopicSpec {
-                    replica_assignments: std::collections::BTreeMap::default(),
-                    name: LOGS_WAL_TOPIC.to_string(),
-                    partitions: 1,
-                    replicas: 1,
-                    configs: {
-                        let mut configs = BTreeMap::new();
-                        configs.insert("retention.ms".to_string(), "900000".to_string());
-                        configs
-                    },
-                }],
-                krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
-            )
-            .await
-            .expect("create the logs WAL topic");
+        provision_topics(
+            bootstrap,
+            &LOGS_TOPICS,
+            &TopicSettings::single_broker(),
+            None,
+        )
+        .await
+        .expect("create the logs WAL topic");
     }
 }
 

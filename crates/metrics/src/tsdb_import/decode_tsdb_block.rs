@@ -65,15 +65,7 @@ pub fn decode_tsdb_block(
         limits,
         chunks: &chunks,
         tombstones: &tombstones,
-        rows: TenantCompactionRows {
-            tenant: tenant.to_owned(),
-            series_labels: BTreeMap::new(),
-            float_rows: Vec::new(),
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
-            metadata_rows: Vec::new(),
-            clock_rows: Vec::new(),
-        },
+        rows: TenantCompactionRows::empty(tenant),
         stats: TsdbImportStats::default(),
         decoded_samples: 0,
     };

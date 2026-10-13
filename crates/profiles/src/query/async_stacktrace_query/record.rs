@@ -47,6 +47,17 @@ pub(super) fn expiry_path(tenant: &TenantId, id: &str) -> Path {
     Path::from(format!("profiles-admin/{tenant}/async/{id}/expired.json"))
 }
 
+async fn decode_json_object<T: serde::de::DeserializeOwned>(
+    object: object_store::GetResult,
+) -> Result<T, ConnectError> {
+    let bytes = object
+        .bytes()
+        .await
+        .map_err(|error| storage_error(&error))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| ConnectError::new(super::Code::Internal, error.to_string()))
+}
+
 pub(super) async fn is_expired<S: ProfileStore>(
     state: &QuerierState<S>,
     tenant: &TenantId,
@@ -57,13 +68,7 @@ pub(super) async fn is_expired<S: ProfileStore>(
         Err(object_store::Error::NotFound { .. }) => return Ok(false),
         Err(error) => return Err(storage_error(&error)),
     };
-    let seal: ExpirySeal = serde_json::from_slice(
-        &object
-            .bytes()
-            .await
-            .map_err(|error| storage_error(&error))?,
-    )
-    .map_err(|error| ConnectError::new(super::Code::Internal, error.to_string()))?;
+    let seal: ExpirySeal = decode_json_object(object).await?;
     if seal.version != 1 || seal.tenant != tenant.as_str() || seal.id != id {
         return Err(ConnectError::new(
             super::Code::Internal,
@@ -173,13 +178,7 @@ pub(super) async fn load<S: ProfileStore>(
         .get(&metadata_object.location)
         .await
         .map_err(|error| storage_error(&error))?;
-    let record: Record = serde_json::from_slice(
-        &object
-            .bytes()
-            .await
-            .map_err(|error| storage_error(&error))?,
-    )
-    .map_err(|error| ConnectError::new(super::Code::Internal, error.to_string()))?;
+    let record: Record = decode_json_object(object).await?;
     if record.version != 1 || record.generation != metadata_object.generation {
         return Err(ConnectError::new(
             super::Code::Internal,

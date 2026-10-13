@@ -1,4 +1,5 @@
 use krabka_blockstore::Labels;
+
 use super::TestLabelPair;
 
 pub(crate) fn labels(pairs: &[TestLabelPair<'_>]) -> Labels {

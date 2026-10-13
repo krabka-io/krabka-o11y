@@ -194,6 +194,13 @@ pub(crate) use histogram::{
 pub(crate) use labels::aggregate_labels;
 pub use max_resolution_points::MAX_RESOLUTION_POINTS;
 pub use promql_engine::PromqlEngine;
+
+pub(crate) fn range_resolution_exceeds_limit(start_ms: i64, end_ms: i64, step_ms: i64) -> bool {
+    step_ms > 0
+        && end_ms.saturating_sub(start_ms) / step_ms
+            > i64::try_from(MAX_RESOLUTION_POINTS).unwrap_or(i64::MAX)
+}
+
 #[cfg(feature = "experimental-functions")]
 pub(super) use query_range_context::QueryRangeContext;
 use range_eval::{RangeEval, RangeWindow};

@@ -18,5 +18,9 @@ pub(crate) async fn start_audited_runtime_security(
     let security = start_runtime_security(config, &dependencies).await?;
     let stop_guard = security.audit_stop.clone().drop_guard();
     let dependencies = dependencies.with_audit(security.audit.clone());
-    Ok(AuditedRuntimeSecurity { security, stop_guard, dependencies })
+    Ok(AuditedRuntimeSecurity {
+        security,
+        stop_guard,
+        dependencies,
+    })
 }

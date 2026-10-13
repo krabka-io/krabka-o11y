@@ -111,8 +111,12 @@ mod tests {
             .iter()
             .map(|block| block.object_key.clone())
             .collect();
-        keys.sort();
+        keys.sort_unstable();
         keys
+    }
+
+    fn memory_store() -> std::sync::Arc<dyn object_store::ObjectStore> {
+        std::sync::Arc::new(object_store::memory::InMemory::new())
     }
 
     /// Saves `index`, whose compaction consumed `b1` after the snapshot
@@ -460,10 +464,8 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_round_trips() {
-        use object_store::{ObjectStore, memory::InMemory};
-
         let idx = seed();
-        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
+        let store = memory_store();
         let loaded = save_and_reload(&idx, &store).await;
         let got = loaded.candidate_blocks_for_trace("t", &tid(1), 0, 1_000);
         assert2::assert!(got == vec!["b1".to_string()]);
@@ -533,10 +535,8 @@ mod tests {
 
     #[tokio::test]
     async fn latest_snapshot_retains_bounded_snapshot_set() {
-        use object_store::{ObjectStore, memory::InMemory};
-
         let idx = seed();
-        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
+        let store = memory_store();
 
         for _ in 0..(crate::index_snapshot::DEFAULT_INDEX_SNAPSHOT_RETAIN + 3) {
             idx.save_latest_snapshot(&store, "index/traces.json")
@@ -552,10 +552,8 @@ mod tests {
 
     #[tokio::test]
     async fn configurable_snapshot_policy_caps_loads_and_retention() {
-        use object_store::{ObjectStore, memory::InMemory};
-
         let idx = seed();
-        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
+        let store = memory_store();
         let retain = crate::IndexSnapshotRetain::new(2).unwrap();
 
         for _ in 0..4 {

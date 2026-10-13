@@ -1,17 +1,12 @@
 use super::{
     ComparisonResult, MetricBinaryExpressionText, format_metric_binary_expression,
     format_metric_query, format_metric_scalar_arithmetic_operator,
-    parse_metric_binary_arithmetic_query, parse_metric_query,
-    split_leading_vector_binary_modifiers, split_top_level_arithmetic_query,
+    parse_metric_binary_arithmetic_query, split_top_level_arithmetic_query,
+    validate_metric_binary_query_operands,
 };
 
 pub(crate) fn format_metric_binary_arithmetic_query(query: &str) -> Option<String> {
-    let split = split_top_level_arithmetic_query(query)?;
-    let left_text = split.left;
-    let right_text = split.right;
-    let right_text = split_leading_vector_binary_modifiers(right_text).remainder;
-    parse_metric_query(left_text.trim()).ok()?;
-    parse_metric_query(right_text.trim()).ok()?;
+    validate_metric_binary_query_operands(split_top_level_arithmetic_query(query)?)?;
     let arithmetic = parse_metric_binary_arithmetic_query(query).ok()?;
     let left = format_metric_query(&arithmetic.left)?;
     let right = format_metric_query(&arithmetic.right)?;

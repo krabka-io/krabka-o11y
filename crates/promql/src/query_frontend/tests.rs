@@ -6,8 +6,8 @@ use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 
 use super::*;
 use crate::{
-    AnnotatedQueryResult, Annotations, EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult,
-    RangeSeries, RangeSeriesSample, SampleValue,
+    AnnotatedQueryResult, Annotations, EngineOpts, PromqlEngine, QueryResult, RangeSeries,
+    RangeSeriesSample, SampleValue,
     test_support::{labels, tenant_id},
 };
 
@@ -68,6 +68,15 @@ use shard_calls::{on_both_shards, shard_calls};
 use unannotated::{unannotated, unlabeled_partial};
 use unlabeled_matrix::UnlabeledMatrix;
 use warning_executor::WarningExecutor;
+
+fn range_series(labels: Labels, samples: Vec<RangeSeriesSample>) -> RangeSeries {
+    RangeSeries {
+        drop_name: false,
+        start_timestamps_ms: std::collections::BTreeMap::new(),
+        labels: labels.into(),
+        samples,
+    }
+}
 
 #[derive(bon::Builder)]
 struct UpQueryAndResult {

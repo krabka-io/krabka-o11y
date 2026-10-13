@@ -2,23 +2,7 @@ use super::*;
 
 #[test]
 pub(crate) fn ruler_rule_set_filter_keeps_only_groups_due_for_evaluation() {
-    let rules = interval_rule_set(&[
-        IntervalGroup {
-            namespace: "team-a",
-            group_name: "new",
-            interval: "30s",
-        },
-        IntervalGroup {
-            namespace: "team-a",
-            group_name: "not-yet",
-            interval: "5m",
-        },
-        IntervalGroup {
-            namespace: "team-b",
-            group_name: "due",
-            interval: "1m",
-        },
-    ]);
+    let rules = standard_due_interval_rule_set(false);
     let state = group_state(&[
         GroupLastEval {
             namespace: "team-a",

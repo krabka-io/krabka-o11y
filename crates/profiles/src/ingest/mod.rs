@@ -311,37 +311,13 @@ mod tests {
 
         config.replacement = String::new();
         assert!(apply_relabel(&mut series, std::slice::from_ref(&config)));
-        assert!(
-            series
-                == labels(&[
-                    LabelInput {
-                        name: "env",
-                        value: "prod"
-                    },
-                    LabelInput {
-                        name: "keep",
-                        value: "me"
-                    }
-                ])
-        );
+        assert_env_and_keep_labels(&series);
 
         // A rule that does not match leaves the labels alone.
         config.replacement = "other".to_string();
         config.regex = "dev".to_string();
         assert!(apply_relabel(&mut series, std::slice::from_ref(&config)));
-        assert!(
-            series
-                == labels(&[
-                    LabelInput {
-                        name: "env",
-                        value: "prod"
-                    },
-                    LabelInput {
-                        name: "keep",
-                        value: "me"
-                    }
-                ])
-        );
+        assert_env_and_keep_labels(&series);
     }
 
     fn ingest_limits(name: u32, names_per_series: u64, value: u32) -> Limits {
@@ -452,6 +428,22 @@ mod tests {
             labels.insert(pair.name, pair.value);
         }
         labels
+    }
+
+    fn assert_env_and_keep_labels(series: &Labels) {
+        assert!(
+            series
+                == &labels(&[
+                    LabelInput {
+                        name: "env",
+                        value: "prod",
+                    },
+                    LabelInput {
+                        name: "keep",
+                        value: "me",
+                    },
+                ])
+        );
     }
 
     #[test]

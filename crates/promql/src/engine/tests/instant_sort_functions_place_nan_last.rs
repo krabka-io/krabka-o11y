@@ -11,28 +11,13 @@ struct SortExpectation {
 /// the value, so the `NaN` series takes the position its labels give it.
 #[tokio::test]
 pub(crate) async fn instant_sort_functions_place_nan_last() {
-    let engine = zoned_queue_depth_engine(&[
-        ZonedQueueDepth {
-            instance: "api-b",
-            zone: "us-west-2b",
-            depth: 3.0,
-        },
-        ZonedQueueDepth {
-            instance: "api-a",
-            zone: "us-east-1a",
-            depth: 1.0,
-        },
-        ZonedQueueDepth {
-            instance: "api-c",
-            zone: "us-east-1a",
-            depth: 2.0,
-        },
-        ZonedQueueDepth {
-            instance: "api-n",
-            zone: "us-east-1a",
-            depth: f64::NAN,
-        },
-    ]);
+    let mut series = standard_zoned_queue_depth_series().to_vec();
+    series.push(ZonedQueueDepth {
+        instance: "api-n",
+        zone: "us-east-1a",
+        depth: f64::NAN,
+    });
+    let engine = zoned_queue_depth_engine(&series);
     for expectation in [
         SortExpectation {
             query: "sort(queue_depth)",

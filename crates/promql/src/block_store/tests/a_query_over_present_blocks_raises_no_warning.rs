@@ -2,9 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn a_query_over_present_blocks_raises_no_warning() {
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let base = url::Url::parse("memory:///").unwrap();
-    let mut block_store = BlockStore::new(object_store, base);
+    let mut block_store = MemoryBlockStoreFixture::build().writer();
 
     let first_series = labels(&[
         crate::test_support::TestLabelPair::new("__name__", "up"),

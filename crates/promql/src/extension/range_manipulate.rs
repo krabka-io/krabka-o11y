@@ -152,6 +152,21 @@ mod tests {
         concat_batches(&out_schema, &out).unwrap()
     }
 
+    async fn single_window_timestamps(ts: Vec<i64>, values: Vec<f64>) -> Vec<Vec<i64>> {
+        let out = run(
+            series_batch(ts, values).batch,
+            RangeManipulateSettings {
+                start_ms: 100,
+                end_ms: 100,
+                interval_ms: 60,
+                range_ms: 60,
+                ..timestamp_value_settings()
+            },
+        )
+        .await;
+        timestamp_cells(&out, "timestamp_range")
+    }
+
     #[test]
     fn physical_node_owns_no_expressions() {
         let series = series_batch(vec![0], vec![1.0]);
@@ -188,19 +203,7 @@ mod tests {
     #[tokio::test]
     async fn right_boundary_sample_is_included() {
         // Sample exactly at eval timestamp t must land in the window.
-        let batch = series_batch(vec![100], vec![1.0]).batch;
-        let out = run(
-            batch,
-            RangeManipulateSettings {
-                start_ms: 100,
-                end_ms: 100,
-                interval_ms: 60,
-                range_ms: 60,
-                ..timestamp_value_settings()
-            },
-        )
-        .await;
-        let cells = timestamp_cells(&out, "timestamp_range");
+        let cells = single_window_timestamps(vec![100], vec![1.0]).await;
         assert2::assert!(cells == vec![vec![100_i64]]);
     }
 
@@ -229,19 +232,7 @@ mod tests {
     #[tokio::test]
     async fn empty_window_produces_empty_cell() {
         // No samples in (40, 100]; the window must be empty, not absent.
-        let batch = series_batch(vec![10, 20], vec![1.0, 2.0]).batch;
-        let out = run(
-            batch,
-            RangeManipulateSettings {
-                start_ms: 100,
-                end_ms: 100,
-                interval_ms: 60,
-                range_ms: 60,
-                ..timestamp_value_settings()
-            },
-        )
-        .await;
-        let ts_cells = timestamp_cells(&out, "timestamp_range");
+        let ts_cells = single_window_timestamps(vec![10, 20], vec![1.0, 2.0]).await;
         assert2::assert!(ts_cells == vec![Vec::<i64>::new()]);
     }
 

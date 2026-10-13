@@ -10,6 +10,18 @@ fn partition(partition: i32) -> WalPartitionAssignment {
     }
 }
 
+struct AssignmentFixture {
+    metrics: WalConsumerMetrics,
+    watch: WalAssignmentWatch,
+}
+
+fn watch_after_assignment(partitions: &[WalPartitionAssignment]) -> AssignmentFixture {
+    let metrics = WalConsumerMetrics::unregistered();
+    let mut watch = WalAssignmentWatch::new(metrics.clone());
+    watch.observe(partitions);
+    AssignmentFixture { metrics, watch }
+}
+
 #[test]
 fn the_first_assignment_is_all_gain_and_no_revocation() {
     let metrics = WalConsumerMetrics::unregistered();
@@ -33,25 +45,21 @@ fn the_first_assignment_is_all_gain_and_no_revocation() {
 
 #[test]
 fn an_unchanged_assignment_reports_nothing_and_moves_no_counter() {
-    let metrics = WalConsumerMetrics::unregistered();
-    let mut watch = WalAssignmentWatch::new(metrics.clone());
-    watch.observe(&[partition(0), partition(1)]);
+    let mut assignment = watch_after_assignment(&[partition(0), partition(1)]);
 
-    let change = watch.observe(&[partition(1), partition(0)]);
+    let change = assignment.watch.observe(&[partition(1), partition(0)]);
 
     check!(change.is_empty());
-    check!(metrics.partition_revocations("wal", 0) == 0);
-    check!(metrics.partition_revocations("wal", 1) == 0);
-    check!(metrics.partition_owned("wal", 0) == 1);
+    check!(assignment.metrics.partition_revocations("wal", 0) == 0);
+    check!(assignment.metrics.partition_revocations("wal", 1) == 0);
+    check!(assignment.metrics.partition_owned("wal", 0) == 1);
 }
 
 #[test]
 fn a_partition_that_moves_to_another_member_is_reported_as_revoked() {
-    let metrics = WalConsumerMetrics::unregistered();
-    let mut watch = WalAssignmentWatch::new(metrics.clone());
-    watch.observe(&[partition(0), partition(1)]);
+    let mut assignment = watch_after_assignment(&[partition(0), partition(1)]);
 
-    let change = watch.observe(&[partition(0)]);
+    let change = assignment.watch.observe(&[partition(0)]);
 
     assert!(
         change
@@ -63,10 +71,10 @@ fn a_partition_that_moves_to_another_member_is_reported_as_revoked() {
     check!(change.strands_buffered_records());
     // The partition this member kept is untouched by the revocation of the
     // other one: a rebalance that moves one partition must not report the rest.
-    check!(metrics.partition_owned("wal", 0) == 1);
-    check!(metrics.partition_revocations("wal", 0) == 0);
-    check!(metrics.partition_owned("wal", 1) == 0);
-    check!(metrics.partition_revocations("wal", 1) == 1);
+    check!(assignment.metrics.partition_owned("wal", 0) == 1);
+    check!(assignment.metrics.partition_revocations("wal", 0) == 0);
+    check!(assignment.metrics.partition_owned("wal", 1) == 0);
+    check!(assignment.metrics.partition_revocations("wal", 1) == 1);
 }
 
 #[test]

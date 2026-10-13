@@ -15,7 +15,7 @@ use super::{
     FrontendRangeQuery, MomentReduction, QueryFrontendOptions, QueryShard, QueryShardExecution,
     QueryShardReducer, RankReduction,
 };
-use crate::{PromqlError, engine::MAX_RESOLUTION_POINTS, parse_promql};
+use crate::{PromqlError, parse_promql};
 
 mod absolute_split_window;
 mod aggregate_k;

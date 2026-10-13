@@ -35,6 +35,15 @@ use crate::{
     split_top_level_set_query,
 };
 
+pub(crate) fn validate_metric_binary_query_operands(
+    split: crate::http::params_format::metric_formatting::TopLevelQuerySplit<'_>,
+) -> Option<()> {
+    let right_text = split_leading_vector_binary_modifiers(split.right).remainder;
+    parse_metric_query(split.left.trim()).ok()?;
+    parse_metric_query(right_text.trim()).ok()?;
+    Some(())
+}
+
 mod execute_format_query;
 mod form_body_query;
 mod format_binary_operator_line;

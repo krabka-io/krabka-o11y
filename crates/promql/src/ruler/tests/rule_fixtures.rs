@@ -138,6 +138,34 @@ pub(crate) fn interval_rule_set(groups: &[IntervalGroup]) -> RuleSet {
     rules
 }
 
+pub(crate) fn standard_due_interval_rule_set(include_additional_group: bool) -> RuleSet {
+    let mut groups = vec![
+        IntervalGroup {
+            namespace: "team-a",
+            group_name: "new",
+            interval: "30s",
+        },
+        IntervalGroup {
+            namespace: "team-a",
+            group_name: "not-yet",
+            interval: "5m",
+        },
+        IntervalGroup {
+            namespace: "team-b",
+            group_name: "due",
+            interval: "1m",
+        },
+    ];
+    if include_additional_group {
+        groups.push(IntervalGroup {
+            namespace: "team-c",
+            group_name: "also-due",
+            interval: "30s",
+        });
+    }
+    interval_rule_set(&groups)
+}
+
 /// When a `tenant-a` rule group last evaluated.
 pub(crate) struct GroupLastEval {
     pub(crate) namespace: &'static str,

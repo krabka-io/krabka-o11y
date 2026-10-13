@@ -65,6 +65,17 @@ mod tests {
         test_span::{server_span_with_event_and_link, string_attr},
     };
 
+    fn int_column_values(batch: &RecordBatch, name: &str) -> Vec<i32> {
+        batch
+            .column_by_name(name)
+            .expect("the column is present")
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .expect("the column is i32")
+            .values()
+            .to_vec()
+    }
+
     struct TagValueCase {
         tag: &'static str,
         expected: &'static str,
@@ -97,23 +108,14 @@ mod tests {
         .expect("the spans form a batch");
 
         let out = super::recompute_nested_sets(&batch).expect("the tree is numbered");
-        let ints = |name: &str| {
-            out.column_by_name(name)
-                .expect("the column is present")
-                .as_any()
-                .downcast_ref::<arrow::array::Int32Array>()
-                .expect("the column is i32")
-                .values()
-                .to_vec()
-        };
 
         // Pre-order: the root spans 1..10, its first child 2..5 with the sole
         // grandchild 3..4 inside it, then the remaining children in row order.
-        check!(ints(SCOL_NESTED_SET_LEFT) == vec![1, 2, 6, 8, 3]);
-        check!(ints(SCOL_NESTED_SET_RIGHT) == vec![10, 5, 7, 9, 4]);
+        check!(int_column_values(&out, SCOL_NESTED_SET_LEFT) == vec![1, 2, 6, 8, 3]);
+        check!(int_column_values(&out, SCOL_NESTED_SET_RIGHT) == vec![10, 5, 7, 9, 4]);
         // A root's nested-set parent is the -1 sentinel, not a row or a zero.
-        check!(ints(SCOL_PARENT_ID) == vec![-1, 1, 1, 1, 2]);
-        check!(ints(SCOL_CHILD_COUNT) == vec![3, 1, 0, 0, 0]);
+        check!(int_column_values(&out, SCOL_PARENT_ID) == vec![-1, 1, 1, 1, 2]);
+        check!(int_column_values(&out, SCOL_CHILD_COUNT) == vec![3, 1, 0, 0, 0]);
     }
 
     /// Two traces in one batch number their spans from the same counter, so a
@@ -231,23 +233,14 @@ mod tests {
             .expect("the span forms a batch");
 
         let out = super::recompute_nested_sets(&batch).expect("the self-parent is numbered");
-        let ints = |name: &str| {
-            out.column_by_name(name)
-                .expect("the column is present")
-                .as_any()
-                .downcast_ref::<arrow::array::Int32Array>()
-                .expect("the column is i32")
-                .values()
-                .to_vec()
-        };
 
-        check!(ints(SCOL_NESTED_SET_LEFT) == vec![1]);
-        check!(ints(SCOL_NESTED_SET_RIGHT) == vec![2]);
+        check!(int_column_values(&out, SCOL_NESTED_SET_LEFT) == vec![1]);
+        check!(int_column_values(&out, SCOL_NESTED_SET_RIGHT) == vec![2]);
         check!(
-            ints(SCOL_PARENT_ID) == vec![-1],
+            int_column_values(&out, SCOL_PARENT_ID) == vec![-1],
             "a root, not a child of itself"
         );
-        check!(ints(SCOL_CHILD_COUNT) == vec![0]);
+        check!(int_column_values(&out, SCOL_CHILD_COUNT) == vec![0]);
     }
 
     /// `MetadataValueArray::string_value` renders one cell of an Arrow column

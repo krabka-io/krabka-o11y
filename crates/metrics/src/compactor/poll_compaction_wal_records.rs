@@ -21,5 +21,8 @@ pub(crate) async fn poll_compaction_wal_records<P: CompactionConsumerPoll + ?Siz
     metrics.wal_consumer.record_poll(&records);
     let polled_records = records.len();
     let wal_records = compaction_wal_records_from_consumer_records(wal_topic, &records)?;
-    Ok(PolledCompactionWalRecords { polled_records, wal_records })
+    Ok(PolledCompactionWalRecords {
+        polled_records,
+        wal_records,
+    })
 }

@@ -484,4 +484,46 @@ use short_lookback_up_engine::short_lookback_up_engine;
 use sort_instant_result::sort_instant_result;
 use stale_nan::stale_nan;
 use target_info_engine::{info_metrics_engine, target_info_engine};
-use zoned_queue_depth_engine::{ZonedQueueDepth, zoned_queue_depth_engine};
+use zoned_queue_depth_engine::{
+    ZonedQueueDepth, standard_zoned_queue_depth_series, zoned_queue_depth_engine,
+};
+
+struct TopKProjection<'a> {
+    metric_name: Option<&'a str>,
+    instance: Option<&'a str>,
+    value: f64,
+}
+
+fn topk_projection(samples: &[crate::InstantSample]) -> Vec<TopKProjection<'_>> {
+    let mut projection = samples
+        .iter()
+        .map(|sample| TopKProjection {
+            metric_name: sample.labels.get("__name__"),
+            instance: sample.labels.get("instance"),
+            value: float_value(&sample.value),
+        })
+        .collect::<Vec<_>>();
+    projection.sort_by_key(|sample| sample.instance);
+    projection
+}
+
+async fn assert_label_transform<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+    result_label: &str,
+    expected_result: &str,
+    preserved_label: &str,
+    expected_preserved: &str,
+) {
+    let result = engine
+        .query_instant(&tenant_id("tenant-a"), query, 10_000)
+        .await
+        .unwrap();
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    assert2::assert!(samples.len() == 1);
+    assert2::assert!(samples[0].labels.get(result_label) == Some(expected_result));
+    assert2::assert!(samples[0].labels.get(preserved_label) == Some(expected_preserved));
+    assert2::assert!(approx_eq(float_value(&samples[0].value), 1.0));
+}

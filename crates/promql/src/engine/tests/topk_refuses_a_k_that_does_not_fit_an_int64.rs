@@ -1,10 +1,5 @@
 use super::*;
 
-struct TopKSample<'a> {
-    instance: Option<&'a str>,
-    value: f64,
-}
-
 /// Prometheus bounds `k` to what an `int64` holds: `topk` refuses any parameter
 /// greater than or equal to `maxInt64`, which is `2^63 - 1024` and the last
 /// `f64` below `2^63`. A `usize` does not impose that bound on a 64-bit target
@@ -41,14 +36,7 @@ pub(crate) async fn topk_refuses_a_k_that_does_not_fit_an_int64() {
     let QueryResult::InstantVector(samples) = result else {
         panic!("expected a vector");
     };
-    let mut projection = samples
-        .iter()
-        .map(|sample| TopKSample {
-            instance: sample.labels.get("instance"),
-            value: float_value(&sample.value),
-        })
-        .collect::<Vec<_>>();
-    projection.sort_by_key(|sample| sample.instance);
+    let projection = topk_projection(&samples);
     assert2::assert!(projection.len() == 3);
     assert2::assert!(projection[0].instance == Some("a"));
     assert2::assert!(projection[0].value == 1.0);

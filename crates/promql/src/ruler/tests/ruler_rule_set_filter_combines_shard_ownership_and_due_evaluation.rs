@@ -2,28 +2,7 @@ use super::*;
 
 #[test]
 pub(crate) fn ruler_rule_set_filter_combines_shard_ownership_and_due_evaluation() {
-    let rules = interval_rule_set(&[
-        IntervalGroup {
-            namespace: "team-a",
-            group_name: "new",
-            interval: "30s",
-        },
-        IntervalGroup {
-            namespace: "team-a",
-            group_name: "not-yet",
-            interval: "5m",
-        },
-        IntervalGroup {
-            namespace: "team-b",
-            group_name: "due",
-            interval: "1m",
-        },
-        IntervalGroup {
-            namespace: "team-c",
-            group_name: "also-due",
-            interval: "30s",
-        },
-    ]);
+    let rules = standard_due_interval_rule_set(true);
     let state = staggered_group_state();
     let shard = super::super::RulerShard::new(1, 2).expect("ruler shard");
 
