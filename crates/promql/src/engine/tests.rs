@@ -9,8 +9,8 @@ use super::{
     MAX_RESOLUTION_POINTS, MatrixSelectorAt, check_resolution_points, match_rate_range_call,
 };
 use crate::{
-    AnnotatedQueryResult, EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine,
-    PromqlError, QueryResult, SampleValue,
+    AnnotatedQueryResult, EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError,
+    QueryResult, SampleValue,
     test_support::{labels, tenant_id},
 };
 
@@ -35,6 +35,7 @@ struct QueryAt {
     time_ms: i64,
 }
 
+#[derive(Clone, Copy, bon::Builder)]
 struct FloatSampleInput {
     timestamp_ms: i64,
     value: f64,

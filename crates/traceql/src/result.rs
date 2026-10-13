@@ -1,6 +1,18 @@
 //! Tempo-shaped `TraceQL` result model.
 
+use std::collections::BTreeSet;
+
 use krabka_units::{ByteSize, Time};
+
+/// Accumulates catalog keys by TraceQL tag scope while a store scans spans.
+#[derive(Debug, Default)]
+pub struct TagNameSets {
+    pub resource: BTreeSet<String>,
+    pub span: BTreeSet<String>,
+    pub event: BTreeSet<String>,
+    pub link: BTreeSet<String>,
+    pub instrumentation: BTreeSet<String>,
+}
 
 #[cfg(test)]
 mod tests {

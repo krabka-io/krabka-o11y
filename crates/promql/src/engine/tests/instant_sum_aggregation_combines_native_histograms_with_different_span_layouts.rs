@@ -1,20 +1,10 @@
-use super::*;
+use super::{native_histogram_store::single_bucket_instance_histogram, *};
 
 #[tokio::test]
 pub(crate) async fn instant_sum_aggregation_combines_native_histograms_with_different_span_layouts()
 {
-    let mut left = native_histogram(4.0, 10.0);
-    left.positive_spans = vec![BucketSpan {
-        offset: 0,
-        length: 1,
-    }];
-    left.positive_counts = vec![1.0];
-    let mut right = native_histogram(6.0, 20.0);
-    right.positive_spans = vec![BucketSpan {
-        offset: 1,
-        length: 1,
-    }];
-    right.positive_counts = vec![2.0];
+    let left = single_bucket_instance_histogram(4.0, 10.0, 0, 0, 1.0);
+    let right = single_bucket_instance_histogram(6.0, 20.0, 0, 1, 2.0);
 
     let store = instance_histogram_store(InstanceHistograms { a: left, b: right });
 

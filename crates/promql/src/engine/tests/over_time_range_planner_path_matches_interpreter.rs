@@ -1,5 +1,24 @@
 use super::*;
 
+fn depth_g_series(
+    group: &str,
+    instance: &str,
+    timestamp_ms: i64,
+    value: f64,
+) -> LabeledFloatSeries {
+    LabeledFloatSeries {
+        labels: labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "depth_g"),
+            crate::test_support::TestLabelPair::new("g", group),
+            crate::test_support::TestLabelPair::new("instance", instance),
+        ]),
+        samples: vec![FloatSampleInput {
+            timestamp_ms,
+            value,
+        }],
+    }
+}
+
 struct OverTimeQueryCase {
     query: &'static str,
     time_ms: i64,
@@ -112,50 +131,10 @@ pub(crate) async fn over_time_range_planner_path_matches_interpreter() {
             //     survives with only the in-window member.
             //   g="allsparse": every member's only sample is outside the window,
             //     so the whole group is no-value and produces NO result row.
-            LabeledFloatSeries {
-                labels: labels(&[
-                    crate::test_support::TestLabelPair::new("__name__", "depth_g"),
-                    crate::test_support::TestLabelPair::new("g", "mix"),
-                    crate::test_support::TestLabelPair::new("instance", "0"),
-                ]),
-                samples: vec![FloatSampleInput {
-                    timestamp_ms: 300_000,
-                    value: 5.0,
-                }],
-            },
-            LabeledFloatSeries {
-                labels: labels(&[
-                    crate::test_support::TestLabelPair::new("__name__", "depth_g"),
-                    crate::test_support::TestLabelPair::new("g", "mix"),
-                    crate::test_support::TestLabelPair::new("instance", "1"),
-                ]),
-                samples: vec![FloatSampleInput {
-                    timestamp_ms: 120_000,
-                    value: 9.0,
-                }],
-            },
-            LabeledFloatSeries {
-                labels: labels(&[
-                    crate::test_support::TestLabelPair::new("__name__", "depth_g"),
-                    crate::test_support::TestLabelPair::new("g", "allsparse"),
-                    crate::test_support::TestLabelPair::new("instance", "0"),
-                ]),
-                samples: vec![FloatSampleInput {
-                    timestamp_ms: 120_000,
-                    value: 1.0,
-                }],
-            },
-            LabeledFloatSeries {
-                labels: labels(&[
-                    crate::test_support::TestLabelPair::new("__name__", "depth_g"),
-                    crate::test_support::TestLabelPair::new("g", "allsparse"),
-                    crate::test_support::TestLabelPair::new("instance", "1"),
-                ]),
-                samples: vec![FloatSampleInput {
-                    timestamp_ms: 120_000,
-                    value: 2.0,
-                }],
-            },
+            depth_g_series("mix", "0", 300_000, 5.0),
+            depth_g_series("mix", "1", 120_000, 9.0),
+            depth_g_series("allsparse", "0", 120_000, 1.0),
+            depth_g_series("allsparse", "1", 120_000, 2.0),
         ],
     );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

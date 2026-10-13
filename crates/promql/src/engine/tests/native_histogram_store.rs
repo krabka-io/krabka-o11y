@@ -14,6 +14,20 @@ pub(crate) fn native_histogram_store() -> InMemoryMetricStore {
     store_with_request_duration_histogram(native_histogram(4.0, 10.0))
 }
 
+pub(crate) fn single_bucket_instance_histogram(
+    count: f64,
+    sum: f64,
+    schema: i8,
+    offset: i32,
+    bucket_count: f64,
+) -> NativeHistogram {
+    let mut histogram = native_histogram(count, sum);
+    histogram.schema = schema;
+    histogram.positive_spans = vec![BucketSpan { offset, length: 1 }];
+    histogram.positive_counts = vec![bucket_count];
+    histogram
+}
+
 pub(crate) fn store_with_request_duration_histogram(
     histogram: NativeHistogram,
 ) -> InMemoryMetricStore {

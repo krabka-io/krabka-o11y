@@ -330,43 +330,45 @@ fn push_body() -> Value {
 /// that both entries landed on one partition in the order they were pushed.
 fn expected_wal_records() -> Vec<WalLogRecord> {
     vec![
-        WalLogRecord {
-            tenant: TENANT.to_string(),
-            labels: labels([
-                krabka_blockstore::LabelPair::new("app", "api"),
-                krabka_blockstore::LabelPair::new("env", "prod"),
-                krabka_blockstore::LabelPair::new("service_name", "api"),
-            ]),
-            timestamp_ns: 10,
-            line: "api error".to_string(),
-            structured_metadata: BTreeMap::from([
+        expected_wal_record(
+            10,
+            "api error",
+            BTreeMap::from([
                 ("trace_id".to_string(), "abc".to_string()),
                 ("detected_level".to_string(), "error".to_string()),
             ]),
-            position: Some(WalPosition {
-                partition: PartitionIndex(0),
-                offset: Offset(0),
-            }),
-        },
-        WalLogRecord {
-            tenant: TENANT.to_string(),
-            labels: labels([
-                krabka_blockstore::LabelPair::new("app", "api"),
-                krabka_blockstore::LabelPair::new("env", "prod"),
-                krabka_blockstore::LabelPair::new("service_name", "api"),
-            ]),
-            timestamp_ns: 20,
-            line: "api recovered".to_string(),
-            structured_metadata: BTreeMap::from([(
-                "detected_level".to_string(),
-                "unknown".to_string(),
-            )]),
-            position: Some(WalPosition {
-                partition: PartitionIndex(0),
-                offset: Offset(1),
-            }),
-        },
+            0,
+        ),
+        expected_wal_record(
+            20,
+            "api recovered",
+            BTreeMap::from([("detected_level".to_string(), "unknown".to_string())]),
+            1,
+        ),
     ]
+}
+
+fn expected_wal_record(
+    timestamp_ns: i64,
+    line: &str,
+    structured_metadata: BTreeMap<String, String>,
+    offset: i64,
+) -> WalLogRecord {
+    WalLogRecord {
+        tenant: TENANT.to_string(),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("service_name", "api"),
+        ]),
+        timestamp_ns,
+        line: line.to_string(),
+        structured_metadata,
+        position: Some(WalPosition {
+            partition: PartitionIndex(0),
+            offset: Offset(offset),
+        }),
+    }
 }
 
 /// One `ServiceConfig` shape for both roles the round trip runs.

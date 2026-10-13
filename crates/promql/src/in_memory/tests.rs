@@ -82,3 +82,20 @@ pub(crate) fn head_with_initial_up_sample() -> HeadWithUpSeries {
     head.apply_wal_record(&float_record("t", &series, 1_000, 1.0));
     HeadWithUpSeries { head, series }
 }
+
+pub(crate) fn push_up_sample(
+    store: &mut InMemoryMetricStore,
+    job: &str,
+    timestamp_ms: i64,
+    value: f64,
+) {
+    store.push_float(
+        "t",
+        lbls(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", job),
+        ]),
+        timestamp_ms,
+        value,
+    );
+}

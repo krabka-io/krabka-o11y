@@ -22,8 +22,8 @@ use krabka_units::{
 use crate::{
     error::{Result, TraceqlError},
     result::{
-        AttrValue, Attribute, EventRef, LinkRef, ScopedTag, SpanRef, TagScope, TraceSpans,
-        TypedValue,
+        AttrValue, Attribute, EventRef, LinkRef, ScopedTag, SpanRef, TagNameSets, TagScope,
+        TraceSpans, TypedValue,
     },
     span_columns::{
         AttributeColumn, EVENT_ATTR_PREFIX, INSTRUMENTATION_ATTR_PREFIX, InputSpan,

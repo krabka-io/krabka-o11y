@@ -226,16 +226,9 @@ async fn query_endpoint_uses_updated_shared_compaction_frontier_for_hot_tail() {
     });
     let app = loki_router(state);
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "streams",
-            data_result: api_prod_streams(json!([["19", "api error"]])),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
+    assert_hot_error_query(
+        &app,
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030",
     )
     .await;
 }
@@ -250,18 +243,23 @@ async fn query_endpoint_applies_limit_to_stream_results() {
     let state = fixture().with_hot_tail(hot_tail, 19);
     let app = loki_router(state);
 
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=forward&limit=1").await;
-
-    assert_json_ok(
-        response,
-        &LokiSuccess {
-            result_type: "streams",
-            data_result: api_prod_streams(json!([["19", "api error"]])),
-            stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
-        }
-        .json(),
+    assert_hot_error_query(
+        &app,
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=forward&limit=1",
     )
     .await;
+}
+
+async fn assert_hot_error_query(app: &axum::Router, uri: &str) {
+    let response = Tenant("tenant-a").get(app, uri).await;
+    let expected = LokiSuccess {
+        result_type: "streams",
+        data_result: api_prod_streams(json!([["19", "api error"]])),
+        stats: LokiStatsCounts::fixture_block_lines(1).expected_stats(),
+    }
+    .json();
+
+    assert_json_ok(response, &expected).await;
 }
 
 #[tokio::test]

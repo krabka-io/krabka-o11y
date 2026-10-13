@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use assert2::{assert, check};
 use async_trait::async_trait;
@@ -16,7 +16,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use futures_util::StreamExt as _;
 use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TenantId, TimeRange, labels,
-    write_log_block, write_log_block_to_object_store,
+    write_log_block, write_log_block_to_object_store, write_log_index_manifest,
     write_tenant_log_index_shards_to_object_store,
 };
 use krabka_observability::{
@@ -810,6 +810,17 @@ pub fn insert_api_series(
             krabka_blockstore::LabelPair::new("env", "prod"),
         ]),
     )
+}
+
+pub fn manifest_with_series(
+    tenant: &str,
+    series_labels: BTreeMap<String, String>,
+) -> (PathBuf, LabelIndex) {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let mut label_index = LabelIndex::default();
+    label_index.insert_series(tenant, series_labels);
+    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
+    (dir, label_index)
 }
 
 /// A streams result that holds one `{app="api", env="prod"}` stream.

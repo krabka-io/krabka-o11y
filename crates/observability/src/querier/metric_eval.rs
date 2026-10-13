@@ -10,6 +10,7 @@ pub(crate) mod binary_sets;
 pub(crate) mod expression_parser;
 pub(crate) mod expressions;
 pub(crate) mod http_queries;
+pub(crate) mod matching_metric_result_series;
 pub(crate) mod result_transforms;
 pub(crate) mod scalar_samples;
 pub(crate) mod validation;

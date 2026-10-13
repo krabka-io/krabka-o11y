@@ -54,6 +54,20 @@ use rule_fixtures::{
     namespaced_rule_set, staggered_group_state, up_api_engine, up_samples_engine,
 };
 
+fn recording_sinks_and_alert_state() -> (
+    RecordingSink,
+    RecordingAlertmanagerSink,
+    RecordingRulerStateSink,
+    super::RulerAlertState,
+) {
+    (
+        RecordingSink::default(),
+        RecordingAlertmanagerSink::default(),
+        RecordingRulerStateSink::default(),
+        super::RulerAlertState::default(),
+    )
+}
+
 #[derive(bon::Builder)]
 struct RulerEvaluationFixture {
     engine: PromqlEngine<InMemoryMetricStore>,

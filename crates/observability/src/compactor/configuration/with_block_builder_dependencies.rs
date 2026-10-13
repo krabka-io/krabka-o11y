@@ -1,7 +1,6 @@
 use super::{
-    BrokerAccessPolicy, ClientResourcePolicy, ClientSecurity, DeferredQueryAuthorizerConnect,
-    KafkaLogWalConsumer, ServiceConfig, ServiceConfigError, ServiceDependencies,
-    ServiceRuntimeError, WalConsumerMetrics,
+    ClientResourcePolicy, ClientSecurity, KafkaLogWalConsumer, ServiceConfig, ServiceDependencies,
+    ServiceRuntimeError, WalConsumerMetrics, deferred_query_authorizer_connect,
 };
 
 /// Adds the WAL consumer the block builder reads its records from, and the
@@ -23,15 +22,13 @@ pub(crate) async fn with_block_builder_dependencies(
     security: Option<&ClientSecurity>,
     metrics: WalConsumerMetrics,
 ) -> Result<ServiceDependencies, ServiceRuntimeError> {
-    let bootstrap = config
-        .wal_bootstrap_server
-        .as_deref()
-        .ok_or(ServiceConfigError::MissingWalBootstrapServer)?;
+    let deferred_authorizer =
+        deferred_query_authorizer_connect(config, client_resource_policy, security)?;
     // `Consumer::start` (called by `KafkaLogWalConsumer::connect`) retries
     // internally with per-attempt timeouts, so there is no need to wrap it in
     // `connect_with_startup_retry` as well.
     let consumer = KafkaLogWalConsumer::connect_with_client_resource_policy(
-        bootstrap,
+        &deferred_authorizer.bootstrap,
         group_id,
         config.wal_topic.clone(),
         client_resource_policy,
@@ -43,11 +40,5 @@ pub(crate) async fn with_block_builder_dependencies(
     Ok(dependencies
         .with_wal_consumer(consumer)
         .with_wal_recovery_metrics(metrics)
-        .with_deferred_query_authorizer_connect(DeferredQueryAuthorizerConnect {
-            bootstrap: bootstrap.to_string(),
-            topic: config.wal_topic.clone(),
-            client_resource_policy,
-            security: security.cloned(),
-            access_policy: BrokerAccessPolicy::for_config(config)?,
-        }))
+        .with_deferred_query_authorizer_connect(deferred_authorizer.connect))
 }

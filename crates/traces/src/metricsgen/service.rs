@@ -363,6 +363,18 @@ mod tests {
         assert2::assert!(store.load_all("A").len() == 1);
     }
 
+    async fn service_with_expired_edge() -> (
+        Arc<InMemoryCheckpointStore>,
+        MetricsGenService<MockSpanSource, MockRemoteWriteSink>,
+    ) {
+        let store = Arc::new(InMemoryCheckpointStore::default());
+        let clock = MockClock::new(0);
+        let svc = service_at(&clock).with_checkpoint_store(store.clone());
+        poll_pending_edge(&svc, &store).await;
+        clock.set(11_000_000_000);
+        (store, svc)
+    }
+
     // Tenant `A`'s client span `0xA`, the caller half of an `A -> A` edge.
     fn client_span_a() -> SpanRecord {
         span("A", SpanKind::Client, [0xA; 8], [0; 8])
@@ -515,13 +527,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_tombstones_checkpoints_for_expired_edges() {
-        let store = Arc::new(InMemoryCheckpointStore::default());
-        let clock = MockClock::new(0);
-        let svc = service_at(&clock).with_checkpoint_store(store.clone());
-
-        poll_pending_edge(&svc, &store).await;
-
-        clock.set(11_000_000_000);
+        let (store, svc) = service_with_expired_edge().await;
         assert2::assert!(svc.collect_once().await.unwrap() == 1);
 
         assert2::assert!(store.load_all("A").is_empty());
@@ -529,17 +535,12 @@ mod tests {
 
     #[tokio::test]
     async fn collect_keeps_expired_edge_checkpoint_when_write_fails() {
-        let store = Arc::new(InMemoryCheckpointStore::default());
-        let clock = MockClock::new(0);
-        let svc = service_at(&clock).with_checkpoint_store(store.clone());
-
-        poll_pending_edge(&svc, &store).await;
+        let (store, svc) = service_with_expired_edge().await;
 
         // Advance past the edge TTL so the collect expires it, but force the sink
         // write to fail. The unpaired-span accounting is carried in the (pending)
         // payload, so the expired-edge checkpoint MUST survive for retry — never
         // tombstone before the payload is durably written and committed.
-        clock.set(11_000_000_000);
         svc.sink.fail_next();
         check!(svc.collect_once().await.is_err());
         check!(svc.source.commits() == 0);

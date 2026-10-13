@@ -15,3 +15,14 @@ pub(crate) fn store_with_series(name: &str, samples: &[TestSample]) -> InMemoryM
     }
     store
 }
+
+pub(crate) fn up_api_store(samples: &[(i64, f64)]) -> InMemoryMetricStore {
+    let mut store = InMemoryMetricStore::new();
+    let mut labels = Labels::new();
+    labels.insert("__name__", "up");
+    labels.insert("job", "api");
+    for &(timestamp_ms, value) in samples {
+        store.push_float(TENANT, labels.clone(), timestamp_ms, value);
+    }
+    store
+}

@@ -2,11 +2,12 @@
 //! Each operator supplies only what it does to one pair of samples.
 
 use super::{
+    super::matching_metric_result_series::retain_matching_metric_result_series,
     MetricVectorGroupModifier, MetricVectorMatching, Value, include_metric_group_labels,
     matching_metric_binary_sample, metric_binary_sample_timestamps_match, metric_series_labels,
     metric_vector_group_modifier, metric_vector_matching_key, parse_metric_sample_value,
 };
-use crate::{MetricValue, querier::metric_eval::MetricOperandValues};
+use crate::querier::metric_eval::MetricOperandValues;
 
 /// The left and right sample of one binary operation.
 #[derive(Clone, Copy)]
@@ -163,37 +164,26 @@ where
             return;
         }
 
-        let mut index = 0;
-        while index < left_results.len() {
-            let Some(left_labels) = metric_series_labels(&left_results[index]) else {
-                left_results.remove(index);
-                continue;
-            };
-            let left_key = metric_vector_matching_key(&left_labels, matching);
-            let Some(right_series) = right_results.iter().find(|series| {
-                metric_series_labels(series).is_some_and(|right_labels| {
-                    metric_vector_matching_key(&right_labels, matching) == left_key
-                })
-            }) else {
-                left_results.remove(index);
-                continue;
-            };
-
-            if (self.apply_series)(&mut left_results[index], right_series) {
-                if let Some(MetricVectorGroupModifier::Left(group_labels)) =
-                    metric_vector_group_modifier(matching)
-                {
-                    include_metric_group_labels(
-                        &mut left_results[index],
-                        right_series,
-                        group_labels,
-                    );
+        retain_matching_metric_result_series(
+            left_results,
+            right_results,
+            matching,
+            |left_series, right_series| {
+                let Some(right_series) = right_series else {
+                    return false;
+                };
+                if (self.apply_series)(left_series, right_series) {
+                    if let Some(MetricVectorGroupModifier::Left(group_labels)) =
+                        metric_vector_group_modifier(matching)
+                    {
+                        include_metric_group_labels(left_series, right_series, group_labels);
+                    }
+                    true
+                } else {
+                    false
                 }
-                index += 1;
-            } else {
-                left_results.remove(index);
-            }
-        }
+            },
+        );
     }
 
     /// Replaces `left_results` with one output series per right series that a

@@ -46,6 +46,64 @@ struct DeletionModel {
     sidecars: usize,
 }
 
+impl DeletionModel {
+    fn transition(&self, state: &mut DeletionState, action: Action) -> bool {
+        match action {
+            Action::Start if matches!(state.phase, Phase::Idle) && state.block => {
+                state.phase = Phase::Sidecar {
+                    sidecar: 0,
+                    failed: false,
+                };
+            }
+            Action::Delete => match state.phase {
+                Phase::Sidecar { sidecar, failed } => {
+                    if !state.sidecars[sidecar] {
+                        state.seen |= SAW_REPLAY;
+                    }
+                    state.sidecars[sidecar] = false;
+                    state.phase = if sidecar + 1 == self.sidecars {
+                        if failed { Phase::Idle } else { Phase::Block }
+                    } else {
+                        Phase::Sidecar {
+                            sidecar: sidecar + 1,
+                            failed,
+                        }
+                    };
+                }
+                Phase::Block => {
+                    state.block = false;
+                    state.phase = Phase::Idle;
+                }
+                Phase::Idle => return false,
+            },
+            Action::Fail => match state.phase {
+                Phase::Sidecar { sidecar, .. } => {
+                    state.seen |= SAW_FAILURE;
+                    state.phase = if sidecar + 1 == self.sidecars {
+                        Phase::Idle
+                    } else {
+                        Phase::Sidecar {
+                            sidecar: sidecar + 1,
+                            failed: true,
+                        }
+                    };
+                }
+                Phase::Block => {
+                    state.seen |= SAW_FAILURE;
+                    state.phase = Phase::Idle;
+                }
+                Phase::Idle => return false,
+            },
+            Action::Crash if !matches!(state.phase, Phase::Idle) => {
+                state.seen |= SAW_CRASH;
+                state.phase = Phase::Idle;
+            }
+            Action::Start | Action::Crash => return false,
+        }
+        true
+    }
+}
+
 impl Model for DeletionModel {
     type State = DeletionState;
     type Action = Action;
@@ -72,61 +130,7 @@ impl Model for DeletionModel {
     }
 
     fn next_state(&self, last: &Self::State, action: Self::Action) -> Option<Self::State> {
-        apply_transition(last, |state| {
-            match action {
-                Action::Start if matches!(state.phase, Phase::Idle) && state.block => {
-                    state.phase = Phase::Sidecar {
-                        sidecar: 0,
-                        failed: false,
-                    };
-                }
-                Action::Delete => match state.phase {
-                    Phase::Sidecar { sidecar, failed } => {
-                        if !state.sidecars[sidecar] {
-                            state.seen |= SAW_REPLAY;
-                        }
-                        state.sidecars[sidecar] = false;
-                        state.phase = if sidecar + 1 == self.sidecars {
-                            if failed { Phase::Idle } else { Phase::Block }
-                        } else {
-                            Phase::Sidecar {
-                                sidecar: sidecar + 1,
-                                failed,
-                            }
-                        };
-                    }
-                    Phase::Block => {
-                        state.block = false;
-                        state.phase = Phase::Idle;
-                    }
-                    Phase::Idle => return false,
-                },
-                Action::Fail => match state.phase {
-                    Phase::Sidecar { sidecar, .. } => {
-                        state.seen |= SAW_FAILURE;
-                        state.phase = if sidecar + 1 == self.sidecars {
-                            Phase::Idle
-                        } else {
-                            Phase::Sidecar {
-                                sidecar: sidecar + 1,
-                                failed: true,
-                            }
-                        };
-                    }
-                    Phase::Block => {
-                        state.seen |= SAW_FAILURE;
-                        state.phase = Phase::Idle;
-                    }
-                    Phase::Idle => return false,
-                },
-                Action::Crash if !matches!(state.phase, Phase::Idle) => {
-                    state.seen |= SAW_CRASH;
-                    state.phase = Phase::Idle;
-                }
-                Action::Start | Action::Crash => return false,
-            }
-            true
-        })
+        apply_transition(last, |state| self.transition(state, action))
     }
 
     fn properties(&self) -> Vec<Property<Self>> {

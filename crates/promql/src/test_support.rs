@@ -83,7 +83,7 @@ pub(crate) use nh::{nh, two_sided_histogram};
 pub(crate) use query_result_ext::QueryResultExt;
 use spans_and_counts::spans_and_counts;
 pub(crate) use spans_and_counts::{BucketCount, SpansAndCounts};
-pub(crate) use store_with_series::{TestSample, store_with_series};
+pub(crate) use store_with_series::{TestSample, store_with_series, up_api_store};
 pub(crate) use store_with_series_multi::{TestSeriesValue, store_with_series_multi};
 use tenant::TENANT;
 pub(crate) use tenant_cardinality::{

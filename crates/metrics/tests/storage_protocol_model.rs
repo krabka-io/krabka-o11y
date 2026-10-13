@@ -54,6 +54,49 @@ struct StorageModel {
     partitions: usize,
 }
 
+impl StorageModel {
+    fn transition(&self, state: &mut StorageState, action: Action) -> bool {
+        match action {
+            Action::Start if matches!(state.phase, Phase::Idle) => {
+                state.phase = Phase::Write(0);
+            }
+            Action::Write => {
+                let Phase::Write(partition) = state.phase else {
+                    return false;
+                };
+                state.saw_replay |= state.durable[partition];
+                state.durable[partition] = true;
+                state.phase = Phase::Publish(partition);
+            }
+            Action::Publish => {
+                let Phase::Publish(partition) = state.phase else {
+                    return false;
+                };
+                state.published[partition] = true;
+                state.phase = if partition + 1 == self.partitions {
+                    Phase::Commit
+                } else {
+                    Phase::Write(partition + 1)
+                };
+            }
+            Action::Commit if matches!(state.phase, Phase::Commit) => {
+                state.committed.fill(true);
+                state.phase = Phase::Idle;
+            }
+            Action::Fail if !matches!(state.phase, Phase::Idle) => {
+                state.saw_failure = true;
+                state.phase = Phase::Idle;
+            }
+            Action::Crash if !matches!(state.phase, Phase::Idle) => {
+                state.saw_crash = true;
+                state.phase = Phase::Idle;
+            }
+            Action::Start | Action::Commit | Action::Fail | Action::Crash => return false,
+        }
+        true
+    }
+}
+
 impl Model for StorageModel {
     type State = StorageState;
     type Action = Action;
@@ -87,46 +130,7 @@ impl Model for StorageModel {
     }
 
     fn next_state(&self, last: &Self::State, action: Self::Action) -> Option<Self::State> {
-        apply_transition(last, |state| {
-            match action {
-                Action::Start if matches!(state.phase, Phase::Idle) => {
-                    state.phase = Phase::Write(0);
-                }
-                Action::Write => {
-                    let Phase::Write(partition) = state.phase else {
-                        return false;
-                    };
-                    state.saw_replay |= state.durable[partition];
-                    state.durable[partition] = true;
-                    state.phase = Phase::Publish(partition);
-                }
-                Action::Publish => {
-                    let Phase::Publish(partition) = state.phase else {
-                        return false;
-                    };
-                    state.published[partition] = true;
-                    state.phase = if partition + 1 == self.partitions {
-                        Phase::Commit
-                    } else {
-                        Phase::Write(partition + 1)
-                    };
-                }
-                Action::Commit if matches!(state.phase, Phase::Commit) => {
-                    state.committed.fill(true);
-                    state.phase = Phase::Idle;
-                }
-                Action::Fail if !matches!(state.phase, Phase::Idle) => {
-                    state.saw_failure = true;
-                    state.phase = Phase::Idle;
-                }
-                Action::Crash if !matches!(state.phase, Phase::Idle) => {
-                    state.saw_crash = true;
-                    state.phase = Phase::Idle;
-                }
-                Action::Start | Action::Commit | Action::Fail | Action::Crash => return false,
-            }
-            true
-        })
+        apply_transition(last, |candidate| self.transition(candidate, action))
     }
 
     fn properties(&self) -> Vec<Property<Self>> {

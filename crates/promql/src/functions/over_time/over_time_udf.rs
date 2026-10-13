@@ -1,5 +1,5 @@
 use super::{
-    super::{UdfArityPhase, check_udf_arity},
+    super::{check_udf_execution_args, coerce_udf_arg_types},
     ColumnarValue, DataType, DfResult, OverTimeFamily, ScalarFunctionArgs, ScalarUDF,
     ScalarUDFImpl, Signature, Volatility, WindowColumns, append_window_values,
     impl_window_udf_identity, scalar_f64,
@@ -44,23 +44,12 @@ impl ScalarUDFImpl for OverTimeUdf {
     /// columns and the scalars are already the exact types the planner supplies.
     /// This method checks the arity and returns the types unchanged.
     fn coerce_types(&self, arg_types: &[DataType]) -> DfResult<Vec<DataType>> {
-        check_udf_arity(
-            self.name(),
-            self.arity(),
-            arg_types.len(),
-            UdfArityPhase::Plan,
-        )?;
-        Ok(arg_types.to_vec())
+        coerce_udf_arg_types(self.name(), self.arity(), arg_types)
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DfResult<ColumnarValue> {
         let name = self.name();
-        check_udf_arity(
-            name,
-            self.arity(),
-            args.args.len(),
-            UdfArityPhase::Execution,
-        )?;
+        check_udf_execution_args(name, self.arity(), args.args.len())?;
         let rows = args.number_rows;
 
         // For the quantile family the leading argument is the `phi` scalar; the

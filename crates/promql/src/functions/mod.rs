@@ -20,6 +20,8 @@ mod udf_args;
 #[cfg(test)]
 mod udf_test_support;
 
+use arrow::datatypes::DataType;
+
 #[derive(Clone, Copy)]
 pub(crate) enum UdfArityPhase {
     Plan,
@@ -40,6 +42,23 @@ pub(crate) fn check_udf_arity(
         UdfArityPhase::Plan => datafusion::common::DataFusionError::Plan(message),
         UdfArityPhase::Execution => datafusion::common::DataFusionError::Execution(message),
     })
+}
+
+pub(crate) fn coerce_udf_arg_types(
+    name: &str,
+    expected: usize,
+    arg_types: &[DataType],
+) -> datafusion::common::Result<Vec<DataType>> {
+    check_udf_arity(name, expected, arg_types.len(), UdfArityPhase::Plan)?;
+    Ok(arg_types.to_vec())
+}
+
+pub(crate) fn check_udf_execution_args(
+    name: &str,
+    expected: usize,
+    actual: usize,
+) -> datafusion::common::Result<()> {
+    check_udf_arity(name, expected, actual, UdfArityPhase::Execution)
 }
 
 macro_rules! impl_window_udf_identity {

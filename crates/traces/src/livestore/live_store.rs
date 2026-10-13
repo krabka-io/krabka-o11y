@@ -1,4 +1,4 @@
-use krabka_traceql::TagCatalog;
+use krabka_traceql::{TagCatalog, TagNameSets};
 
 use super::{
     BTreeMap, BTreeSet, EVENT_TAGS, INTRINSIC_TAGS, LINK_TAGS, LiveResult, LiveSource, MemTable,
@@ -167,11 +167,7 @@ impl TagCatalog for LiveStore {
         start_ns: i64,
         end_ns: i64,
     ) -> LiveResult<Vec<krabka_traceql::ScopedTag>> {
-        let mut resource = BTreeSet::new();
-        let mut span = BTreeSet::new();
-        let mut event = BTreeSet::new();
-        let mut link = BTreeSet::new();
-        let mut instrumentation = BTreeSet::new();
+        let mut tags = TagNameSets::default();
         let mut has_spans = false;
         if let Some(traces) = self.by_tenant.get(tenant) {
             for item in traces
@@ -180,49 +176,58 @@ impl TagCatalog for LiveStore {
                 .filter(|item| in_time_range(item, UnixNano(start_ns), UnixNano(end_ns)))
             {
                 has_spans = true;
-                resource.extend(item.resource_attrs.iter().map(|attr| attr.key.clone()));
-                span.extend(item.span_attrs.iter().map(|attr| attr.key.clone()));
+                tags.resource
+                    .extend(item.resource_attrs.iter().map(|attr| attr.key.clone()));
+                tags.span
+                    .extend(item.span_attrs.iter().map(|attr| attr.key.clone()));
                 for event_record in &item.events {
-                    event.extend(EVENT_TAGS.iter().map(|tag| (*tag).to_string()));
-                    event.extend(event_record.attrs.iter().map(|attr| attr.key.clone()));
+                    tags.event
+                        .extend(EVENT_TAGS.iter().map(|tag| (*tag).to_string()));
+                    tags.event
+                        .extend(event_record.attrs.iter().map(|attr| attr.key.clone()));
                 }
                 for link_record in &item.links {
-                    link.extend(LINK_TAGS.iter().map(|tag| (*tag).to_string()));
-                    link.extend(link_record.attrs.iter().map(|attr| attr.key.clone()));
+                    tags.link
+                        .extend(LINK_TAGS.iter().map(|tag| (*tag).to_string()));
+                    tags.link
+                        .extend(link_record.attrs.iter().map(|attr| attr.key.clone()));
                 }
                 if !item.instrumentation_scope.is_empty() {
-                    instrumentation.insert("instrumentation:name".to_string());
+                    tags.instrumentation
+                        .insert("instrumentation:name".to_string());
                 }
                 if !item.instrumentation_version.is_empty() {
-                    instrumentation.insert("instrumentation:version".to_string());
+                    tags.instrumentation
+                        .insert("instrumentation:version".to_string());
                 }
             }
         }
 
         let mut out = Vec::new();
-        if matches!(scope, None | Some(krabka_traceql::TagScope::Resource)) && !resource.is_empty()
+        if matches!(scope, None | Some(krabka_traceql::TagScope::Resource))
+            && !tags.resource.is_empty()
         {
             out.push(krabka_traceql::ScopedTag {
                 scope: krabka_traceql::TagScope::Resource,
-                tags: resource.into_iter().collect(),
+                tags: tags.resource.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(krabka_traceql::TagScope::Span)) && !span.is_empty() {
+        if matches!(scope, None | Some(krabka_traceql::TagScope::Span)) && !tags.span.is_empty() {
             out.push(krabka_traceql::ScopedTag {
                 scope: krabka_traceql::TagScope::Span,
-                tags: span.into_iter().collect(),
+                tags: tags.span.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(krabka_traceql::TagScope::Event)) && !event.is_empty() {
+        if matches!(scope, None | Some(krabka_traceql::TagScope::Event)) && !tags.event.is_empty() {
             out.push(krabka_traceql::ScopedTag {
                 scope: krabka_traceql::TagScope::Event,
-                tags: event.into_iter().collect(),
+                tags: tags.event.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(krabka_traceql::TagScope::Link)) && !link.is_empty() {
+        if matches!(scope, None | Some(krabka_traceql::TagScope::Link)) && !tags.link.is_empty() {
             out.push(krabka_traceql::ScopedTag {
                 scope: krabka_traceql::TagScope::Link,
-                tags: link.into_iter().collect(),
+                tags: tags.link.into_iter().collect(),
             });
         }
         if matches!(scope, None | Some(krabka_traceql::TagScope::Intrinsic)) && has_spans {
@@ -237,11 +242,11 @@ impl TagCatalog for LiveStore {
         if matches!(
             scope,
             None | Some(krabka_traceql::TagScope::Instrumentation)
-        ) && !instrumentation.is_empty()
+        ) && !tags.instrumentation.is_empty()
         {
             out.push(krabka_traceql::ScopedTag {
                 scope: krabka_traceql::TagScope::Instrumentation,
-                tags: instrumentation.into_iter().collect(),
+                tags: tags.instrumentation.into_iter().collect(),
             });
         }
         Ok(out)

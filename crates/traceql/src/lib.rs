@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod ast;
+mod duration;
 mod engine;
 mod error;
 mod ids;
@@ -26,6 +27,7 @@ pub use ast::{
     Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
     QueryHintValue, ScalarAggregate, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value,
 };
+pub use duration::{DurationPart, next_duration_part};
 pub use engine::{EngineOpts, SearchOptions, TraceqlEngine, block_row_attrs_where, bytes_to_hex};
 pub use error::TraceqlError;
 pub use in_memory::InMemorySpanStore;
@@ -33,8 +35,9 @@ pub use lexer::{Token, lex};
 pub use parser::parse;
 pub use result::{
     AttrValue, Attribute, EventRef, LinkRef, MetricLabel, MetricPoint, ScopedTag, SearchResponse,
-    SpanRef, SpanSet, TagScope, TagScopePrefix, TraceMetricExemplar, TraceMetricLabelType,
-    TraceMetricSeries, TraceMetricsResponse, TraceResult, TraceSpans, TypedValue,
+    SpanRef, SpanSet, TagNameSets, TagScope, TagScopePrefix, TraceMetricExemplar,
+    TraceMetricLabelType, TraceMetricSeries, TraceMetricsResponse, TraceResult, TraceSpans,
+    TypedValue,
 };
 pub use span_columns::{
     ATTR_PREFIX, AttributeColumn, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME,

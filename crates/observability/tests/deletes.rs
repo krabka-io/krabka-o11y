@@ -196,16 +196,13 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
     let delete_requests = SharedLogDeleteRequests::default();
     create_delete_request_with(&block_builder_config(), &delete_requests).await;
 
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series(
+    let (dir, _) = support::manifest_with_series(
         "tenant-a",
         labels([
             krabka_blockstore::LabelPair::new("app", "api"),
             krabka_blockstore::LabelPair::new("env", "prod"),
         ]),
     );
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
 
     let hot_tail = InMemoryWalSink::default();
     hot_tail

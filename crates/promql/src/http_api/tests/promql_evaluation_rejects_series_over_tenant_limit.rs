@@ -8,16 +8,6 @@ pub(crate) async fn promql_evaluation_rejects_series_over_tenant_limit() {
     ];
 
     for uri in uris {
-        let limits = Limits {
-            max_fetched_series_per_query: 1,
-            ..Limits::default()
-        };
-        let response = limited_get(two_series_store(), limits, uri).await;
-
-        assert_execution_error(
-            &response,
-            |error| error == "series per query exceeded: observed 2 above limit 1",
-            uri,
-        );
+        assert_series_limit_rejected(uri).await;
     }
 }

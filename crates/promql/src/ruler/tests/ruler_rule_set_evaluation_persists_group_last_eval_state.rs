@@ -12,10 +12,7 @@ rules:
     );
 
     let engine = up_api_engine(&[120_000]);
-    let wal_sink = RecordingSink::default();
-    let alert_sink = RecordingAlertmanagerSink::default();
-    let state_sink = RecordingRulerStateSink::default();
-    let mut alert_state = super::super::RulerAlertState::default();
+    let (wal_sink, alert_sink, state_sink, mut alert_state) = recording_sinks_and_alert_state();
 
     let evaluation = super::super::evaluate_and_persist_ruler_rule_set(
         &engine,

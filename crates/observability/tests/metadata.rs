@@ -188,9 +188,7 @@ async fn empty_metadata_endpoints_return_loki_sparse_success_shapes() {
 
 #[tokio::test]
 async fn metadata_endpoints_hide_loki_detected_level_enrichment() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series(
+    let (dir, label_index) = support::manifest_with_series(
         "tenant-a",
         labels([
             krabka_blockstore::LabelPair::new("app", "api"),

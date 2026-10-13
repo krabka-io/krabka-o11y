@@ -281,30 +281,28 @@ impl TagCatalog for InMemorySpanStore {
         start_ns: i64,
         end_ns: i64,
     ) -> Result<Vec<ScopedTag>> {
-        let mut resource = BTreeSet::new();
-        let mut span = BTreeSet::new();
-        let mut event = BTreeSet::new();
-        let mut link = BTreeSet::new();
-        let mut instrumentation = BTreeSet::new();
+        let mut tags = TagNameSets::default();
         let traces = self.traces_in_range(tenant, start_ns, end_ns);
         for trace in &traces {
-            resource.insert("service.name".to_string());
+            tags.resource.insert("service.name".to_string());
             for input in &trace.spans {
                 for attribute in &input.attrs {
                     if let Some(key) = attribute.key.strip_prefix(INSTRUMENTATION_ATTR_PREFIX) {
-                        instrumentation.insert(key.to_string());
+                        tags.instrumentation.insert(key.to_string());
                     } else {
-                        span.insert(attribute.key.clone());
+                        tags.span.insert(attribute.key.clone());
                     }
                 }
                 if !input.events.is_empty() {
-                    event.extend(EVENT_TAGS.iter().map(|tag| (*tag).to_string()));
+                    tags.event
+                        .extend(EVENT_TAGS.iter().map(|tag| (*tag).to_string()));
                 }
                 if !input.links.is_empty() {
-                    link.extend(LINK_TAGS.iter().map(|tag| (*tag).to_string()));
+                    tags.link
+                        .extend(LINK_TAGS.iter().map(|tag| (*tag).to_string()));
                 }
                 for event_ref in &input.events {
-                    event.extend(
+                    tags.event.extend(
                         event_ref
                             .attributes
                             .iter()
@@ -312,7 +310,7 @@ impl TagCatalog for InMemorySpanStore {
                     );
                 }
                 for link_ref in &input.links {
-                    link.extend(
+                    tags.link.extend(
                         link_ref
                             .attributes
                             .iter()
@@ -320,25 +318,27 @@ impl TagCatalog for InMemorySpanStore {
                     );
                 }
                 if !input.instrumentation_name.is_empty() {
-                    instrumentation.insert("instrumentation:name".to_string());
+                    tags.instrumentation
+                        .insert("instrumentation:name".to_string());
                 }
                 if !input.instrumentation_version.is_empty() {
-                    instrumentation.insert("instrumentation:version".to_string());
+                    tags.instrumentation
+                        .insert("instrumentation:version".to_string());
                 }
             }
         }
 
         let mut out = Vec::new();
-        if matches!(scope, None | Some(TagScope::Resource)) && !resource.is_empty() {
+        if matches!(scope, None | Some(TagScope::Resource)) && !tags.resource.is_empty() {
             out.push(ScopedTag {
                 scope: TagScope::Resource,
-                tags: resource.into_iter().collect(),
+                tags: tags.resource.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(TagScope::Span)) && !span.is_empty() {
+        if matches!(scope, None | Some(TagScope::Span)) && !tags.span.is_empty() {
             out.push(ScopedTag {
                 scope: TagScope::Span,
-                tags: span.into_iter().collect(),
+                tags: tags.span.into_iter().collect(),
             });
         }
         if matches!(scope, None | Some(TagScope::Intrinsic)) && !traces.is_empty() {
@@ -350,22 +350,24 @@ impl TagCatalog for InMemorySpanStore {
                     .collect(),
             });
         }
-        if matches!(scope, None | Some(TagScope::Event)) && !event.is_empty() {
+        if matches!(scope, None | Some(TagScope::Event)) && !tags.event.is_empty() {
             out.push(ScopedTag {
                 scope: TagScope::Event,
-                tags: event.into_iter().collect(),
+                tags: tags.event.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(TagScope::Link)) && !link.is_empty() {
+        if matches!(scope, None | Some(TagScope::Link)) && !tags.link.is_empty() {
             out.push(ScopedTag {
                 scope: TagScope::Link,
-                tags: link.into_iter().collect(),
+                tags: tags.link.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(TagScope::Instrumentation)) && !instrumentation.is_empty() {
+        if matches!(scope, None | Some(TagScope::Instrumentation))
+            && !tags.instrumentation.is_empty()
+        {
             out.push(ScopedTag {
                 scope: TagScope::Instrumentation,
-                tags: instrumentation.into_iter().collect(),
+                tags: tags.instrumentation.into_iter().collect(),
             });
         }
         Ok(out)

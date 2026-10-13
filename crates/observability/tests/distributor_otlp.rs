@@ -16,7 +16,7 @@ use opentelemetry_proto::tonic::{
     logs::v1::LogRecord, resource::v1::Resource,
 };
 use prost::Message as _;
-use serde_json::json;
+use serde_json::{Value, json};
 use support::{
     FailingWalSink, RejectingIngestLimiter, assert_loki_error, json_body, proto_key_value,
     proto_logs_request, send, tenant_a_post,
@@ -40,6 +40,20 @@ fn checkout_record(metadata: LogLabels) -> WalLogRecord {
         structured_metadata,
         position: None,
     }
+}
+
+async fn post_checkout_export_with_attributes(
+    app: &axum::Router,
+    resource_attributes: &Value,
+    scope_attributes: &Value,
+    log_records: &Value,
+) -> axum::response::Response {
+    post_json(
+        app,
+        "/v1/logs",
+        &checkout_json_export_with_attributes(resource_attributes, scope_attributes, log_records),
+    )
+    .await
 }
 
 fn checkout_proto_log_metadata() -> LogLabels {
@@ -148,24 +162,21 @@ async fn otlp_logs_endpoint_writes_tenant_scoped_wal_records() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = post_json(
+    let response = post_checkout_export_with_attributes(
         &app,
-        "/v1/logs",
-        &checkout_json_export_with_attributes(
-            &json!([
-                {"key": "service.name", "value": {"stringValue": "checkout"}},
-                {"key": "deployment.environment", "value": {"stringValue": "prod"}}
-            ]),
-            &json!([{"key": "instrumentation.scope", "value": {"stringValue": "api"}}]),
-            &json!([{
-                "timeUnixNano": "19",
-                "body": {"stringValue": "api error"},
-                "attributes": [
-                    {"key": "status", "value": {"intValue": "500"}},
-                    {"key": "trace_id", "value": {"stringValue": "abc"}}
-                ]
-            }]),
-        ),
+        &json!([
+            {"key": "service.name", "value": {"stringValue": "checkout"}},
+            {"key": "deployment.environment", "value": {"stringValue": "prod"}}
+        ]),
+        &json!([{"key": "instrumentation.scope", "value": {"stringValue": "api"}}]),
+        &json!([{
+            "timeUnixNano": "19",
+            "body": {"stringValue": "api error"},
+            "attributes": [
+                {"key": "status", "value": {"intValue": "500"}},
+                {"key": "trace_id", "value": {"stringValue": "abc"}}
+            ]
+        }]),
     )
     .await;
 
@@ -245,24 +256,21 @@ async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metad
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = post_json(
+    let response = post_checkout_export_with_attributes(
         &app,
-        "/v1/logs",
-        &checkout_json_export_with_attributes(
-            &json!([
-                {"key": "service.name", "value": {"stringValue": "checkout"}},
-                {"key": "cloud/region", "value": {"stringValue": "us-west"}}
-            ]),
-            &json!([{"key": "instrumentation.scope", "value": {"stringValue": "api"}}]),
-            &json!([{
-                "timeUnixNano": "19",
-                "body": {"stringValue": "api error"},
-                "attributes": [
-                    {"key": "thread.name", "value": {"stringValue": "worker-1"}},
-                    {"key": "http.status-code", "value": {"intValue": "500"}}
-                ]
-            }]),
-        ),
+        &json!([
+            {"key": "service.name", "value": {"stringValue": "checkout"}},
+            {"key": "cloud/region", "value": {"stringValue": "us-west"}}
+        ]),
+        &json!([{"key": "instrumentation.scope", "value": {"stringValue": "api"}}]),
+        &json!([{
+            "timeUnixNano": "19",
+            "body": {"stringValue": "api error"},
+            "attributes": [
+                {"key": "thread.name", "value": {"stringValue": "worker-1"}},
+                {"key": "http.status-code", "value": {"intValue": "500"}}
+            ]
+        }]),
     )
     .await;
 

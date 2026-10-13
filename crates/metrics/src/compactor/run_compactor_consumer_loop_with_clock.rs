@@ -1,4 +1,4 @@
-use super::*;
+use super::{run_compactor_loop_with_clock::poll_result, *};
 
 /// Accumulate-then-flush single-consumer compactor loop with an injectable clock.
 ///
@@ -71,19 +71,12 @@ where
             drop(span);
         }
 
-        summary.polls += 1;
-        summary.polled_records += polled_records;
-        summary.compacted_records += compacted_records;
-
-        let result = CompactionPollResult {
+        let result = poll_result(
+            &mut summary,
             polled_records,
             compacted_records,
-            batch: CompactionBatchResult {
-                partition_results: Vec::new(),
-                writes: Vec::new(),
-                committed_offsets: iteration_offsets,
-            },
-        };
+            iteration_offsets,
+        );
 
         draining |= should_stop(&result);
         if draining {

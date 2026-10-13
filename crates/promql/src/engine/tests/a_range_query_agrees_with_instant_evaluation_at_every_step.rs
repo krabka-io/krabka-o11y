@@ -24,10 +24,7 @@ pub(crate) async fn a_range_query_agrees_with_instant_evaluation_at_every_step()
         job: &'a str,
         samples: &'a [TimedValue],
     }
-    struct TimedValue {
-        timestamp_ms: i64,
-        value: f64,
-    }
+    type TimedValue = FloatSampleInput;
     #[derive(PartialEq, Eq)]
     struct RangeSampleBits {
         timestamp_ms: i64,
@@ -130,14 +127,7 @@ pub(crate) async fn a_range_query_agrees_with_instant_evaluation_at_every_step()
                     crate::test_support::TestLabelPair::new("__name__", series.metric_name),
                     crate::test_support::TestLabelPair::new("job", series.job),
                 ]),
-                samples: series
-                    .samples
-                    .iter()
-                    .map(|sample| FloatSampleInput {
-                        timestamp_ms: sample.timestamp_ms,
-                        value: sample.value,
-                    })
-                    .collect(),
+                samples: series.samples.to_vec(),
             }),
     );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

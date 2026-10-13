@@ -1,10 +1,6 @@
 use super::*;
 
-#[derive(bon::Builder)]
-struct RangeFoldSample {
-    timestamp_ms: i64,
-    value: f64,
-}
+type RangeFoldSample = FloatSampleInput;
 
 #[derive(bon::Builder)]
 struct RangeFoldSeries {
@@ -112,14 +108,7 @@ pub(crate) async fn extended_range_fold_planner_matches_interpreter() {
                 crate::test_support::TestLabelPair::new("__name__", "ctr"),
                 crate::test_support::TestLabelPair::new("job", series.job),
             ]),
-            samples: series
-                .samples
-                .into_iter()
-                .map(|sample| FloatSampleInput {
-                    timestamp_ms: sample.timestamp_ms,
-                    value: sample.value,
-                })
-                .collect(),
+            samples: series.samples,
         }),
     );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

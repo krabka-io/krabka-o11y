@@ -17,11 +17,12 @@ pub use krabka_observability::service_metrics::{
     RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, metrics_router,
 };
 use krabka_units::{Time, convert::TimeExt};
-use prometheus_client::{
+use prom_client::{
     encoding::EncodeLabelSet,
     metrics::{counter::Counter, family::Family, gauge::Gauge, histogram::Histogram},
     registry::Registry,
 };
+use prometheus_client as prom_client;
 
 #[cfg(test)]
 mod tests {

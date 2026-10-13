@@ -1,7 +1,7 @@
 use super::{
-    BrokerAccessPolicy, ClientResourcePolicy, ClientSecurity, DeferredQueryAuthorizerConnect,
-    DeferredWalConsumerConnect, ServiceConfig, ServiceConfigError, ServiceDependencies,
-    ServiceRuntimeError, WalConsumerMetrics,
+    ClientResourcePolicy, ClientSecurity, DeferredWalConsumerConnect, ServiceConfig,
+    ServiceDependencies, ServiceRuntimeError, WalConsumerMetrics,
+    deferred_query_authorizer_connect,
 };
 
 /// Records what the querier's hot tail will need, without connecting it.
@@ -26,20 +26,12 @@ pub(crate) fn with_querier_dependencies(
     security: Option<&ClientSecurity>,
     metrics: WalConsumerMetrics,
 ) -> Result<ServiceDependencies, ServiceRuntimeError> {
-    let bootstrap = config
-        .wal_bootstrap_server
-        .as_deref()
-        .ok_or(ServiceConfigError::MissingWalBootstrapServer)?;
+    let deferred_authorizer =
+        deferred_query_authorizer_connect(config, client_resource_policy, security)?;
     Ok(dependencies
-        .with_deferred_query_authorizer_connect(DeferredQueryAuthorizerConnect {
-            bootstrap: bootstrap.to_string(),
-            topic: config.wal_topic.clone(),
-            client_resource_policy,
-            security: security.cloned(),
-            access_policy: BrokerAccessPolicy::for_config(config)?,
-        })
+        .with_deferred_query_authorizer_connect(deferred_authorizer.connect)
         .with_deferred_wal_consumer_connect(DeferredWalConsumerConnect {
-            bootstrap: bootstrap.to_string(),
+            bootstrap: deferred_authorizer.bootstrap,
             group_id,
             topic: config.wal_topic.clone(),
             client_resource_policy,

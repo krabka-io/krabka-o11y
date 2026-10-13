@@ -27,6 +27,17 @@ fn matcher_expected(matcher: LabelMatcher, expected: &[u64]) -> MatcherExpectedC
     }
 }
 
+fn assert_resolves_in_each_order(
+    index: &Index,
+    tenant: &str,
+    expected: &BTreeSet<u64>,
+    orders: [Vec<LabelMatcher>; 2],
+) {
+    for matchers in orders {
+        assert!(&index.resolve(tenant, &matchers).unwrap() == expected);
+    }
+}
+
 fn fixture() -> Index {
     let mut index = Index::new();
     for fixture in [
@@ -173,12 +184,15 @@ fn regex_posting_unions_preserve_missing_empty_and_multiline_labels() {
     ] {
         let expected = case.expected.into_iter().collect::<BTreeSet<_>>();
         let matcher = case.matcher;
-        for matchers in [
-            vec![anchor.clone(), matcher.clone()],
-            vec![matcher, anchor.clone()],
-        ] {
-            assert!(index.resolve("tenant", &matchers).unwrap() == expected);
-        }
+        assert_resolves_in_each_order(
+            &index,
+            "tenant",
+            &expected,
+            [
+                vec![anchor.clone(), matcher.clone()],
+                vec![matcher, anchor.clone()],
+            ],
+        );
     }
     let all = LabelMatcher::new("all", MatchOp::Eq, "series");
     for case in [
@@ -194,12 +208,15 @@ fn regex_posting_unions_preserve_missing_empty_and_multiline_labels() {
     ] {
         let expected = case.expected.into_iter().collect::<BTreeSet<_>>();
         let matcher = case.matcher;
-        for matchers in [
-            vec![all.clone(), matcher.clone()],
-            vec![matcher, all.clone()],
-        ] {
-            assert!(index.resolve("tenant", &matchers).unwrap() == expected);
-        }
+        assert_resolves_in_each_order(
+            &index,
+            "tenant",
+            &expected,
+            [
+                vec![all.clone(), matcher.clone()],
+                vec![matcher, all.clone()],
+            ],
+        );
     }
 }
 
@@ -258,11 +275,12 @@ fn selective_resolution_preserves_full_matcher_ledger_in_each_order() {
     ] {
         let expected = case.expected.into_iter().collect::<BTreeSet<_>>();
         let matcher = case.matcher;
-        for matchers in [
+        let orders = [
             vec![anchor.clone(), matcher.clone()],
             vec![matcher.clone(), anchor.clone()],
-        ] {
-            assert!(index.resolve("tenant", &matchers).unwrap() == expected);
+        ];
+        assert_resolves_in_each_order(&index, "tenant", &expected, orders.clone());
+        for matchers in orders {
             assert!(index.resolve("missing", &matchers).unwrap().is_empty());
         }
         // A one-series posting also exercises candidate label evaluation for

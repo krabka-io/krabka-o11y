@@ -20,20 +20,16 @@ mod tests {
 
     #[test]
     fn default_limits_are_generous_and_finite() {
-        assert2::assert!(
-            Limits::default()
-                == Limits {
-                    query_admission: AdmissionLimits::default(),
-                    ingestion_rate: per_sec(100_000),
-                    ingestion_burst_spans: 100_000,
-                    max_spans_per_request: 10_000,
-                    max_traces_per_search: 1000,
-                    max_spans_per_trace: 200_000,
-                    max_attribute: bytes(2048),
-                    max_search_duration: <Time as TimeExt>::ZERO,
-                    block_retention: hours(336),
-                }
-        );
+        let defaults = Limits::default();
+        check!(defaults.query_admission == AdmissionLimits::default());
+        check!(defaults.ingestion_rate == per_sec(100_000));
+        check!(defaults.ingestion_burst_spans == 100_000);
+        check!(defaults.max_spans_per_request == 10_000);
+        check!(defaults.max_traces_per_search == 1000);
+        check!(defaults.max_spans_per_trace == 200_000);
+        check!(defaults.max_attribute == bytes(2048));
+        check!(defaults.max_search_duration == <Time as TimeExt>::ZERO);
+        check!(defaults.block_retention == hours(336));
     }
 
     /// Tempo keeps blocks for `336h` unless an operator says otherwise, and a
