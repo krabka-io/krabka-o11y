@@ -5,11 +5,11 @@ use super::{
     yaml_string_field,
 };
 use crate::{
-    BTreeMap, BTreeSet, Bytes, HeaderMap, HttpQueryError, LokiRuleNamespaces, Path, QuerierState,
-    RawQuery, RequestSecurity, Response, Serialize, State, StatusCode, StreamQuery,
-    TenantErrorSurface, TenantId,
+    BTreeMap, BTreeSet, Bytes, HeaderMap, HttpQueryError, LokiRuleNamespaces, LokiRuleTenants,
+    Path, QuerierState, RawQuery, RequestSecurity, Response, Serialize, State, StatusCode,
+    StreamQuery, TenantErrorSurface, TenantId,
     audit::{
-        AuditOutcome, OPERATION_RULE_GROUP_DELETE, OPERATION_RULE_GROUP_SET,
+        AuditOutcome, AuditResource, OPERATION_RULE_GROUP_DELETE, OPERATION_RULE_GROUP_SET,
         OPERATION_RULE_NAMESPACE_DELETE, RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE,
         RESOURCE_TENANT, resource,
     },
@@ -61,6 +61,46 @@ pub(crate) use ring_status_page::ring_status_page;
 pub(crate) use ruler_status_page::ruler_status_page;
 pub(crate) use validate_loki_rule::validate_loki_rule;
 pub(crate) use validate_loki_rule_group::validate_loki_rule_group;
+
+fn deleted_rule_response(
+    state: &QuerierState,
+    security: RequestSecurity,
+    operation: &'static str,
+    resources: Vec<AuditResource>,
+    tenant: &str,
+    snapshot: &LokiRuleTenants,
+) -> Result<Response, HttpQueryError> {
+    if let Err(error) = state.rules.persist_snapshot(snapshot) {
+        security.admin_operation(operation, resources, AuditOutcome::Failure);
+        return Err(HttpQueryError::from(error));
+    }
+    security.admin_operation(operation, resources, AuditOutcome::Success);
+    state.alert_states.clear_tenant(tenant);
+    Ok(json_response(
+        StatusCode::ACCEPTED,
+        &json!({ "status": "success" }),
+    ))
+}
+
+fn snapshot_after_rule_removal(
+    state: &QuerierState,
+    tenant: &str,
+    remove: impl FnOnce(&mut LokiRuleNamespaces) -> bool,
+) -> Option<LokiRuleTenants> {
+    let mut rules = state
+        .rules
+        .tenants
+        .lock()
+        .expect("Loki rule store lock poisoned");
+    let namespaces = rules.get_mut(tenant)?;
+    if !remove(namespaces) {
+        return None;
+    }
+    if namespaces.is_empty() {
+        rules.remove(tenant);
+    }
+    Some(rules.clone())
+}
 
 #[derive(serde::Deserialize)]
 pub(crate) struct LokiRuleGroupPath {

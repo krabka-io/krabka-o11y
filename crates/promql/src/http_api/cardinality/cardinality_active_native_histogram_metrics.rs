@@ -44,8 +44,45 @@ impl LatestSample {
     }
 }
 
+fn keep_latest_sample(
+    latest: &mut BTreeMap<SeriesFingerprint, LatestSample>,
+    fingerprint: SeriesFingerprint,
+    candidate: LatestSample,
+) {
+    if latest
+        .get(&fingerprint)
+        .is_none_or(|current| current.timestamp() < candidate.timestamp())
+    {
+        latest.insert(fingerprint, candidate);
+    }
+}
+
+fn keep_decoded_samples<T>(
+    decoded: Vec<T>,
+    known_series: &BTreeMap<SeriesFingerprint, String>,
+    latest: &mut BTreeMap<SeriesFingerprint, LatestSample>,
+    mut identity: impl FnMut(&T) -> (SeriesFingerprint, i64),
+    mut candidate: impl FnMut(T, i64) -> LatestSample,
+) {
+    for row in decoded {
+        let (fingerprint, timestamp) = identity(&row);
+        if known_series.contains_key(&fingerprint) {
+            keep_latest_sample(latest, fingerprint, candidate(row, timestamp));
+        }
+    }
+}
+
 struct LatestHistogram {
     bucket_count: u64,
+}
+
+macro_rules! decode_cardinality_batch {
+    ($decode:ident, $batch:expr) => {
+        match $decode($batch) {
+            Ok(decoded) => decoded,
+            Err(error) => return ApiError::internal(error.to_string()).into_response(),
+        }
+    };
 }
 
 pub(crate) async fn cardinality_active_native_histogram_metrics<S: MetricStore>(
@@ -128,21 +165,14 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
                 Err(error) => return error.into_response(),
             };
             for batch in batches {
-                let decoded = match decode_float_samples(&batch) {
-                    Ok(decoded) => decoded,
-                    Err(error) => return ApiError::internal(error.to_string()).into_response(),
-                };
-                for row in decoded {
-                    let fingerprint = row.fingerprint;
-                    let timestamp = row.timestamp_ms;
-                    if metric_by_fingerprint.contains_key(&fingerprint)
-                        && latest
-                            .get(&fingerprint)
-                            .is_none_or(|current| current.timestamp() < timestamp)
-                    {
-                        latest.insert(fingerprint, LatestSample::Float { timestamp });
-                    }
-                }
+                let decoded = decode_cardinality_batch!(decode_float_samples, &batch);
+                keep_decoded_samples(
+                    decoded,
+                    &metric_by_fingerprint,
+                    &mut latest,
+                    |row| (row.fingerprint, row.timestamp_ms),
+                    |_, timestamp| LatestSample::Float { timestamp },
+                );
             }
         }
         let Some(table) = scan.histogram_table else {
@@ -153,32 +183,24 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
             Err(error) => return error.into_response(),
         };
         for batch in batches {
-            let decoded = match decode_native_histograms(&batch) {
-                Ok(decoded) => decoded,
-                Err(error) => return ApiError::internal(error.to_string()).into_response(),
-            };
-            for row in decoded {
-                let fingerprint = row.fingerprint;
-                let timestamp = row.timestamp_ms;
-                let histogram = row.hist;
-                if !metric_by_fingerprint.contains_key(&fingerprint) {
-                    continue;
-                }
-                let bucket_count = u64::try_from(
-                    histogram.positive_counts.len() + histogram.negative_counts.len(),
-                )
-                .expect("bucket count fits in u64");
-                let candidate = LatestSample::Histogram {
-                    timestamp,
-                    bucket_count,
-                };
-                if latest
-                    .get(&fingerprint)
-                    .is_none_or(|current| current.timestamp() < timestamp)
-                {
-                    latest.insert(fingerprint, candidate);
-                }
-            }
+            let decoded = decode_cardinality_batch!(decode_native_histograms, &batch);
+            keep_decoded_samples(
+                decoded,
+                &metric_by_fingerprint,
+                &mut latest,
+                |row| (row.fingerprint, row.timestamp_ms),
+                |row, timestamp| {
+                    let histogram = row.hist;
+                    let bucket_count = u64::try_from(
+                        histogram.positive_counts.len() + histogram.negative_counts.len(),
+                    )
+                    .expect("bucket count fits in u64");
+                    LatestSample::Histogram {
+                        timestamp,
+                        bucket_count,
+                    }
+                },
+            );
         }
     }
 

@@ -200,6 +200,23 @@ async fn check_limit_scan(case: LimitScanCase<'_>) {
     }
 }
 
+async fn check_hot_limit_scan(direction: LokiDirection, hot_instance: &'static str) {
+    check_limit_scan(LimitScanCase {
+        cold: &[cold_row("a", 10, 10, 10, "error cold")],
+        hot: &[hot_row(hot_instance, 10, "error hot")],
+        options: LokiStreamOptions {
+            direction,
+            limit: Some(1),
+            interval: None,
+        },
+        end_exclusive: None,
+        query: r#"{app="a"} |= "error""#,
+        expected: &[hot_row("a", 10, "error cold")],
+        expected_scanned: 1,
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn limited_cold_hot_scan_matches_independent_timestamp_ledger() {
     let query = r#"{app=~"a|b"} |= "error""#;
@@ -266,34 +283,8 @@ async fn limited_cold_hot_scan_matches_independent_timestamp_ledger() {
     })
     .await;
     for direction in [LokiDirection::Forward, LokiDirection::Backward] {
-        check_limit_scan(LimitScanCase {
-            cold: &[cold_row("a", 10, 10, 10, "error cold")],
-            hot: &[hot_row("b", 10, "error hot")],
-            options: LokiStreamOptions {
-                direction,
-                limit: Some(1),
-                interval: None,
-            },
-            end_exclusive: None,
-            query,
-            expected: &[hot_row("a", 10, "error cold")],
-            expected_scanned: 1,
-        })
-        .await;
-        check_limit_scan(LimitScanCase {
-            cold: &[cold_row("a", 10, 10, 10, "error cold")],
-            hot: &[hot_row("a", 10, "error hot")],
-            options: LokiStreamOptions {
-                direction,
-                limit: Some(1),
-                interval: None,
-            },
-            end_exclusive: None,
-            query,
-            expected: &[hot_row("a", 10, "error cold")],
-            expected_scanned: 1,
-        })
-        .await;
+        check_hot_limit_scan(direction, "b").await;
+        check_hot_limit_scan(direction, "a").await;
     }
 }
 

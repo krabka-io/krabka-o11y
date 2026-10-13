@@ -15,6 +15,7 @@ pub mod store_stats;
 pub mod traces;
 
 use std::{
+    collections::HashMap,
     fmt::Display,
     future::Future,
     sync::Arc,
@@ -45,6 +46,26 @@ pub const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 pub(crate) struct CachedEngine<T> {
     pub loaded_at: Instant,
     pub engine: Arc<T>,
+}
+
+pub(crate) struct SignalCore<T, E, L> {
+    pub stores: Stores,
+    pub seed: u64,
+    pub enforcer: E,
+    pub limits: std::sync::Mutex<HashMap<String, L>>,
+    pub reader: AsyncMutex<Option<CachedEngine<T>>>,
+}
+
+impl<T, E, L> SignalCore<T, E, L> {
+    pub fn new(stores: Stores, seed: u64, enforcer: E) -> Self {
+        Self {
+            stores,
+            seed,
+            enforcer,
+            limits: std::sync::Mutex::new(HashMap::new()),
+            reader: AsyncMutex::new(None),
+        }
+    }
 }
 
 pub(crate) async fn cached_engine<T, F, Fut>(

@@ -51,13 +51,13 @@ where
         // compaction work and correctly carries no span.
         let span = compaction_batch_span(&records, compacted_records);
 
-        let now = context.clock.now();
-        buffer.extend(wal_records, now);
-
-        let mut iteration_offsets = Vec::new();
-        if buffer.should_flush(&config, now) {
-            let buffered = buffer.take();
-            iteration_offsets = flush_buffer_with_consumer(
+        let iteration_offsets = if let Some(buffered) = super::append_compaction_records_until_due(
+            &mut buffer,
+            wal_records,
+            &config,
+            context.clock,
+        ) {
+            flush_buffer_with_consumer(
                 block_writer,
                 index_sink,
                 consumer,
@@ -66,10 +66,11 @@ where
                 context.metrics,
             )
             .instrument(span)
-            .await?;
+            .await?
         } else {
             drop(span);
-        }
+            Vec::new()
+        };
 
         let result = poll_result(
             &mut summary,

@@ -218,6 +218,12 @@ pub use distributor::{
 };
 pub use error::QueryError;
 pub use http::loki_router;
+/// Deserializes a human-readable time cap and rejects negative values.
+pub fn deserialize_non_negative_time<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<krabka_units::Time, D::Error> {
+    limits::non_negative_time::deserialize(deserializer)
+}
 pub use limits::{
     Limits, OtlpAttributeAction, OtlpAttributesConfig, OtlpConfig, OtlpResourceAttributesConfig,
     OverridesError, OverridesProvider,

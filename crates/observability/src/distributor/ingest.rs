@@ -39,6 +39,21 @@ mod validate_loki_json_push_timestamp_types;
 mod validate_loki_json_push_value_arrays;
 mod validate_loki_json_structured_metadata_value_types;
 
+fn validate_typed_loki_values(
+    payload: &LokiTypedPushRequest,
+    mut validate: impl FnMut(&Value) -> Result<(), DistributorError>,
+) -> Result<(), DistributorError> {
+    for stream in &payload.streams {
+        let Some(values) = &stream.values else {
+            continue;
+        };
+        for value in values {
+            validate(value)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) use append_distributor_wal_records::append_distributor_wal_records;
 pub(crate) use check_ingest_quota::check_ingest_quota;
 pub(crate) use decode_loki_http_body::decode_loki_http_body;

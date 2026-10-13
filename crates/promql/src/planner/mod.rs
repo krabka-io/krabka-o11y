@@ -21,6 +21,24 @@ use promql_parser::{
 
 use crate::{PromqlError, PromqlLabels as Labels, error::Result};
 
+struct QueryScan {
+    chars: Vec<char>,
+    output: String,
+    index: usize,
+    quoted: QuotedCopy,
+}
+
+impl QueryScan {
+    fn new(query: &str) -> Self {
+        Self {
+            chars: query.chars().collect(),
+            output: String::with_capacity(query.len()),
+            index: 0,
+            quoted: QuotedCopy::default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

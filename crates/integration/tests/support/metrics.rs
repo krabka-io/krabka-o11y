@@ -2,8 +2,8 @@
 //! compactor, the retention sweep, and `PromQL` over the manifests.
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    sync::{Arc, Mutex},
+    collections::BTreeMap,
+    sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -29,12 +29,16 @@ use super::{Batch, Signal, Stores, WriteOutcome, config::mix, err, labels, now_m
 const METRIC: &str = "soak_samples";
 
 pub struct MetricsSignal {
-    stores: Stores,
-    seed: u64,
-    enforcer: IngestEnforcer,
-    limits: Mutex<HashMap<String, Limits>>,
-    reader: AsyncMutex<Option<super::CachedEngine<PromqlEngine<MetricBlockStore>>>>,
+    core: super::SignalCore<PromqlEngine<MetricBlockStore>, IngestEnforcer, Limits>,
     deferred: AsyncMutex<DeferredBlockDeletions>,
+}
+
+impl std::ops::Deref for MetricsSignal {
+    type Target = super::SignalCore<PromqlEngine<MetricBlockStore>, IngestEnforcer, Limits>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
 }
 
 struct Windows(Time);
@@ -50,11 +54,7 @@ impl MetricsSignal {
     /// opening reads nothing until the first query lists them.
     pub fn open(stores: Stores, seed: u64) -> Self {
         Self {
-            stores,
-            seed,
-            enforcer: IngestEnforcer::new(),
-            limits: Mutex::new(HashMap::new()),
-            reader: AsyncMutex::new(None),
+            core: super::SignalCore::new(stores, seed, IngestEnforcer::new()),
             deferred: AsyncMutex::new(DeferredBlockDeletions::new()),
         }
     }

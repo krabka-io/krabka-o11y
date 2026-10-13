@@ -14,6 +14,19 @@ pub struct TagNameSets {
     pub instrumentation: BTreeSet<String>,
 }
 
+impl TagNameSets {
+    pub fn add_instrumentation(&mut self, name: &str, version: &str) {
+        if !name.is_empty() {
+            self.instrumentation
+                .insert("instrumentation:name".to_string());
+        }
+        if !version.is_empty() {
+            self.instrumentation
+                .insert("instrumentation:version".to_string());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::assert;

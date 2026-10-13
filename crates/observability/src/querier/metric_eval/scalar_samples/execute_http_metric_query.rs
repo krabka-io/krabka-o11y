@@ -124,17 +124,7 @@ fn take_approximate_limit(
     query: &mut MetricQuery,
 ) -> Result<Option<usize>, HttpQueryError> {
     let limit = if metric_query_uses_approx_topk(query) {
-        if !state
-            .limits
-            .shard_aggregations
-            .iter()
-            .any(|name| name == "approx_topk")
-        {
-            return Err(HttpQueryError::ApproxTopKDisabled);
-        }
-        if matches!(kind, QueryKind::Range) {
-            return Err(HttpQueryError::ApproxTopKRangeQuery);
-        }
+        super::validate_approximate_topk(state, kind)?;
         match query
             .vector_aggregation
             .take()

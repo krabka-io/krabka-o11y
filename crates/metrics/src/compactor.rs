@@ -3115,6 +3115,25 @@ use compacted_metric_object_key::compacted_metric_object_key;
 pub use compaction_batch_result::CompactionBatchResult;
 use compaction_batch_span::compaction_batch_span;
 use compaction_buffer::CompactionBuffer;
+
+fn take_due_compaction_buffer(
+    buffer: &mut CompactionBuffer,
+    config: &CompactionLoopConfig,
+    now: std::time::Instant,
+) -> Option<Vec<CompactionWalRecord>> {
+    buffer.should_flush(config, now).then(|| buffer.take())
+}
+
+fn append_compaction_records_until_due<Clock: CompactionClock + ?Sized>(
+    buffer: &mut CompactionBuffer,
+    records: Vec<CompactionWalRecord>,
+    config: &CompactionLoopConfig,
+    clock: &Clock,
+) -> Option<Vec<CompactionWalRecord>> {
+    let now = clock.now();
+    buffer.extend(records, now);
+    take_due_compaction_buffer(buffer, config, now)
+}
 pub use compaction_clock::CompactionClock;
 pub use compaction_commit_error::CompactionCommitError;
 pub use compaction_consumer_commit::CompactionConsumerCommit;

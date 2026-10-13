@@ -115,6 +115,16 @@ mod tests {
         keys
     }
 
+    async fn save_and_load_snapshot(
+        index: &TraceIndex,
+        store: &std::sync::Arc<dyn object_store::ObjectStore>,
+    ) -> TraceIndex {
+        save_snapshot(index, store).await;
+        TraceIndex::load_latest_snapshot(store, "index/traces.json")
+            .await
+            .unwrap()
+    }
+
     fn memory_store() -> std::sync::Arc<dyn object_store::ObjectStore> {
         std::sync::Arc::new(object_store::memory::InMemory::new())
     }
@@ -632,20 +642,13 @@ mod tests {
                 &[crate::labels::LabelPair::new("service.name", "web")],
             ),
         );
-        save_snapshot(&second, &store).await;
-
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_and_load_snapshot(&second, &store).await;
         check!(block_keys(&loaded) == vec!["b1".to_string(), "b2".to_string()]);
         check!(loaded.tag_values("t", "service.name", 0, 1_000) == strings(&["api", "web"]));
 
         // Re-saving the same writer's view republishes the same set, rather
         // than duplicating its own blocks.
-        save_snapshot(&second, &store).await;
-        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        let loaded = save_and_load_snapshot(&second, &store).await;
         check!(block_keys(&loaded) == vec!["b1".to_string(), "b2".to_string()]);
     }
 

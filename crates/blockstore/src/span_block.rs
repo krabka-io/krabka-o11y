@@ -271,20 +271,28 @@ mod tests {
         row
     }
 
+    fn encode_promoted_attr(
+        key: &str,
+        value: AttrValue,
+        promoted: &PromotedSpanAttr,
+    ) -> RecordBatch {
+        let row = row_with_attrs(vec![SpanAttr {
+            key: key.into(),
+            is_array: false,
+            value,
+        }]);
+        encode_span_rows_with_promoted_attrs(&[row], std::slice::from_ref(promoted)).unwrap()
+    }
+
     #[test]
     fn promotes_double_attr_into_its_column() {
         // Guards the `Some(AttrValue::Double(values))` match arm in
         // PromotedAttrBuilder::append: deleting it falls through to
         // append_null, so the promoted column would be null instead of 1.5.
-        let promoted = [PromotedSpanAttr::double("latency")];
-        let row = row_with_attrs(vec![SpanAttr {
-            key: "latency".into(),
-            is_array: false,
-            value: AttrValue::Double(vec![1.5]),
-        }]);
-        let batch = encode_span_rows_with_promoted_attrs(&[row], &promoted).unwrap();
+        let promoted = PromotedSpanAttr::double("latency");
+        let batch = encode_promoted_attr("latency", AttrValue::Double(vec![1.5]), &promoted);
         let col = batch
-            .column_by_name(&promoted[0].column_name())
+            .column_by_name(&promoted.column_name())
             .unwrap()
             .as_any()
             .downcast_ref::<Float64Array>()
@@ -296,15 +304,10 @@ mod tests {
     #[test]
     fn promotes_bool_attr_into_its_column() {
         // Guards the `Some(AttrValue::Bool(values))` match arm.
-        let promoted = [PromotedSpanAttr::bool("ok")];
-        let row = row_with_attrs(vec![SpanAttr {
-            key: "ok".into(),
-            is_array: false,
-            value: AttrValue::Bool(vec![true]),
-        }]);
-        let batch = encode_span_rows_with_promoted_attrs(&[row], &promoted).unwrap();
+        let promoted = PromotedSpanAttr::bool("ok");
+        let batch = encode_promoted_attr("ok", AttrValue::Bool(vec![true]), &promoted);
         let col = batch
-            .column_by_name(&promoted[0].column_name())
+            .column_by_name(&promoted.column_name())
             .unwrap()
             .as_any()
             .downcast_ref::<BooleanArray>()

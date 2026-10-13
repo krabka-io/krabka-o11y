@@ -23,23 +23,16 @@ use crate::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::native_histogram_fixture;
 
     fn histogram(schema: i8, reset_hint: ResetHint) -> NativeHistogram {
-        NativeHistogram {
+        native_histogram_fixture(
             schema,
-            is_float: true,
+            true,
             reset_hint,
-            zero_threshold: 0.0,
-            zero_count: 0.0,
-            count: 0.0,
-            sum: 0.0,
-            positive_spans: Vec::new(),
-            positive_counts: Vec::new(),
-            negative_spans: Vec::new(),
-            negative_counts: Vec::new(),
-            custom_values: (schema == -53).then(Vec::new),
-            start_timestamp_ms: None,
-        }
+            (schema == -53).then(Vec::new),
+            None,
+        )
     }
 
     /// Two histograms are range-compatible only when *every* shape field

@@ -211,6 +211,12 @@ mod tests {
         }
     }
 
+    fn assert_accepted_push(response: Response, sink: &RecordingSink, span_name: &str) {
+        check!(response.status() == StatusCode::ACCEPTED);
+        assert2::assert!(sink.count() == 1);
+        assert2::assert!(sink.span_name(0) == span_name.to_string());
+    }
+
     fn test_state() -> DistributorTestState {
         test_state_with_limits(crate::limits::Limits::default())
     }
@@ -498,9 +504,7 @@ mod tests {
             )
             .await
             .unwrap();
-        check!(resp.status() == StatusCode::ACCEPTED);
-        assert2::assert!(sink.count() == 1);
-        assert2::assert!(sink.span_name(0) == "GET /".to_string());
+        assert_accepted_push(resp, &sink, "GET /");
     }
 
     #[tokio::test]
@@ -519,9 +523,7 @@ mod tests {
             .await
             .unwrap();
 
-        check!(resp.status() == StatusCode::ACCEPTED);
-        assert2::assert!(sink.count() == 1);
-        assert2::assert!(sink.span_name(0) == "GET /binary".to_string());
+        assert_accepted_push(resp, &sink, "GET /binary");
     }
 
     /// A datagram names no tenant, so the policy alone decides where its spans

@@ -1,8 +1,8 @@
 use super::{
     BTreeSet, InstantSample, LeftSampleMatch, Result, VectorMatching, VectorOperands,
     append_left_fill_results, append_matched_binary_result, copy_group_labels, fill_missing_right,
-    index_by_match_key, labels_without_metric_name, left_sample_matches,
-    one_to_one_binary_result_labels,
+    index_by_match_key, labels_without_metric_name, one_to_one_binary_result_labels,
+    visit_left_sample_matches,
 };
 
 pub(crate) fn eval_many_to_one_vector_binary(
@@ -18,43 +18,48 @@ pub(crate) fn eval_many_to_one_vector_binary(
 
     let mut out = Vec::new();
     let mut matched = BTreeSet::new();
-    for LeftSampleMatch {
-        left: left_sample,
-        key,
-        right,
-    } in left_sample_matches(left, &right_by_key, modifier)
-    {
-        let Some(right_sample) = right else {
-            out.extend(fill_missing_right(&left_sample, matching, |fill| {
-                let mut labels = if fill.preserves_name {
-                    left_sample.labels.clone()
-                } else {
-                    labels_without_metric_name(&left_sample.labels)
-                };
-                let filled_labels = one_to_one_binary_result_labels(&labels, modifier, false);
-                copy_group_labels(&mut labels, &filled_labels, group_labels);
-                labels
-            })?);
-            continue;
-        };
-        matched.insert(key);
-        append_matched_binary_result(
-            &mut out,
-            &left_sample,
-            right_sample,
-            op,
-            modifier,
-            |preserves_name| {
-                let mut labels = if preserves_name {
-                    left_sample.labels.clone()
-                } else {
-                    labels_without_metric_name(&left_sample.labels)
-                };
-                copy_group_labels(&mut labels, &right_sample.labels, group_labels);
-                labels
-            },
-        )?;
-    }
+    visit_left_sample_matches(
+        left,
+        &right_by_key,
+        modifier,
+        |LeftSampleMatch {
+             left: left_sample,
+             key,
+             right,
+         }| {
+            let Some(right_sample) = right else {
+                out.extend(fill_missing_right(&left_sample, matching, |fill| {
+                    let mut labels = if fill.preserves_name {
+                        left_sample.labels.clone()
+                    } else {
+                        labels_without_metric_name(&left_sample.labels)
+                    };
+                    let filled_labels = one_to_one_binary_result_labels(&labels, modifier, false);
+                    copy_group_labels(&mut labels, &filled_labels, group_labels);
+                    labels
+                })?);
+                return Ok(());
+            };
+            matched.insert(key);
+            append_matched_binary_result(
+                &mut out,
+                &left_sample,
+                right_sample,
+                op,
+                modifier,
+                |preserves_name| {
+                    let mut labels = if preserves_name {
+                        left_sample.labels.clone()
+                    } else {
+                        labels_without_metric_name(&left_sample.labels)
+                    };
+                    copy_group_labels(&mut labels, &right_sample.labels, group_labels);
+                    labels
+                },
+            )?;
+            Ok(())
+        },
+    )?;
     append_left_fill_results(
         &mut out,
         right_by_key,

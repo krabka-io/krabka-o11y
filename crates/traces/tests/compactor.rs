@@ -290,6 +290,18 @@ fn rec_with_method(span: FixtureSpan, method: &str) -> SpanRecord {
     record
 }
 
+fn get_request_record() -> SpanRecord {
+    rec_with_method(
+        FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 1,
+            parent: None,
+            start_ns: 100,
+        },
+        "GET",
+    )
+}
+
 fn post_child_record() -> SpanRecord {
     rec_with_method(
         FixtureSpan {
@@ -377,15 +389,7 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method(
-            FixtureSpan {
-                trace_id: [1; 16],
-                span_id: 1,
-                parent: None,
-                start_ns: 100,
-            },
-            "GET",
-        )],
+        &[get_request_record()],
         OffsetRange::new(10, 10),
         &promoted,
     )
@@ -426,15 +430,7 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
         &mut index,
         "tenant-a",
         7,
-        &[rec_with_method(
-            FixtureSpan {
-                trace_id: [1; 16],
-                span_id: 1,
-                parent: None,
-                start_ns: 100,
-            },
-            "GET",
-        )],
+        &[get_request_record()],
         OffsetRange::new(10, 10),
     )
     .await

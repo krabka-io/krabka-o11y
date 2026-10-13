@@ -13,7 +13,8 @@ use tokio::sync::Mutex;
 mod client_harness;
 
 use client_harness::{
-    AsyncRunner as _, GenericImage, ImageExt, WaitFor, expect_seen, spawn_capture_server,
+    AsyncRunner as _, GenericImage, ImageExt, WaitFor, capture_server, expect_seen,
+    spawn_capture_server,
 };
 use testcontainers::core::{Host, IntoContainerPort};
 
@@ -89,11 +90,12 @@ pyroscope.scrape "self" {
 #[tokio::test]
 #[ignore = "requires Docker and the digest-pinned Alloy image"]
 async fn alloy_sends_every_public_protocol_without_a_krabka_adapter() -> TestResult {
-    let seen = Arc::new(Mutex::new(BTreeSet::new()));
-    let app = Router::new()
-        .fallback(capture)
-        .with_state(Arc::clone(&seen));
-    let oracle_port = spawn_capture_server(app).await?;
+    let (seen, oracle_port) = capture_server!(
+        Arc::new(Mutex::new(BTreeSet::new())),
+        Router::new(),
+        capture,
+        spawn_capture_server
+    );
     let oracle_url = format!("http://host.docker.internal:{oracle_port}");
 
     let tag = std::env::var("KRABKA_ALLOY_IMAGE_TAG")

@@ -14,6 +14,13 @@ use crate::{
     test_support::{labels, tenant_id},
 };
 
+fn http_requests_counter_labels() -> Labels {
+    labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ])
+}
+
 fn push_float_counter_series(
     store: &mut InMemoryMetricStore,
     labels: Labels,

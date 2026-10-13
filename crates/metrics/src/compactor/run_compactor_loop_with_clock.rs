@@ -46,22 +46,25 @@ where
             compaction_wal_records_from_consumer_records(&config.wal_topic, &records)?;
         let compacted_records = wal_records.len();
 
-        let now = context.clock.now();
-        buffer.extend(wal_records, now);
-
-        let mut iteration_offsets = Vec::new();
-        if buffer.should_flush(&config, now) {
-            let buffered = buffer.take();
-            iteration_offsets = flush_buffer(
-                block_writer,
-                index_sink,
-                committer,
-                &buffered,
-                &mut summary,
-                context.metrics,
-            )
-            .await?;
-        }
+        let iteration_offsets = match super::append_compaction_records_until_due(
+            &mut buffer,
+            wal_records,
+            &config,
+            context.clock,
+        ) {
+            Some(buffered) => {
+                flush_buffer(
+                    block_writer,
+                    index_sink,
+                    committer,
+                    &buffered,
+                    &mut summary,
+                    context.metrics,
+                )
+                .await?
+            }
+            None => Vec::new(),
+        };
 
         let result = poll_result(
             &mut summary,

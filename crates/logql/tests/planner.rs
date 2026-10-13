@@ -21,6 +21,19 @@ fn add_test_block(
     ));
 }
 
+fn block_index_for_series(fingerprints: impl IntoIterator<Item = u64>) -> BlockIndex {
+    let mut blocks = BlockIndex::default();
+    add_test_block(
+        &mut blocks,
+        0,
+        1,
+        10,
+        TimeRange::new(10, 20).unwrap(),
+        fingerprints,
+    );
+    blocks
+}
+
 #[test]
 fn stream_planner_prunes_series_and_blocks_before_line_filters() {
     let mut labels_index = LabelIndex::default();
@@ -101,15 +114,7 @@ fn stream_planner_keeps_regex_and_negative_matchers_in_index_filter() {
         ]),
     );
 
-    let mut blocks = BlockIndex::default();
-    add_test_block(
-        &mut blocks,
-        0,
-        1,
-        10,
-        TimeRange::new(10, 20).unwrap(),
-        [api_prod, web_prod, admin_prod],
-    );
+    let blocks = block_index_for_series([api_prod, web_prod, admin_prod]);
 
     let query = parse_query(r#"{app=~"api|web|admin", app!~"admin"} !~ "debug""#).unwrap();
     let plan = plan_stream_query(
@@ -142,15 +147,7 @@ fn stream_planner_treats_empty_compatible_regex_matcher_as_matching_absent_label
         ]),
     );
 
-    let mut blocks = BlockIndex::default();
-    add_test_block(
-        &mut blocks,
-        0,
-        1,
-        10,
-        TimeRange::new(10, 20).unwrap(),
-        [api_without_env, api_prod, worker_prod],
-    );
+    let blocks = block_index_for_series([api_without_env, api_prod, worker_prod]);
 
     let query = parse_query(r#"{app="api", env=~".*"}"#).unwrap();
     let plan = plan_stream_query(

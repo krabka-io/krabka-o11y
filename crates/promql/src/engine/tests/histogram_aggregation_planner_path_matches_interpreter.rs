@@ -1,5 +1,13 @@
 use super::*;
 
+fn histogram_group_labels(instance: &str) -> Labels {
+    labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "m"),
+        crate::test_support::TestLabelPair::new("g", "hist"),
+        crate::test_support::TestLabelPair::new("instance", instance),
+    ])
+}
+
 #[derive(bon::Builder)]
 struct FloatAggregationSample {
     instance: &'static str,
@@ -38,21 +46,13 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
     // them into one group.
     store.push_histogram(
         "t",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "m"),
-            crate::test_support::TestLabelPair::new("g", "hist"),
-            crate::test_support::TestLabelPair::new("instance", "0"),
-        ]),
+        histogram_group_labels("0"),
         300_000,
         two_positive_bucket_histogram(4.0, 6.0),
     );
     store.push_histogram(
         "t",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "m"),
-            crate::test_support::TestLabelPair::new("g", "hist"),
-            crate::test_support::TestLabelPair::new("instance", "1"),
-        ]),
+        histogram_group_labels("1"),
         300_000,
         two_positive_bucket_histogram(8.0, 20.0),
     );

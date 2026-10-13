@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use krabka_blockstore::{Labels, MatchOp};
 use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
+use krabka_query_frontend::QueryCache;
 
 use super::*;
 use crate::{
@@ -91,4 +92,22 @@ fn up_query_and_result() -> UpQueryAndResult {
             crate::test_support::TestLabelPair::new("__name__", "up"),
         ])))
         .build()
+}
+
+async fn assert_ttl_hit_then_miss<
+    C: QueryCache<AnnotatedQueryResult, Error = crate::PromqlError>,
+>(
+    cache: &C,
+    clock: &ManualClock,
+    query: &FrontendRangeQuery,
+    result: &AnnotatedQueryResult,
+    within_ttl_ms: i64,
+    past_ttl_ms: i64,
+) {
+    let key = super::cache::range_cache_key("tenant-a", query);
+    QueryCache::insert(cache, &key, result).await.unwrap();
+    clock.advance(within_ttl_ms);
+    assert2::assert!(QueryCache::get(cache, &key).await.unwrap() == Some(result.clone()));
+    clock.advance(past_ttl_ms);
+    assert2::assert!(QueryCache::get(cache, &key).await.unwrap() == None);
 }

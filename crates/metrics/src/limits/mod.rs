@@ -15,7 +15,7 @@ pub use overrides::{OverridesError, OverridesProvider};
 /// cleanly and mean *unlimited*, but zero is the documented way to turn a cap
 /// off. A rejection at parse time keeps one sentinel.
 pub mod non_negative_time {
-    use serde::{Deserializer, Serializer, de::Error as _};
+    use serde::{Deserializer, Serializer};
 
     use crate::limits::{Time, serde_units};
 
@@ -34,13 +34,7 @@ pub mod non_negative_time {
     ///
     /// If the value is not a human time string, or names a negative extent.
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Time, D::Error> {
-        let value = serde_units::human::time::deserialize(deserializer)?;
-        if value < Time::default() {
-            return Err(D::Error::custom(
-                "this limit cannot be negative; use 0 to disable the cap",
-            ));
-        }
-        Ok(value)
+        krabka_observability::deserialize_non_negative_time(deserializer)
     }
 }
 

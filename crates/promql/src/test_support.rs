@@ -10,6 +10,30 @@ use crate::{
     conformance::testkit::metric_to_labels, error::Result,
 };
 
+pub(crate) fn native_histogram_fixture(
+    schema: i8,
+    is_float: bool,
+    reset_hint: ResetHint,
+    custom_values: Option<Vec<f64>>,
+    start_timestamp_ms: Option<i64>,
+) -> NativeHistogram {
+    NativeHistogram {
+        schema,
+        is_float,
+        reset_hint,
+        zero_threshold: 0.0,
+        zero_count: 0.0,
+        count: 0.0,
+        sum: 0.0,
+        positive_spans: Vec::new(),
+        positive_counts: Vec::new(),
+        negative_spans: Vec::new(),
+        negative_counts: Vec::new(),
+        custom_values,
+        start_timestamp_ms,
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod http {
     use axum::{body::Body, http::Request};
@@ -60,7 +84,7 @@ mod eval_instant_err;
 mod eval_instant_nh;
 mod instant_sample;
 mod instant_sample_ext;
-mod labels;
+pub(crate) mod labels;
 mod metric_store_with_empty_lookups;
 mod nh;
 mod query_result;

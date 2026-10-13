@@ -8,7 +8,8 @@ use tokio::sync::Mutex;
 mod client_harness;
 
 use client_harness::{
-    AsyncRunner as _, GenericImage, ImageExt, WaitFor, expect_seen, spawn_capture_server,
+    AsyncRunner as _, GenericImage, ImageExt, WaitFor, capture_server, expect_seen,
+    spawn_capture_server,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -29,11 +30,12 @@ scrape_configs:
 #[tokio::test]
 #[ignore = "requires Docker and the digest-pinned Prometheus image"]
 async fn official_prometheus_sends_remote_write_v1_and_v2() -> TestResult {
-    let seen = Arc::new(Mutex::new(BTreeSet::new()));
-    let app = Router::new()
-        .fallback(capture)
-        .with_state(Arc::clone(&seen));
-    let port = spawn_capture_server(app).await?;
+    let (seen, port) = capture_server!(
+        Arc::new(Mutex::new(BTreeSet::new())),
+        Router::new(),
+        capture,
+        spawn_capture_server
+    );
 
     let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG")
         .expect("KRABKA_PROMETHEUS_IMAGE_TAG is set by `bazel test --config=docker`");

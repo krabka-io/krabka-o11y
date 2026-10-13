@@ -1,5 +1,5 @@
 use super::{
-    DurationExprContext, DurationExprParser, QuotedCopy, Result, consume_ident, is_ident_char,
+    DurationExprContext, DurationExprParser, QueryScan, Result, consume_ident, is_ident_char,
     is_zero, matching_delimiter, ms_to_seconds, normalize_range_duration_content, offset_operand,
     seconds_to_duration_literal, skip_ws, starts_offset_keyword,
 };
@@ -8,10 +8,12 @@ pub(crate) fn normalize_duration_expressions(
     query: &str,
     context: DurationExprContext,
 ) -> Result<String> {
-    let chars = query.chars().collect::<Vec<_>>();
-    let mut out = String::with_capacity(query.len());
-    let mut index = 0;
-    let mut quoted = QuotedCopy::default();
+    let QueryScan {
+        chars,
+        output: mut out,
+        index: mut index,
+        quoted: mut quoted,
+    } = QueryScan::new(query);
 
     while index < chars.len() {
         if quoted.copy(&chars, &mut index, &mut out) {

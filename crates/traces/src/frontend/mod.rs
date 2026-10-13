@@ -94,14 +94,14 @@ mod orch_tests {
     }
 
     fn three_querier_frontend(config: FrontendConfig) -> QueryFrontend<MockQuerier, MockCatalog> {
-        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+        let catalog = MockCatalog::one_block_with_row_groups(
             "b1",
             TimeRange {
                 start_ns: 0,
                 end_ns: 100,
             },
             &[500],
-        )]);
+        );
         QueryFrontend::new(
             Arc::new(MockQuerier::new()),
             Arc::new(catalog),
@@ -207,14 +207,14 @@ mod orch_tests {
 
     #[tokio::test]
     async fn search_honors_limit() {
-        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+        let catalog = MockCatalog::one_block_with_row_groups(
             "b1",
             TimeRange {
                 start_ns: 0,
                 end_ns: 100,
             },
             &[500],
-        )]);
+        );
         let backend = MockQuerier::new();
         backend.stub_search(SearchPartial {
             traces: vec![

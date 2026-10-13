@@ -81,11 +81,15 @@ fn general_float(value: f64) -> String {
         return crate::http_api::format_sample_value(value);
     }
     let text = format!("{value:e}");
+    let (mantissa, exponent) = scientific_mantissa_and_exponent(&text);
+    format!("{mantissa}e{exponent:+03}")
+}
+
+fn scientific_mantissa_and_exponent(text: &str) -> (&str, i32) {
     let exponent_at = text.find('e').expect("scientific exponent");
     let mantissa = &text[..exponent_at];
-    let exponent = &text[exponent_at + 1..];
-    let exponent: i32 = exponent.parse().expect("integer exponent");
-    format!("{mantissa}e{exponent:+03}")
+    let exponent = text[exponent_at + 1..].parse().expect("integer exponent");
+    (mantissa, exponent)
 }
 
 fn two_significant_digits(value: f64) -> String {
@@ -93,10 +97,7 @@ fn two_significant_digits(value: f64) -> String {
         return general_float(value);
     }
     let text = format!("{value:.1e}");
-    let exponent_at = text.find('e').expect("scientific exponent");
-    let mantissa = &text[..exponent_at];
-    let exponent = &text[exponent_at + 1..];
-    let exponent: i32 = exponent.parse().expect("integer exponent");
+    let (mantissa, exponent) = scientific_mantissa_and_exponent(&text);
     if !(-4..2).contains(&exponent) {
         return format!(
             "{}e{exponent:+03}",

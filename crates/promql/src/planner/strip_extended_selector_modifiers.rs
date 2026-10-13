@@ -1,4 +1,4 @@
-use super::{ExtendedSelectorModifier, PromqlError, QuotedCopy, Result, extended_modifier_at};
+use super::{ExtendedSelectorModifier, PromqlError, QueryScan, Result, extended_modifier_at};
 
 pub(crate) struct StrippedExtendedSelectorModifiers {
     pub query: String,
@@ -8,10 +8,12 @@ pub(crate) struct StrippedExtendedSelectorModifiers {
 pub(crate) fn strip_extended_selector_modifiers(
     query: &str,
 ) -> Result<StrippedExtendedSelectorModifiers> {
-    let chars = query.chars().collect::<Vec<_>>();
-    let mut out = String::with_capacity(query.len());
-    let mut index = 0;
-    let mut quoted = QuotedCopy::default();
+    let QueryScan {
+        chars,
+        output: mut out,
+        index: mut index,
+        quoted: mut quoted,
+    } = QueryScan::new(query);
     let mut modifier = None;
 
     while index < chars.len() {

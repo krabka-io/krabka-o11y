@@ -358,7 +358,7 @@ impl ProfileStore for InMemoryProfileStore {
         label_names: &[String],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<Vec<crate::ProfileLabel>>, ProfileError> {
+    ) -> crate::ProfileSeriesResult {
         let compiled = compile_matchers(matchers)?;
         let mut out = BTreeSet::new();
         for row in self.rows_in_range(tenant, start_ms, end_ms) {

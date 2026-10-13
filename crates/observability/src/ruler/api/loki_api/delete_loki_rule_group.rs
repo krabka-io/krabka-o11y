@@ -1,7 +1,7 @@
 use super::{
-    AuditOutcome, HttpQueryError, LokiRuleGroupPath, OPERATION_RULE_GROUP_DELETE, Path,
-    QuerierState, RESOURCE_RULE_GROUP, RESOURCE_TENANT, RequestSecurity, Response, RulerTenant,
-    State, StatusCode, json, json_response, resource, text_response,
+    HttpQueryError, LokiRuleGroupPath, OPERATION_RULE_GROUP_DELETE, Path, QuerierState,
+    RESOURCE_RULE_GROUP, RESOURCE_TENANT, RequestSecurity, Response, RulerTenant, State,
+    StatusCode, json, json_response, resource, text_response,
 };
 
 /// `DELETE /loki/api/v1/rules/{namespace}/{group_name}`: delete one rule group.
@@ -22,54 +22,31 @@ pub(crate) async fn delete_loki_rule_group(
             format!("{}/{}", path.namespace, path.group_name),
         ),
     ];
-    let snapshot = {
-        let mut rules = state
-            .rules
-            .tenants
-            .lock()
-            .expect("Loki rule store lock poisoned");
-        let Some(namespaces) = rules.get_mut(tenant.as_str()) else {
-            return Ok(text_response(
-                StatusCode::NOT_FOUND,
-                "group does not exist\n",
-            ));
-        };
-        let Some(groups) = namespaces.get_mut(&path.namespace) else {
-            return Ok(text_response(
-                StatusCode::NOT_FOUND,
-                "group does not exist\n",
-            ));
-        };
-        if groups.remove(&path.group_name).is_none() {
-            return Ok(text_response(
-                StatusCode::NOT_FOUND,
-                "group does not exist\n",
-            ));
-        }
-        if groups.is_empty() {
-            namespaces.remove(&path.namespace);
-        }
-        if namespaces.is_empty() {
-            rules.remove(tenant.as_str());
-        }
-        rules.clone()
+    let Some(snapshot) =
+        super::snapshot_after_rule_removal(&state, tenant.as_str(), |namespaces| {
+            let Some(groups) = namespaces.get_mut(&path.namespace) else {
+                return false;
+            };
+            if groups.remove(&path.group_name).is_none() {
+                return false;
+            }
+            if groups.is_empty() {
+                namespaces.remove(&path.namespace);
+            }
+            true
+        })
+    else {
+        return Ok(text_response(
+            StatusCode::NOT_FOUND,
+            "group does not exist\n",
+        ));
     };
-    if let Err(error) = state.rules.persist_snapshot(&snapshot) {
-        security.admin_operation(
-            OPERATION_RULE_GROUP_DELETE,
-            resources,
-            AuditOutcome::Failure,
-        );
-        return Err(HttpQueryError::from(error));
-    }
-    security.admin_operation(
+    super::deleted_rule_response(
+        &state,
+        security,
         OPERATION_RULE_GROUP_DELETE,
         resources,
-        AuditOutcome::Success,
-    );
-    state.alert_states.clear_tenant(tenant.as_str());
-    Ok(json_response(
-        StatusCode::ACCEPTED,
-        &json!({ "status": "success" }),
-    ))
+        tenant.as_str(),
+        &snapshot,
+    )
 }

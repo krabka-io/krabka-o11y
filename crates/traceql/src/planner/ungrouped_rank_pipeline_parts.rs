@@ -1,13 +1,10 @@
-use super::{Pipeline, RankFilter, UngroupedRankParts};
+use super::{Pipeline, RankFilter, UngroupedRankParts, rank_pipeline};
 
 pub(crate) fn ungrouped_rank_pipeline_parts(
     pipeline: &[Pipeline],
 ) -> Option<UngroupedRankParts<'_>> {
     match pipeline {
-        [
-            Pipeline::Aggregate(agg),
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
-        ] => Some(UngroupedRankParts {
+        [Pipeline::Aggregate(agg), rank_pipeline!(rank)] => Some(UngroupedRankParts {
             aggregate: agg,
             rank,
             filter: None,
@@ -15,11 +12,11 @@ pub(crate) fn ungrouped_rank_pipeline_parts(
         [
             Pipeline::Aggregate(agg),
             Pipeline::Filter { op, value },
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
         ]
         | [
             Pipeline::Aggregate(agg),
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
             Pipeline::Filter { op, value },
         ] => Some(UngroupedRankParts {
             aggregate: agg,

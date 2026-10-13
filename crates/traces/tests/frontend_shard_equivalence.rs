@@ -125,14 +125,14 @@ async fn sharded_search_equals_unsharded() {
 
 #[tokio::test]
 async fn limit_and_spss_applied_after_merge() {
-    let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+    let catalog = MockCatalog::one_block_with_row_groups(
         "b1",
         TimeRange {
             start_ns: 0,
             end_ns: 100,
         },
         &[500],
-    )]);
+    );
     let backend = MockQuerier::new();
     backend.stub_search(partial(
         vec![

@@ -10,7 +10,7 @@ use crate::{
     metric_scan_range,
     querier::{
         aggregate::sample_windows::absent_metric_labels,
-        metric_eval::scalar_samples::execute_http_metric_query,
+        metric_eval::scalar_samples::{execute_http_metric_query, validate_approximate_topk},
     },
 };
 
@@ -34,7 +34,12 @@ pub(crate) async fn execute_federated_metric_query(
     if absent_labels.is_some() {
         query.aggregation = RangeAggregation::CountOverTime;
     }
-    validate_approximate_aggregation(state, kind, aggregation.as_ref())?;
+    if aggregation
+        .as_ref()
+        .is_some_and(|aggregation| matches!(aggregation.op, VectorAggregationOp::ApproxTopK(_)))
+    {
+        validate_approximate_topk(state, kind)?;
+    }
     let tenants = state
         .federated_metric_tenants
         .as_ref()
@@ -117,29 +122,6 @@ pub(crate) async fn execute_federated_metric_query(
         }
     }
     Ok(response)
-}
-
-fn validate_approximate_aggregation(
-    state: &QuerierState,
-    kind: QueryKind,
-    aggregation: Option<&crate::VectorAggregation>,
-) -> Result<(), HttpQueryError> {
-    if aggregation
-        .is_some_and(|aggregation| matches!(aggregation.op, VectorAggregationOp::ApproxTopK(_)))
-    {
-        if !state
-            .limits
-            .shard_aggregations
-            .iter()
-            .any(|name| name == "approx_topk")
-        {
-            return Err(HttpQueryError::ApproxTopKDisabled);
-        }
-        if matches!(kind, QueryKind::Range) {
-            return Err(HttpQueryError::ApproxTopKRangeQuery);
-        }
-    }
-    Ok(())
 }
 
 fn add_federated_tenant_labels(value: &mut Value, tenant: &str) {

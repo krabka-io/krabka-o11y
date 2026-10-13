@@ -73,6 +73,18 @@ use fill_missing_right::fill_missing_right;
 use index_by_match_key::index_by_match_key;
 pub(super) use instant_value::InstantValue;
 use left_sample_matches::{LeftSampleMatch, left_sample_matches};
+
+fn visit_left_sample_matches<'a>(
+    left: Vec<InstantSample>,
+    right_by_key: &'a BTreeMap<String, InstantSample>,
+    modifier: Option<&'a BinModifier>,
+    mut visit: impl FnMut(LeftSampleMatch<'a>) -> Result<()>,
+) -> Result<()> {
+    for sample in left_sample_matches(left, right_by_key, modifier) {
+        visit(sample)?;
+    }
+    Ok(())
+}
 use missing_side::MissingSide;
 use one_to_one_binary_result_labels::one_to_one_binary_result_labels;
 use scalar_side::ScalarSide;

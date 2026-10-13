@@ -114,15 +114,8 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Err(PromqlError::Plan("end must be >= start".to_string()));
         }
 
-        let expr = parse_promql_with_duration_context(
-            query,
-            DurationExprContext::range(start_ms, end_ms, step),
-        )?;
-        emit_range_sort_warnings(&expr);
-        let mut expr = &expr;
-        while let Expr::Paren(paren) = expr {
-            expr = &paren.expr;
-        }
+        let parsed_expr = parse_range_expression(query, start_ms, end_ms, step)?;
+        let expr = unparenthesized_expr(&parsed_expr);
 
         // A plannable instant expression (a bare selector, a scalar expression,
         // an aggregation/binary/call/unary over those, …) routes through the
@@ -368,15 +361,8 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
         step: Time,
     ) -> Result<QueryResult> {
-        let expr = parse_promql_with_duration_context(
-            query,
-            DurationExprContext::range(start_ms, end_ms, step),
-        )?;
-        emit_range_sort_warnings(&expr);
-        let mut expr = &expr;
-        while let Expr::Paren(paren) = expr {
-            expr = &paren.expr;
-        }
+        let parsed_expr = parse_range_expression(query, start_ms, end_ms, step)?;
+        let expr = unparenthesized_expr(&parsed_expr);
         let series = self
             .eval_range_via_planner_scoped(tenant, expr, start_ms, end_ms, step)
             .await?
@@ -386,4 +372,20 @@ impl<S: MetricStore> PromqlEngine<S> {
         validate_unique_instant_labelsets(&result)?;
         Ok(result)
     }
+}
+
+fn parse_range_expression(query: &str, start_ms: i64, end_ms: i64, step: Time) -> Result<Expr> {
+    let expr = parse_promql_with_duration_context(
+        query,
+        DurationExprContext::range(start_ms, end_ms, step),
+    )?;
+    emit_range_sort_warnings(&expr);
+    Ok(expr)
+}
+
+fn unparenthesized_expr(mut expr: &Expr) -> &Expr {
+    while let Expr::Paren(paren) = expr {
+        expr = &paren.expr;
+    }
+    expr
 }

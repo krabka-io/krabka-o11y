@@ -13,18 +13,6 @@ pub struct TagNameGroups {
 }
 
 impl TagNameGroups {
-    /// Records the instrumentation scope names present on a span.
-    pub fn add_instrumentation(&mut self, name: &str, version: &str) {
-        if !name.is_empty() {
-            self.instrumentation
-                .insert("instrumentation:name".to_string());
-        }
-        if !version.is_empty() {
-            self.instrumentation
-                .insert("instrumentation:version".to_string());
-        }
-    }
-
     /// Returns nonempty groups allowed by `scope`, with intrinsic names
     /// included when the store has matching spans.
     pub fn into_scoped_tags(

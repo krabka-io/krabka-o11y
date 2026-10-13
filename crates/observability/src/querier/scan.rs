@@ -1,12 +1,29 @@
 use std::path::Path;
 
-use datafusion::prelude::SessionContext;
-use krabka_blockstore::BlockDescriptor;
+use datafusion::{arrow::record_batch::RecordBatch, prelude::SessionContext};
 
 use crate::{
-    LabelIndex, MetricQuery, QueryError, QueryHotTail, StreamPlan, TimeRange, checked_eval_times,
-    register_log_blocks,
+    Arc, BlockDescriptor, LabelIndex, MetricQuery, ObjectPath, ObjectStore, QueryError,
+    QueryHotTail, StreamPlan, TimeRange, checked_eval_times, register_log_blocks,
+    register_log_blocks_from_object_store,
 };
+
+pub(crate) async fn collect_object_store_log_batches(
+    store: Arc<dyn ObjectStore>,
+    prefix: &ObjectPath,
+    block: &BlockDescriptor,
+    sql: &str,
+) -> Result<Vec<RecordBatch>, QueryError> {
+    let ctx = SessionContext::new();
+    register_log_blocks_from_object_store(
+        &ctx,
+        "logs",
+        store,
+        prefix,
+        std::slice::from_ref(block),
+    )?;
+    Ok(ctx.sql(sql).await?.collect().await?)
+}
 
 pub(crate) fn registered_local_log_session(
     root: impl AsRef<Path>,

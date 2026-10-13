@@ -610,4 +610,14 @@ pub use relabel_action::RelabelAction;
 pub use relabel_config::RelabelConfig;
 use remove_label::remove_label;
 use replace_label::replace_label;
+
+fn labels_without_target(labels: &Labels, target: &str) -> Labels {
+    labels
+        .iter()
+        .filter(|pair| pair.name != target)
+        .fold(Labels::new(), |mut rebuilt, pair| {
+            rebuilt.insert(pair.name, pair.value);
+            rebuilt
+        })
+}
 pub use require_service_name::require_service_name;

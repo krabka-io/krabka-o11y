@@ -77,13 +77,15 @@ impl CompactorRun<'_> {
 
         loop {
             let batch_descriptors = materialize_deletes_then_compact_next_kafka_wal_batch(
-                store,
-                &prefix,
-                consumer.as_mut(),
-                config.compactor_wal_poll_timeout,
-                &delete_requests,
-                &mut tenant_indexes,
-                &compaction_metrics,
+                super::super::runtime::NextKafkaBatch {
+                    store,
+                    prefix: &prefix,
+                    consumer: consumer.as_mut(),
+                    poll_timeout: config.compactor_wal_poll_timeout,
+                    delete_requests: &delete_requests,
+                    tenant_indexes: &mut tenant_indexes,
+                    metrics: &compaction_metrics,
+                },
             )
             .await?;
             if batches == CompactorBatches::UntilIdle

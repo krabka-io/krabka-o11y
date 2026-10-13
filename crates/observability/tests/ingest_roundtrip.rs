@@ -11,6 +11,8 @@
 //! This is that check, and it is an ordinary `bazel test` target because the
 //! broker runs in this process rather than in a container.
 
+#[path = "support/loki_push_body.rs"]
+mod loki_push_body;
 #[path = "support/wal_broker.rs"]
 mod wal_broker;
 
@@ -93,7 +95,7 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
                 .uri("/loki/api/v1/push")
                 .header("content-type", "application/json")
                 .header("X-Scope-OrgID", tenant)
-                .body(Body::from(push_body().to_string()))
+                .body(Body::from(loki_push_body::push_body().to_string()))
                 .expect("push request"),
         )
     };
@@ -311,18 +313,6 @@ async fn check_compactor_instruments_moved(metrics: &ServiceMetrics, wal_topic: 
 
 /// The push body: two entries in one stream, one of them carrying structured
 /// metadata, so the WAL assertion covers both shapes of record.
-fn push_body() -> Value {
-    json!({
-        "streams": [{
-            "stream": {"app": "api", "env": "prod"},
-            "values": [
-                ["10", "api error", {"trace_id": "abc"}],
-                ["20", "api recovered"],
-            ],
-        }],
-    })
-}
-
 /// What the broker must hand back for that body, whole records rather than a
 /// chain of field assertions.
 ///

@@ -1,7 +1,7 @@
 use super::{
-    AuditOutcome, HttpQueryError, OPERATION_RULE_NAMESPACE_DELETE, Path, QuerierState,
-    RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT, RequestSecurity, Response, RulerTenant, State,
-    StatusCode, json, json_response, resource, text_response,
+    HttpQueryError, OPERATION_RULE_NAMESPACE_DELETE, Path, QuerierState, RESOURCE_RULE_NAMESPACE,
+    RESOURCE_TENANT, RequestSecurity, Response, RulerTenant, State, StatusCode, json,
+    json_response, resource, text_response,
 };
 
 /// `DELETE /loki/api/v1/rules/{namespace}`: delete every rule group in a
@@ -20,45 +20,22 @@ pub(crate) async fn delete_loki_rule_namespace(
         resource(RESOURCE_TENANT, tenant.as_str()),
         resource(RESOURCE_RULE_NAMESPACE, namespace.as_str()),
     ];
-    let snapshot = {
-        let mut rules = state
-            .rules
-            .tenants
-            .lock()
-            .expect("Loki rule store lock poisoned");
-        let Some(namespaces) = rules.get_mut(tenant.as_str()) else {
-            return Ok(text_response(
-                StatusCode::NOT_FOUND,
-                "no rule groups found\n",
-            ));
-        };
-        if namespaces.remove(&namespace).is_none() {
-            return Ok(text_response(
-                StatusCode::NOT_FOUND,
-                "no rule groups found\n",
-            ));
-        }
-        if namespaces.is_empty() {
-            rules.remove(tenant.as_str());
-        }
-        rules.clone()
+    let Some(snapshot) =
+        super::snapshot_after_rule_removal(&state, tenant.as_str(), |namespaces| {
+            namespaces.remove(&namespace).is_some()
+        })
+    else {
+        return Ok(text_response(
+            StatusCode::NOT_FOUND,
+            "no rule groups found\n",
+        ));
     };
-    if let Err(error) = state.rules.persist_snapshot(&snapshot) {
-        security.admin_operation(
-            OPERATION_RULE_NAMESPACE_DELETE,
-            resources,
-            AuditOutcome::Failure,
-        );
-        return Err(HttpQueryError::from(error));
-    }
-    security.admin_operation(
+    super::deleted_rule_response(
+        &state,
+        security,
         OPERATION_RULE_NAMESPACE_DELETE,
         resources,
-        AuditOutcome::Success,
-    );
-    state.alert_states.clear_tenant(tenant.as_str());
-    Ok(json_response(
-        StatusCode::ACCEPTED,
-        &json!({ "status": "success" }),
-    ))
+        tenant.as_str(),
+        &snapshot,
+    )
 }

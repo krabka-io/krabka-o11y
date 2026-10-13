@@ -19,6 +19,22 @@ use crate::{
     store::{MatchCmp, MatchScope, MatchValue, ScanOptions, SpanMatcher, SpanStore},
 };
 
+macro_rules! rank_pipeline {
+    ($rank:ident) => {
+        $rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_))
+    };
+}
+
+pub(crate) use rank_pipeline;
+
+macro_rules! numeric_aggregate {
+    ($aggregate:ident) => {
+        $aggregate @ (Aggregate::Sum(_) | Aggregate::Avg(_) | Aggregate::Min(_) | Aggregate::Max(_))
+    };
+}
+
+pub(crate) use numeric_aggregate;
+
 #[cfg(test)]
 mod tests {
     use arrow::{array::Array, record_batch::RecordBatch};

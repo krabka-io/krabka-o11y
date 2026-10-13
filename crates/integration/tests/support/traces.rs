@@ -2,8 +2,7 @@
 //! retention pass, and `TraceQL` search through the querier's span store.
 
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -40,25 +39,25 @@ struct CompactionIndexUpdate {
 }
 
 pub struct TracesSignal {
-    stores: Stores,
-    seed: u64,
-    enforcer: IngestEnforcer,
-    limits: Mutex<HashMap<String, Limits>>,
+    core: super::SignalCore<TraceqlEngine<KrabkaSpanStore>, IngestEnforcer, Limits>,
     /// Each write builds its own index, as one block builder per partition
     /// does, and publishes it by merging into the latest snapshot.
-    reader: AsyncMutex<Option<super::CachedEngine<TraceqlEngine<KrabkaSpanStore>>>>,
     /// Serializes compaction and retention, as the compactor's one loop does.
     compactor: AsyncMutex<()>,
+}
+
+impl std::ops::Deref for TracesSignal {
+    type Target = super::SignalCore<TraceqlEngine<KrabkaSpanStore>, IngestEnforcer, Limits>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
 }
 
 impl TracesSignal {
     pub fn open(stores: Stores, seed: u64) -> Self {
         Self {
-            stores,
-            seed,
-            enforcer: IngestEnforcer::new(),
-            limits: Mutex::new(HashMap::new()),
-            reader: AsyncMutex::new(None),
+            core: super::SignalCore::new(stores, seed, IngestEnforcer::new()),
             compactor: AsyncMutex::new(()),
         }
     }

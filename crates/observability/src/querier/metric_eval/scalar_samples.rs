@@ -43,3 +43,21 @@ pub(crate) use validate_loki_volume_query_range_limit::validate_loki_volume_quer
 pub(crate) use validate_query_entries_limit::validate_query_entries_limit;
 pub(crate) use validate_query_range_limit::validate_query_range_limit;
 pub(crate) use validate_query_string_bytes_limit::validate_query_string_bytes_limit;
+
+pub(crate) fn validate_approximate_topk(
+    state: &QuerierState,
+    kind: QueryKind,
+) -> Result<(), HttpQueryError> {
+    if !state
+        .limits
+        .shard_aggregations
+        .iter()
+        .any(|name| name == "approx_topk")
+    {
+        return Err(HttpQueryError::ApproxTopKDisabled);
+    }
+    if matches!(kind, QueryKind::Range) {
+        return Err(HttpQueryError::ApproxTopKRangeQuery);
+    }
+    Ok(())
+}

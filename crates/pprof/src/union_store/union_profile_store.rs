@@ -167,7 +167,7 @@ where
         label_names: &[String],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<Vec<crate::ProfileLabel>>, ProfileError> {
+    ) -> crate::ProfileSeriesResult {
         let hot = self
             .hot
             .series(tenant, matchers, label_names, start_ms, end_ms)

@@ -10,6 +10,8 @@
 //! Neither passes this suite, because it pushes at the ingest route and reads
 //! back at the query route, against a real broker, in one process.
 
+#[path = "support/loki_push_body.rs"]
+mod loki_push_body;
 #[path = "support/parquet_files.rs"]
 mod parquet_files;
 #[path = "support/wal_broker.rs"]
@@ -54,7 +56,7 @@ const DEADLINE: Duration = Duration::from_secs(45);
 async fn a_line_pushed_into_the_all_in_one_comes_back_out_of_its_query_api() {
     let stack = Box::pin(AllInOne::start()).await;
 
-    let pushed = stack.push(push_body()).await;
+    let pushed = stack.push(loki_push_body::push_body()).await;
     check!(pushed == reqwest::StatusCode::NO_CONTENT);
 
     let result = stack.query_until_answered().await;
@@ -135,7 +137,7 @@ async fn a_drain_request_takes_the_all_in_one_out_of_rotation() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_stop_closes_the_data_port_and_leaves_the_last_push_in_a_block() {
     let stack = Box::pin(AllInOne::start()).await;
-    check!(stack.push(push_body()).await == reqwest::StatusCode::NO_CONTENT);
+    check!(stack.push(loki_push_body::push_body()).await == reqwest::StatusCode::NO_CONTENT);
     stack.query_until_answered().await;
 
     check!(stack.push(late_push_body()).await == reqwest::StatusCode::NO_CONTENT);
@@ -383,18 +385,6 @@ fn block_keys(prefix: &std::path::Path) -> Vec<BlockKey> {
             ))
         })
         .collect()
-}
-
-fn push_body() -> Value {
-    json!({
-        "streams": [{
-            "stream": {"app": "api", "env": "prod"},
-            "values": [
-                ["10", "api error", {"trace_id": "abc"}],
-                ["20", "api recovered"],
-            ],
-        }],
-    })
 }
 
 /// The push the stop has to save: accepted with nothing waiting behind it.

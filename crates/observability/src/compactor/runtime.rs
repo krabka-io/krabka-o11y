@@ -11,13 +11,14 @@ use crate::{
     active_log_delete_filters_from_requests, active_log_delete_tenants,
     build_compactor_configured_object_store,
     compact_wal_records_to_object_store_with_delete_filters_and_index_output,
-    compactor::frontier::CompactionWriteOptions, compactor_object_store,
-    decode_kafka_wal_record_envelope, limits_provider_for_config,
+    compaction_metrics::CompactionMetrics, compactor::frontier::CompactionWriteOptions,
+    compactor_object_store, decode_kafka_wal_record_envelope, limits_provider_for_config,
     materialize_delete_requests_in_existing_object_store_blocks,
     poll_accumulated_log_compaction_records, read_compaction_frontier_from_object_store, sleep,
     sweep_expired_log_blocks, validate_compactor_policy, wal_compaction_chunks,
     wal_record_time_range, write_compaction_frontier_to_object_store,
 };
+
 mod advance_and_persist_compaction_frontier;
 mod block_store_error_is_object_store;
 mod compact_next_kafka_wal_batch_to_object_store_from_existing_manifest;
@@ -45,6 +46,16 @@ pub(crate) use compaction_error_is_object_store::compaction_error_is_object_stor
 pub(crate) use compactor_run_error_is_object_store::compactor_run_error_is_object_store;
 pub(crate) use load_existing_compaction_frontier::load_existing_compaction_frontier;
 pub(crate) use materialize_deletes_then_compact_next_kafka_wal_batch::materialize_deletes_then_compact_next_kafka_wal_batch;
+
+pub(crate) struct NextKafkaBatch<'a> {
+    pub store: &'a dyn ObjectStore,
+    pub prefix: &'a ObjectPath,
+    pub consumer: &'a mut dyn LogWalConsumer,
+    pub poll_timeout: Time,
+    pub delete_requests: &'a SharedLogDeleteRequests,
+    pub tenant_indexes: &'a mut TenantCompactionIndexCache,
+    pub metrics: &'a CompactionMetrics,
+}
 pub(crate) use materialize_log_deletes_before_compaction::materialize_log_deletes_before_compaction;
 pub(crate) use next_compactor_object_store_backoff::next_compactor_object_store_backoff;
 pub(crate) use refresh_compaction_frontier_and_prune::refresh_compaction_frontier_and_prune;

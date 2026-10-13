@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::native_histogram_fixture;
 
 pub(crate) fn native_histogram_rows() -> Vec<NativeHistogramRow> {
     vec![
@@ -52,21 +53,13 @@ pub(crate) fn native_histogram_rows() -> Vec<NativeHistogramRow> {
         NativeHistogramRow {
             fingerprint: 9_u64,
             timestamp_ms: 119_i64,
-            hist: NativeHistogram {
-                schema: 1,
-                is_float: false,
-                reset_hint: ResetHint::Unknown,
-                zero_threshold: 0.0,
-                zero_count: 0.0,
-                count: 0.0,
-                sum: 0.0,
-                positive_spans: Vec::new(),
-                positive_counts: Vec::new(),
-                negative_spans: Vec::new(),
-                negative_counts: Vec::new(),
-                custom_values: Some(Vec::new()),
-                start_timestamp_ms: Some(456),
-            },
+            hist: native_histogram_fixture(
+                1,
+                false,
+                ResetHint::Unknown,
+                Some(Vec::new()),
+                Some(456),
+            ),
         },
     ]
 }

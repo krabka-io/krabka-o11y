@@ -1,4 +1,4 @@
-use super::{Aggregate, Field, Pipeline, RankFilter};
+use super::{Aggregate, Field, Pipeline, RankFilter, rank_pipeline};
 
 pub(crate) struct GroupedRankPipelineParts<'a> {
     pub(crate) aggregate: &'a Aggregate,
@@ -15,16 +15,16 @@ pub(crate) fn grouped_rank_pipeline_parts(
         [
             Pipeline::Aggregate(agg),
             Pipeline::By(by),
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
         ]
         | [
             Pipeline::By(by),
             Pipeline::Aggregate(agg),
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
         ]
         | [
             Pipeline::Aggregate(agg),
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
             Pipeline::By(by),
         ] => Some(GroupedRankPipelineParts {
             aggregate: agg,
@@ -37,18 +37,18 @@ pub(crate) fn grouped_rank_pipeline_parts(
             Pipeline::Aggregate(agg),
             Pipeline::By(by),
             Pipeline::Filter { op, value },
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
         ]
         | [
             Pipeline::By(by),
             Pipeline::Aggregate(agg),
             Pipeline::Filter { op, value },
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
         ]
         | [
             Pipeline::Aggregate(agg),
             Pipeline::Filter { op, value },
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
             Pipeline::By(by),
         ] => Some(GroupedRankPipelineParts {
             aggregate: agg,
@@ -60,24 +60,24 @@ pub(crate) fn grouped_rank_pipeline_parts(
         [
             Pipeline::Aggregate(agg),
             Pipeline::By(by),
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
             Pipeline::Filter { op, value },
         ]
         | [
             Pipeline::By(by),
             Pipeline::Aggregate(agg),
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
             Pipeline::Filter { op, value },
         ]
         | [
             Pipeline::Aggregate(agg),
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
             Pipeline::By(by),
             Pipeline::Filter { op, value },
         ]
         | [
             Pipeline::Aggregate(agg),
-            rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
+            rank_pipeline!(rank),
             Pipeline::Filter { op, value },
             Pipeline::By(by),
         ] => Some(GroupedRankPipelineParts {

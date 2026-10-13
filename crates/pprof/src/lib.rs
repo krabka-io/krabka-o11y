@@ -36,6 +36,7 @@ pub use engine::{
     stack_matches_call_sites, timestamp_total_points,
 };
 pub use error::ProfileError;
+pub(crate) type ProfileSeriesResult = Result<Vec<Vec<ProfileLabel>>, ProfileError>;
 pub use frame::{
     Frame, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping, SymbolSource,
 };

@@ -194,6 +194,33 @@ impl<V> Default for InMemoryCache<V> {
     }
 }
 
+macro_rules! cache_policy_methods {
+    () => {
+        #[must_use]
+        pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+            self.clock = clock;
+            self
+        }
+
+        #[must_use]
+        pub fn with_policy(mut self, policy: CachePolicy) -> Self {
+            self.policy = policy;
+            self
+        }
+
+        #[must_use]
+        pub fn metrics(&self) -> Arc<CacheMetrics> {
+            Arc::clone(&self.metrics)
+        }
+
+        #[must_use]
+        pub fn with_metrics(mut self, metrics: Arc<CacheMetrics>) -> Self {
+            self.metrics = metrics;
+            self
+        }
+    };
+}
+
 impl<V> InMemoryCache<V> {
     #[must_use]
     pub fn new(ttl: Duration) -> Self {
@@ -214,32 +241,11 @@ impl<V> InMemoryCache<V> {
         }
     }
 
-    #[must_use]
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.clock = clock;
-        self
-    }
-
-    #[must_use]
-    pub fn with_policy(mut self, policy: CachePolicy) -> Self {
-        self.policy = policy;
-        self
-    }
+    cache_policy_methods!();
 
     #[must_use]
     pub fn with_weigher(mut self, weigh: fn(&V) -> usize) -> Self {
         self.weigh = weigh;
-        self
-    }
-
-    #[must_use]
-    pub fn metrics(&self) -> Arc<CacheMetrics> {
-        Arc::clone(&self.metrics)
-    }
-
-    #[must_use]
-    pub fn with_metrics(mut self, metrics: Arc<CacheMetrics>) -> Self {
-        self.metrics = metrics;
         self
     }
 
@@ -544,32 +550,11 @@ impl<V> ObjectStoreCache<V> {
         }
     }
 
-    #[must_use]
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.clock = clock;
-        self
-    }
+    cache_policy_methods!();
 
     #[must_use]
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
-        self
-    }
-
-    #[must_use]
-    pub fn with_policy(mut self, policy: CachePolicy) -> Self {
-        self.policy = policy;
-        self
-    }
-
-    #[must_use]
-    pub fn metrics(&self) -> Arc<CacheMetrics> {
-        Arc::clone(&self.metrics)
-    }
-
-    #[must_use]
-    pub fn with_metrics(mut self, metrics: Arc<CacheMetrics>) -> Self {
-        self.metrics = metrics;
         self
     }
 

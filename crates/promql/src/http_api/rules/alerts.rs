@@ -26,12 +26,25 @@ macro_rules! tenant_rules_or_return {
 
 pub(super) use tenant_rules_or_return;
 
-pub(crate) async fn alerts<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-) -> Response {
-    let snapshot = tenant_rules_or_return!(&state, &headers, &principal);
+macro_rules! tenant_rule_handler {
+    ($name:ident, $state:ident, $snapshot:ident, $body:block) => {
+        pub(crate) async fn $name<S: MetricStore>(
+            State(state): State<Arc<PrometheusApiState<S>>>,
+            Extension(principal): Extension<Principal>,
+            headers: HeaderMap,
+        ) -> Response {
+            let $snapshot = $crate::http_api::rules::alerts::tenant_rules_or_return!(
+                &state, &headers, &principal
+            );
+            let $state = state;
+            $body
+        }
+    };
+}
+
+pub(super) use tenant_rule_handler;
+
+tenant_rule_handler!(alerts, state, snapshot, {
     let alerts = match prometheus_alerts_json(&state, &snapshot.tenant, snapshot.rules).await {
         Ok(alerts) => alerts,
         Err(error) => return ApiError::from(error).into_response(),
@@ -39,4 +52,4 @@ pub(crate) async fn alerts<S: MetricStore>(
     success_data_response(json!({
         "alerts": alerts,
     }))
-}
+});
