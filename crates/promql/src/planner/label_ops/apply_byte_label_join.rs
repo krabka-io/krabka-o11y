@@ -1,4 +1,4 @@
-use super::{InstantSample, PromqlError, Result};
+use super::{InstantSample, PromqlError, Result, set_label_value};
 use crate::PromqlString;
 
 pub(crate) fn apply_byte_label_join(
@@ -18,26 +18,38 @@ pub(crate) fn apply_byte_label_join(
     let dst = dst.utf8().filter(|name| !name.is_empty()).ok_or_else(|| {
         PromqlError::Exec("invalid destination label name in label_join()".to_owned())
     })?;
-    Ok(samples
+    Ok(apply_join_samples(
+        samples,
+        dst,
+        separator.as_bytes(),
+        &source_names,
+    ))
+}
+
+pub(crate) fn apply_join_samples(
+    samples: Vec<InstantSample>,
+    dst_label: &str,
+    separator: &[u8],
+    source_names: &[&str],
+) -> Vec<InstantSample> {
+    samples
         .into_iter()
         .map(|mut sample| {
             let mut value = Vec::new();
-            for source in source_names.iter().enumerate() {
-                let index = source.0;
-                let name = source.1;
+            for (index, name) in source_names.iter().enumerate() {
                 if index > 0 {
-                    value.extend_from_slice(separator.as_bytes());
+                    value.extend_from_slice(separator);
                 }
                 if let Some(source) = sample.labels.get_value(name) {
                     value.extend_from_slice(source.as_bytes());
                 }
             }
             sample.labels =
-                super::set_label_value(&sample.labels, dst, crate::PromqlString::from(value));
-            if dst == "__name__" {
+                set_label_value(&sample.labels, dst_label, crate::PromqlString::from(value));
+            if dst_label == "__name__" {
                 sample.drop_name = false;
             }
             sample
         })
-        .collect())
+        .collect()
 }

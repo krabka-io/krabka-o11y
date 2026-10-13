@@ -25,3 +25,29 @@ impl SeriesFixture {
         self.store
     }
 }
+
+pub(crate) fn queue_depth_store(samples: &[(i64, f64)]) -> InMemoryMetricStore {
+    samples
+        .iter()
+        .fold(
+            SeriesFixture::new(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "queue_depth"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ])),
+            |series, (timestamp_ms, value)| series.at(*timestamp_ms, *value),
+        )
+        .store()
+}
+
+pub(crate) fn up_series_store(samples: &[(i64, f64)]) -> InMemoryMetricStore {
+    samples
+        .iter()
+        .fold(
+            SeriesFixture::new(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ])),
+            |series, (timestamp_ms, value)| series.at(*timestamp_ms, *value),
+        )
+        .store()
+}

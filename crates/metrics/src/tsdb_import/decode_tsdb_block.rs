@@ -86,16 +86,10 @@ pub fn decode_tsdb_block(
     if rows.float_rows.is_empty() && rows.histogram_rows.is_empty() {
         return Err(TsdbImportError::Empty);
     }
-    rows.float_rows.sort_by(|left, right| {
-        left.fingerprint
-            .cmp(&right.fingerprint)
-            .then_with(|| left.timestamp_ms.cmp(&right.timestamp_ms))
-    });
-    rows.histogram_rows.sort_by(|left, right| {
-        left.fingerprint
-            .cmp(&right.fingerprint)
-            .then_with(|| left.timestamp_ms.cmp(&right.timestamp_ms))
-    });
+    rows.float_rows
+        .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
+    rows.histogram_rows
+        .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
     Ok(DecodedTsdbBlock { rows, stats })
 }
 

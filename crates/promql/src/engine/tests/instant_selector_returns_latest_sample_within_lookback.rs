@@ -2,14 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_selector_returns_latest_sample_within_lookback() {
-    let store = SeriesFixture::new(labels(&[
-        crate::test_support::TestLabelPair::new("__name__", "up"),
-        crate::test_support::TestLabelPair::new("job", "api"),
-    ]))
-    .at(10_000, 1.0)
-    .at(20_000, 2.0)
-    .at(40_000, 4.0)
-    .store();
+    let store = up_series_store(&[(10_000, 1.0), (20_000, 2.0), (40_000, 4.0)]);
     let engine = lookback_engine(store, millis(15_000));
 
     let samples = instant_vector(&engine, "up", 30_000).await;

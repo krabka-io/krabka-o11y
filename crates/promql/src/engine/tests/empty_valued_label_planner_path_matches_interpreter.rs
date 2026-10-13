@@ -1,14 +1,7 @@
 use super::*;
 
-struct SamplePoint {
-    timestamp_ms: i64,
-    value: f64,
-}
-
-struct SeriesFixture {
-    labels: crate::PromqlLabels,
-    samples: Vec<SamplePoint>,
-}
+type SamplePoint = FloatSampleInput;
+type SeriesFixture = LabeledFloatSeries;
 
 struct RangeQueryBounds {
     start_ms: i64,
@@ -105,14 +98,7 @@ pub(crate) async fn empty_valued_label_planner_path_matches_interpreter() {
             ],
         },
     ] {
-        for sample in fixture.samples {
-            store.push_float(
-                "t",
-                fixture.labels.clone(),
-                sample.timestamp_ms,
-                sample.value,
-            );
-        }
+        push_float_series(&mut store, [fixture]);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 

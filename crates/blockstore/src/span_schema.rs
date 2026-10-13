@@ -108,14 +108,8 @@ mod tests {
 
     #[test]
     fn kind_and_status_enums_round_trip_i32() {
-        for kind in [
-            SpanKind::Unspecified,
-            SpanKind::Internal,
-            SpanKind::Server,
-            SpanKind::Client,
-            SpanKind::Producer,
-            SpanKind::Consumer,
-        ] {
+        for value in 0..=5 {
+            let kind = SpanKind::from_i32(value);
             assert2::assert!(SpanKind::from_i32(kind.as_i32()) == kind);
         }
         for status in [StatusCode::Unset, StatusCode::Ok, StatusCode::Error] {

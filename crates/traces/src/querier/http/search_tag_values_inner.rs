@@ -1,8 +1,8 @@
 use super::{
-    IntoResponse, Json, QuerierRequest, Response, SpanStore, StatusCode, TagFilter, TimeRange,
-    TypedValue, Value, exact_tag_value_filter, filter_tag_values, is_match_all_query,
-    optional_time_bounds, query_param, status_text_response, tag_values_from_traces,
-    tempo_tag_alias, tenant_and_bounds, traceql_query_error_response, traces_matching_filter,
+    IntoResponse, Json, QuerierRequest, Response, SpanStore, StatusCode, TypedValue, Value,
+    exact_tag_value_filter, filter_tag_values, is_match_all_query, optional_time_bounds,
+    query_param, status_text_response, tag_filter, tag_values_from_traces, tempo_tag_alias,
+    tenant_and_bounds, traceql_query_error_response, traces_matching_filter,
 };
 
 /// A tag-values request: the tag it asks about and how to render its values.
@@ -34,15 +34,7 @@ where
         match exact_tag_value_filter(&query, tag) {
             Ok(Some(value)) => expected = Some(value),
             Ok(None) => {
-                let filter = TagFilter {
-                    tenant: bounds.tenant.as_str(),
-                    query: &query,
-                    uri,
-                    window: TimeRange {
-                        start_ns: bounds.start_ns,
-                        end_ns: bounds.end_ns,
-                    },
-                };
+                let filter = tag_filter(bounds.tenant.as_str(), &bounds, &query, uri);
                 return match traces_matching_filter(state, filter).await {
                     Ok(traces) => {
                         Json(render(&tag_values_from_traces(&traces, tag))).into_response()

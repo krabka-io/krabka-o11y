@@ -1,16 +1,11 @@
 use super::{
     ComparisonResult, format_binary_operator_line, format_label_replace_metric_binary_expression,
-    split_leading_vector_binary_modifiers, split_top_level_arithmetic_query,
 };
+use crate::{http::params_format::split_vector_binary_query, split_top_level_arithmetic_query};
 
 pub(crate) fn format_label_replace_metric_binary_arithmetic(query: &str) -> Option<String> {
-    let split = split_top_level_arithmetic_query(query)?;
-    let left_text = split.left;
-    let operator = split.operator;
-    let right_text = split.right;
-    let split_modifiers = split_leading_vector_binary_modifiers(right_text);
-    let modifiers = split_modifiers.modifiers;
-    let right_text = split_modifiers.remainder;
-    let operator = format_binary_operator_line(operator, ComparisonResult::Filter, modifiers);
-    format_label_replace_metric_binary_expression(left_text.trim(), &operator, right_text.trim())
+    let split = split_vector_binary_query(query, split_top_level_arithmetic_query)?;
+    let operator =
+        format_binary_operator_line(split.operator, ComparisonResult::Filter, split.modifiers);
+    format_label_replace_metric_binary_expression(split.left.trim(), &operator, split.right.trim())
 }

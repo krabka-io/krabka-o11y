@@ -91,10 +91,7 @@ async fn source_labels_preserve_distinct_and_both_tail_encodings() {
             records: &records,
             frontier: &frontier,
         };
-        assert!(
-            scan.streams(case.encoding).await
-                == json!({"status":"success","data":{"resultType":"streams","result":case.expected}})
-        );
+        scan.assert_streams(case.encoding, &case.expected).await;
         assert!(scan.tail(case.encoding, TailMode::Backfill) == json!({"streams":case.expected}));
         let live = scan.tail(case.encoding, TailMode::Live);
         let expected_live = if case.encoding == LokiStreamEncoding::Folded {
@@ -133,10 +130,7 @@ async fn source_labels_preserve_distinct_and_both_tail_encodings() {
             records: &records,
             frontier: &frontier,
         };
-        assert!(
-            scan.streams(case.encoding).await
-                == json!({"status":"success","data":{"resultType":"streams","result":case.expected}})
-        );
+        scan.assert_streams(case.encoding, &case.expected).await;
         for mode in [TailMode::Backfill, TailMode::Live] {
             assert!(scan.tail(case.encoding, mode) == json!({"streams":case.expected}));
         }
@@ -161,6 +155,13 @@ enum TailMode {
 }
 
 impl HotTailScan<'_> {
+    async fn assert_streams(&self, encoding: LokiStreamEncoding, expected: &serde_json::Value) {
+        assert!(
+            self.streams(encoding).await
+                == json!({"status":"success","data":{"resultType":"streams","result":expected}})
+        );
+    }
+
     async fn streams(&self, encoding: LokiStreamEncoding) -> serde_json::Value {
         execute_stream_query_with_hot_tail_frontier_and_deletes(
             ".",

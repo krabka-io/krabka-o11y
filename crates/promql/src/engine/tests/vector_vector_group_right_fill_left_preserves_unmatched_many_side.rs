@@ -37,14 +37,11 @@ pub(crate) async fn vector_vector_group_right_fill_left_preserves_unmatched_many
             .value(7.0)
             .build(),
     ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
-                crate::test_support::TestLabelPair::new("job", series.job),
-                crate::test_support::TestLabelPair::new("instance", series.instance),
-            ]),
-            10_000,
+        push_named_job_instance_sample(
+            &mut store,
+            "http_requests_total",
+            series.job,
+            series.instance,
             series.value,
         );
     }

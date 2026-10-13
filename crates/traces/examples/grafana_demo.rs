@@ -100,6 +100,30 @@ fn span(
     }
 }
 
+fn http_get_span(base: i64, identity: SpanIdentity, name: &str, timing: SpanTiming) -> InputSpan {
+    span(
+        base,
+        identity,
+        name,
+        SERVER,
+        timing,
+        SpanStatus {
+            code: OK,
+            message: "",
+        },
+        vec![
+            SpanAttributeInput {
+                key: "http.method",
+                value: str_attr("GET"),
+            },
+            SpanAttributeInput {
+                key: "http.status_code",
+                value: AttrValue::Int(200),
+            },
+        ],
+    )
+}
+
 fn str_attr(value: &str) -> AttrValue {
     AttrValue::Str(value.to_string())
 }
@@ -285,7 +309,7 @@ fn demo_store() -> InMemorySpanStore {
         "web-frontend",
         "GET /products",
         vec![
-            span(
+            http_get_span(
                 base,
                 SpanIdentity {
                     trace_id: 0x22,
@@ -293,25 +317,10 @@ fn demo_store() -> InMemorySpanStore {
                     parent_span_id: None,
                 },
                 "GET /products",
-                SERVER,
                 SpanTiming {
                     start_offset_ms: 0,
                     duration_ms: 80,
                 },
-                SpanStatus {
-                    code: OK,
-                    message: "",
-                },
-                vec![
-                    SpanAttributeInput {
-                        key: "http.method",
-                        value: str_attr("GET"),
-                    },
-                    SpanAttributeInput {
-                        key: "http.status_code",
-                        value: AttrValue::Int(200),
-                    },
-                ],
             ),
             span(
                 base,
@@ -344,7 +353,7 @@ fn demo_store() -> InMemorySpanStore {
         "checkout-frontend",
         "GET /checkout",
         vec![
-            span(
+            http_get_span(
                 base,
                 SpanIdentity {
                     trace_id: 0x33,
@@ -352,25 +361,10 @@ fn demo_store() -> InMemorySpanStore {
                     parent_span_id: None,
                 },
                 "GET /checkout",
-                SERVER,
                 SpanTiming {
                     start_offset_ms: 0,
                     duration_ms: 35,
                 },
-                SpanStatus {
-                    code: OK,
-                    message: "",
-                },
-                vec![
-                    SpanAttributeInput {
-                        key: "http.method",
-                        value: str_attr("GET"),
-                    },
-                    SpanAttributeInput {
-                        key: "http.status_code",
-                        value: AttrValue::Int(200),
-                    },
-                ],
             ),
             span(
                 base,
@@ -403,7 +397,7 @@ fn demo_store() -> InMemorySpanStore {
         "reporting-svc",
         "GET /report",
         vec![
-            span(
+            http_get_span(
                 base,
                 SpanIdentity {
                     trace_id: 0x44,
@@ -411,25 +405,10 @@ fn demo_store() -> InMemorySpanStore {
                     parent_span_id: None,
                 },
                 "GET /report",
-                SERVER,
                 SpanTiming {
                     start_offset_ms: 0,
                     duration_ms: 450,
                 },
-                SpanStatus {
-                    code: OK,
-                    message: "",
-                },
-                vec![
-                    SpanAttributeInput {
-                        key: "http.method",
-                        value: str_attr("GET"),
-                    },
-                    SpanAttributeInput {
-                        key: "http.status_code",
-                        value: AttrValue::Int(200),
-                    },
-                ],
             ),
             span(
                 base,

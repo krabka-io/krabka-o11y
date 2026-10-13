@@ -1,3 +1,5 @@
+use krabka_client_consumer::ConsumerRecord;
+
 /// Kafka header carried by every Krabka-owned durable record.
 pub const PERSISTED_FORMAT_HEADER: &str = "krabka-format-version";
 pub const PERSISTED_FORMAT_VERSION: &[u8] = b"1";
@@ -50,6 +52,13 @@ pub fn validate_persisted_format<'a>(
             String::from_utf8_lossy(value).into_owned(),
         )),
     }
+}
+
+pub fn validate_consumer_record(record: &ConsumerRecord) -> Result<(), PersistedFormatError> {
+    validate_persisted_format(record.headers.iter().map(|header| PersistedHeader {
+        key: header.key.as_str(),
+        value: header.value.as_deref(),
+    }))
 }
 
 #[cfg(test)]

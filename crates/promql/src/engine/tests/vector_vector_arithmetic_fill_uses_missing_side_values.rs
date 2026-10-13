@@ -1,45 +1,15 @@
 use super::*;
 
-struct FillInput {
-    metric: &'static str,
-    instance: &'static str,
-    value: f64,
-}
-
 #[tokio::test]
 pub(crate) async fn vector_vector_arithmetic_fill_uses_missing_side_values() {
     let mut store = InMemoryMetricStore::new();
-    for input in [
-        FillInput {
-            metric: "a",
-            instance: "matched",
-            value: 10.0,
-        },
-        FillInput {
-            metric: "a",
-            instance: "left-only",
-            value: 7.0,
-        },
-        FillInput {
-            metric: "b",
-            instance: "matched",
-            value: 3.0,
-        },
-        FillInput {
-            metric: "b",
-            instance: "right-only",
-            value: 5.0,
-        },
+    for (metric, instance, value) in [
+        ("a", "matched", 10.0),
+        ("a", "left-only", 7.0),
+        ("b", "matched", 3.0),
+        ("b", "right-only", 5.0),
     ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", input.metric),
-                crate::test_support::TestLabelPair::new("instance", input.instance),
-            ]),
-            10_000,
-            input.value,
-        );
+        push_metric_instance_sample(&mut store, metric, instance, value);
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

@@ -4,15 +4,7 @@ use super::*;
 #[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn instant_double_exponential_smoothing_smooths_gauge_series() {
-    let store = SeriesFixture::new(labels(&[
-        crate::test_support::TestLabelPair::new("__name__", "queue_depth"),
-        crate::test_support::TestLabelPair::new("job", "api"),
-    ]))
-    .at(0_i64, 3.0)
-    .at(60_000, 6.0)
-    .at(120_000, 12.0)
-    .at(180_000, 21.0)
-    .store();
+    let store = queue_depth_store(&[(0, 3.0), (60_000, 6.0), (120_000, 12.0), (180_000, 21.0)]);
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let samples = instant_vector(

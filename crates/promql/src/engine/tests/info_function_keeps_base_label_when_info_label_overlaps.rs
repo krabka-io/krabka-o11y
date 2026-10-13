@@ -5,24 +5,16 @@ pub(crate) async fn info_function_keeps_base_label_when_info_label_overlaps() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "a"),
-            crate::test_support::TestLabelPair::new("region", "base"),
-        ]),
+        super::target_info_engine::request_metric_labels(&[("region", "base")]),
         10_000,
         7.0,
     );
     store.push_float(
         "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "target_info"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "a"),
-            crate::test_support::TestLabelPair::new("region", "info"),
-            crate::test_support::TestLabelPair::new("cluster", "prod"),
-        ]),
+        super::target_info_engine::info_series_labels(
+            "target_info",
+            &[("region", "info"), ("cluster", "prod")],
+        ),
         10_000,
         1.0,
     );

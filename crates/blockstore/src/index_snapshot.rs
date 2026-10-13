@@ -332,7 +332,6 @@ mod tests {
 
             for case in AWKWARD_TENANTS {
                 let name = case.name;
-                let tenant = case.tenant;
                 let key = shard_payload_object_key(KEY, case.tenant, range, &content);
                 let rest = key
                     .strip_prefix(&prefix)

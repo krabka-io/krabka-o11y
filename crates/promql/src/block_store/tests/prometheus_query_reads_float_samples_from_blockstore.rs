@@ -6,12 +6,9 @@ pub(crate) async fn prometheus_query_reads_float_samples_from_blockstore() {
     let base = url::Url::parse("memory:///").unwrap();
     let mut block_store = BlockStore::new(object_store, base);
 
-    let series_labels = labels(&[
-        crate::test_support::TestLabelPair::new("__name__", "up"),
-        crate::test_support::TestLabelPair::new("job", "api"),
-    ]);
+    let series_labels = up_api_labels();
     let fp = series_labels.fingerprint();
-    let batch = encode_float_samples(&[float_sample_row(fp, 1_000, 1.0, None)]).unwrap();
+    let batch = up_api_sample_batch(&[(1_000, 1.0)]);
     let block_meta = block_store
         .writer()
         .write_block(

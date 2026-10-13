@@ -60,6 +60,16 @@ struct HotTailApp {
     app: Router,
 }
 
+async fn append_and_receive_later_record(hot_tail: &InMemoryWalSink, tail: &mut support::OpenTail) {
+    hot_tail
+        .append(record(21, "api later error"))
+        .await
+        .unwrap();
+    let frame = next_frame_within_two_seconds(&mut tail.socket).await;
+    tail.server.abort();
+    assert!(frame == frame_of(log_entry(21, "api later error")));
+}
+
 #[tokio::test]
 async fn tail_endpoint_does_not_resend_records_after_an_idle_poll() {
     let hot_app = hot_tail_app([record(20, "api first error")]).await;
@@ -74,14 +84,7 @@ async fn tail_endpoint_does_not_resend_records_after_an_idle_poll() {
     // not the new record -- is what arrives next.
     tokio::time::sleep(Duration::from_millis(400)).await;
 
-    hot_app
-        .hot_tail
-        .append(record(21, "api later error"))
-        .await
-        .unwrap();
-    let frame = next_frame_within_two_seconds(&mut tail.socket).await;
-    tail.server.abort();
-    assert!(frame == frame_of(log_entry(21, "api later error")));
+    append_and_receive_later_record(&hot_app.hot_tail, &mut tail).await;
 }
 
 #[tokio::test]
@@ -108,15 +111,7 @@ async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
         matches!(pong, tokio_tungstenite::tungstenite::Message::Pong(payload) if payload == b"alive"[..])
     );
 
-    hot_app
-        .hot_tail
-        .append(record(21, "api later error"))
-        .await
-        .unwrap();
-    let frame = next_frame_within_two_seconds(&mut tail.socket).await;
-    tail.server.abort();
-
-    assert!(frame == frame_of(log_entry(21, "api later error")));
+    append_and_receive_later_record(&hot_app.hot_tail, &mut tail).await;
 }
 
 #[tokio::test]

@@ -1,14 +1,7 @@
 use super::*;
 
-struct FixtureSample {
-    timestamp_ms: i64,
-    value: f64,
-}
-
-struct FixtureSeries {
-    labels: crate::PromqlLabels,
-    samples: Vec<FixtureSample>,
-}
+type FixtureSample = FloatSampleInput;
+type FixtureSeries = LabeledFloatSeries;
 
 /// Direct totality assertion over a representative construct sweep.
 ///
@@ -88,14 +81,7 @@ pub(crate) async fn plan_instant_expr_is_total_over_construct_sweep() {
             ],
         },
     ] {
-        for sample in fixture.samples {
-            store.push_float(
-                "t",
-                fixture.labels.clone(),
-                sample.timestamp_ms,
-                sample.value,
-            );
-        }
+        push_float_series(&mut store, [fixture]);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 

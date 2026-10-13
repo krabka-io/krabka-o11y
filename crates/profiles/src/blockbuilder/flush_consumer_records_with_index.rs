@@ -1,4 +1,4 @@
-use krabka_observability::persisted_format::{PersistedHeader, validate_persisted_format};
+use krabka_observability::persisted_format::validate_consumer_record;
 
 use super::{
     Arc, BTreeMap, BlockIndex, BlockMeta, ConsumerRecord, Labels, ObjectStore, ObjectStoreMetrics,
@@ -23,11 +23,7 @@ pub async fn flush_consumer_records_with_index(
     metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     for record in records {
-        validate_persisted_format(record.headers.iter().map(|header| PersistedHeader {
-            key: header.key.as_str(),
-            value: header.value.as_deref(),
-        }))
-        .map_err(|error| ProfilesError::Wal(error.to_string()))?;
+        validate_consumer_record(record).map_err(|error| ProfilesError::Wal(error.to_string()))?;
     }
     let mut batches: BTreeMap<TenantPartition, Vec<PositionedProfileRecord>> = BTreeMap::new();
     for record in records {

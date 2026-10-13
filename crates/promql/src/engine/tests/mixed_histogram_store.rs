@@ -72,3 +72,39 @@ pub(crate) fn mixed_api_group_store() -> InMemoryMetricStore {
     );
     store
 }
+
+#[derive(bon::Builder)]
+pub(crate) struct MixedMetricFloatSample {
+    pub(crate) instance: &'static str,
+    pub(crate) value: f64,
+}
+
+pub(crate) fn mixed_metric_store(
+    metric: &'static str,
+    float_samples: &[MixedMetricFloatSample],
+) -> InMemoryMetricStore {
+    let mut store = InMemoryMetricStore::new();
+    for sample in float_samples {
+        store.push_float(
+            "tenant-a",
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", metric),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", sample.instance),
+            ]),
+            10_000,
+            sample.value,
+        );
+    }
+    store.push_histogram(
+        "tenant-a",
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", metric),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "hist"),
+        ]),
+        10_000,
+        native_histogram(4.0, 10.0),
+    );
+    store
+}

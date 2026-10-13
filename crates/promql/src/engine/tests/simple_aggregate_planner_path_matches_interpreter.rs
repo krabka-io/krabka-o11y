@@ -30,10 +30,7 @@ struct GroupInput {
     instance: &'static str,
 }
 
-struct AggregateQueryCase {
-    query: &'static str,
-    time_ms: i64,
-}
+type AggregateQueryCase = QueryAt;
 
 #[tokio::test]
 pub(crate) async fn simple_aggregate_planner_path_matches_interpreter() {

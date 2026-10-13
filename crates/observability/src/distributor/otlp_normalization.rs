@@ -81,6 +81,40 @@ pub(crate) struct OtlpScopeGroups<L> {
     pub(crate) records: Vec<L>,
 }
 
+pub(crate) fn group_otlp_resource<A, S>(
+    attributes: &[A],
+    scopes: Vec<S>,
+    limits: &Limits,
+) -> Result<OtlpResourceGroups<S>, DistributorError>
+where
+    A: otlp_log_steps::OtlpAttribute,
+{
+    let groups = otlp_resource_labels(attributes, limits)?;
+    Ok(OtlpResourceGroups {
+        labels: groups.labels,
+        structured_metadata: groups.structured_metadata,
+        scopes,
+    })
+}
+
+pub(crate) fn group_otlp_scope<A, L>(
+    resource_labels: &Labels,
+    resource_metadata: &Labels,
+    scope: &OtlpScope<'_, A>,
+    records: Vec<L>,
+    limits: &Limits,
+) -> Result<OtlpScopeGroups<L>, DistributorError>
+where
+    A: otlp_log_steps::OtlpAttribute,
+{
+    let groups = otlp_scope_context(resource_labels, resource_metadata, scope, limits)?;
+    Ok(OtlpScopeGroups {
+        labels: groups.labels,
+        inherited_metadata: groups.structured_metadata,
+        records,
+    })
+}
+
 pub(crate) fn normalize_log_hierarchy<R, S, L>(
     tenant: &str,
     resources: impl IntoIterator<Item = R>,

@@ -1,38 +1,19 @@
 use super::*;
 
-#[derive(bon::Builder)]
-struct LatencySample {
-    instance: &'static str,
-    value: f64,
-}
-
 #[tokio::test]
 pub(crate) async fn instant_quantile_aggregation_ignores_histograms() {
-    let mut store = InMemoryMetricStore::new();
-    for sample in [
-        LatencySample::builder().instance("a").value(2.0).build(),
-        LatencySample::builder().instance("b").value(6.0).build(),
-    ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-                crate::test_support::TestLabelPair::new("instance", sample.instance),
-            ]),
-            10_000,
-            sample.value,
-        );
-    }
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "hist"),
-        ]),
-        10_000,
-        native_histogram(4.0, 10.0),
+    let store = mixed_metric_store(
+        "latency_seconds",
+        &[
+            MixedMetricFloatSample::builder()
+                .instance("a")
+                .value(2.0)
+                .build(),
+            MixedMetricFloatSample::builder()
+                .instance("b")
+                .value(6.0)
+                .build(),
+        ],
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

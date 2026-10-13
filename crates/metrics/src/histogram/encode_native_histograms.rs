@@ -4,6 +4,7 @@ use super::{
     native_histogram_schema, new_f64_list_builder, new_span_list_builder,
     validate_span_count_consistency,
 };
+use crate::append_optional_i64;
 
 /// Encodes `(fingerprint, timestamp, NativeHistogram)` rows into a
 /// `RecordBatch` that matches [`native_histogram_schema`].
@@ -53,10 +54,7 @@ pub fn encode_native_histograms(
             Some(values) => append_f64_list(&mut custom_values, values),
             None => custom_values.append(false),
         }
-        match histogram.start_timestamp_ms {
-            Some(start_timestamp) => start_timestamps.append_value(start_timestamp),
-            None => start_timestamps.append_null(),
-        }
+        append_optional_i64(&mut start_timestamps, histogram.start_timestamp_ms);
     }
 
     let columns: Vec<ArrayRef> = vec![

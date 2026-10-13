@@ -13,7 +13,7 @@ use krabka_observability::{InMemoryWalSink, LogWalSink, QuerierState, WalLogReco
 use serde_json::json;
 use support::{
     DenyingQueryAuthorizer, Tenant, assert_json_ok, assert_loki_error, current_unix_epoch_nanos,
-    fixture, json_body, send, tenant_a_post, text_body,
+    fixture, insert_api_series, json_body, send, tenant_a_post, text_body,
 };
 
 /// The shared fixture with one hot-tail `api` record at 20 ns that carries a
@@ -42,13 +42,7 @@ async fn hot_error_level_app() -> axum::Router {
 fn api_then_zoned_worker_app() -> axum::Router {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series(
-        "tenant-a",
-        labels([
-            krabka_blockstore::LabelPair::new("app", "api"),
-            krabka_blockstore::LabelPair::new("env", "prod"),
-        ]),
-    );
+    let api = insert_api_series(&mut label_index, "tenant-a");
     let worker = label_index.insert_series(
         "tenant-a",
         labels([

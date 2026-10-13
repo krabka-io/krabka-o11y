@@ -61,12 +61,14 @@ pub(crate) async fn execute_stacktrace_query<S: ProfileStore>(
             }
         })
         .unwrap_or_default();
+    let query_target = super::QueryTarget::new(tenant, &req.profile_type_id, &label_selector);
+    let query_range = super::QueryRange::new(req.start, req.end);
     let response = match req.format {
         format if format == pb::querier::v1::ProfileFormat::Tree as i32 => {
             let tree = state
                 .select_merge_stacktraces_tree_with_selectors(
-                    super::QueryTarget::new(tenant, &req.profile_type_id, &label_selector),
-                    super::QueryRange::new(req.start, req.end),
+                    query_target,
+                    query_range,
                     max_nodes,
                     &stack_trace_call_sites,
                     sample_selector,
@@ -122,8 +124,8 @@ pub(crate) async fn execute_stacktrace_query<S: ProfileStore>(
         _ => {
             let flamegraph = state
                 .select_merge_stacktraces_with_selectors(
-                    super::QueryTarget::new(tenant, &req.profile_type_id, &label_selector),
-                    super::QueryRange::new(req.start, req.end),
+                    query_target,
+                    query_range,
                     max_nodes,
                     &stack_trace_call_sites,
                     sample_selector,

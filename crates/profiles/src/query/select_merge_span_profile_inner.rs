@@ -22,14 +22,11 @@ where
             count
         }
     });
+    let query_target = super::QueryTarget::new(&tenant, &req.profile_type_id, &req.label_selector);
+    let query_range = super::QueryRange::new(req.start, req.end);
     let response = if req.format == pb::querier::v1::ProfileFormat::Tree as i32 {
         let tree = state
-            .select_merge_span_profile_tree(
-                super::QueryTarget::new(&tenant, &req.profile_type_id, &req.label_selector),
-                &span_ids,
-                super::QueryRange::new(req.start, req.end),
-                max_nodes,
-            )
+            .select_merge_span_profile_tree(query_target, &span_ids, query_range, max_nodes)
             .await
             .map_err(connect_error)?;
         pb::querier::v1::SelectMergeSpanProfileResponse {
@@ -38,12 +35,7 @@ where
         }
     } else {
         let flamegraph = state
-            .select_merge_span_profile(
-                super::QueryTarget::new(&tenant, &req.profile_type_id, &req.label_selector),
-                &span_ids,
-                super::QueryRange::new(req.start, req.end),
-                max_nodes,
-            )
+            .select_merge_span_profile(query_target, &span_ids, query_range, max_nodes)
             .await
             .map_err(connect_error)?;
         pb::querier::v1::SelectMergeSpanProfileResponse {

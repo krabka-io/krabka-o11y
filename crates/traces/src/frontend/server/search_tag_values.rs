@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use super::{
     ApiVersion, BlockCatalog, FrontendRequest, IntoResponse, Json, Path, QuerierBackend, Response,
-    RouteVariant, backend_error_response, json, with_warnings,
+    RouteVariant, backend_error_response, json, query_time_range, with_warnings,
 };
 
 /// `/api/search/tag/{tag}/values`, or for [`ApiVersion::V2`] the typed
@@ -22,14 +22,7 @@ where
     };
     let qf = request.qf;
     let result = match qf
-        .tag_values(
-            &bounds.tenant,
-            &tag,
-            krabka_blockstore::TimeRange {
-                start_ns: bounds.start_ns,
-                end_ns: bounds.end_ns,
-            },
-        )
+        .tag_values(&bounds.tenant, &tag, query_time_range(&bounds))
         .await
     {
         Ok(out) => out,

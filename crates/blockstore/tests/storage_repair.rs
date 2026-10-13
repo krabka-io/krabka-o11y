@@ -720,6 +720,22 @@ fn log_shard_indexes(first_offset: i64) -> LogShardIndexes {
     }
 }
 
+async fn assert_log_shard_matches_fixture(store: &dyn ObjectStore, context: &str) {
+    let loaded = read_tenant_log_index_shard_from_object_store(
+        store,
+        &Path::default(),
+        "t",
+        TimeRange::new(10, 19).unwrap(),
+    )
+    .await
+    .unwrap();
+    let expected = log_shard_indexes(10);
+    check!(
+        loaded.labels == expected.label_index && loaded.blocks == expected.block_index,
+        "{context}"
+    );
+}
+
 async fn publish_log_shard(store: &Arc<dyn ObjectStore>, first_offset: i64) -> String {
     let indexes = log_shard_indexes(first_offset);
     let label_index = indexes.label_index;
@@ -824,19 +840,7 @@ async fn a_log_repair_keeps_the_newest_shard_blocks_and_removes_old_generation_o
         let remaining: Vec<_> = before.into_iter().filter(|key| key != &orphan).collect();
         check!(listed_keys(&store).await == remaining, "{layout}");
         check!(store.head(&Path::from(live)).await.is_ok(), "{layout}");
-        let loaded = read_tenant_log_index_shard_from_object_store(
-            store.as_ref(),
-            &Path::default(),
-            "t",
-            TimeRange::new(10, 19).unwrap(),
-        )
-        .await
-        .unwrap();
-        let expected = log_shard_indexes(10);
-        check!(
-            loaded.labels == expected.label_index && loaded.blocks == expected.block_index,
-            "{layout}"
-        );
+        assert_log_shard_matches_fixture(store.as_ref(), layout).await;
     }
 }
 
@@ -949,18 +953,6 @@ async fn an_unreadable_log_shard_range_suppresses_orphan_repair() {
             "{range}"
         );
         check!(listed_keys(&store).await == before, "{range}");
-        let loaded = read_tenant_log_index_shard_from_object_store(
-            store.as_ref(),
-            &Path::default(),
-            "t",
-            TimeRange::new(10, 19).unwrap(),
-        )
-        .await
-        .unwrap();
-        let expected = log_shard_indexes(10);
-        check!(
-            loaded.labels == expected.label_index && loaded.blocks == expected.block_index,
-            "{range}"
-        );
+        assert_log_shard_matches_fixture(store.as_ref(), range).await;
     }
 }

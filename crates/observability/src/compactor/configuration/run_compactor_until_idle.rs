@@ -1,8 +1,9 @@
 use super::{
-    super::prepare_compactor_wal_inputs, BlockDescriptor, ObjectStore, ServiceConfig,
-    ServiceDependencies, ServiceRuntimeError, advance_and_persist_compaction_frontier,
-    build_compactor_configured_object_store, compactor_object_store,
-    materialize_deletes_then_compact_next_kafka_wal_batch, validate_compactor_policy,
+    super::{CompactorRunComponents, prepare_compactor_wal_inputs},
+    BlockDescriptor, ObjectStore, ServiceConfig, ServiceDependencies, ServiceRuntimeError,
+    advance_and_persist_compaction_frontier, build_compactor_configured_object_store,
+    compactor_object_store, materialize_deletes_then_compact_next_kafka_wal_batch,
+    validate_compactor_policy,
 };
 
 /// # Errors
@@ -66,15 +67,13 @@ impl CompactorRun<'_> {
         let prefix = object_store.prefix;
         let wal_inputs =
             prepare_compactor_wal_inputs(config, &dependencies, store, &prefix).await?;
-        let started = wal_inputs.start().await;
-        let compaction_frontier = started.compaction_frontier;
-        let delete_requests = started.delete_requests;
-        let run = started.run;
-        let super::super::CompactorRunState {
+        let CompactorRunComponents {
+            compaction_frontier,
+            delete_requests,
             mut consumer,
             mut descriptors,
             mut tenant_indexes,
-        } = run;
+        } = wal_inputs.start().await.into_components();
 
         loop {
             let batch_descriptors = materialize_deletes_then_compact_next_kafka_wal_batch(

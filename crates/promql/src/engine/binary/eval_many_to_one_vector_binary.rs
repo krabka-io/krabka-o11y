@@ -1,8 +1,7 @@
 use super::{
-    BTreeSet, InstantSample, MissingSide, Result, VectorMatching, VectorOperands,
-    apply_binary_fill_value, apply_binary_sample_value, binary_match_key, binary_returns_bool,
-    copy_group_labels, fill_missing_right, index_by_match_key, labels_without_metric_name,
-    one_to_one_binary_result_labels,
+    BTreeSet, InstantSample, Result, VectorMatching, VectorOperands, append_left_fill_results,
+    append_matched_binary_result, binary_match_key, copy_group_labels, fill_missing_right,
+    index_by_match_key, labels_without_metric_name, one_to_one_binary_result_labels,
 };
 
 pub(crate) fn eval_many_to_one_vector_binary(
@@ -34,50 +33,35 @@ pub(crate) fn eval_many_to_one_vector_binary(
             continue;
         };
         matched.insert(key);
-        let Some(value) = apply_binary_sample_value(&left_sample, right_sample, op, modifier)?
-        else {
-            continue;
-        };
-        let preserves_name = op.is_comparison() && !binary_returns_bool(modifier);
-        let drop_name = if preserves_name {
-            left_sample.drop_name
-        } else {
-            true
-        };
-        let mut labels = if preserves_name {
-            left_sample.labels.clone()
-        } else {
-            labels_without_metric_name(&left_sample.labels)
-        };
-        copy_group_labels(&mut labels, &right_sample.labels, group_labels);
-        out.push(InstantSample {
-            labels,
-            ts_ms: left_sample.ts_ms,
-            value,
-            drop_name,
-        });
+        append_matched_binary_result(
+            &mut out,
+            &left_sample,
+            right_sample,
+            op,
+            modifier,
+            |preserves_name| {
+                let mut labels = if preserves_name {
+                    left_sample.labels.clone()
+                } else {
+                    labels_without_metric_name(&left_sample.labels)
+                };
+                copy_group_labels(&mut labels, &right_sample.labels, group_labels);
+                labels
+            },
+        )?;
     }
-    if let Some(lhs_fill) = modifier.and_then(|modifier| modifier.fill_values.lhs) {
-        for entry in right_by_key {
-            let key = entry.0;
-            let right_sample = entry.1;
-            if matched.contains(&key) {
-                continue;
-            }
-            let Some(value) =
-                apply_binary_fill_value(&right_sample, lhs_fill, op, modifier, MissingSide::Left)?
-            else {
-                continue;
-            };
-            let mut labels = one_to_one_binary_result_labels(&right_sample.labels, modifier, false);
-            copy_group_labels(&mut labels, &right_sample.labels, group_labels);
-            out.push(InstantSample {
-                labels,
-                ts_ms: right_sample.ts_ms,
-                value,
-                drop_name: true,
-            });
-        }
-    }
+    append_left_fill_results(
+        &mut out,
+        right_by_key,
+        &matched,
+        modifier.and_then(|modifier| modifier.fill_values.lhs),
+        op,
+        modifier,
+        |sample| {
+            let mut labels = one_to_one_binary_result_labels(&sample.labels, modifier, false);
+            copy_group_labels(&mut labels, &sample.labels, group_labels);
+            labels
+        },
+    )?;
     Ok(out)
 }

@@ -1,9 +1,10 @@
 use krabka_blockstore::ObjectStoreMetrics;
 
 use super::{
-    super::prepare_compactor_wal_inputs, BlockDescriptor, CompactorRunError, Instant,
-    KafkaWalRecord, ObjectStore, ServiceConfig, ServiceDependencies, ServiceRuntimeError, Time,
-    TimeExt, advance_and_persist_compaction_frontier, build_compactor_configured_object_store,
+    super::{CompactorRunComponents, prepare_compactor_wal_inputs},
+    BlockDescriptor, CompactorRunError, Instant, KafkaWalRecord, ObjectStore, ServiceConfig,
+    ServiceDependencies, ServiceRuntimeError, Time, TimeExt,
+    advance_and_persist_compaction_frontier, build_compactor_configured_object_store,
     compact_polled_kafka_wal_records_to_object_store_from_existing_manifest,
     compactor_object_store, compactor_run_error_is_object_store, limits_provider_for_config,
     materialize_log_deletes_before_compaction, next_compactor_object_store_backoff,
@@ -50,15 +51,13 @@ pub async fn run_compactor_until_shutdown(
         None => limits_provider_for_config(config)?,
     };
     let wal_inputs = prepare_compactor_wal_inputs(config, &dependencies, store, &prefix).await?;
-    let started = wal_inputs.start().await;
-    let compaction_frontier = started.compaction_frontier;
-    let delete_requests = started.delete_requests;
-    let run = started.run;
-    let super::super::CompactorRunState {
+    let CompactorRunComponents {
+        compaction_frontier,
+        delete_requests,
         mut consumer,
         mut descriptors,
         mut tenant_indexes,
-    } = run;
+    } = wal_inputs.start().await.into_components();
     let mut object_store_retry_backoff = config.compactor_object_store_initial_backoff;
     // Now, so the first pass of the loop sweeps rather than waiting an
     // interval out before it deletes anything.

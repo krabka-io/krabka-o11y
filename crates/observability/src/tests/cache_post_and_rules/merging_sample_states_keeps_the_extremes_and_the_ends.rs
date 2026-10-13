@@ -1,5 +1,28 @@
 use super::*;
 
+#[bon::builder]
+fn tied_sample_state(value: i128) -> super::super::prelude::MetricSampleState {
+    let value = super::super::prelude::MetricValue {
+        numerator: value,
+        denominator: 1,
+    };
+    super::super::prelude::MetricSampleState {
+        summary: super::super::prelude::VectorAggregationState {
+            count: 1,
+            ..Default::default()
+        },
+        first: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 10,
+            value,
+        }),
+        last: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 10,
+            value,
+        }),
+        ..Default::default()
+    }
+}
+
 /// Merging two partial sample states keeps the smaller minimum, the larger
 /// maximum, the earliest first and the latest last, taking each from
 /// whichever side holds it. A tie on the timestamp keeps the side already
@@ -108,36 +131,8 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
     );
 
     // Matching timestamps on both sides: the value already held stays.
-    let mut tied = super::super::prelude::MetricSampleState {
-        summary: super::super::prelude::VectorAggregationState {
-            count: 1,
-            ..Default::default()
-        },
-        first: Some(super::super::prelude::TimestampedMetricValue {
-            timestamp_ns: 10,
-            value: value(1),
-        }),
-        last: Some(super::super::prelude::TimestampedMetricValue {
-            timestamp_ns: 10,
-            value: value(1),
-        }),
-        ..Default::default()
-    };
-    tied.merge(super::super::prelude::MetricSampleState {
-        summary: super::super::prelude::VectorAggregationState {
-            count: 1,
-            ..Default::default()
-        },
-        first: Some(super::super::prelude::TimestampedMetricValue {
-            timestamp_ns: 10,
-            value: value(7),
-        }),
-        last: Some(super::super::prelude::TimestampedMetricValue {
-            timestamp_ns: 10,
-            value: value(7),
-        }),
-        ..Default::default()
-    });
+    let mut tied = tied_sample_state().value(1).call();
+    tied.merge(tied_sample_state().value(7).call());
     check!(
         tied.first
             == Some(super::super::prelude::TimestampedMetricValue {

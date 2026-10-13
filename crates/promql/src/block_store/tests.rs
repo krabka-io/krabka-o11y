@@ -78,3 +78,19 @@ pub(crate) fn float_sample_row(
         start_timestamp_ms,
     }
 }
+
+pub(crate) fn up_api_labels() -> krabka_blockstore::Labels {
+    labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ])
+}
+
+pub(crate) fn up_api_sample_batch(samples: &[(i64, f64)]) -> RecordBatch {
+    let fingerprint = up_api_labels().fingerprint();
+    let rows = samples
+        .iter()
+        .map(|&(timestamp_ms, value)| float_sample_row(fingerprint, timestamp_ms, value, None))
+        .collect::<Vec<_>>();
+    encode_float_samples(&rows).expect("valid up sample rows")
+}

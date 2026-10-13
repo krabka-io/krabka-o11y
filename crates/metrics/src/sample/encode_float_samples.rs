@@ -2,6 +2,7 @@ use super::{
     Arc, ArrayRef, Float64Builder, FloatSampleRow, HistogramCodecError, Int64Builder, RecordBatch,
     UInt64Builder, float_sample_schema,
 };
+use crate::append_optional_i64;
 
 /// Encodes `(fingerprint, timestamp, value, start timestamp)` rows into a `RecordBatch` that
 /// matches [`float_sample_schema`].
@@ -17,10 +18,7 @@ pub fn encode_float_samples(rows: &[FloatSampleRow]) -> Result<RecordBatch, Hist
         fingerprints.append_value(row.fingerprint);
         timestamps.append_value(row.timestamp_ms);
         values.append_value(row.value);
-        match row.start_timestamp_ms {
-            Some(start_timestamp) => start_timestamps.append_value(start_timestamp),
-            None => start_timestamps.append_null(),
-        }
+        append_optional_i64(&mut start_timestamps, row.start_timestamp_ms);
     }
 
     let columns: Vec<ArrayRef> = vec![

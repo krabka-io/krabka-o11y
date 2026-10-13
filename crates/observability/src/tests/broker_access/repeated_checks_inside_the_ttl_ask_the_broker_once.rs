@@ -7,9 +7,7 @@ use super::*;
 pub(crate) async fn repeated_checks_inside_the_ttl_ask_the_broker_once() {
     let tenant = tenant_for_test("tenant-a");
 
-    let source = Arc::new(CountingBrokerAccess::answering(Ok(
-        AclSet::SecurityDisabled,
-    )));
+    let source = security_disabled_broker_access();
     let fixture = broker_access_for_test(&source, 8);
     let access = fixture.cache;
     let connected = fixture.connected;
@@ -25,9 +23,7 @@ pub(crate) async fn repeated_checks_inside_the_ttl_ask_the_broker_once() {
     check!(source.lookups() == BrokerLookups { acl: 1, quota: 0 });
     check!(connected.load(AtomicOrdering::SeqCst));
 
-    let source = Arc::new(CountingBrokerAccess::answering(Ok(
-        AclSet::SecurityDisabled,
-    )));
+    let source = security_disabled_broker_access();
     let fixture = broker_access_for_test(&source, 8);
     let access = fixture.cache;
     let clock = fixture.clock;

@@ -24,98 +24,104 @@ struct RangeFoldSeries {
 pub(crate) async fn extended_range_fold_planner_matches_interpreter() {
     let mut store = InMemoryMetricStore::new();
     // A monotonic-ish counter with a reset, sampled every 30s through t=300000.
-    for series in [
-        RangeFoldSeries::builder()
-            .job("a")
-            .samples(vec![
-                RangeFoldSample::builder()
-                    .timestamp_ms(0)
-                    .value(0.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(30_000)
-                    .value(5.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(60_000)
-                    .value(10.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(90_000)
-                    .value(4.0)
-                    .build(), // reset
-                RangeFoldSample::builder()
-                    .timestamp_ms(120_000)
-                    .value(9.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(150_000)
-                    .value(15.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(180_000)
-                    .value(21.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(210_000)
-                    .value(25.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(240_000)
-                    .value(30.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(270_000)
-                    .value(33.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(300_000)
-                    .value(40.0)
-                    .build(),
-            ])
-            .build(),
-        RangeFoldSeries::builder()
-            .job("b")
-            .samples(vec![
-                RangeFoldSample::builder()
-                    .timestamp_ms(0)
-                    .value(100.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(60_000)
-                    .value(90.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(120_000)
-                    .value(80.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(180_000)
-                    .value(70.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(240_000)
-                    .value(60.0)
-                    .build(),
-                RangeFoldSample::builder()
-                    .timestamp_ms(300_000)
-                    .value(50.0)
-                    .build(),
-            ])
-            .build(),
-    ] {
-        for sample in series.samples {
-            store.push_float(
-                "t",
-                labels(&[
-                    crate::test_support::TestLabelPair::new("__name__", "ctr"),
-                    crate::test_support::TestLabelPair::new("job", series.job),
-                ]),
-                sample.timestamp_ms,
-                sample.value,
-            );
-        }
-    }
+    push_float_series(
+        &mut store,
+        [
+            RangeFoldSeries::builder()
+                .job("a")
+                .samples(vec![
+                    RangeFoldSample::builder()
+                        .timestamp_ms(0)
+                        .value(0.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(30_000)
+                        .value(5.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(60_000)
+                        .value(10.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(90_000)
+                        .value(4.0)
+                        .build(), // reset
+                    RangeFoldSample::builder()
+                        .timestamp_ms(120_000)
+                        .value(9.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(150_000)
+                        .value(15.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(180_000)
+                        .value(21.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(210_000)
+                        .value(25.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(240_000)
+                        .value(30.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(270_000)
+                        .value(33.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(300_000)
+                        .value(40.0)
+                        .build(),
+                ])
+                .build(),
+            RangeFoldSeries::builder()
+                .job("b")
+                .samples(vec![
+                    RangeFoldSample::builder()
+                        .timestamp_ms(0)
+                        .value(100.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(60_000)
+                        .value(90.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(120_000)
+                        .value(80.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(180_000)
+                        .value(70.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(240_000)
+                        .value(60.0)
+                        .build(),
+                    RangeFoldSample::builder()
+                        .timestamp_ms(300_000)
+                        .value(50.0)
+                        .build(),
+                ])
+                .build(),
+        ]
+        .into_iter()
+        .map(|series| LabeledFloatSeries {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "ctr"),
+                crate::test_support::TestLabelPair::new("job", series.job),
+            ]),
+            samples: series
+                .samples
+                .into_iter()
+                .map(|sample| FloatSampleInput {
+                    timestamp_ms: sample.timestamp_ms,
+                    value: sample.value,
+                })
+                .collect(),
+        }),
+    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let time_ms = 300_000_i64;
 

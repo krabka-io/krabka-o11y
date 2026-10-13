@@ -4,13 +4,7 @@ use super::*;
 #[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn instant_double_exponential_smoothing_validates_factors() {
-    let store = SeriesFixture::new(labels(&[
-        crate::test_support::TestLabelPair::new("__name__", "queue_depth"),
-        crate::test_support::TestLabelPair::new("job", "api"),
-    ]))
-    .at(0_i64, 3.0)
-    .at(60_000, 6.0)
-    .store();
+    let store = queue_depth_store(&[(0, 3.0), (60_000, 6.0)]);
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let error = engine

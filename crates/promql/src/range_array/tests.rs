@@ -13,6 +13,16 @@ use krabka_metrics::{
 
 use super::{RangeArray, RangeWindow};
 
+fn int_range_array() -> RangeArray {
+    let timestamps = Arc::new(Int64Array::from(vec![0_i64, 15, 30, 45])) as ArrayRef;
+    RangeArray::from_ranges(timestamps, [RangeWindow::new(0, 2), RangeWindow::new(2, 2)]).unwrap()
+}
+
+fn float_range_array() -> RangeArray {
+    let values = Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0, 4.0])) as ArrayRef;
+    RangeArray::from_ranges(values, [RangeWindow::new(0, 2), RangeWindow::new(1, 3)]).unwrap()
+}
+
 mod basic_accessors_report_empty_state_and_exact_ranges;
 mod cell_len_and_empty_cells;
 mod dict_array_round_trips_through_recordbatch_column;

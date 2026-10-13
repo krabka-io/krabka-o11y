@@ -8,12 +8,9 @@ use super::*;
 /// point in this test that produces one.
 #[tokio::test]
 pub(crate) async fn a_snapshot_never_sees_part_of_a_batch() {
-    let head = WalHead::new();
-    let series = lbls(&[
-        crate::test_support::TestLabelPair::new("__name__", "up"),
-        crate::test_support::TestLabelPair::new("job", "api"),
-    ]);
-    head.apply_wal_record(&float_record("t", &series, 1_000, 1.0));
+    let initial = head_with_initial_up_sample();
+    let head = initial.head;
+    let series = initial.series;
 
     let before = head.snapshot();
 

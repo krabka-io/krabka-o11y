@@ -23,14 +23,11 @@ pub(crate) async fn vector_vector_group_right_carries_labels_from_one_side() {
         InstanceSample::builder().instance("a").value(10.0).build(),
         InstanceSample::builder().instance("b").value(25.0).build(),
     ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-                crate::test_support::TestLabelPair::new("instance", sample.instance),
-            ]),
-            10_000,
+        push_named_job_instance_sample(
+            &mut store,
+            "http_requests_total",
+            "api",
+            sample.instance,
             sample.value,
         );
     }

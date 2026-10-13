@@ -72,16 +72,10 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
 
     let mut out = tenants.into_values().collect::<Vec<_>>();
     for rows in &mut out {
-        rows.float_rows.sort_by(|left, right| {
-            left.fingerprint
-                .cmp(&right.fingerprint)
-                .then_with(|| left.timestamp_ms.cmp(&right.timestamp_ms))
-        });
-        rows.histogram_rows.sort_by(|left, right| {
-            left.fingerprint
-                .cmp(&right.fingerprint)
-                .then_with(|| left.timestamp_ms.cmp(&right.timestamp_ms))
-        });
+        rows.float_rows
+            .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
+        rows.histogram_rows
+            .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
         rows.exemplar_rows.sort_by(|left, right| {
             left.fingerprint
                 .cmp(&right.fingerprint)

@@ -7,9 +7,7 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn a_failed_refresh_keeps_serving_the_last_snapshot_until_the_staleness_bound() {
     let tenant = tenant_for_test("tenant-a");
-    let source = Arc::new(CountingBrokerAccess::answering(Ok(
-        AclSet::SecurityDisabled,
-    )));
+    let source = security_disabled_broker_access();
     let fixture = broker_access_for_test(&source, 8);
     let access = fixture.cache;
     let connected = fixture.connected;

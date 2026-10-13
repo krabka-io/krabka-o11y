@@ -248,15 +248,10 @@ mod tests {
         }
     }
 
-    struct LabelInput {
-        name: &'static str,
-        value: &'static str,
-    }
-
-    fn labels(pairs: &[LabelInput]) -> Labels {
+    fn labels(pairs: &[(&'static str, &'static str)]) -> Labels {
         let mut labels = Labels::new();
-        for pair in pairs {
-            labels.insert(pair.name, pair.value);
+        for (name, value) in pairs {
+            labels.insert(*name, *value);
         }
         labels
     }
@@ -279,18 +274,9 @@ mod tests {
     #[test]
     fn label_length_caps_enforced() {
         let l = limits_with(0, bytes(4), bytes(4));
-        let ok = labels(&[LabelInput {
-            name: "ab",
-            value: "cd",
-        }]);
-        let bad_name = labels(&[LabelInput {
-            name: "toolong",
-            value: "x",
-        }]);
-        let bad_val = labels(&[LabelInput {
-            name: "a",
-            value: "toolong",
-        }]);
+        let ok = labels(&[("ab", "cd")]);
+        let bad_name = labels(&[("toolong", "x")]);
+        let bad_val = labels(&[("a", "toolong")]);
         check!(IngestEnforcer::check_labels(&l, &ok).is_ok());
         assert!(matches!(
             IngestEnforcer::check_labels(&l, &bad_name),

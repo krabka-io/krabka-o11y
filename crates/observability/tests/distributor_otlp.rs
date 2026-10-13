@@ -42,6 +42,15 @@ fn checkout_record(metadata: LogLabels) -> WalLogRecord {
     }
 }
 
+fn checkout_proto_log_metadata() -> LogLabels {
+    labels([
+        krabka_blockstore::LabelPair::new("scope_name", "api"),
+        krabka_blockstore::LabelPair::new("scope_version", "1.2.3"),
+        krabka_blockstore::LabelPair::new("status", "500"),
+        krabka_blockstore::LabelPair::new("trace_id", "abc"),
+    ])
+}
+
 /// An OTLP/JSON logs export from the `checkout` service whose one scope holds
 /// `log_records`.
 fn checkout_json_export(log_records: &serde_json::Value) -> serde_json::Value {
@@ -461,15 +470,7 @@ async fn otlp_logs_endpoint_accepts_protobuf_payloads() {
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
-    assert!(
-        records
-            == vec![checkout_record(labels([
-                krabka_blockstore::LabelPair::new("scope_name", "api"),
-                krabka_blockstore::LabelPair::new("scope_version", "1.2.3"),
-                krabka_blockstore::LabelPair::new("status", "500"),
-                krabka_blockstore::LabelPair::new("trace_id", "abc"),
-            ]))]
-    );
+    assert!(records == vec![checkout_record(checkout_proto_log_metadata())]);
 }
 
 #[tokio::test]
@@ -575,15 +576,7 @@ async fn otlp_grpc_logs_service_writes_tenant_scoped_wal_records() {
 
     assert!(response.get_ref().partial_success.is_none());
     let records = sink.records();
-    assert!(
-        records
-            == vec![checkout_record(labels([
-                krabka_blockstore::LabelPair::new("scope_name", "api"),
-                krabka_blockstore::LabelPair::new("scope_version", "1.2.3"),
-                krabka_blockstore::LabelPair::new("status", "500"),
-                krabka_blockstore::LabelPair::new("trace_id", "abc"),
-            ]))]
-    );
+    assert!(records == vec![checkout_record(checkout_proto_log_metadata())]);
 }
 
 #[tokio::test]

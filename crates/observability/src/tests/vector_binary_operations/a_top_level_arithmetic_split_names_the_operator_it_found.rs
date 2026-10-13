@@ -9,17 +9,6 @@ use super::*;
 /// The first operator wins, which matters because these are scanned left
 /// to right with no precedence: "a - b * c" splits at the minus.
 
-fn split_matches(
-    actual: Option<crate::http::params_format::metric_formatting::TopLevelQuerySplit<'_>>,
-    left: &str,
-    operator: &str,
-    right: &str,
-) -> bool {
-    actual.is_some_and(|split| {
-        split.left == left && split.operator == operator && split.right == right
-    })
-}
-
 #[test]
 pub(crate) fn a_top_level_arithmetic_split_names_the_operator_it_found() {
     let split = super::super::prelude::split_top_level_arithmetic_query;

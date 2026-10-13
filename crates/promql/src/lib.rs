@@ -28,6 +28,7 @@ mod series_stats;
 mod store;
 #[cfg(test)]
 mod test_support;
+mod wal_record;
 
 pub use block_store::MetricBlockStore;
 pub use conformance::{

@@ -14,11 +14,7 @@ pub async fn write_log_block_to_object_store(
     mut rows: Vec<LogRow>,
 ) -> Result<BlockDescriptor, BlockStoreError> {
     validate_rows(key, &rows)?;
-    rows.sort_by(|left, right| {
-        left.series_fingerprint
-            .cmp(&right.series_fingerprint)
-            .then_with(|| left.timestamp_ns.cmp(&right.timestamp_ns))
-    });
+    sort_log_rows(&mut rows);
 
     let payload = encode_log_block(&rows)?;
     let size_bytes = u64::try_from(payload.len()).unwrap_or(u64::MAX);

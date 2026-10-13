@@ -25,6 +25,7 @@ use crate::{
     result::{InstantSample, QueryResult, SampleValue},
 };
 
+mod append_left_fill_results;
 mod apply_binary_fill_value;
 mod apply_binary_sample_value;
 mod apply_histogram_float_binary;
@@ -50,6 +51,9 @@ mod validate_binary_modifier;
 mod validate_set_modifier;
 mod vector_operands;
 
+use append_left_fill_results::{
+    append_left_fill_results, append_matched_binary_result, default_left_fill_labels,
+};
 use apply_binary_fill_value::apply_binary_fill_value;
 use apply_binary_sample_value::apply_binary_sample_value;
 use apply_histogram_float_binary::apply_histogram_float_binary;

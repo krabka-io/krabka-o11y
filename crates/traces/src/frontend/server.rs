@@ -54,6 +54,13 @@ pub(crate) fn status_bytes_response(
         .expect("the HTTP response builds")
 }
 
+fn query_time_range(bounds: &TenantTimeBounds) -> krabka_blockstore::TimeRange {
+    krabka_blockstore::TimeRange {
+        start_ns: bounds.start_ns,
+        end_ns: bounds.end_ns,
+    }
+}
+
 // --- param helpers (mirror the querier's contract) --------------------------
 
 #[cfg(test)]

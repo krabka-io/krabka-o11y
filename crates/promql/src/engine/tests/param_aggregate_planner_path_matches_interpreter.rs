@@ -21,10 +21,7 @@ struct CounterPathCase {
     factor: f64,
 }
 
-struct ParameterizedQueryCase {
-    query: &'static str,
-    time_ms: i64,
-}
+type ParameterizedQueryCase = QueryAt;
 
 #[tokio::test]
 pub(crate) async fn param_aggregate_planner_path_matches_interpreter() {
@@ -297,15 +294,7 @@ pub(crate) async fn param_aggregate_planner_path_matches_interpreter() {
         },
     ];
 
-    for case in queries {
-        let query = case.query;
-        let time_ms = case.time_ms;
-        let SortedParity {
-            via_operators,
-            via_interpreter,
-        } = sorted_planned_and_interpreted(&engine, query, time_ms).await;
-        assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
-    }
+    assert_call_planner_matches_interpreter(&engine, &queries).await;
 
     // The experimental `limitk`/`limit_ratio` param aggregations now route
     // through the planner via the shared interpreter kernels (incl.

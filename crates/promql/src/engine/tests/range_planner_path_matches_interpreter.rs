@@ -11,6 +11,38 @@ struct RangeFixtureSeries {
     samples: Vec<RangeFixtureSample>,
 }
 
+fn range_labels(metric: &str, job: &str, group: &str) -> Labels {
+    labels(&[
+        crate::test_support::TestLabelPair::new("__name__", metric),
+        crate::test_support::TestLabelPair::new("job", job),
+        crate::test_support::TestLabelPair::new("group", group),
+    ])
+}
+
+fn minute_samples(values: &[f64]) -> Vec<RangeFixtureSample> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(minute, &value)| {
+            RangeFixtureSample::builder()
+                .timestamp_ms(minute as i64 * 60_000)
+                .value(value)
+                .build()
+        })
+        .collect()
+}
+
+fn push_range_series(store: &mut InMemoryMetricStore, series: RangeFixtureSeries) {
+    for sample in series.samples {
+        store.push_float(
+            "t",
+            series.labels.clone(),
+            sample.timestamp_ms,
+            sample.value,
+        );
+    }
+}
+
 struct RangeQueryBounds {
     start_ms: i64,
     end_ms: i64,
@@ -26,153 +58,30 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
     // Two counters (for rate and sum-by-rate), grouped by `group`.
     for series in [
         RangeFixtureSeries {
-            labels: labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-                crate::test_support::TestLabelPair::new("group", "a"),
-            ]),
-            samples: vec![
-                RangeFixtureSample::builder()
-                    .timestamp_ms(0)
-                    .value(0.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(60_000)
-                    .value(1.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(120_000)
-                    .value(3.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(180_000)
-                    .value(6.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(240_000)
-                    .value(10.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(300_000)
-                    .value(15.0)
-                    .build(),
-            ],
+            labels: range_labels("http_requests_total", "api", "a"),
+            samples: minute_samples(&[0.0, 1.0, 3.0, 6.0, 10.0, 15.0]),
         },
         RangeFixtureSeries {
-            labels: labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
-                crate::test_support::TestLabelPair::new("job", "db"),
-                crate::test_support::TestLabelPair::new("group", "a"),
-            ]),
-            samples: vec![
-                RangeFixtureSample::builder()
-                    .timestamp_ms(0)
-                    .value(0.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(60_000)
-                    .value(2.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(120_000)
-                    .value(4.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(180_000)
-                    .value(8.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(240_000)
-                    .value(16.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(300_000)
-                    .value(32.0)
-                    .build(),
-            ],
+            labels: range_labels("http_requests_total", "db", "a"),
+            samples: minute_samples(&[0.0, 2.0, 4.0, 8.0, 16.0, 32.0]),
         },
         RangeFixtureSeries {
             // group b: a full history so `rate` has a value at every step
             // (no no-value NaN sentinel), keeping the operator aggregate
             // over this rate parity-exact in the forced comparison below.
-            labels: labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
-                crate::test_support::TestLabelPair::new("job", "cache"),
-                crate::test_support::TestLabelPair::new("group", "b"),
-            ]),
-            samples: vec![
-                RangeFixtureSample::builder()
-                    .timestamp_ms(0)
-                    .value(1.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(60_000)
-                    .value(5.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(120_000)
-                    .value(7.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(180_000)
-                    .value(9.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(240_000)
-                    .value(11.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(300_000)
-                    .value(20.0)
-                    .build(),
-            ],
+            labels: range_labels("http_requests_total", "cache", "b"),
+            samples: minute_samples(&[1.0, 5.0, 7.0, 9.0, 11.0, 20.0]),
         },
     ] {
-        for sample in series.samples {
-            store.push_float(
-                "t",
-                series.labels.clone(),
-                sample.timestamp_ms,
-                sample.value,
-            );
-        }
+        push_range_series(&mut store, series);
     }
     // A second counter family with a single-sample (no-value rate) series, to
     // exercise the SPARSE aggregate-over-rate parity (group b's only member is
     // no-value, so it is excluded from the group on both paths).
     for series in [
         RangeFixtureSeries {
-            labels: labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "spotty_total"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-                crate::test_support::TestLabelPair::new("group", "a"),
-            ]),
-            samples: vec![
-                RangeFixtureSample::builder()
-                    .timestamp_ms(0)
-                    .value(0.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(60_000)
-                    .value(1.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(120_000)
-                    .value(2.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(180_000)
-                    .value(3.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(240_000)
-                    .value(4.0)
-                    .build(),
-                RangeFixtureSample::builder()
-                    .timestamp_ms(300_000)
-                    .value(5.0)
-                    .build(),
-            ],
+            labels: range_labels("spotty_total", "api", "a"),
+            samples: minute_samples(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]),
         },
         RangeFixtureSeries {
             // Only one in-window sample at each step's 2m window: rate has no
@@ -181,11 +90,7 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
             // to no row at those steps — matching the interpreter, which omits
             // the no-value series. This drives the SPARSE aggregate-over-rate
             // parity proof below.
-            labels: labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "spotty_total"),
-                crate::test_support::TestLabelPair::new("job", "db"),
-                crate::test_support::TestLabelPair::new("group", "b"),
-            ]),
+            labels: range_labels("spotty_total", "db", "b"),
             samples: vec![
                 RangeFixtureSample::builder()
                     .timestamp_ms(180_000)
@@ -194,14 +99,7 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
             ],
         },
     ] {
-        for sample in series.samples {
-            store.push_float(
-                "t",
-                series.labels.clone(),
-                sample.timestamp_ms,
-                sample.value,
-            );
-        }
+        push_range_series(&mut store, series);
     }
     // A plain gauge for a bare-selector range and a binary op.
     for sample in [

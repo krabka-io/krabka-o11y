@@ -2,15 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_absent_over_time_returns_one_when_range_is_empty() {
-    let engine = FloatStore::default()
-        .sample(
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "up"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-            ]),
-            1.0,
-        )
-        .engine();
+    let engine = FloatStore::default().up_job_sample("api", 1.0).engine();
     let samples = instant_vector(&engine, r#"absent_over_time(up{job="api"}[1m])"#, 120_000).await;
     assert_one_unnamed_float(
         &samples,

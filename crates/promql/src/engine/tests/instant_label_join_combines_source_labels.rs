@@ -2,20 +2,17 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_label_join_combines_source_labels() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "up"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "a"),
-            crate::test_support::TestLabelPair::new("zone", "us-east-1a"),
-        ]),
-        10_000,
-        1.0,
-    );
-
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let engine = FloatStore::default()
+        .named_sample(
+            "up",
+            &[
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", "a"),
+                crate::test_support::TestLabelPair::new("zone", "us-east-1a"),
+            ],
+            1.0,
+        )
+        .engine();
     let result = engine
         .query_instant(
             &tenant_id("tenant-a"),

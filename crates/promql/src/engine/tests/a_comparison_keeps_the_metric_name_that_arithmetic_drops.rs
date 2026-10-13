@@ -29,6 +29,29 @@ impl ExpectedLabel {
     }
 }
 
+fn expected_job_labels() -> Vec<Vec<ExpectedLabel>> {
+    ["x", "y"]
+        .into_iter()
+        .map(|job| vec![ExpectedLabel::new("job", job)])
+        .collect()
+}
+
+fn expected_instance_job_labels(keep_metric_name: bool) -> Vec<Vec<ExpectedLabel>> {
+    ["1", "9"]
+        .into_iter()
+        .zip(["x", "y"])
+        .map(|(instance, job)| {
+            let mut labels = Vec::new();
+            if keep_metric_name {
+                labels.push(ExpectedLabel::new("__name__", "m"));
+            }
+            labels.push(ExpectedLabel::new("inst", instance));
+            labels.push(ExpectedLabel::new("job", job));
+            labels
+        })
+        .collect()
+}
+
 struct QueryExpectation {
     query: &'static str,
     labels: Vec<Vec<ExpectedLabel>>,
@@ -107,34 +130,22 @@ pub(crate) async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
         // One-to-one: `x` matches, `y` takes the right-fill path.
         QueryExpectation {
             query: "a > on (job) fill_right(0) b",
-            labels: vec![
-                vec![ExpectedLabel::new("job", "x")],
-                vec![ExpectedLabel::new("job", "y")],
-            ],
+            labels: expected_job_labels(),
         },
         QueryExpectation {
             query: "a + on (job) fill_right(0) b",
-            labels: vec![
-                vec![ExpectedLabel::new("job", "x")],
-                vec![ExpectedLabel::new("job", "y")],
-            ],
+            labels: expected_job_labels(),
         },
         // The mirror of the pair above: here the *left* side is filled, so the
         // synthetic left operand has the matching labels and no metric name.
         // Only a left-fill query reaches that branch.
         QueryExpectation {
             query: "b < on (job) fill_left(0) a",
-            labels: vec![
-                vec![ExpectedLabel::new("job", "x")],
-                vec![ExpectedLabel::new("job", "y")],
-            ],
+            labels: expected_job_labels(),
         },
         QueryExpectation {
             query: "b + on (job) fill_left(0) a",
-            labels: vec![
-                vec![ExpectedLabel::new("job", "x")],
-                vec![ExpectedLabel::new("job", "y")],
-            ],
+            labels: expected_job_labels(),
         },
         // `bool` puts a comparison back on the arithmetic rule.
         QueryExpectation {
@@ -144,60 +155,20 @@ pub(crate) async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
         // Many-to-one: `x` matches, `y` takes the right-fill path.
         QueryExpectation {
             query: "m > on (job) group_left fill_right(0) b",
-            labels: vec![
-                vec![
-                    ExpectedLabel::new("__name__", "m"),
-                    ExpectedLabel::new("inst", "1"),
-                    ExpectedLabel::new("job", "x"),
-                ],
-                vec![
-                    ExpectedLabel::new("__name__", "m"),
-                    ExpectedLabel::new("inst", "9"),
-                    ExpectedLabel::new("job", "y"),
-                ],
-            ],
+            labels: expected_instance_job_labels(true),
         },
         QueryExpectation {
             query: "m + on (job) group_left fill_right(0) b",
-            labels: vec![
-                vec![
-                    ExpectedLabel::new("inst", "1"),
-                    ExpectedLabel::new("job", "x"),
-                ],
-                vec![
-                    ExpectedLabel::new("inst", "9"),
-                    ExpectedLabel::new("job", "y"),
-                ],
-            ],
+            labels: expected_instance_job_labels(false),
         },
         // One-to-many: `x` matches, `y` takes the left-fill path.
         QueryExpectation {
             query: "b < on (job) group_right fill_right(0) m",
-            labels: vec![
-                vec![
-                    ExpectedLabel::new("__name__", "m"),
-                    ExpectedLabel::new("inst", "1"),
-                    ExpectedLabel::new("job", "x"),
-                ],
-                vec![
-                    ExpectedLabel::new("__name__", "m"),
-                    ExpectedLabel::new("inst", "9"),
-                    ExpectedLabel::new("job", "y"),
-                ],
-            ],
+            labels: expected_instance_job_labels(true),
         },
         QueryExpectation {
             query: "b + on (job) group_right fill_right(0) m",
-            labels: vec![
-                vec![
-                    ExpectedLabel::new("inst", "1"),
-                    ExpectedLabel::new("job", "x"),
-                ],
-                vec![
-                    ExpectedLabel::new("inst", "9"),
-                    ExpectedLabel::new("job", "y"),
-                ],
-            ],
+            labels: expected_instance_job_labels(false),
         },
     ] {
         let result = engine

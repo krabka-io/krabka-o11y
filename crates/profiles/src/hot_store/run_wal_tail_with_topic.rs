@@ -1,7 +1,6 @@
 use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{
-    persisted_format::{PersistedHeader, validate_persisted_format},
-    wal_group_assignment::WalAssignmentWatch,
+    persisted_format::validate_consumer_record, wal_group_assignment::WalAssignmentWatch,
 };
 use krabka_units::convert::TimeExt;
 
@@ -92,11 +91,8 @@ pub async fn run_wal_tail_with_topic(
             .observe_consumer(&consumer, !records.is_empty())
             .await;
         for record in &records {
-            validate_persisted_format(record.headers.iter().map(|header| PersistedHeader {
-                key: header.key.as_str(),
-                value: header.value.as_deref(),
-            }))
-            .map_err(|error| ProfilesError::Wal(error.to_string()))?;
+            validate_consumer_record(record)
+                .map_err(|error| ProfilesError::Wal(error.to_string()))?;
         }
         // Decoded outside the store's write lock, then applied as one batch:
         // the store copies itself on write while a query holds a snapshot, and

@@ -5,6 +5,8 @@ use krabka_blockstore::{
     LogMatchOp as MatchOp, TimeRange, labels, series_fingerprint,
 };
 
+mod common;
+
 struct PredicateCase {
     candidate: krabka_blockstore::LogLabels,
     want: bool,
@@ -33,13 +35,7 @@ fn series_fingerprint_is_stable_across_label_ordering() {
 #[test]
 fn label_index_is_tenant_scoped_and_applies_all_matcher_ops() {
     let mut index = LabelIndex::default();
-    let api_prod = index.insert_series(
-        "tenant-a",
-        labels([
-            krabka_blockstore::LabelPair::new("app", "api"),
-            krabka_blockstore::LabelPair::new("env", "prod"),
-        ]),
-    );
+    let api_prod = index.insert_series("tenant-a", common::api_prod_labels());
     index.insert_series(
         "tenant-a",
         labels([
@@ -47,13 +43,7 @@ fn label_index_is_tenant_scoped_and_applies_all_matcher_ops() {
             krabka_blockstore::LabelPair::new("env", "dev"),
         ]),
     );
-    let worker_prod = index.insert_series(
-        "tenant-a",
-        labels([
-            krabka_blockstore::LabelPair::new("app", "worker"),
-            krabka_blockstore::LabelPair::new("env", "prod"),
-        ]),
-    );
+    let worker_prod = index.insert_series("tenant-a", common::worker_prod_labels());
     index.insert_series(
         "tenant-b",
         labels([
@@ -107,20 +97,8 @@ fn label_predicate_equal_matches_only_identical_label_value() {
 #[test]
 fn label_index_exact_match_requires_posting_candidate_set() {
     let mut index = LabelIndex::default();
-    let api = index.insert_series(
-        "tenant-a",
-        labels([
-            krabka_blockstore::LabelPair::new("app", "api"),
-            krabka_blockstore::LabelPair::new("env", "prod"),
-        ]),
-    );
-    index.insert_series(
-        "tenant-a",
-        labels([
-            krabka_blockstore::LabelPair::new("app", "worker"),
-            krabka_blockstore::LabelPair::new("env", "prod"),
-        ]),
-    );
+    let api = index.insert_series("tenant-a", common::api_prod_labels());
+    index.insert_series("tenant-a", common::worker_prod_labels());
 
     let matched = index.match_series(
         "tenant-a",
@@ -159,14 +137,8 @@ fn label_metadata_is_tenant_scoped() {
 #[test]
 fn label_index_returns_labels_and_tenant_series() {
     let mut index = LabelIndex::default();
-    let api_labels = labels([
-        krabka_blockstore::LabelPair::new("app", "api"),
-        krabka_blockstore::LabelPair::new("env", "prod"),
-    ]);
-    let worker_labels = labels([
-        krabka_blockstore::LabelPair::new("app", "worker"),
-        krabka_blockstore::LabelPair::new("env", "prod"),
-    ]);
+    let api_labels = common::api_prod_labels();
+    let worker_labels = common::worker_prod_labels();
     let api = index.insert_series("tenant-a", api_labels.clone());
     let worker = index.insert_series("tenant-a", worker_labels.clone());
     index.insert_series(

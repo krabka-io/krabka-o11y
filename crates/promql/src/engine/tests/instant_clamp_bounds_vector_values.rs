@@ -1,10 +1,5 @@
 use super::*;
 
-struct ClampInput {
-    instance: &'static str,
-    value: f64,
-}
-
 struct ClampedSample {
     instance: String,
     value: f64,
@@ -13,29 +8,8 @@ struct ClampedSample {
 #[tokio::test]
 pub(crate) async fn instant_clamp_bounds_vector_values() {
     let mut store = InMemoryMetricStore::new();
-    for input in [
-        ClampInput {
-            instance: "low",
-            value: -5.0,
-        },
-        ClampInput {
-            instance: "mid",
-            value: 7.0,
-        },
-        ClampInput {
-            instance: "high",
-            value: 20.0,
-        },
-    ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "temperature_celsius"),
-                crate::test_support::TestLabelPair::new("instance", input.instance),
-            ]),
-            10_000,
-            input.value,
-        );
+    for (instance, value) in [("low", -5.0), ("mid", 7.0), ("high", 20.0)] {
+        push_metric_instance_sample(&mut store, "temperature_celsius", instance, value);
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

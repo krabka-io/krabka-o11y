@@ -1,7 +1,8 @@
 use super::{
-    BTreeSet, InstantSample, MissingSide, PromqlError, Result, VectorMatching, VectorOperands,
-    apply_binary_fill_value, apply_binary_sample_value, binary_match_key, binary_returns_bool,
-    fill_missing_right, index_by_match_key, one_to_one_binary_result_labels,
+    BTreeSet, InstantSample, PromqlError, Result, VectorMatching, VectorOperands,
+    append_left_fill_results, append_matched_binary_result, binary_match_key,
+    default_left_fill_labels, fill_missing_right, index_by_match_key,
+    one_to_one_binary_result_labels,
 };
 
 pub(crate) fn eval_one_to_one_vector_binary(
@@ -29,46 +30,25 @@ pub(crate) fn eval_one_to_one_vector_binary(
                 "many-to-one matching must be explicit for key `{key}`"
             )));
         }
-        let Some(value) = apply_binary_sample_value(&left_sample, right_sample, op, modifier)?
-        else {
-            continue;
-        };
-        let preserves_name = op.is_comparison() && !binary_returns_bool(modifier);
-        let drop_name = if preserves_name {
-            left_sample.drop_name
-        } else {
-            true
-        };
-        let labels = one_to_one_binary_result_labels(&left_sample.labels, modifier, preserves_name);
-        out.push(InstantSample {
-            labels,
-            ts_ms: left_sample.ts_ms,
-            value,
-            drop_name,
-        });
+        append_matched_binary_result(
+            &mut out,
+            &left_sample,
+            right_sample,
+            op,
+            modifier,
+            |preserves_name| {
+                one_to_one_binary_result_labels(&left_sample.labels, modifier, preserves_name)
+            },
+        )?;
     }
-    if let Some(lhs_fill) = modifier.and_then(|modifier| modifier.fill_values.lhs) {
-        for entry in right_by_key {
-            let key = entry.0;
-            let right_sample = entry.1;
-            if matched_keys.contains(&key) {
-                continue;
-            }
-            let Some(value) =
-                apply_binary_fill_value(&right_sample, lhs_fill, op, modifier, MissingSide::Left)?
-            else {
-                continue;
-            };
-            // The synthetic left side has no metric name, including filtered comparisons.
-            let drop_name = true;
-            let labels = one_to_one_binary_result_labels(&right_sample.labels, modifier, false);
-            out.push(InstantSample {
-                labels,
-                ts_ms: right_sample.ts_ms,
-                value,
-                drop_name,
-            });
-        }
-    }
+    append_left_fill_results(
+        &mut out,
+        right_by_key,
+        &matched_keys,
+        modifier.and_then(|modifier| modifier.fill_values.lhs),
+        op,
+        modifier,
+        |sample| default_left_fill_labels(sample, modifier),
+    )?;
     Ok(out)
 }

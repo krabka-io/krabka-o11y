@@ -12,17 +12,6 @@ use super::*;
 /// which only skips characters where `starts_with` would fail anyway. Both
 /// are equivalent mutations rather than gaps.
 
-fn split_matches(
-    actual: Option<crate::http::params_format::metric_formatting::TopLevelQuerySplit<'_>>,
-    left: &str,
-    operator: &str,
-    right: &str,
-) -> bool {
-    actual.is_some_and(|split| {
-        split.left == left && split.operator == operator && split.right == right
-    })
-}
-
 #[test]
 pub(crate) fn a_top_level_set_split_needs_a_whole_word() {
     let split = super::super::prelude::split_top_level_set_query;

@@ -89,6 +89,13 @@ fn retention(entries: &[TenantRetention]) -> OverridesProvider {
         .expect("the retention overrides")
 }
 
+fn one_hour_retention() -> OverridesProvider {
+    retention(&[TenantRetention {
+        tenant: "t",
+        window_secs: 3600,
+    }])
+}
+
 fn options(
     policy: CompactionPolicy,
     windows: &OverridesProvider,
@@ -228,10 +235,7 @@ async fn an_expired_block_and_its_symbol_database_leave_the_bucket() {
         expired,
         live,
     } = one_expired_and_one_live(&store).await;
-    let windows = retention(&[TenantRetention {
-        tenant: "t",
-        window_secs: 3600,
-    }]);
+    let windows = one_hour_retention();
 
     let report = run_lifecycle_pass(
         &store,
@@ -273,10 +277,7 @@ async fn an_expired_block_is_not_resurrected_by_the_snapshot_merge() {
         expired,
         live,
     } = one_expired_and_one_live(&store).await;
-    let windows = retention(&[TenantRetention {
-        tenant: "t",
-        window_secs: 3600,
-    }]);
+    let windows = one_hour_retention();
 
     run_lifecycle_pass(
         &store,
@@ -580,10 +581,7 @@ async fn the_retention_cutoff_is_counted_in_milliseconds() {
         let mut index = ProfileIndex::new();
         let block = write_block(&store, &mut index, "t", "alpha", NOW_MS - age_ms, 0).await;
         publish(&store, &index).await;
-        let windows = retention(&[TenantRetention {
-            tenant: "t",
-            window_secs: 3600,
-        }]);
+        let windows = one_hour_retention();
 
         let report = run_lifecycle_pass(
             &store,

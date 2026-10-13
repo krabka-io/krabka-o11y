@@ -1,4 +1,4 @@
-use super::*;
+use super::{native_histogram_store::push_request_duration_instance_histogram, *};
 
 #[derive(bon::Builder)]
 struct HistogramInstance {
@@ -33,16 +33,7 @@ pub(crate) async fn instant_count_values_counts_native_histogram_sample_values()
             .histogram(distinct)
             .build(),
     ] {
-        store.push_histogram(
-            "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-                crate::test_support::TestLabelPair::new("instance", sample.instance),
-            ]),
-            10_000,
-            sample.histogram,
-        );
+        push_request_duration_instance_histogram(&mut store, sample.instance, sample.histogram);
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

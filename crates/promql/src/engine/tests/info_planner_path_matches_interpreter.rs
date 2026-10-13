@@ -5,6 +5,15 @@ struct InfoSampleFixture {
     value: f64,
 }
 
+fn matching_metric_labels() -> Labels {
+    labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "metric"),
+        crate::test_support::TestLabelPair::new("instance", "a"),
+        crate::test_support::TestLabelPair::new("job", "1"),
+        crate::test_support::TestLabelPair::new("label", "value"),
+    ])
+}
+
 /// Differential parity for `info(v [, data_label_selector])` in the planner.
 ///
 /// The recursive planner recurses the input vector. It selects the
@@ -21,13 +30,7 @@ pub(crate) async fn info_planner_path_matches_interpreter() {
     let mut store = InMemoryMetricStore::new();
     for fixture in [
         InfoSampleFixture {
-            labels: labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "metric"),
-                crate::test_support::TestLabelPair::new("instance", "a"),
-                crate::test_support::TestLabelPair::new("job", "1"),
-                crate::test_support::TestLabelPair::new("label", "value"),
-            ])
-            .into(),
+            labels: matching_metric_labels().into(),
             value: 2.0,
         },
         InfoSampleFixture {
@@ -120,17 +123,7 @@ pub(crate) async fn info_planner_path_matches_interpreter() {
     // A histogram info-series match errors identically (the info series must be
     // float-typed). Pin that the planner surfaces the same error class.
     let mut hist_store = InMemoryMetricStore::new();
-    hist_store.push_float(
-        "t",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "metric"),
-            crate::test_support::TestLabelPair::new("instance", "a"),
-            crate::test_support::TestLabelPair::new("job", "1"),
-            crate::test_support::TestLabelPair::new("label", "value"),
-        ]),
-        600_000,
-        2.0,
-    );
+    hist_store.push_float("t", matching_metric_labels(), 600_000, 2.0);
     hist_store.push_histogram(
         "t",
         labels(&[

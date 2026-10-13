@@ -67,3 +67,18 @@ use lbls::lbls;
 use store_with_float_and_hist_series::store_with_float_and_hist_series;
 
 use crate::testkit::count_two_sum_three_histogram;
+
+pub(crate) struct HeadWithUpSeries {
+    pub(crate) head: WalHead,
+    pub(crate) series: Labels,
+}
+
+pub(crate) fn head_with_initial_up_sample() -> HeadWithUpSeries {
+    let head = WalHead::new();
+    let series = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
+    head.apply_wal_record(&float_record("t", &series, 1_000, 1.0));
+    HeadWithUpSeries { head, series }
+}

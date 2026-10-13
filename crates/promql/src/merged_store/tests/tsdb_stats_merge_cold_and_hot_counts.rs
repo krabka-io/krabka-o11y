@@ -2,37 +2,34 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn tsdb_stats_merge_cold_and_hot_counts() {
-    let mut cold = InMemoryMetricStore::new();
-    let mut hot = InMemoryMetricStore::new();
-    cold.push_float(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "up"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-        ]),
-        10_000,
-        1.0,
+    let store = merged_store_with_samples(
+        &[
+            MergedFloatSample::builder()
+                .metric("up")
+                .job("api")
+                .instance("")
+                .cluster("")
+                .timestamp_ms(10_000)
+                .value(1.0)
+                .build(),
+            MergedFloatSample::builder()
+                .metric("up")
+                .job("api")
+                .instance("")
+                .cluster("")
+                .timestamp_ms(20_000)
+                .value(2.0)
+                .build(),
+        ],
+        &[MergedFloatSample::builder()
+            .metric("errors_total")
+            .job("worker")
+            .instance("")
+            .cluster("")
+            .timestamp_ms(30_000)
+            .value(3.0)
+            .build()],
     );
-    cold.push_float(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "up"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-        ]),
-        20_000,
-        2.0,
-    );
-    hot.push_float(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "errors_total"),
-            crate::test_support::TestLabelPair::new("job", "worker"),
-        ]),
-        30_000,
-        3.0,
-    );
-
-    let store = MergedMetricStore::new(cold, hot);
     let stats = store.tsdb_stats("tenant-a").await.unwrap();
 
     let stat = |name: &str, value: usize| NamedTsdbStat {

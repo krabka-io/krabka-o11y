@@ -16,9 +16,32 @@ use crate::{
 };
 
 struct ScalarAggregateParts {
-    name: &'static str,
     function: ScalarAggregate,
     expression: ScalarExpr,
+}
+
+fn scalar_aggregate_parts(aggregate: &Aggregate) -> Option<ScalarAggregateParts> {
+    let (function, expression) = match aggregate {
+        Aggregate::Expression { function, expr } => (*function, expr.clone()),
+        Aggregate::Sum(field) => (ScalarAggregate::Sum, ScalarExpr::Field(field.clone())),
+        Aggregate::Avg(field) => (ScalarAggregate::Avg, ScalarExpr::Field(field.clone())),
+        Aggregate::Min(field) => (ScalarAggregate::Min, ScalarExpr::Field(field.clone())),
+        Aggregate::Max(field) => (ScalarAggregate::Max, ScalarExpr::Field(field.clone())),
+        _ => return None,
+    };
+    Some(ScalarAggregateParts {
+        function,
+        expression,
+    })
+}
+
+fn scalar_aggregate_function_name(function: ScalarAggregate) -> &'static str {
+    match function {
+        ScalarAggregate::Sum => "sum",
+        ScalarAggregate::Avg => "avg",
+        ScalarAggregate::Min => "min",
+        ScalarAggregate::Max => "max",
+    }
 }
 
 pub(crate) fn requires_expression_execution(stage: &Pipeline) -> bool {
@@ -287,43 +310,14 @@ fn attribute_value(value: &Value) -> AttrValue {
 }
 
 fn aggregate_name(aggregate: &Aggregate) -> String {
-    let parts = match aggregate {
-        Aggregate::Count => return "count()".into(),
-        Aggregate::Expression { function, expr } => ScalarAggregateParts {
-            name: match function {
-                ScalarAggregate::Sum => "sum",
-                ScalarAggregate::Avg => "avg",
-                ScalarAggregate::Min => "min",
-                ScalarAggregate::Max => "max",
-            },
-            function: *function,
-            expression: expr.clone(),
-        },
-        Aggregate::Sum(field) => ScalarAggregateParts {
-            name: "sum",
-            function: ScalarAggregate::Sum,
-            expression: ScalarExpr::Field(field.clone()),
-        },
-        Aggregate::Avg(field) => ScalarAggregateParts {
-            name: "avg",
-            function: ScalarAggregate::Avg,
-            expression: ScalarExpr::Field(field.clone()),
-        },
-        Aggregate::Min(field) => ScalarAggregateParts {
-            name: "min",
-            function: ScalarAggregate::Min,
-            expression: ScalarExpr::Field(field.clone()),
-        },
-        Aggregate::Max(field) => ScalarAggregateParts {
-            name: "max",
-            function: ScalarAggregate::Max,
-            expression: ScalarExpr::Field(field.clone()),
-        },
-        _ => unreachable!("aggregate_value rejects non-scalar aggregates"),
-    };
+    if matches!(aggregate, Aggregate::Count) {
+        return "count()".into();
+    }
+    let parts =
+        scalar_aggregate_parts(aggregate).expect("aggregate_value rejects non-scalar aggregates");
     format!(
         "{}({})",
-        parts.name,
+        scalar_aggregate_function_name(parts.function),
         super::expression_name::scalar_name(&parts.expression)
     )
 }
@@ -340,36 +334,8 @@ fn aggregate_value(
                     .map_err(|error| TraceqlError::Exec(error.to_string()))?,
             )));
         }
-        Aggregate::Expression { function, expr } => ScalarAggregateParts {
-            name: "",
-            function: *function,
-            expression: expr.clone(),
-        },
-        Aggregate::Sum(field) => ScalarAggregateParts {
-            name: "sum",
-            function: ScalarAggregate::Sum,
-            expression: ScalarExpr::Field(field.clone()),
-        },
-        Aggregate::Avg(field) => ScalarAggregateParts {
-            name: "avg",
-            function: ScalarAggregate::Avg,
-            expression: ScalarExpr::Field(field.clone()),
-        },
-        Aggregate::Min(field) => ScalarAggregateParts {
-            name: "min",
-            function: ScalarAggregate::Min,
-            expression: ScalarExpr::Field(field.clone()),
-        },
-        Aggregate::Max(field) => ScalarAggregateParts {
-            name: "max",
-            function: ScalarAggregate::Max,
-            expression: ScalarExpr::Field(field.clone()),
-        },
-        other => {
-            return Err(TraceqlError::Unsupported(format!(
-                "scalar aggregate {other:?}"
-            )));
-        }
+        other => scalar_aggregate_parts(other)
+            .ok_or_else(|| TraceqlError::Unsupported(format!("scalar aggregate {other:?}")))?,
     };
     let values = indexes
         .iter()

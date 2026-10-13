@@ -121,19 +121,25 @@ pub(crate) async fn a_range_query_agrees_with_instant_evaluation_at_every_step()
             ],
         },
     ];
-    for series in series_fixtures {
-        for sample in series.samples {
-            store.push_float(
-                "t",
-                labels(&[
+    push_float_series(
+        &mut store,
+        series_fixtures
+            .into_iter()
+            .map(|series| LabeledFloatSeries {
+                labels: labels(&[
                     crate::test_support::TestLabelPair::new("__name__", series.metric_name),
                     crate::test_support::TestLabelPair::new("job", series.job),
                 ]),
-                sample.timestamp_ms,
-                sample.value,
-            );
-        }
-    }
+                samples: series
+                    .samples
+                    .iter()
+                    .map(|sample| FloatSampleInput {
+                        timestamp_ms: sample.timestamp_ms,
+                        value: sample.value,
+                    })
+                    .collect(),
+            }),
+    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let start_ms = 0_i64;

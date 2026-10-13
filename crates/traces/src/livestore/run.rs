@@ -32,15 +32,8 @@ pub async fn run(
         }
 
         for record in &records {
-            krabka_observability::persisted_format::validate_persisted_format(
-                record.headers.iter().map(|header| {
-                    krabka_observability::persisted_format::PersistedHeader {
-                        key: header.key.as_str(),
-                        value: header.value.as_deref(),
-                    }
-                }),
-            )
-            .map_err(|error| TracesError::Wal(error.to_string()))?;
+            krabka_observability::persisted_format::validate_consumer_record(record)
+                .map_err(|error| TracesError::Wal(error.to_string()))?;
         }
 
         {

@@ -4,6 +4,7 @@ use super::*;
 pub(crate) struct DeletedApiBlockStoreFixture {
     pub(crate) block_store: BlockStore,
     pub(crate) kept_series: Labels,
+    pub(crate) object_store: Arc<dyn ObjectStore>,
 }
 
 /// A block store of two float blocks at 1s, `up{job="api"}` = 1 in
@@ -11,8 +12,17 @@ pub(crate) struct DeletedApiBlockStoreFixture {
 /// `metrics/float/0002.parquet`, whose first block object has been deleted.
 /// Returns the store and the surviving `job="db"` series labels.
 pub(crate) async fn deleted_api_block_store() -> DeletedApiBlockStoreFixture {
+    let fixture = api_db_block_store().await;
+    fixture
+        .object_store
+        .delete(&ObjectPath::from("metrics/float/0001.parquet"))
+        .await
+        .unwrap();
+    fixture
+}
+
+pub(crate) async fn api_db_block_store() -> DeletedApiBlockStoreFixture {
     let fixture = MemoryBlockStoreFixture::build();
-    let object_store = &fixture.object_store;
     let mut block_store = fixture.writer();
 
     let deleted_series = labels(&[
@@ -39,12 +49,9 @@ pub(crate) async fn deleted_api_block_store() -> DeletedApiBlockStoreFixture {
         2.0,
     )
     .await;
-    object_store
-        .delete(&ObjectPath::from("metrics/float/0001.parquet"))
-        .await
-        .unwrap();
     DeletedApiBlockStoreFixture::builder()
         .block_store(block_store)
         .kept_series(kept_series)
+        .object_store(fixture.object_store)
         .build()
 }

@@ -9,7 +9,7 @@ use super::{
     MAX_RESOLUTION_POINTS, MatrixSelectorAt, check_resolution_points, match_rate_range_call,
 };
 use crate::{
-    AnnotatedQueryResult, Annotations, EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine,
+    AnnotatedQueryResult, EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine,
     PromqlError, QueryResult, SampleValue,
     test_support::{labels, tenant_id},
 };
@@ -251,7 +251,6 @@ mod lone_matrix_series;
 mod matching_on_a_metadata_label_keeps_it_out_of_the_result;
 mod memory_bytes_engine;
 mod mixed_histogram_store;
-mod nan_equal_samples;
 mod native_histogram;
 mod native_histogram_bucket_bounds_follow_the_schema;
 mod native_histogram_planner_path_matches_interpreter;
@@ -345,7 +344,7 @@ use case_values::{
 use classic_bucket_store::classic_bucket_store;
 use float_store::{FloatStore, default_engine, lookback_engine};
 use float_value::float_value;
-use instant_samples_match::instant_samples_match;
+use instant_samples_match::{instant_samples_match, nan_equal_samples};
 use instant_vector::{
     LoneValueQuery, assert_lone_unlabeled_value_at, assert_lone_value, assert_lone_value_at,
     instant_vector,
@@ -354,9 +353,93 @@ use lone_matrix_series::{ExpectedPoint, check_series_points, lone_matrix_series}
 use memory_bytes_engine::{
     JobInstanceSample, has_job_memory_bytes_sample, job_memory_bytes_engine, memory_bytes_engine,
 };
-use mixed_histogram_store::{mixed_api_group_store, mixed_histogram_store};
-use nan_equal_samples::nan_equal_samples;
+use mixed_histogram_store::{
+    MixedMetricFloatSample, mixed_api_group_store, mixed_histogram_store, mixed_metric_store,
+};
 use native_histogram::native_histogram;
+pub(crate) fn single_bucket_native_histogram(
+    count: f64,
+    sum: f64,
+    zero_count: f64,
+    bucket_count: f64,
+) -> NativeHistogram {
+    let mut histogram = native_histogram(count, sum);
+    histogram.zero_count = zero_count;
+    histogram.positive_spans = vec![BucketSpan {
+        offset: 0,
+        length: 1,
+    }];
+    histogram.positive_counts = vec![bucket_count];
+    histogram
+}
+
+pub(crate) fn push_named_job_instance_sample(
+    store: &mut InMemoryMetricStore,
+    metric: &str,
+    job: &str,
+    instance: &str,
+    value: f64,
+) {
+    store.push_float(
+        "tenant-a",
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", metric),
+            crate::test_support::TestLabelPair::new("job", job),
+            crate::test_support::TestLabelPair::new("instance", instance),
+        ]),
+        10_000,
+        value,
+    );
+}
+
+pub(crate) fn push_metric_instance_sample(
+    store: &mut InMemoryMetricStore,
+    metric: &str,
+    instance: &str,
+    value: f64,
+) {
+    store.push_float(
+        "tenant-a",
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", metric),
+            crate::test_support::TestLabelPair::new("instance", instance),
+        ]),
+        10_000,
+        value,
+    );
+}
+
+pub(crate) fn push_metric_job_samples(
+    store: &mut InMemoryMetricStore,
+    samples: impl IntoIterator<Item = (&'static str, &'static str, f64)>,
+) {
+    for (metric, job, value) in samples {
+        store.push_float(
+            "tenant-a",
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", metric),
+                crate::test_support::TestLabelPair::new("job", job),
+            ]),
+            10_000,
+            value,
+        );
+    }
+}
+
+pub(crate) fn push_metadata_sample(store: &mut InMemoryMetricStore, instance: &str, value: f64) {
+    store.push_float(
+        "tenant-a",
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "requests_total"),
+            crate::test_support::TestLabelPair::new("__type__", "counter"),
+            crate::test_support::TestLabelPair::new("__unit__", "requests"),
+            crate::test_support::TestLabelPair::new("instance", instance),
+        ]),
+        10_000,
+        value,
+    );
+}
+
 use native_histogram_store::{
     InstanceHistograms, assert_histogram_series_reduction, instance_histogram_store,
     native_histogram_store, signed_bucket_histogram_engine, two_bucket_histogram_store,
@@ -372,7 +455,7 @@ use range_query_routes_through_planner::range_query_routes_through_planner;
 use region_info_engine::{InstanceRequests, region_info_engine};
 #[cfg(feature = "experimental-functions")]
 use sample_instances::{sample_instances, selected_memory_instances};
-use series_store::SeriesFixture;
+use series_store::{SeriesFixture, queue_depth_store, up_series_store};
 
 fn three_point_gauge_store(metric: &str) -> InMemoryMetricStore {
     SeriesFixture::new(labels(&[

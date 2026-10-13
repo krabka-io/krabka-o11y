@@ -1,8 +1,7 @@
 use super::{
-    DistributorError, Limits, OtlpLine, OtlpResourceGroups, OtlpScope, OtlpScopeGroups,
-    ProtoExportLogsServiceRequest, TenantId, WalLogRecord, otlp_resource_labels,
-    otlp_scope_context, proto_log_record_structured_metadata, proto_timestamp_ns,
-    proto_value_to_string,
+    DistributorError, Limits, OtlpLine, OtlpScope, ProtoExportLogsServiceRequest, TenantId,
+    WalLogRecord, group_otlp_resource, group_otlp_scope, proto_log_record_structured_metadata,
+    proto_timestamp_ns, proto_value_to_string,
 };
 
 pub(crate) fn normalize_otlp_proto_logs_for_tenant(
@@ -15,32 +14,24 @@ pub(crate) fn normalize_otlp_proto_logs_for_tenant(
         payload.resource_logs,
         limits,
         |resource_logs, limits| {
-            let groups = otlp_resource_labels(
+            group_otlp_resource(
                 resource_logs
                     .resource
                     .as_ref()
                     .map(|resource| resource.attributes.as_slice())
                     .unwrap_or_default(),
+                resource_logs.scope_logs,
                 limits,
-            )?;
-            Ok(OtlpResourceGroups {
-                labels: groups.labels,
-                structured_metadata: groups.structured_metadata,
-                scopes: resource_logs.scope_logs,
-            })
+            )
         },
         |scope_logs, resource_labels, resource_metadata, limits| {
-            let groups = otlp_scope_context(
+            group_otlp_scope(
                 resource_labels,
                 resource_metadata,
                 &OtlpScope::from_proto(scope_logs.scope.as_ref()),
+                scope_logs.log_records,
                 limits,
-            )?;
-            Ok(OtlpScopeGroups {
-                labels: groups.labels,
-                inherited_metadata: groups.structured_metadata,
-                records: scope_logs.log_records,
-            })
+            )
         },
         |log_record, labels, inherited, tenant, limits| {
             OtlpLine {

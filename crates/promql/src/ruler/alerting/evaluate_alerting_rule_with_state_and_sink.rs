@@ -1,7 +1,7 @@
 use super::{
     AlertStateKey, AlertmanagerAlert, AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine,
     PromqlError, QueryResult, RecordingRuleWalSink, RulerAlertState, RulerAlertStateRecord,
-    RulerStateSink, SamplePayload, TenantId, TimeExt, WalRecord, alert_template_variables,
+    RulerStateSink, TenantId, TimeExt, WalRecord, alert_template_variables,
     expand_alert_label_map_async, labels_to_map, yaml_duration, yaml_optional_string,
     yaml_required_string, yaml_string_map,
 };
@@ -340,19 +340,14 @@ fn wal_record(
     value: f64,
     eval_time_ms: i64,
 ) -> WalRecord {
-    WalRecord {
-        tenant: tenant.to_string(),
-        labels: labels
+    crate::wal_record::float_wal_record(
+        tenant,
+        labels
             .iter()
-            .map(|pair| krabka_metrics::MetricLabelPair::new(pair.name.clone(), pair.value.clone()))
-            .collect(),
-        payload: SamplePayload::Float {
-            timestamp_ms: eval_time_ms,
-            value,
-            start_timestamp_ms: None,
-        },
-        exemplars: Vec::new(),
-    }
+            .map(|pair| (pair.name.to_owned(), pair.value.clone())),
+        eval_time_ms,
+        value,
+    )
 }
 
 fn stale_nan() -> f64 {

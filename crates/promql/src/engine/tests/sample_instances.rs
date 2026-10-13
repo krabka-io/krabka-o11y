@@ -44,14 +44,11 @@ pub(crate) async fn selected_memory_instances(query: &str) -> Vec<String> {
             value: 5.0,
         },
     ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "memory_bytes"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-                crate::test_support::TestLabelPair::new("instance", sample.instance),
-            ]),
-            10_000,
+        push_named_job_instance_sample(
+            &mut store,
+            "memory_bytes",
+            "api",
+            sample.instance,
             sample.value,
         );
     }

@@ -5,6 +5,14 @@
 //! append, and compactor block and index writes. Query execution lives in
 //! `krabka-promql`.
 
+fn append_optional_i64(builder: &mut arrow::array::Int64Builder, value: Option<i64>) {
+    if let Some(value) = value {
+        builder.append_value(value);
+    } else {
+        builder.append_null();
+    }
+}
+
 mod arrow_codec;
 mod metric_labels;
 mod metric_string;

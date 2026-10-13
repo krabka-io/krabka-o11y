@@ -4189,6 +4189,23 @@ pub(crate) struct TimeBounds {
     pub(crate) start_ns: i64,
     pub(crate) end_ns: i64,
 }
+
+pub(crate) fn tag_filter<'a>(
+    tenant: &'a str,
+    bounds: &'a TenantTimeBounds,
+    query: &'a str,
+    uri: &'a Uri,
+) -> TagFilter<'a> {
+    TagFilter {
+        tenant,
+        query,
+        uri,
+        window: TimeRange {
+            start_ns: bounds.start_ns,
+            end_ns: bounds.end_ns,
+        },
+    }
+}
 mod timed_tag_values;
 mod trace_by_id;
 mod trace_by_id_inner;

@@ -1,4 +1,4 @@
-use super::{InstantSample, set_label_value};
+use super::{InstantSample, apply_byte_label_join::apply_join_samples};
 
 /// Applies `label_join(v, dst_label, separator, src_label_1, …)` to an
 /// already-assembled instant vector.
@@ -15,26 +15,6 @@ pub fn apply_label_join(
     separator: &str,
     src_labels: &[String],
 ) -> Vec<InstantSample> {
-    samples
-        .into_iter()
-        .map(|mut sample| {
-            let mut value = Vec::new();
-            for source in src_labels.iter().enumerate() {
-                let index = source.0;
-                let name = source.1;
-                if index > 0 {
-                    value.extend_from_slice(separator.as_bytes());
-                }
-                if let Some(source) = sample.labels.get_value(name) {
-                    value.extend_from_slice(source.as_bytes());
-                }
-            }
-            sample.labels =
-                set_label_value(&sample.labels, dst_label, crate::PromqlString::from(value));
-            if dst_label == "__name__" {
-                sample.drop_name = false;
-            }
-            sample
-        })
-        .collect()
+    let source_names = src_labels.iter().map(String::as_str).collect::<Vec<_>>();
+    apply_join_samples(samples, dst_label, separator.as_bytes(), &source_names)
 }

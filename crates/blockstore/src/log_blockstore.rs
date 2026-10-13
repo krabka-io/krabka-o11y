@@ -1335,7 +1335,6 @@ mod tests {
 
         for case in AWKWARD_TENANTS {
             let name = case.name;
-            let tenant = case.tenant;
             let key = BlockKey::new(case.tenant, 3, 42, 47, TimeRange::new(10, 20).unwrap());
             let object_key = key.object_key();
             let segments = object_key.split('/').collect::<Vec<_>>();
@@ -1469,6 +1468,10 @@ mod structured_metadata_value;
 mod time_range;
 mod validate_planned_blocks;
 mod validate_rows;
+
+fn sort_log_rows(rows: &mut [LogRow]) {
+    rows.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
+}
 mod write_log_block;
 mod write_log_block_to_object_store;
 mod write_log_index_manifest;

@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_count_values_counts_by_sample_value() {
     let mut store = InMemoryMetricStore::new();
-    for case in [
+    for InstanceValueCase { instance, value } in [
         InstanceValueCase {
             instance: "0",
             value: 200.0,
@@ -17,16 +17,7 @@ pub(crate) async fn instant_count_values_counts_by_sample_value() {
             value: 500.0,
         },
     ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "http_responses_total"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-                crate::test_support::TestLabelPair::new("instance", case.instance),
-            ]),
-            10_000,
-            case.value,
-        );
+        push_named_job_instance_sample(&mut store, "http_responses_total", "api", instance, value);
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

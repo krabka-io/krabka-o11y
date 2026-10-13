@@ -799,6 +799,19 @@ pub fn api_prod_wal_record(timestamp_ns: i64, line: &str) -> WalLogRecord {
     }
 }
 
+pub fn insert_api_series(
+    label_index: &mut LabelIndex,
+    tenant: &str,
+) -> krabka_blockstore::SeriesFingerprint {
+    label_index.insert_series(
+        tenant,
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    )
+}
+
 /// A streams result that holds one `{app="api", env="prod"}` stream.
 pub fn api_prod_streams(values: Value) -> Value {
     let mut stream = json!({ "stream": { "app": "api", "env": "prod" } });

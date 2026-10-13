@@ -6,19 +6,14 @@ pub(crate) fn float_record(
     timestamp_ms: i64,
     value: f64,
 ) -> WalRecord {
-    WalRecord {
-        tenant: tenant.to_string(),
-        labels: labels
+    crate::wal_record::float_wal_record(
+        tenant,
+        labels
             .iter()
-            .map(|pair| krabka_metrics::MetricLabelPair::new(pair.name.clone(), pair.value.clone()))
-            .collect(),
-        payload: SamplePayload::Float {
-            timestamp_ms,
-            value,
-            start_timestamp_ms: None,
-        },
-        exemplars: Vec::new(),
-    }
+            .map(|pair| (pair.name.to_owned(), pair.value.to_owned().into())),
+        timestamp_ms,
+        value,
+    )
 }
 
 pub(crate) fn float_sample_row(

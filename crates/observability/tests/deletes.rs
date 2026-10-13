@@ -15,14 +15,14 @@ use krabka_blockstore::{
 };
 use krabka_observability::{
     InMemoryWalSink, LogWalSink, Role, ServiceConfig, ServiceDependencies, SharedLogDeleteRequests,
-    WalLogRecord, build_service_router,
+    build_service_router,
 };
 use krabka_units::convert::ByteSizeExt as _;
 use serde_json::{Value, json};
 use support::{
-    LokiStatsCounts, LokiSuccess, Method, Tenant, TenantDenyingQueryAuthorizer, assert_loki_error,
-    json_body, minimal_service_config, next_frame_within_two_seconds, open_tail, post_form,
-    test_service_config, text_body,
+    LokiStatsCounts, LokiSuccess, Method, Tenant, TenantDenyingQueryAuthorizer,
+    api_prod_wal_record, assert_loki_error, insert_api_series, json_body, minimal_service_config,
+    next_frame_within_two_seconds, open_tail, post_form, test_service_config, text_body,
 };
 use tower::ServiceExt as _;
 
@@ -209,31 +209,11 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
 
     let hot_tail = InMemoryWalSink::default();
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([
-                krabka_blockstore::LabelPair::new("app", "api"),
-                krabka_blockstore::LabelPair::new("env", "prod"),
-            ]),
-            timestamp_ns: 15_000_000_000,
-            line: "api secret".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
+        .append(api_prod_wal_record(15_000_000_000, "api secret"))
         .await
         .unwrap();
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([
-                krabka_blockstore::LabelPair::new("app", "api"),
-                krabka_blockstore::LabelPair::new("env", "prod"),
-            ]),
-            timestamp_ns: 17_000_000_000,
-            line: "api later secret".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
+        .append(api_prod_wal_record(17_000_000_000, "api later secret"))
         .await
         .unwrap();
 
@@ -539,13 +519,7 @@ struct SecretLinesManifest {
 fn secret_lines_manifest() -> SecretLinesManifest {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series(
-        "tenant-a",
-        labels([
-            krabka_blockstore::LabelPair::new("app", "api"),
-            krabka_blockstore::LabelPair::new("env", "prod"),
-        ]),
-    );
+    let api = insert_api_series(&mut label_index, "tenant-a");
     let block = write_log_block(
         &dir,
         &BlockKey::new(

@@ -19,16 +19,7 @@ struct RankCase {
 /// in the table below, because no float compares equal to a `NaN`.
 #[test]
 fn rank_reduction_ranks_nan_last_for_top_and_bottom() {
-    let series = |name: &str, value: f64| RangeSeries {
-        drop_name: false,
-        start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "up"),
-            crate::test_support::TestLabelPair::new("series", name),
-        ])
-        .into(),
-        samples: vec![RangeSeriesSample::new(0, SampleValue::Float(value))],
-    };
+    use super::rank_recording_executor::ranked_series as series;
     let selected = |series: &str, value| SelectedValue {
         series: series.to_string(),
         value,

@@ -344,35 +344,32 @@ mod tests {
         OverTimeUdf::new(OverTimeFamily::Sum).invoke_with_args(args)
     }
 
-    #[test]
-    fn invoke_rejects_each_row_count_mismatch() {
-        let err = invoke_sum_with_columns(
-            2,
-            Arc::new(Int64Array::from(vec![60_000, 120_000])) as ArrayRef,
-            dict_i64(vec![60_000], [crate::RangeWindow::new(0, 1)]),
-            dict_f64(
-                vec![1.0, 2.0],
-                [crate::RangeWindow::new(0, 1), crate::RangeWindow::new(1, 1)],
-            ),
-        )
-        .unwrap_err()
-        .to_string();
-        assert2::assert!(err.contains("row-count mismatch"));
-
-        let err = invoke_sum_with_columns(
-            2,
-            Arc::new(Int64Array::from(vec![60_000])) as ArrayRef,
+    #[yare::parameterized(
+        eval_timestamp = { false },
+        timestamp_range = { true },
+    )]
+    fn invoke_rejects_row_count_mismatch(timestamp_range_has_wrong_rows: bool) {
+        let eval_col = if timestamp_range_has_wrong_rows {
+            Arc::new(Int64Array::from(vec![60_000])) as ArrayRef
+        } else {
+            Arc::new(Int64Array::from(vec![60_000, 120_000])) as ArrayRef
+        };
+        let ts_dict = if timestamp_range_has_wrong_rows {
             dict_i64(
                 vec![60_000, 120_000],
                 [crate::RangeWindow::new(0, 1), crate::RangeWindow::new(1, 1)],
-            ),
-            dict_f64(
-                vec![1.0, 2.0],
-                [crate::RangeWindow::new(0, 1), crate::RangeWindow::new(1, 1)],
-            ),
-        )
-        .unwrap_err()
-        .to_string();
+            )
+        } else {
+            dict_i64(vec![60_000], [crate::RangeWindow::new(0, 1)])
+        };
+        let values = dict_f64(
+            vec![1.0, 2.0],
+            [crate::RangeWindow::new(0, 1), crate::RangeWindow::new(1, 1)],
+        );
+
+        let err = invoke_sum_with_columns(2, eval_col, ts_dict, values)
+            .unwrap_err()
+            .to_string();
         assert2::assert!(err.contains("row-count mismatch"));
     }
 

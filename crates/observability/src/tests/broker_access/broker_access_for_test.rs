@@ -63,3 +63,9 @@ pub(crate) fn broker_access_for_test(
         clock,
     }
 }
+
+pub(crate) fn security_disabled_broker_access() -> Arc<CountingBrokerAccess> {
+    Arc::new(CountingBrokerAccess::answering(Ok(
+        AclSet::SecurityDisabled,
+    )))
+}

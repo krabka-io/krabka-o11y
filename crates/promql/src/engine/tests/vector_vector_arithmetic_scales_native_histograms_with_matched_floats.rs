@@ -9,13 +9,7 @@ struct HistogramScaleExpectation {
 
 #[tokio::test]
 pub(crate) async fn vector_vector_arithmetic_scales_native_histograms_with_matched_floats() {
-    let mut histogram = native_histogram(4.0, 10.0);
-    histogram.zero_count = 1.0;
-    histogram.positive_spans = vec![BucketSpan {
-        offset: 0,
-        length: 1,
-    }];
-    histogram.positive_counts = vec![3.0];
+    let histogram = single_bucket_native_histogram(4.0, 10.0, 1.0, 3.0);
 
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(

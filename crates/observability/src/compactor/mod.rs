@@ -35,6 +35,31 @@ pub(crate) struct StartedCompactorRun<'a> {
     pub(crate) run: CompactorRunState<'a>,
 }
 
+pub(crate) struct CompactorRunComponents<'a> {
+    pub(crate) compaction_frontier: SharedCompactionFrontier,
+    pub(crate) delete_requests: SharedLogDeleteRequests,
+    pub(crate) consumer: tokio::sync::MutexGuard<'a, Box<dyn crate::LogWalConsumer>>,
+    pub(crate) descriptors: Vec<crate::BlockDescriptor>,
+    pub(crate) tenant_indexes: crate::TenantCompactionIndexCache,
+}
+
+impl<'a> StartedCompactorRun<'a> {
+    pub(crate) fn into_components(self) -> CompactorRunComponents<'a> {
+        let Self {
+            compaction_frontier,
+            delete_requests,
+            run,
+        } = self;
+        CompactorRunComponents {
+            compaction_frontier,
+            delete_requests,
+            consumer: run.consumer,
+            descriptors: run.descriptors,
+            tenant_indexes: run.tenant_indexes,
+        }
+    }
+}
+
 pub(crate) struct CompactorRunState<'a> {
     pub(crate) consumer: tokio::sync::MutexGuard<'a, Box<dyn crate::LogWalConsumer>>,
     pub(crate) descriptors: Vec<crate::BlockDescriptor>,

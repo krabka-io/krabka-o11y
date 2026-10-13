@@ -33,6 +33,13 @@ fn entry(name: &str, partitions: i32, replicas: i32) -> TopicMetadataEntry {
     }
 }
 
+fn missing_wal_topic() -> TopicDrift {
+    TopicDrift::Missing {
+        topic: METRICS_WAL_TOPIC.to_string(),
+        purpose: ALL_TOPICS[0].purpose,
+    }
+}
+
 struct ConfigPair {
     name: &'static str,
     value: &'static str,
@@ -327,10 +334,7 @@ fn an_absent_or_unreadable_topic_is_fatal() {
     assert!(
         drift
             == vec![
-                TopicDrift::Missing {
-                    topic: METRICS_WAL_TOPIC.to_string(),
-                    purpose: ALL_TOPICS[0].purpose,
-                },
+                missing_wal_topic(),
                 TopicDrift::Unreadable {
                     topic: METRICS_HA_TOPIC.to_string(),
                     error: "TOPIC_AUTHORIZATION_FAILED".to_string(),
@@ -356,13 +360,7 @@ fn a_topic_the_broker_omits_entirely_is_also_absent() {
     let drift = inspection.drift;
 
     assert!(observed == Vec::new());
-    assert!(
-        drift
-            == vec![TopicDrift::Missing {
-                topic: METRICS_WAL_TOPIC.to_string(),
-                purpose: ALL_TOPICS[0].purpose,
-            }]
-    );
+    assert!(drift == vec![missing_wal_topic()]);
 }
 
 #[test]

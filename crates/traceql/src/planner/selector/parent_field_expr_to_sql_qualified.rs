@@ -8,6 +8,32 @@ struct ParentPredicateSides {
     right: Option<String>,
 }
 
+enum ParentPredicateOperator {
+    And,
+    Or,
+}
+
+fn combine_parent_predicates(
+    sides: ParentPredicateSides,
+    operator: ParentPredicateOperator,
+) -> Option<String> {
+    let ParentPredicateSides { left, right } = sides;
+    match (left, right, operator) {
+        (Some(left), Some(right), ParentPredicateOperator::And) => {
+            Some(format!("({left} AND {right})"))
+        }
+        (Some(left), Some(right), ParentPredicateOperator::Or) => {
+            Some(format!("({left} OR {right})"))
+        }
+        (Some(predicate), None, ParentPredicateOperator::And)
+        | (None, Some(predicate), ParentPredicateOperator::And) => Some(predicate),
+        (None, None, ParentPredicateOperator::And)
+        | (Some(_), None, ParentPredicateOperator::Or)
+        | (None, Some(_), ParentPredicateOperator::Or)
+        | (None, None, ParentPredicateOperator::Or) => None,
+    }
+}
+
 pub(crate) fn parent_field_expr_to_sql_qualified(
     fe: &FieldExpr,
     span_alias: &str,
@@ -30,42 +56,18 @@ pub(crate) fn parent_field_expr_to_sql_qualified(
         FieldExpr::And(a, b) => {
             let left = parent_field_expr_to_sql_qualified(a, span_alias, parent_alias)?;
             let right = parent_field_expr_to_sql_qualified(b, span_alias, parent_alias)?;
-            Ok(match (ParentPredicateSides { left, right }) {
-                ParentPredicateSides {
-                    left: Some(left),
-                    right: Some(right),
-                } => Some(format!("({left} AND {right})")),
-                ParentPredicateSides {
-                    left: Some(predicate),
-                    right: None,
-                }
-                | ParentPredicateSides {
-                    left: None,
-                    right: Some(predicate),
-                } => Some(predicate),
-                ParentPredicateSides {
-                    left: None,
-                    right: None,
-                } => None,
-            })
+            Ok(combine_parent_predicates(
+                ParentPredicateSides { left, right },
+                ParentPredicateOperator::And,
+            ))
         }
         FieldExpr::Or(a, b) => {
             let left = parent_field_expr_to_sql_qualified(a, span_alias, parent_alias)?;
             let right = parent_field_expr_to_sql_qualified(b, span_alias, parent_alias)?;
-            Ok(match (ParentPredicateSides { left, right }) {
-                ParentPredicateSides {
-                    left: Some(left),
-                    right: Some(right),
-                } => Some(format!("({left} OR {right})")),
-                ParentPredicateSides {
-                    left: Some(_) | None,
-                    right: None,
-                }
-                | ParentPredicateSides {
-                    left: None,
-                    right: Some(_),
-                } => None,
-            })
+            Ok(combine_parent_predicates(
+                ParentPredicateSides { left, right },
+                ParentPredicateOperator::Or,
+            ))
         }
         FieldExpr::Not(inner) => {
             Ok(

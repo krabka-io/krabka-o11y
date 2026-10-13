@@ -17,6 +17,7 @@ use crate::{
 };
 
 mod assemble_aggregate_batches;
+mod assemble_float_vector_batches;
 mod assemble_over_time_batches;
 mod assemble_range_fold_grid;
 mod assemble_rate_batches;

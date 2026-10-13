@@ -60,6 +60,20 @@ fn trace_partial(body: TraceByIdResponseJson) -> TracePartial {
     }
 }
 
+fn frontend(
+    backend: MockQuerier,
+    catalog: MockCatalog,
+    config: FrontendConfig,
+    members: &[&str],
+) -> QueryFrontend<MockQuerier, MockCatalog> {
+    QueryFrontend::new(
+        Arc::new(backend),
+        Arc::new(catalog),
+        config,
+        MembershipView::fixed(members.iter().copied()),
+    )
+}
+
 #[tokio::test]
 async fn trace_split_across_queriers_reassembles() {
     // 2 queriers: A holds spans 01,02; B holds spans 02,03 (02 overlaps).
@@ -73,12 +87,7 @@ async fn trace_split_across_queriers_reassembles() {
         max_concurrency: 1,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["qa:3200", "qb:3200"]),
-    );
+    let qf = frontend(backend, catalog, cfg, &["qa:3200", "qb:3200"]);
 
     let krabka_traces::frontend::TraceByIdResult {
         trace,
@@ -110,12 +119,7 @@ async fn oversized_trace_is_partial() {
         max_concurrency: 1,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["qa:3200"]),
-    );
+    let qf = frontend(backend, catalog, cfg, &["qa:3200"]);
 
     let krabka_traces::frontend::TraceByIdResult {
         trace,
@@ -140,12 +144,7 @@ async fn missing_trace_is_none() {
         max_concurrency: 1,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["qa:3200", "qb:3200"]),
-    );
+    let qf = frontend(backend, catalog, cfg, &["qa:3200", "qb:3200"]);
     let krabka_traces::frontend::TraceByIdResult { trace, status, .. } = qf
         .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
         .await

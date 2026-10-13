@@ -13,6 +13,8 @@ use krabka_blockstore::{
 use krabka_units::prelude::*;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 
+mod common;
+
 struct ApiAndWorker {
     api: u64,
     worker: u64,
@@ -41,14 +43,8 @@ fn mixed_rows(series: &ApiAndWorker) -> Vec<LogRow> {
 #[test]
 fn parquet_log_block_round_trips_rows_sorted_by_series_and_timestamp() {
     let dir = tempfile::tempdir().unwrap();
-    let api_labels = labels([
-        krabka_blockstore::LabelPair::new("app", "api"),
-        krabka_blockstore::LabelPair::new("env", "prod"),
-    ]);
-    let worker_labels = labels([
-        krabka_blockstore::LabelPair::new("app", "worker"),
-        krabka_blockstore::LabelPair::new("env", "prod"),
-    ]);
+    let api_labels = common::api_prod_labels();
+    let worker_labels = common::worker_prod_labels();
     let api = series_fingerprint(&api_labels);
     let worker = series_fingerprint(&worker_labels);
     let key = BlockKey::new("tenant-a", 3, 50, 55, TimeRange::new(10, 30).unwrap());
@@ -62,11 +58,7 @@ fn parquet_log_block_round_trips_rows_sorted_by_series_and_timestamp() {
 
     let rows = read_log_block(dir.path(), &key).unwrap();
     let mut expected = mixed_rows(&ApiAndWorker { api, worker });
-    expected.sort_by(|left, right| {
-        left.series_fingerprint
-            .cmp(&right.series_fingerprint)
-            .then_with(|| left.timestamp_ns.cmp(&right.timestamp_ns))
-    });
+    expected.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
 
     assert2::assert!(rows == expected);
 }
@@ -182,11 +174,7 @@ async fn parquet_log_block_round_trips_through_object_store() {
         .await
         .unwrap();
     let mut expected = mixed_rows(&ApiAndWorker { api, worker });
-    expected.sort_by(|left, right| {
-        left.series_fingerprint
-            .cmp(&right.series_fingerprint)
-            .then_with(|| left.timestamp_ns.cmp(&right.timestamp_ns))
-    });
+    expected.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
 
     assert2::assert!(rows == expected);
 }

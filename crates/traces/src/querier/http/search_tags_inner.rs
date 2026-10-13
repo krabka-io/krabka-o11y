@@ -1,7 +1,8 @@
 use super::{
-    IntoResponse, Json, QuerierRequest, Response, ScopedTag, SpanStore, StatusCode, TagFilter,
-    TagScope, TimeRange, Value, is_match_all_query, optional_time_bounds, query_param, scope_param,
-    scoped_tags_from_traces, status_text_response, tenant_and_bounds, traces_matching_filter,
+    IntoResponse, Json, QuerierRequest, Response, ScopedTag, SpanStore, StatusCode, TagScope,
+    Value, is_match_all_query, optional_time_bounds, query_param, scope_param,
+    scoped_tags_from_traces, status_text_response, tag_filter, tenant_and_bounds,
+    traces_matching_filter,
 };
 
 /// Renders the scoped tags; this is where the v1 and v2 endpoints differ.
@@ -27,15 +28,7 @@ where
     if let Some(query) = query_param(uri, "q")
         && !is_match_all_query(&query)
     {
-        let filter = TagFilter {
-            tenant: bounds.tenant.as_str(),
-            query: &query,
-            uri,
-            window: TimeRange {
-                start_ns: bounds.start_ns,
-                end_ns: bounds.end_ns,
-            },
-        };
+        let filter = tag_filter(bounds.tenant.as_str(), &bounds, &query, uri);
         return match traces_matching_filter(state, filter).await {
             Ok(traces) => {
                 Json(render(scoped_tags_from_traces(&traces, scope), scope)).into_response()

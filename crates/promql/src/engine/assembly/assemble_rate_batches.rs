@@ -1,55 +1,23 @@
 use super::{
-    Array, BTreeMap, Float64Array, InstantSample, Labels, PromqlError, QueryResult, RecordBatch,
-    Result, SampleValue, SeriesFingerprint, labels_from_rate_batch, rate_range,
+    BTreeMap, Labels, QueryResult, RecordBatch, Result, SeriesFingerprint,
+    assemble_float_vector_batches::assemble_float_vector_batches as assemble_values, rate_range,
 };
 
 /// Assembles rate-family projection output batches into a result.
 ///
-/// Output rows carry label columns plus one `value` column. This function
-/// reattaches the eval timestamp and drops the metric name. It also drops NULL
-/// rows, which are the UDF's "no value" marker for a window with too few
-/// samples. This is exactly how the interpreter omits no-value series. A
-/// non-null NaN row is a genuine NaN value, so the function KEEPS it and
-/// propagates it.
+/// Empty windows are omitted while genuine NaN results are retained. Rate
+/// families always drop the metric name.
 pub(crate) fn assemble_rate_batches(
     batches: &[RecordBatch],
     labels_by_fp: &BTreeMap<SeriesFingerprint, Labels>,
     time_ms: i64,
 ) -> Result<QueryResult> {
-    let mut by_fp: BTreeMap<SeriesFingerprint, f64> = BTreeMap::new();
-    for batch in batches {
-        let values = batch
-            .column_by_name(rate_range::RATE_VALUE_COLUMN)
-            .and_then(|column| column.as_any().downcast_ref::<Float64Array>())
-            .ok_or_else(|| {
-                PromqlError::Exec("rate projection missing Float64 value column".to_string())
-            })?;
-        for row in 0..batch.num_rows() {
-            // A NULL is the no-value marker (the series has no value at this
-            // step): drop it. A non-null NaN is a genuine NaN value: keep it.
-            if values.is_null(row) {
-                continue;
-            }
-            let value = values.value(row);
-            let fp = labels_from_rate_batch(batch, row).fingerprint();
-            by_fp.insert(fp, value);
-        }
-    }
-
-    let samples = by_fp
-        .into_iter()
-        .filter_map(|entry| {
-            let fp = entry.0;
-            let value = entry.1;
-            labels_by_fp.get(&fp).map(|labels| InstantSample {
-                // Rate-family results drop the metric name, matching
-                // `eval_range_function_call`'s `labels_without_metric_name`.
-                labels: labels.clone(),
-                ts_ms: time_ms,
-                value: SampleValue::Float(value),
-                drop_name: true,
-            })
-        })
-        .collect();
-    Ok(QueryResult::InstantVector(samples))
+    assemble_values(
+        batches,
+        labels_by_fp,
+        time_ms,
+        rate_range::RATE_VALUE_COLUMN,
+        "rate projection missing Float64 value column",
+        true,
+    )
 }

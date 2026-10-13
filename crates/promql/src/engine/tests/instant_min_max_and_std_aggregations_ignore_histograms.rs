@@ -7,36 +7,18 @@ struct AggregationExpectation {
 
 #[tokio::test]
 pub(crate) async fn instant_min_max_and_std_aggregations_ignore_histograms() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "mixed_metric"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "a"),
-        ]),
-        10_000,
-        4.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "mixed_metric"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "b"),
-        ]),
-        10_000,
-        8.0,
-    );
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "mixed_metric"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "hist"),
-        ]),
-        10_000,
-        native_histogram(4.0, 10.0),
+    let store = mixed_metric_store(
+        "mixed_metric",
+        &[
+            MixedMetricFloatSample::builder()
+                .instance("a")
+                .value(4.0)
+                .build(),
+            MixedMetricFloatSample::builder()
+                .instance("b")
+                .value(8.0)
+                .build(),
+        ],
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

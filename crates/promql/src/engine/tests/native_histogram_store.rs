@@ -11,6 +11,12 @@ struct NamedHistogram {
 }
 
 pub(crate) fn native_histogram_store() -> InMemoryMetricStore {
+    store_with_request_duration_histogram(native_histogram(4.0, 10.0))
+}
+
+pub(crate) fn store_with_request_duration_histogram(
+    histogram: NativeHistogram,
+) -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
@@ -19,7 +25,7 @@ pub(crate) fn native_histogram_store() -> InMemoryMetricStore {
             crate::test_support::TestLabelPair::new("job", "api"),
         ]),
         10_000,
-        native_histogram(4.0, 10.0),
+        histogram,
     );
     store
 }
@@ -34,17 +40,7 @@ pub(crate) fn two_bucket_histogram_store(sum: f64) -> InMemoryMetricStore {
         length: 2,
     }];
     histogram.positive_counts = vec![1.0, 3.0];
-    let mut store = InMemoryMetricStore::new();
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-        ]),
-        10_000,
-        histogram,
-    );
-    store
+    store_with_request_duration_histogram(histogram)
 }
 
 /// A store holding `request_duration_seconds{job="api"}` native histograms of
@@ -80,6 +76,23 @@ pub(crate) struct InstanceHistograms {
     pub(crate) b: NativeHistogram,
 }
 
+pub(crate) fn push_request_duration_instance_histogram(
+    store: &mut InMemoryMetricStore,
+    instance: &str,
+    histogram: NativeHistogram,
+) {
+    store.push_histogram(
+        "tenant-a",
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", instance),
+        ]),
+        10_000,
+        histogram,
+    );
+}
+
 /// A store holding `request_duration_seconds{job="api"}` at 10s, with one
 /// native histogram per instance.
 pub(crate) fn instance_histogram_store(histograms: InstanceHistograms) -> InMemoryMetricStore {
@@ -94,16 +107,7 @@ pub(crate) fn instance_histogram_store(histograms: InstanceHistograms) -> InMemo
             histogram: histograms.b,
         },
     ] {
-        store.push_histogram(
-            "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-                crate::test_support::TestLabelPair::new("instance", sample.instance),
-            ]),
-            10_000,
-            sample.histogram,
-        );
+        push_request_duration_instance_histogram(&mut store, sample.instance, sample.histogram);
     }
     store
 }

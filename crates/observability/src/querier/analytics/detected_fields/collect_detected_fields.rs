@@ -1,9 +1,7 @@
 use super::{
-    AnalyticsQuery, BTreeMap, DetectedFieldStats, DetectedFieldsParams, HeaderMap, HttpQueryError,
-    PlannedRead, QuerierState, RangeEnd, RequestSecurity, TenantErrorSurface, TimeRange,
-    VolumeRangeLimit, active_log_delete_filters, authorized_tenant, detect_entry_fields,
-    is_deleted_log_entry, plan_analytics_query, plan_hot_tail_records, read_planned_log_block,
-    reads_planned_row,
+    BTreeMap, DetectedFieldStats, DetectedFieldsParams, HeaderMap, HttpQueryError, QuerierState,
+    RangeEnd, RequestSecurity, TenantErrorSurface, VolumeRangeLimit, detect_entry_fields,
+    is_deleted_log_entry, plan_hot_tail_records, read_planned_log_block, reads_planned_row,
 };
 
 pub(crate) async fn collect_detected_fields(
@@ -12,38 +10,26 @@ pub(crate) async fn collect_detected_fields(
     headers: &HeaderMap,
     params: &DetectedFieldsParams,
 ) -> Result<BTreeMap<String, DetectedFieldStats>, HttpQueryError> {
-    let tenant =
-        authorized_tenant(state, security, headers, TenantErrorSurface::QuerierRead).await?;
-    let time_range = TimeRange::new(params.start, params.end)?;
-    let planned = plan_analytics_query(
+    let planned = crate::querier::analytics::authorize_and_prepare_analytics_read(
         state,
-        AnalyticsQuery {
-            tenant: &tenant,
-            time_range,
-            query: &params.query,
-            volume_range_limit: VolumeRangeLimit::Check,
-        },
+        security,
+        headers,
+        TenantErrorSurface::QuerierRead,
+        params.start,
+        params.end,
+        &params.query,
+        VolumeRangeLimit::Check,
     )
     .await?;
-    let state = planned.state;
-    let plan = planned.plan;
-    let time_range = planned.time_range;
-    let tenant = tenant.as_str();
-    let delete_filters = active_log_delete_filters(&state, tenant, time_range)?;
-    let read = PlannedRead {
-        state: &state,
-        plan: &plan,
-        delete_filters: &delete_filters,
-        end: RangeEnd::Inclusive,
-    };
+    let read = planned.read(RangeEnd::Inclusive);
 
     let mut fields = BTreeMap::new();
     let mut scanned_lines = 0_usize;
-    for block in &plan.blocks {
+    for block in &planned.plan.blocks {
         if scanned_lines >= params.line_limit {
             break;
         }
-        let Some(rows) = read_planned_log_block(&state, &block.key).await? else {
+        let Some(rows) = read_planned_log_block(&planned.state, &block.key).await? else {
             continue;
         };
         for row in rows {
@@ -58,17 +44,17 @@ pub(crate) async fn collect_detected_fields(
         }
     }
 
-    for record in plan_hot_tail_records(&state, &plan) {
+    for record in plan_hot_tail_records(&planned.state, &planned.plan) {
         if scanned_lines >= params.line_limit {
             break;
         }
         if is_deleted_log_entry(
-            &delete_filters,
+            read.delete_filters,
             &record.labels,
             &record.line,
             &record.structured_metadata,
             record.timestamp_ns,
-        ) || !plan.query.matches_with_fields(
+        ) || !planned.plan.query.matches_with_fields(
             &record.labels,
             &record.line,
             &record.structured_metadata,

@@ -1,9 +1,7 @@
 use super::{
-    AnalyticsQuery, BTreeMap, HeaderMap, HttpQueryError, PlannedRead, QuerierState, RangeEnd,
-    RequestSecurity, TenantErrorSurface, TimeRange, Value, VolumeRangeLimit,
-    active_log_delete_filters, authorized_tenant, json, log_line_pattern, loki_success_value,
-    parse_patterns_params, plan_analytics_query, read_planned_log_block, reads_planned_row,
-    sample_time_bucket,
+    BTreeMap, HeaderMap, HttpQueryError, QuerierState, RangeEnd, RequestSecurity,
+    TenantErrorSurface, Value, VolumeRangeLimit, json, log_line_pattern, loki_success_value,
+    parse_patterns_params, read_planned_log_block, reads_planned_row, sample_time_bucket,
 };
 
 pub(crate) async fn execute_patterns_query(
@@ -20,33 +18,22 @@ pub(crate) async fn execute_patterns_query(
         });
     }
 
-    let tenant = authorized_tenant(state, security, headers, TenantErrorSurface::Patterns).await?;
-    let time_range = TimeRange::new(params.start, params.end)?;
-    let planned = plan_analytics_query(
+    let planned = crate::querier::analytics::authorize_and_prepare_analytics_read(
         state,
-        AnalyticsQuery {
-            tenant: &tenant,
-            time_range,
-            query: &params.query,
-            volume_range_limit: VolumeRangeLimit::Skip,
-        },
+        security,
+        headers,
+        TenantErrorSurface::Patterns,
+        params.start,
+        params.end,
+        &params.query,
+        VolumeRangeLimit::Skip,
     )
     .await?;
-    let state = planned.state;
-    let plan = planned.plan;
-    let time_range = planned.time_range;
-    let tenant = tenant.as_str();
-    let delete_filters = active_log_delete_filters(&state, tenant, time_range)?;
-    let read = PlannedRead {
-        state: &state,
-        plan: &plan,
-        delete_filters: &delete_filters,
-        end: RangeEnd::Exclusive,
-    };
+    let read = planned.read(RangeEnd::Exclusive);
 
     let mut patterns = BTreeMap::<String, BTreeMap<i64, u64>>::new();
-    for block in &plan.blocks {
-        let Some(rows) = read_planned_log_block(&state, &block.key).await? else {
+    for block in &planned.plan.blocks {
+        let Some(rows) = read_planned_log_block(&planned.state, &block.key).await? else {
             continue;
         };
         for row in rows {
