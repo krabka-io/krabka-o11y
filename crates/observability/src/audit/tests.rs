@@ -46,6 +46,17 @@ struct AuditEnvironmentOverride {
     value: &'static str,
 }
 
+fn with_environment<T>(overrides: &[AuditEnvironmentOverride], run: impl FnOnce() -> T) -> T {
+    if overrides.is_empty() {
+        return run();
+    }
+    let override_value = &overrides[0];
+    let remaining = &overrides[1..];
+    temp_env::with_var(override_value.variable, Some(override_value.value), || {
+        with_environment(remaining, run)
+    })
+}
+
 /// Every environment variable the audit flags read.
 const ENVIRONMENT: [&str; 9] = [
     "KRABKA_AUDIT_TOPIC",
@@ -327,7 +338,7 @@ fn every_audit_flag_parses_into_its_field() {
         "audit-2026",
     ])
     .expect("every flag is valid");
-    let environment: Vec<_> = [
+    let environment = [
         AuditEnvironmentOverride {
             variable: "KRABKA_AUDIT_TOPIC",
             value: "krabka-audit",
@@ -364,11 +375,8 @@ fn every_audit_flag_parses_into_its_field() {
             variable: "KRABKA_AUDIT_SIGNING_KEY_ID",
             value: "audit-2026",
         },
-    ]
-    .into_iter()
-    .map(|override_value| (override_value.variable, Some(override_value.value)))
-    .collect();
-    let from_environment = temp_env::with_vars(environment, || {
+    ];
+    let from_environment = with_environment(&environment, || {
         Cli::try_parse_from(["krabka-audit-test"]).map(|cli| cli.audit)
     })
     .expect("every variable is valid");

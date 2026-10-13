@@ -95,12 +95,12 @@ impl Listener for ServerListener {
         match &mut self.mode {
             ListenerMode::Plain(listener) => loop {
                 match TcpListener::accept(listener).await {
-                    Ok((tcp, socket)) => {
+                    Ok(connection) => {
                         let peer = PeerAddr {
-                            socket,
+                            socket: connection.1,
                             client_identity: None,
                         };
-                        return (ServerStream::Plain(tcp), peer);
+                        return (ServerStream::Plain(connection.0), peer);
                     }
                     Err(error) => handle_accept_error(error).await,
                 }

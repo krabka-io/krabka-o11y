@@ -71,6 +71,17 @@ struct EnvironmentSetting<'a> {
     value: &'a str,
 }
 
+fn with_environment<T>(overrides: &[EnvironmentSetting<'_>], run: impl FnOnce() -> T) -> T {
+    if overrides.is_empty() {
+        return run();
+    }
+    let override_value = &overrides[0];
+    let remaining = &overrides[1..];
+    temp_env::with_var(override_value.name, Some(override_value.value), || {
+        with_environment(remaining, run)
+    })
+}
+
 #[derive(Debug, Parser)]
 struct Cli {
     #[command(flatten)]
@@ -309,13 +320,9 @@ fn every_flag_parses_from_the_command_line_and_from_the_environment() {
             setting
         })
         .collect::<Vec<_>>();
-    let from_environment = temp_env::with_vars(
-        environment
-            .into_iter()
-            .map(|setting| (setting.name, Some(setting.value)))
-            .collect::<Vec<_>>(),
-        || Cli::try_parse_from([PROGRAM]).map(|cli| cli.wal),
-    );
+    let from_environment = with_environment(&environment, || {
+        Cli::try_parse_from([PROGRAM]).map(|cli| cli.wal)
+    });
     assert!(let Ok(from_environment) = from_environment);
     assert!(from_environment == expected);
 }

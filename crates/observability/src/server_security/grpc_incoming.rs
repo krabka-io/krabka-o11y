@@ -1,4 +1,4 @@
-use std::convert::Infallible;
+use std::{convert::Infallible, future::Future, task::Poll};
 
 use axum::serve::Listener;
 use futures_util::Stream;
@@ -39,13 +39,19 @@ use super::{GrpcConnection, ServerListener};
 pub fn grpc_incoming(
     listener: ServerListener,
 ) -> impl Stream<Item = Result<GrpcConnection, Infallible>> + Send + 'static {
-    futures_util::stream::unfold(listener, |mut listener| async move {
-        let connection = Listener::accept(&mut listener).await;
-        let stream = connection.0;
-        let peer = connection.1;
-        if let Err(error) = stream.tcp().set_nodelay(true) {
-            tracing::debug!(peer = %peer.socket, %error, "cannot set TCP_NODELAY on a gRPC connection");
+    let mut listener = listener;
+    futures_util::stream::poll_fn(move |context| {
+        let mut accept = Box::pin(Listener::accept(&mut listener));
+        match accept.as_mut().poll(context) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(connection) => {
+                let stream = connection.0;
+                let peer = connection.1;
+                if let Err(error) = stream.tcp().set_nodelay(true) {
+                    tracing::debug!(peer = %peer.socket, %error, "cannot set TCP_NODELAY on a gRPC connection");
+                }
+                Poll::Ready(Some(Ok(GrpcConnection::new(stream, peer))))
+            }
         }
-        Some((Ok(GrpcConnection::new(stream, peer)), listener))
     })
 }

@@ -40,11 +40,10 @@ fn append_query_parameters<'a>(
     url: &mut url::Url,
     parameters: impl IntoIterator<Item = QueryParameter<'a>>,
 ) {
-    let pairs = parameters
-        .into_iter()
-        .map(|parameter| (parameter.name, parameter.value))
-        .collect::<Vec<_>>();
-    url.query_pairs_mut().extend_pairs(pairs);
+    let mut query = url.query_pairs_mut();
+    for parameter in parameters {
+        query.append_pair(parameter.name, parameter.value);
+    }
 }
 
 struct EncodedPushPayload {
