@@ -11,20 +11,20 @@ pub(crate) fn nested_attr_value<'a>(
             event
                 .attributes
                 .iter()
-                .find(|(attr_key, _)| attr_key == key)
-                .map(|(_, value)| value)
+                .find(|attribute| attribute.key == key)
+                .map(|attribute| &attribute.value)
         });
     }
     if let Some(key) = key.strip_prefix(LINK_ATTR_PREFIX) {
         return link.and_then(|link| {
             link.attributes
                 .iter()
-                .find(|(attr_key, _)| attr_key == key)
-                .map(|(_, value)| value)
+                .find(|attribute| attribute.key == key)
+                .map(|attribute| &attribute.value)
         });
     }
     span.attrs
         .iter()
-        .find(|(attr_key, _)| attr_key == key)
-        .map(|(_, value)| value)
+        .find(|attribute| attribute.key == key)
+        .map(|attribute| &attribute.value)
 }

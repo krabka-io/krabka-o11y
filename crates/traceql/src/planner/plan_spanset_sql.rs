@@ -20,9 +20,11 @@ pub(crate) async fn plan_spanset_sql<S: SpanStore>(
             &scan_options,
         )
         .await?;
-    let (span_table, sampling_factor) =
+    let sampled =
         super::sample_metric_scan::sample_metric_scan(&scan.ctx, &scan.span_table, &scan_options)
             .await?;
+    let span_table = sampled.table;
+    let sampling_factor = sampled.scale;
     let mut selectors = Vec::new();
     super::collect_field_selectors(root, &mut selectors);
     super::register_field_comparison_columns(&scan.ctx, &span_table, &selectors).await?;

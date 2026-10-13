@@ -107,7 +107,9 @@ impl MetricsGenerator {
         let now_ns = self.clock.now_ns();
         let mut payloads = Vec::new();
 
-        for (tenant, state) in &mut self.per_tenant {
+        for entry in &mut self.per_tenant {
+            let tenant = entry.0;
+            let state = entry.1;
             state.edges.expire(now_ns);
             let mut series = state.span_metrics.drain(timestamp_ms);
             series.extend(state.edges.drain(timestamp_ms));
@@ -127,9 +129,12 @@ impl MetricsGenerator {
         let mut checkpoints: Vec<_> = self
             .per_tenant
             .iter()
-            .map(|(tenant, state)| (tenant.clone(), state.edges.checkpoint_entries(tenant)))
+            .map(|entry| TenantEdgeCheckpoints {
+                tenant: entry.0.clone(),
+                entries: entry.1.edges.checkpoint_entries(entry.0),
+            })
             .collect();
-        checkpoints.sort_by(|a, b| a.0.cmp(&b.0));
+        checkpoints.sort_by(|a, b| a.tenant.cmp(&b.tenant));
         checkpoints
     }
 }

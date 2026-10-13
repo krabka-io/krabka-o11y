@@ -97,7 +97,7 @@ fn parse_entry(
         limits.max_labels_per_series,
     )?;
     let label_count = usize::try_from(label_count).unwrap_or(usize::MAX);
-    let mut labels = Vec::<(String, MetricString)>::with_capacity(label_count);
+    let mut labels = Vec::<super::MetricLabelPair<MetricString>>::with_capacity(label_count);
     for _ in 0..label_count {
         let name = symbol(symbols, reader.uvarint()?)?.utf8().ok_or_else(|| {
             TsdbImportError::InvalidLabels(format!(
@@ -110,12 +110,15 @@ fn parse_entry(
                 "series {reference} has an empty label name or value"
             )));
         }
-        if labels.last().is_some_and(|(last, _)| last.as_str() >= name) {
+        if labels.last().is_some_and(|last| last.name.as_str() >= name) {
             return Err(TsdbImportError::InvalidLabels(format!(
                 "series {reference} has label {name:?} out of order or repeated"
             )));
         }
-        labels.push((name.to_owned(), value.to_owned()));
+        labels.push(super::MetricLabelPair::new(
+            name.to_owned(),
+            value.to_owned(),
+        ));
     }
     if labels.is_empty() {
         return Err(TsdbImportError::InvalidLabels(format!(
@@ -137,7 +140,7 @@ fn parse_entry(
         reason,
     };
     for index in 0..chunk_count {
-        let (min_time, max_time, chunk_reference) = if let Some(previous) = chunks.last() {
+        let chunk = if let Some(previous) = chunks.last() {
             let gap = reader.uvarint()?.cast_signed();
             let min_time = previous
                 .max_time
@@ -160,30 +163,34 @@ fn parse_entry(
                     previous.max_time
                 )));
             }
-            (min_time, max_time, chunk_reference)
+            ChunkMeta {
+                min_time,
+                max_time,
+                reference: chunk_reference,
+            }
         } else {
             let min_time = reader.varint()?;
             let span = reader.uvarint()?.cast_signed();
             let max_time = min_time
                 .checked_add(span)
                 .ok_or_else(|| invalid("chunk time overflows".to_owned()))?;
-            (min_time, max_time, reader.uvarint()?)
+            ChunkMeta {
+                min_time,
+                max_time,
+                reference: reader.uvarint()?,
+            }
         };
-        if max_time < min_time {
+        if chunk.max_time < chunk.min_time {
             return Err(invalid(format!("chunk {index} ends before it starts")));
         }
-        if chunk_reference < cursor.last_reference {
+        if chunk.reference < cursor.last_reference {
             return Err(invalid(format!(
-                "chunk reference {chunk_reference:#x} is below the previous reference {:#x}",
-                cursor.last_reference
+                "chunk reference {:#x} is below the previous reference {:#x}",
+                chunk.reference, cursor.last_reference
             )));
         }
-        cursor.last_reference = chunk_reference;
-        chunks.push(ChunkMeta {
-            min_time,
-            max_time,
-            reference: chunk_reference,
-        });
+        cursor.last_reference = chunk.reference;
+        chunks.push(chunk);
     }
     if reader.remaining() != 0 {
         return Err(invalid(

@@ -1,4 +1,5 @@
 use super::{BTreeSet, BlockIndex, CompactorRunError, LabelIndex, insert_descriptor_labels};
+use crate::TenantLogIndexes;
 
 /// Rebuilds one index pair without the blocks in `expired`.
 ///
@@ -19,7 +20,7 @@ pub(crate) fn retire_blocks_from_index(
     label_index: &LabelIndex,
     block_index: &BlockIndex,
     expired: &BTreeSet<String>,
-) -> Result<Option<(LabelIndex, BlockIndex)>, CompactorRunError> {
+) -> Result<Option<TenantLogIndexes>, CompactorRunError> {
     if !block_index
         .blocks()
         .iter()
@@ -37,5 +38,8 @@ pub(crate) fn retire_blocks_from_index(
         insert_descriptor_labels(&mut next_label_index, label_index, tenant, block)?;
         next_block_index.insert(block.clone());
     }
-    Ok(Some((next_label_index, next_block_index)))
+    Ok(Some(TenantLogIndexes {
+        label_index: next_label_index,
+        block_index: next_block_index,
+    }))
 }

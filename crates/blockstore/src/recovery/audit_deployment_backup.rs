@@ -20,7 +20,9 @@ use super::{
 pub async fn audit_deployment_backup(
     backup: &Arc<dyn ObjectStore>,
 ) -> Result<DeploymentAuditReport, RecoveryError> {
-    let (cut, cut_sha256) = load_cut(backup.as_ref()).await?;
+    let loaded_cut = load_cut(backup.as_ref()).await?;
+    let cut = loaded_cut.cut;
+    let cut_sha256 = loaded_cut.digest;
     let names = cut
         .parts
         .iter()
@@ -31,13 +33,14 @@ pub async fn audit_deployment_backup(
     let mut parts = BTreeMap::new();
     for expected in &cut.parts {
         let store = part_store(backup, &expected.name);
-        let Some((manifest, manifest_sha256)) = load_backup_manifest_with_digest(&store).await?
-        else {
+        let Some(loaded_manifest) = load_backup_manifest_with_digest(&store).await? else {
             return Err(RecoveryError::MixedSet(format!(
                 "part `{}` has no manifest",
                 expected.name
             )));
         };
+        let manifest = loaded_manifest.manifest;
+        let manifest_sha256 = loaded_manifest.digest;
         if manifest_sha256 != expected.manifest_sha256 {
             return Err(RecoveryError::MixedSet(format!(
                 "part `{}` manifest digest {manifest_sha256} differs from the cut",

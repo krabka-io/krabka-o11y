@@ -8,8 +8,8 @@ use axum::{
 };
 use krabka_blockstore::Labels;
 use krabka_metrics::{
-    BucketSpan, Limits, NativeHistogram, OverridesProvider, ResetHint, SamplePayload, WalRecord,
-    wire::pb,
+    BucketSpan, Limits, MetricLabelPair, NativeHistogram, OverridesProvider, ResetHint,
+    SamplePayload, WalRecord, wire::pb,
 };
 use krabka_observability::{
     RoleReadiness,
@@ -73,7 +73,14 @@ fn api_state<S: MetricStore + 'static>(store: S) -> Arc<PrometheusApiState<S>> {
 
 /// `up{job="api"}` = 1 at 10s.
 fn up_api_at_10() -> TenantFloats {
-    TenantFloats::new().sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+    TenantFloats::new().sample(
+        labels(&[
+            MetricLabelPair::new("__name__", "up"),
+            MetricLabelPair::new("job", "api"),
+        ]),
+        10_000,
+        1.0,
+    )
 }
 
 /// Checks a successful instant-query body whose first sample is the
@@ -96,7 +103,10 @@ async fn request_duration_query_body(histogram: NativeHistogram) -> Value {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "request_duration_seconds"),
+            MetricLabelPair::new("job", "api"),
+        ]),
         10_000,
         histogram,
     );
@@ -126,8 +136,22 @@ fn assert_api_and_web_jobs(body: &Value, job_pointer: &str) {
 /// `up{job="api"}` at 60s (value 1) and 120s (value 2).
 fn up_api_at_60_and_120() -> TenantFloats {
     TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 60_000, 1.0)
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 120_000, 2.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            60_000,
+            1.0,
+        )
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            120_000,
+            2.0,
+        )
 }
 
 /// Checks the matrix a 60s-step range query returns over [`up_api_at_60_and_120`].
@@ -143,12 +167,20 @@ fn assert_up_api_matrix(body: &Value) {
 fn up_api_a_and_web_b() -> TenantFloats {
     TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             10_000,
             1.0,
         )
         .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+                MetricLabelPair::new("instance", "b"),
+            ]),
             10_000,
             1.0,
         )
@@ -157,32 +189,75 @@ fn up_api_a_and_web_b() -> TenantFloats {
 /// `up{job="api"}` = 1 and `up{job="web"}` = 2, both at 10s.
 fn up_api_1_and_web_2() -> TenantFloats {
     TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 2.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+            ]),
+            10_000,
+            2.0,
+        )
 }
 
 /// `up{job="api"}` and `up{job="web"}`, both 1 at 10s.
 fn up_api_and_web_jobs() -> TenantFloats {
     TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+            ]),
+            10_000,
+            1.0,
+        )
 }
 
 /// `up{job="api",instance="a"}` and `up{job="web"}`, both 1 at 10s.
 fn up_api_a_and_web() -> TenantFloats {
     TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             10_000,
             1.0,
         )
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+            ]),
+            10_000,
+            1.0,
+        )
 }
 
 /// `up{job="api",instance="a"}`, 1 at `ts_ms`.
 fn up_api_a_at(ts_ms: i64) -> TenantFloats {
     TenantFloats::new().sample(
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "up"),
+            MetricLabelPair::new("job", "api"),
+            MetricLabelPair::new("instance", "a"),
+        ]),
         ts_ms,
         1.0,
     )
@@ -194,7 +269,11 @@ fn app_with_hidden_tenant_b(floats: TenantFloats) -> axum::Router {
     let mut store = floats.store();
     store.push_float(
         "tenant-b",
-        labels(&[("__name__", "up"), ("job", "hidden"), ("instance", "z")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "up"),
+            MetricLabelPair::new("job", "hidden"),
+            MetricLabelPair::new("instance", "z"),
+        ]),
         10_000,
         1.0,
     );
@@ -281,12 +360,20 @@ async fn assert_only_active_up_api_a(response: axum::response::Response) {
 fn up_api_a_at_10_and_20() -> TenantFloats {
     TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             10_000,
             1.0,
         )
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             20_000,
             2.0,
         )
@@ -296,12 +383,19 @@ fn up_api_a_at_10_and_20() -> TenantFloats {
 fn up_api_a_and_api_errors() -> TenantFloats {
     TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             10_000,
             1.0,
         )
         .sample(
-            labels(&[("__name__", "errors_total"), ("job", "api")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "errors_total"),
+                MetricLabelPair::new("job", "api"),
+            ]),
             10_000,
             1.0,
         )
@@ -311,12 +405,20 @@ fn up_api_a_and_api_errors() -> TenantFloats {
 fn up_api_a_and_web_zone_us() -> TenantFloats {
     TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             10_000,
             1.0,
         )
         .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("zone", "us")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+                MetricLabelPair::new("zone", "us"),
+            ]),
             10_000,
             1.0,
         )
@@ -350,15 +452,24 @@ async fn only_api_exemplar_series(response: axum::response::Response) -> Value {
 fn api_exemplar_store() -> InMemoryMetricStore {
     let mut store = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "http_requests_total"), ("job", "api")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "http_requests_total"),
+                MetricLabelPair::new("job", "api"),
+            ]),
             10_000,
             1.0,
         )
         .store();
     store.push_exemplar(
         "tenant-a",
-        labels(&[("__name__", "http_requests_total"), ("job", "api")]),
-        labels(&[("trace_id", "abc"), ("span_id", "def")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "http_requests_total"),
+            MetricLabelPair::new("job", "api"),
+        ]),
+        labels(&[
+            MetricLabelPair::new("trace_id", "abc"),
+            MetricLabelPair::new("span_id", "def"),
+        ]),
         10_500,
         7.0,
     );
@@ -605,10 +716,10 @@ async fn ok_remote_read(app: &axum::Router, request: &pb::v1::ReadRequest) -> pb
 }
 
 /// Each of `labels` as its name and value, in order.
-fn label_pairs(labels: &[pb::v1::Label]) -> Vec<(&str, &str)> {
+fn label_pairs(labels: &[pb::v1::Label]) -> Vec<MetricLabelPair<&str>> {
     labels
         .iter()
-        .map(|label| (label.name.as_str(), label.value.as_str()))
+        .map(|label| MetricLabelPair::new(label.name.as_str(), label.value.as_str()))
         .collect()
 }
 
@@ -707,18 +818,73 @@ rules:
       summary: high latency
 ";
 
-fn labels(pairs: &[(&str, &str)]) -> Labels {
+fn labels<V: AsRef<str>>(pairs: &[MetricLabelPair<V>]) -> Labels {
     let mut labels = Labels::new();
-    for (name, value) in pairs {
-        labels.insert(*name, *value);
+    for pair in pairs {
+        labels.insert(pair.name.as_str(), pair.value.as_ref());
     }
     labels
+}
+
+struct TimedFloatSample {
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct ShardedQueryCase {
+    encoded_query: &'static str,
+    series: TenantFloats,
+    expected: &'static str,
+}
+
+struct RemoteReadHintRange {
+    start_ms: i64,
+    end_ms: i64,
+}
+
+struct RemoteReadHintErrorCase {
+    start_ms: i64,
+    end_ms: i64,
+    expected_status: StatusCode,
+}
+
+struct QueryErrorCase {
+    query: &'static str,
+    endpoint: &'static str,
+    status: StatusCode,
+}
+
+struct JsonQueryCase {
+    query: &'static str,
+    expected: Value,
+}
+
+struct JsonEndpointCase {
+    path: &'static str,
+    expected: Value,
+}
+
+struct ByteLabelValue {
+    bytes: Vec<u8>,
+    value: f64,
+}
+
+struct RemoteReadSelection {
+    response_type: i32,
+    selected: Option<Vec<u8>>,
+}
+
+#[derive(Debug, PartialEq)]
+struct NamedFloatSample {
+    name: String,
+    value: f64,
 }
 
 fn first_streamed_payload(body: &[u8]) -> &[u8] {
     let mut length = 0_usize;
     let mut header = 0_usize;
-    for (index, byte) in body.iter().copied().enumerate() {
+    for index in 0..body.len() {
+        let byte = body[index];
         length |= usize::from(byte & 0x7f) << (index * 7);
         header = index + 1;
         if byte & 0x80 == 0 {
@@ -916,7 +1082,14 @@ async fn query_range_endpoint_is_available_under_mimir_prefix() {
 #[tokio::test]
 async fn matrix_integral_second_ts_is_bare_integer() {
     let app = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 60_000, 1.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            60_000,
+            1.0,
+        )
         .app();
 
     let response = get(&app, "/api/v1/query_range?query=up&start=60&end=60&step=60").await;
@@ -935,12 +1108,28 @@ async fn matrix_integral_second_ts_is_bare_integer() {
 #[tokio::test]
 async fn query_range_endpoint_can_use_query_frontend_split_and_merge() {
     let mut store = InMemoryMetricStore::new();
-    for (ts_ms, value) in [(0, 1.0), (60_000, 2.0), (120_000, 3.0)] {
+    for sample in [
+        TimedFloatSample {
+            timestamp_ms: 0,
+            value: 1.0,
+        },
+        TimedFloatSample {
+            timestamp_ms: 60_000,
+            value: 2.0,
+        },
+        TimedFloatSample {
+            timestamp_ms: 120_000,
+            value: 3.0,
+        },
+    ] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "up"), ("job", "api")]),
-            ts_ms,
-            value,
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            sample.timestamp_ms,
+            sample.value,
         );
     }
     let state = Arc::new(
@@ -963,11 +1152,19 @@ async fn query_range_endpoint_can_use_query_frontend_split_and_merge() {
     assert2::assert!(body["data"]["result"][0]["values"][2][1] == "3");
 }
 
-fn labels_on_two_query_shards() -> (Labels, Labels) {
+struct QueryShardLabels {
+    first: Labels,
+    second: Labels,
+}
+
+fn labels_on_two_query_shards() -> QueryShardLabels {
     let mut shard_one = None;
     let mut shard_two = None;
     for id in 0..100 {
-        let candidate = labels(&[("__name__", "up"), ("series", &id.to_string())]);
+        let candidate = labels(&[
+            MetricLabelPair::new("__name__", "up"),
+            MetricLabelPair::new("series", &id.to_string()),
+        ]);
         if candidate.fingerprint().is_multiple_of(2) && shard_one.is_none() {
             shard_one = Some(candidate);
         } else if candidate.fingerprint() % 2 == 1 && shard_two.is_none() {
@@ -977,18 +1174,27 @@ fn labels_on_two_query_shards() -> (Labels, Labels) {
             break;
         }
     }
-    (
-        shard_one.expect("series for first query shard"),
-        shard_two.expect("series for second query shard"),
-    )
+    QueryShardLabels {
+        first: shard_one.expect("series for first query shard"),
+        second: shard_two.expect("series for second query shard"),
+    }
 }
 
-fn labels_on_uneven_query_shards() -> (Labels, Labels, Labels) {
+struct UnevenQueryShardLabels {
+    first_even: Labels,
+    second_even: Labels,
+    odd: Labels,
+}
+
+fn labels_on_uneven_query_shards() -> UnevenQueryShardLabels {
     let mut first_even = None;
     let mut second_even = None;
     let mut odd = None;
     for id in 0..100 {
-        let candidate = labels(&[("__name__", "up"), ("series", &id.to_string())]);
+        let candidate = labels(&[
+            MetricLabelPair::new("__name__", "up"),
+            MetricLabelPair::new("series", &id.to_string()),
+        ]);
         if candidate.fingerprint().is_multiple_of(2) {
             if first_even.is_none() {
                 first_even = Some(candidate);
@@ -1002,11 +1208,11 @@ fn labels_on_uneven_query_shards() -> (Labels, Labels, Labels) {
             break;
         }
     }
-    (
-        first_even.expect("first series for first query shard"),
-        second_even.expect("second series for first query shard"),
-        odd.expect("series for second query shard"),
-    )
+    UnevenQueryShardLabels {
+        first_even: first_even.expect("first series for first query shard"),
+        second_even: second_even.expect("second series for first query shard"),
+        odd: odd.expect("series for second query shard"),
+    }
 }
 
 /// Runs an instant-width `query_range` at `t=0` through a two-shard query
@@ -1032,53 +1238,72 @@ async fn sharded_query_range(samples: TenantFloats, encoded_query: &str) -> Valu
 
 #[tokio::test]
 async fn query_range_endpoint_query_frontend_reduces_sharded_aggregations() {
-    let (shard_one, shard_two) = labels_on_two_query_shards();
-    let (first_even, second_even, odd) = labels_on_uneven_query_shards();
+    let two_query_shards = labels_on_two_query_shards();
+    let uneven_shards = labels_on_uneven_query_shards();
     let two_shards = |one_value, two_value| {
         TenantFloats::new()
-            .sample(shard_one.clone(), 0, one_value)
-            .sample(shard_two.clone(), 0, two_value)
+            .sample(two_query_shards.first.clone(), 0, one_value)
+            .sample(two_query_shards.second.clone(), 0, two_value)
     };
     let cases = [
-        ("sum%28up%29", two_shards(1.0, 2.0), "3"),
-        (
-            "avg%28up%29",
-            TenantFloats::new()
-                .sample(first_even.clone(), 0, 2.0)
-                .sample(second_even.clone(), 0, 10.0)
-                .sample(odd.clone(), 0, 3.0),
-            "5",
-        ),
-        ("min%28up%29", two_shards(5.0, 2.0), "2"),
-        ("max%28up%29", two_shards(5.0, 2.0), "5"),
-        ("group%28up%29", two_shards(5.0, 2.0), "1"),
+        ShardedQueryCase {
+            encoded_query: "sum%28up%29",
+            series: two_shards(1.0, 2.0),
+            expected: "3",
+        },
+        ShardedQueryCase {
+            encoded_query: "avg%28up%29",
+            series: TenantFloats::new()
+                .sample(uneven_shards.first_even.clone(), 0, 2.0)
+                .sample(uneven_shards.second_even.clone(), 0, 10.0)
+                .sample(uneven_shards.odd.clone(), 0, 3.0),
+            expected: "5",
+        },
+        ShardedQueryCase {
+            encoded_query: "min%28up%29",
+            series: two_shards(5.0, 2.0),
+            expected: "2",
+        },
+        ShardedQueryCase {
+            encoded_query: "max%28up%29",
+            series: two_shards(5.0, 2.0),
+            expected: "5",
+        },
+        ShardedQueryCase {
+            encoded_query: "group%28up%29",
+            series: two_shards(5.0, 2.0),
+            expected: "1",
+        },
     ];
-    for (encoded_query, series, expected) in cases {
-        let body = sharded_query_range(series, encoded_query).await;
+    for case in cases {
+        let body = sharded_query_range(case.series, case.encoded_query).await;
         assert2::assert!(
             body["data"]["result"][0]["metric"] == serde_json::json!({}),
-            "{encoded_query}"
+            "{}",
+            case.encoded_query
         );
         assert2::assert!(
             body["data"]["result"][0]["values"][0][0] == 0,
-            "{encoded_query}"
+            "{}",
+            case.encoded_query
         );
         assert2::assert!(
-            body["data"]["result"][0]["values"][0][1] == expected,
-            "{encoded_query}"
+            body["data"]["result"][0]["values"][0][1] == case.expected,
+            "{}",
+            case.encoded_query
         );
     }
 }
 
 #[tokio::test]
 async fn query_range_endpoint_query_frontend_reduces_sharded_stdvar() {
-    let (first_even, second_even, odd) = labels_on_uneven_query_shards();
+    let shards = labels_on_uneven_query_shards();
 
     let body = sharded_query_range(
         TenantFloats::new()
-            .sample(first_even, 0, 2.0)
-            .sample(second_even, 0, 10.0)
-            .sample(odd, 0, 3.0),
+            .sample(shards.first_even, 0, 2.0)
+            .sample(shards.second_even, 0, 10.0)
+            .sample(shards.odd, 0, 3.0),
         "stdvar%28up%29",
     )
     .await;
@@ -1095,21 +1320,23 @@ async fn query_range_endpoint_query_frontend_reduces_sharded_stdvar() {
 
 #[tokio::test]
 async fn query_range_endpoint_query_frontend_reduces_sharded_topk() {
-    let (first_even, second_even, odd) = labels_on_uneven_query_shards();
-    let expected_high = second_even
+    let shards = labels_on_uneven_query_shards();
+    let expected_high = shards
+        .second_even
         .get("series")
         .expect("high value series label")
         .to_string();
-    let expected_mid = odd
+    let expected_mid = shards
+        .odd
         .get("series")
         .expect("mid value series label")
         .to_string();
 
     let body = sharded_query_range(
         TenantFloats::new()
-            .sample(first_even, 0, 2.0)
-            .sample(second_even, 0, 10.0)
-            .sample(odd, 0, 3.0),
+            .sample(shards.first_even, 0, 2.0)
+            .sample(shards.second_even, 0, 10.0)
+            .sample(shards.odd, 0, 3.0),
         "topk%282%2C%20up%29",
     )
     .await;
@@ -1118,31 +1345,52 @@ async fn query_range_endpoint_query_frontend_reduces_sharded_topk() {
         .as_array()
         .expect("topk result array")
         .iter()
-        .map(|series| {
-            (
-                series["metric"]["series"]
-                    .as_str()
-                    .expect("series label")
-                    .to_string(),
-                series["values"][0][1]
-                    .as_str()
-                    .expect("sample value")
-                    .parse::<f64>()
-                    .expect("sample value parses"),
-            )
+        .map(|series| NamedFloatSample {
+            name: series["metric"]["series"]
+                .as_str()
+                .expect("series label")
+                .to_string(),
+            value: series["values"][0][1]
+                .as_str()
+                .expect("sample value")
+                .parse::<f64>()
+                .expect("sample value parses"),
         })
         .collect::<Vec<_>>();
-    selected.sort_by(|left, right| left.0.cmp(&right.0));
-    let mut expected = vec![(expected_high, 10.0), (expected_mid, 3.0)];
-    expected.sort_by(|left, right| left.0.cmp(&right.0));
+    selected.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut expected = vec![
+        NamedFloatSample {
+            name: expected_high,
+            value: 10.0,
+        },
+        NamedFloatSample {
+            name: expected_mid,
+            value: 3.0,
+        },
+    ];
+    expected.sort_by(|left, right| left.name.cmp(&right.name));
     assert2::assert!(selected == expected);
 }
 
 #[tokio::test]
 async fn query_range_endpoint_honors_limit_parameter_for_matrices() {
     let app = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 60_000, 1.0)
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 60_000, 2.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            60_000,
+            1.0,
+        )
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+            ]),
+            60_000,
+            2.0,
+        )
         .app();
 
     let response = get(
@@ -1268,8 +1516,22 @@ async fn query_endpoint_requires_scope_org_id() {
 #[tokio::test]
 async fn query_endpoint_returns_422_when_max_samples_is_exceeded() {
     let store = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+            ]),
+            10_000,
+            1.0,
+        )
         .store();
     let state = Arc::new(PrometheusApiState::new(
         Arc::new(store),
@@ -1295,8 +1557,22 @@ async fn query_endpoint_returns_422_when_max_samples_is_exceeded() {
 #[tokio::test]
 async fn query_endpoint_applies_runtime_max_samples_per_query() {
     let app = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+            ]),
+            10_000,
+            1.0,
+        )
         .limited_app(Limits {
             max_samples_per_query: 1,
             ..Limits::default()
@@ -1332,7 +1608,11 @@ async fn series_endpoint_returns_matching_label_sets() {
 async fn series_endpoint_accepts_or_label_matchers() {
     let app = up_api_a_and_web_b()
         .sample(
-            labels(&[("__name__", "up"), ("job", "db"), ("instance", "c")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "db"),
+                MetricLabelPair::new("instance", "c"),
+            ]),
             10_000,
             1.0,
         )
@@ -1432,7 +1712,11 @@ async fn labels_endpoint_accepts_post_form_body() {
 async fn labels_endpoint_honors_limit_parameter() {
     let app = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             10_000,
             1.0,
         )
@@ -1466,7 +1750,10 @@ async fn label_values_endpoint_is_available_under_mimir_prefix() {
 async fn label_values_endpoint_accepts_post_form_body() {
     let app = up_api_and_web_jobs()
         .sample(
-            labels(&[("__name__", "errors_total"), ("job", "ignored")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "errors_total"),
+                MetricLabelPair::new("job", "ignored"),
+            ]),
             10_000,
             1.0,
         )
@@ -1770,7 +2057,11 @@ async fn rules_endpoint_can_exclude_alert_payloads() {
 async fn rules_endpoint_embeds_evaluated_alerts() {
     let app = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             0,
             1.0,
         )
@@ -1794,7 +2085,11 @@ async fn rules_endpoint_embeds_evaluated_alerts() {
 async fn rules_endpoint_expands_value_and_labels_in_alert_templates() {
     let app = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             0,
             2.0,
         )
@@ -1912,12 +2207,20 @@ async fn alerts_endpoint_marks_for_duration_alerts_pending() {
 async fn alerts_endpoint_fires_for_duration_alerts_after_active_duration() {
     let store = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             0,
             1.0,
         )
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             300_000,
             1.0,
         )
@@ -1943,7 +2246,11 @@ async fn alerts_endpoint_fires_for_duration_alerts_after_active_duration() {
 async fn alerts_endpoint_replays_compacted_alert_state() {
     let store = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             300_000,
             1.0,
         )
@@ -1954,11 +2261,10 @@ async fn alerts_endpoint_replays_compacted_alert_state() {
 
     configure_team_a_rules(&app, INSTANCE_DOWN_FOR_5M_GROUP).await;
 
-    let alert_labels = BTreeMap::from([
-        ("alertname".to_string(), "InstanceDown".to_string()),
-        ("instance".to_string(), "a".to_string()),
-        ("job".to_string(), "api".to_string()),
-    ]);
+    let mut alert_labels = BTreeMap::new();
+    alert_labels.insert("alertname".to_string(), "InstanceDown".to_string());
+    alert_labels.insert("instance".to_string(), "a".to_string());
+    alert_labels.insert("job".to_string(), "api".to_string());
     state.apply_ruler_alert_state(RulerAlertStateRecord {
         tenant: "tenant-a".to_string(),
         rule_id: "InstanceDown\nup > 0".to_string(),
@@ -2215,8 +2521,11 @@ async fn query_exemplars_endpoint_returns_matching_exemplars() {
     let mut store = api_exemplar_store();
     store.push_exemplar(
         "tenant-a",
-        labels(&[("__name__", "http_requests_total"), ("job", "web")]),
-        labels(&[("trace_id", "ignored")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "http_requests_total"),
+            MetricLabelPair::new("job", "web"),
+        ]),
+        labels(&[MetricLabelPair::new("trace_id", "ignored")]),
         10_500,
         9.0,
     );
@@ -2239,22 +2548,31 @@ async fn query_exemplars_endpoint_accepts_or_label_matchers() {
     let mut store = InMemoryMetricStore::new();
     store.push_exemplar(
         "tenant-a",
-        labels(&[("__name__", "http_requests_total"), ("job", "api")]),
-        labels(&[("trace_id", "api")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "http_requests_total"),
+            MetricLabelPair::new("job", "api"),
+        ]),
+        labels(&[MetricLabelPair::new("trace_id", "api")]),
         10_500,
         7.0,
     );
     store.push_exemplar(
         "tenant-a",
-        labels(&[("__name__", "http_requests_total"), ("job", "web")]),
-        labels(&[("trace_id", "web")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "http_requests_total"),
+            MetricLabelPair::new("job", "web"),
+        ]),
+        labels(&[MetricLabelPair::new("trace_id", "web")]),
         10_600,
         9.0,
     );
     store.push_exemplar(
         "tenant-a",
-        labels(&[("__name__", "http_requests_total"), ("job", "db")]),
-        labels(&[("trace_id", "db")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "http_requests_total"),
+            MetricLabelPair::new("job", "db"),
+        ]),
+        labels(&[MetricLabelPair::new("trace_id", "db")]),
         10_700,
         11.0,
     );
@@ -2383,9 +2701,17 @@ async fn remote_read_endpoint_rejects_invalid_or_oversized_hint_ranges() {
             .with_query_limits(OverridesProvider::new(limits)),
     );
     let app = prometheus_router(state);
-    for (start_ms, end_ms, expected_status) in [
-        (20_000, 10_000, StatusCode::BAD_REQUEST),
-        (1, 30_000, StatusCode::UNPROCESSABLE_ENTITY),
+    for case in [
+        RemoteReadHintErrorCase {
+            start_ms: 20_000,
+            end_ms: 10_000,
+            expected_status: StatusCode::BAD_REQUEST,
+        },
+        RemoteReadHintErrorCase {
+            start_ms: 1,
+            end_ms: 30_000,
+            expected_status: StatusCode::UNPROCESSABLE_ENTITY,
+        },
     ] {
         let request = pb::v1::ReadRequest {
             queries: vec![pb::v1::Query {
@@ -2393,15 +2719,15 @@ async fn remote_read_endpoint_rejects_invalid_or_oversized_hint_ranges() {
                 end_timestamp_ms: 20_000,
                 matchers: Vec::new(),
                 hints: Some(pb::v1::ReadHints {
-                    start_ms,
-                    end_ms,
+                    start_ms: case.start_ms,
+                    end_ms: case.end_ms,
                     ..Default::default()
                 }),
             }],
             accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
         };
         let response = remote_read(&app, &request).await;
-        assert2::assert!(response.status() == expected_status);
+        assert2::assert!(response.status() == case.expected_status);
         let body = response_json(response).await;
         assert2::assert!(body["status"] == "error");
     }
@@ -2411,12 +2737,20 @@ async fn remote_read_endpoint_rejects_invalid_or_oversized_hint_ranges() {
 async fn remote_read_endpoint_returns_matching_float_samples() {
     let app = up_api_a_at_10_and_20()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             30_000,
             3.0,
         )
         .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+                MetricLabelPair::new("instance", "b"),
+            ]),
             20_000,
             9.0,
         )
@@ -2424,20 +2758,35 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
     let request = pb::v1::ReadRequest {
         queries: [
             None,
-            Some((0, 0)),
-            Some((20_000, 20_000)),
-            Some((0, 10_000)),
-            Some((20_000, 0)),
-            Some((1, 30_000)),
+            Some(RemoteReadHintRange {
+                start_ms: 0,
+                end_ms: 0,
+            }),
+            Some(RemoteReadHintRange {
+                start_ms: 20_000,
+                end_ms: 20_000,
+            }),
+            Some(RemoteReadHintRange {
+                start_ms: 0,
+                end_ms: 10_000,
+            }),
+            Some(RemoteReadHintRange {
+                start_ms: 20_000,
+                end_ms: 0,
+            }),
+            Some(RemoteReadHintRange {
+                start_ms: 1,
+                end_ms: 30_000,
+            }),
         ]
         .into_iter()
         .map(|bounds| pb::v1::Query {
             start_timestamp_ms: 10_000,
             end_timestamp_ms: 20_000,
             matchers: vec![eq_matcher("__name__", "up"), eq_matcher("job", "api")],
-            hints: bounds.map(|(start_ms, end_ms)| pb::v1::ReadHints {
-                start_ms,
-                end_ms,
+            hints: bounds.map(|bounds| pb::v1::ReadHints {
+                start_ms: bounds.start_ms,
+                end_ms: bounds.end_ms,
                 ..Default::default()
             }),
         })
@@ -2449,7 +2798,12 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
     assert2::assert!(read_response.results.len() == 6);
     assert2::assert!(read_response.results[0].timeseries.len() == 1);
     assert2::assert!(
-        label_pairs(&series.labels) == vec![("__name__", "up"), ("instance", "a"), ("job", "api")]
+        label_pairs(&series.labels)
+            == vec![
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("instance", "a"),
+                MetricLabelPair::new("job", "api")
+            ]
     );
     assert2::assert!(
         read_response
@@ -2479,12 +2833,20 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
 async fn remote_read_endpoint_rejects_selected_series_over_tenant_limit() {
     let app = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             10_000,
             1.0,
         )
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "b"),
+            ]),
             10_000,
             1.0,
         )
@@ -2515,9 +2877,9 @@ async fn remote_read_endpoint_returns_matching_exemplars() {
     let mut store = TenantFloats::new()
         .sample(
             labels(&[
-                ("__name__", "http_requests_total"),
-                ("job", "api"),
-                ("instance", "a"),
+                MetricLabelPair::new("__name__", "http_requests_total"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
             ]),
             10_000,
             1.0,
@@ -2526,11 +2888,14 @@ async fn remote_read_endpoint_returns_matching_exemplars() {
     store.push_exemplar(
         "tenant-a",
         labels(&[
-            ("__name__", "http_requests_total"),
-            ("job", "api"),
-            ("instance", "a"),
+            MetricLabelPair::new("__name__", "http_requests_total"),
+            MetricLabelPair::new("job", "api"),
+            MetricLabelPair::new("instance", "a"),
         ]),
-        labels(&[("trace_id", "abc"), ("span_id", "def")]),
+        labels(&[
+            MetricLabelPair::new("trace_id", "abc"),
+            MetricLabelPair::new("span_id", "def"),
+        ]),
         10_500,
         7.0,
     );
@@ -2551,7 +2916,11 @@ async fn remote_read_endpoint_returns_matching_exemplars() {
     assert2::assert!(series.exemplars[0].timestamp == 10_500);
     assert2::assert!((series.exemplars[0].value - 7.0).abs() < f64::EPSILON);
     assert2::assert!(
-        label_pairs(&series.exemplars[0].labels) == vec![("span_id", "def"), ("trace_id", "abc")]
+        label_pairs(&series.exemplars[0].labels)
+            == vec![
+                MetricLabelPair::new("span_id", "def"),
+                MetricLabelPair::new("trace_id", "abc")
+            ]
     );
 }
 
@@ -2560,7 +2929,10 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "request_duration_seconds"),
+            MetricLabelPair::new("job", "api"),
+        ]),
         10_000,
         float_histogram(HistogramTotals {
             count: 4.0,
@@ -2628,7 +3000,10 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
 async fn remote_read_endpoint_streams_prometheus_xor_frames() {
     let app = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
             7_200_000,
             12_000.0,
         )
@@ -2657,15 +3032,30 @@ async fn remote_read_endpoint_streams_prometheus_xor_frames() {
 async fn cardinality_label_names_endpoint_returns_label_name_counts() {
     let mut store = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             10_000,
             1.0,
         )
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+            ]),
+            10_000,
+            1.0,
+        )
         .store();
     store.push_float(
         "tenant-b",
-        labels(&[("__name__", "up"), ("job", "other"), ("zone", "hidden")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "up"),
+            MetricLabelPair::new("job", "other"),
+            MetricLabelPair::new("zone", "hidden"),
+        ]),
         10_000,
         1.0,
     );
@@ -2743,7 +3133,14 @@ async fn cardinality_label_names_endpoint_rejects_invalid_limit_parameter() {
 #[tokio::test]
 async fn cardinality_label_names_endpoint_accepts_documented_count_methods() {
     let app = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            10_000,
+            1.0,
+        )
         .app();
 
     for count_method in ["inmemory", "active"] {
@@ -2776,7 +3173,11 @@ async fn cardinality_label_names_endpoint_rejects_invalid_count_method_parameter
 #[tokio::test]
 async fn cardinality_active_series_endpoint_returns_series_labels_under_mimir_prefix() {
     let app = app_with_hidden_tenant_b(up_api_a_at_10_and_20().sample(
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "up"),
+            MetricLabelPair::new("job", "web"),
+            MetricLabelPair::new("instance", "b"),
+        ]),
         10_000,
         1.0,
     ));
@@ -2839,12 +3240,20 @@ async fn cardinality_label_values_endpoint_returns_label_value_counts() {
     let app = app_with_hidden_tenant_b(
         up_api_a_at_10_and_20()
             .sample(
-                labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
+                labels(&[
+                    MetricLabelPair::new("__name__", "up"),
+                    MetricLabelPair::new("job", "api"),
+                    MetricLabelPair::new("instance", "b"),
+                ]),
                 10_000,
                 1.0,
             )
             .sample(
-                labels(&[("__name__", "up"), ("job", "web"), ("instance", "c")]),
+                labels(&[
+                    MetricLabelPair::new("__name__", "up"),
+                    MetricLabelPair::new("job", "web"),
+                    MetricLabelPair::new("instance", "c"),
+                ]),
                 10_000,
                 1.0,
             ),
@@ -3003,7 +3412,10 @@ async fn histogram_trim_round_trips_through_get_and_post_ast_apis_and_evaluation
     // Schema 0: one observation in (0.5, 1], three in (1, 2].
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "h"), ("job", "api")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "h"),
+            MetricLabelPair::new("job", "api"),
+        ]),
         10_000,
         {
             let mut histogram = float_histogram(HistogramTotals {
@@ -3064,16 +3476,28 @@ async fn histogram_trim_round_trips_through_get_and_post_ast_apis_and_evaluation
             == serde_json::json!([{"metric":{},"value":[10,"4"]}])
     );
     // Trim is not a comparison: bool is illegal, scalar operands parse but fail evaluation.
-    for (query, endpoint, status) in [
-        ("h </ bool 2", "parse_query", StatusCode::BAD_REQUEST),
-        ("1 </ 2", "parse_query", StatusCode::OK),
-        ("1 </ 2", "query", StatusCode::UNPROCESSABLE_ENTITY),
+    for case in [
+        QueryErrorCase {
+            query: "h </ bool 2",
+            endpoint: "parse_query",
+            status: StatusCode::BAD_REQUEST,
+        },
+        QueryErrorCase {
+            query: "1 </ 2",
+            endpoint: "parse_query",
+            status: StatusCode::OK,
+        },
+        QueryErrorCase {
+            query: "1 </ 2",
+            endpoint: "query",
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+        },
     ] {
         let encoded = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("query", query)
+            .append_pair("query", case.query)
             .finish();
-        let response = get(&app, format!("/api/v1/{endpoint}?{encoded}&time=10")).await;
-        assert2::assert!(response.status() == status, "{query}");
+        let response = get(&app, format!("/api/v1/{}?{encoded}&time=10", case.endpoint)).await;
+        assert2::assert!(response.status() == case.status, "{}", case.query);
     }
 }
 
@@ -3203,24 +3627,38 @@ async fn status_config_endpoint_is_available_under_mimir_prefix() {
 async fn status_tsdb_endpoint_returns_tenant_cardinality_stats() {
     let mut store = TenantFloats::new()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+                MetricLabelPair::new("instance", "a"),
+            ]),
             10_000,
             1.0,
         )
         .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "web"),
+                MetricLabelPair::new("instance", "b"),
+            ]),
             20_000,
             2.0,
         )
         .sample(
-            labels(&[("__name__", "errors_total"), ("job", "api")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "errors_total"),
+                MetricLabelPair::new("job", "api"),
+            ]),
             30_000,
             3.0,
         )
         .store();
     store.push_float(
         "tenant-b",
-        labels(&[("__name__", "hidden"), ("job", "ignored")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "hidden"),
+            MetricLabelPair::new("job", "ignored"),
+        ]),
         10_000,
         1.0,
     );
@@ -3308,7 +3746,10 @@ async fn status_walreplay_endpoint_reports_live_materialized_offsets_without_cla
     head.apply_wal_record_at(
         &WalRecord {
             tenant: "tenant-a".to_string(),
-            labels: vec![("__name__".to_string(), "up".into())],
+            labels: vec![MetricLabelPair::new(
+                "__name__",
+                krabka_metrics::MetricString::from("up"),
+            )],
             payload: SamplePayload::Float {
                 timestamp_ms: 10_000,
                 value: 1.0,
@@ -3366,16 +3807,29 @@ async fn status_walreplay_without_a_tail_is_explicitly_not_applicable() {
 #[tokio::test]
 async fn status_runtimeinfo_endpoint_is_available_under_mimir_prefix() {
     let mut store = TenantFloats::new()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
         .sample(
-            labels(&[("__name__", "errors_total"), ("job", "api")]),
+            labels(&[
+                MetricLabelPair::new("__name__", "up"),
+                MetricLabelPair::new("job", "api"),
+            ]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[
+                MetricLabelPair::new("__name__", "errors_total"),
+                MetricLabelPair::new("job", "api"),
+            ]),
             10_000,
             1.0,
         )
         .store();
     store.push_float(
         "tenant-b",
-        labels(&[("__name__", "hidden"), ("job", "ignored")]),
+        labels(&[
+            MetricLabelPair::new("__name__", "hidden"),
+            MetricLabelPair::new("job", "ignored"),
+        ]),
         10_000,
         1.0,
     );
@@ -3412,55 +3866,58 @@ async fn status_runtimeinfo_endpoint_is_available_under_mimir_prefix() {
 async fn byte_label_identity_is_preserved_until_the_http_json_boundary() {
     let mut store = InMemoryMetricStore::new();
     for bytes in [vec![0xff], vec![0xfe], "�".as_bytes().to_vec()] {
-        let mut labels = krabka_promql::PromqlLabels::from_pairs([("__name__", "byte_input")]);
+        let mut labels = krabka_promql::PromqlLabels::from_pairs([MetricLabelPair::new(
+            "__name__",
+            "byte_input",
+        )]);
         labels.insert("raw", krabka_promql::PromqlString::from(bytes));
         store.push_float("tenant-a", labels, 10_000, 2.0);
     }
     let app = prometheus_router(api_state(store));
-    for (query, expected) in [
-        (
-            "count(byte_input)",
-            serde_json::json!({"resultType":"vector","result":[{"metric":{},"value":[10,"3"]}]}),
-        ),
-        (
-            "sum by(raw)(byte_input)",
-            serde_json::json!({"resultType":"vector","result":[{"metric":{"raw":"�"},"value":[10,"2"]},{"metric":{"raw":"�"},"value":[10,"2"]},{"metric":{"raw":"�"},"value":[10,"2"]}]}),
-        ),
-        (
-            r#"byte_input{raw="\xff"}"#,
-            serde_json::json!({"resultType":"vector","result":[{"metric":{"__name__":"byte_input","raw":"�"},"value":[10,"2"]}]}),
-        ),
-        (
-            r#"label_join(label_replace(byte_input{raw="\xff"},"captured","$1","raw","(.*)"),"joined","\xfe","captured","raw")"#,
-            serde_json::json!({"resultType":"vector","result":[{"metric":{"__name__":"byte_input","raw":"�","captured":"�","joined":"���"},"value":[10,"2"]}]}),
-        ),
+    for case in [
+        JsonQueryCase {
+            query: "count(byte_input)",
+            expected: serde_json::json!({"resultType":"vector","result":[{"metric":{},"value":[10,"3"]}]}),
+        },
+        JsonQueryCase {
+            query: "sum by(raw)(byte_input)",
+            expected: serde_json::json!({"resultType":"vector","result":[{"metric":{"raw":"�"},"value":[10,"2"]},{"metric":{"raw":"�"},"value":[10,"2"]},{"metric":{"raw":"�"},"value":[10,"2"]}]}),
+        },
+        JsonQueryCase {
+            query: r#"byte_input{raw="\xff"}"#,
+            expected: serde_json::json!({"resultType":"vector","result":[{"metric":{"__name__":"byte_input","raw":"�"},"value":[10,"2"]}]}),
+        },
+        JsonQueryCase {
+            query: r#"label_join(label_replace(byte_input{raw="\xff"},"captured","$1","raw","(.*)"),"joined","\xfe","captured","raw")"#,
+            expected: serde_json::json!({"resultType":"vector","result":[{"metric":{"__name__":"byte_input","raw":"�","captured":"�","joined":"���"},"value":[10,"2"]}]}),
+        },
     ] {
-        let response = post_query_at_10(&app, query).await;
-        assert2::assert!(response.status() == StatusCode::OK, "{query}");
+        let response = post_query_at_10(&app, case.query).await;
+        assert2::assert!(response.status() == StatusCode::OK, "{}", case.query);
         let body = response_json(response).await;
-        assert2::assert!(body["data"] == expected, "{query}");
+        assert2::assert!(body["data"] == case.expected, "{}", case.query);
     }
-    for (path, expected) in [
-        (
-            "/api/v1/label/raw/values",
-            serde_json::json!(["�", "�", "�"]),
-        ),
-        (
-            "/api/v1/series?match%5B%5D=byte_input%7Braw%3D%22%5Cxff%22%7D",
-            serde_json::json!([{"__name__":"byte_input","raw":"�"}]),
-        ),
+    for case in [
+        JsonEndpointCase {
+            path: "/api/v1/label/raw/values",
+            expected: serde_json::json!(["�", "�", "�"]),
+        },
+        JsonEndpointCase {
+            path: "/api/v1/series?match%5B%5D=byte_input%7Braw%3D%22%5Cxff%22%7D",
+            expected: serde_json::json!([{"__name__":"byte_input","raw":"�"}]),
+        },
     ] {
         let response = send(
             &app,
             Request::builder()
-                .uri(path)
+                .uri(case.path)
                 .header("x-scope-orgid", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await;
         assert2::assert!(response.status() == StatusCode::OK);
-        assert2::assert!(response_json(response).await["data"] == expected);
+        assert2::assert!(response_json(response).await["data"] == case.expected);
     }
     let response = post_query_at_10(&app, r#"byte_input{raw=~"\xff"}"#).await;
     let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
@@ -3471,28 +3928,52 @@ async fn byte_label_identity_is_preserved_until_the_http_json_boundary() {
 async fn remote_read_preserves_go_byte_labels_in_samples_and_chunked_frames() {
     use krabka_metrics::wire::remote_read_pb::v1 as raw;
     let mut store = InMemoryMetricStore::new();
-    for (bytes, value) in [
-        (vec![0xff], 2.0),
-        (vec![0xfe], 3.0),
-        ("�".as_bytes().to_vec(), 4.0),
+    for sample in [
+        ByteLabelValue {
+            bytes: vec![0xff],
+            value: 2.0,
+        },
+        ByteLabelValue {
+            bytes: vec![0xfe],
+            value: 3.0,
+        },
+        ByteLabelValue {
+            bytes: "�".as_bytes().to_vec(),
+            value: 4.0,
+        },
     ] {
-        let mut labels = krabka_promql::PromqlLabels::from_pairs([("__name__", "byte_input")]);
-        labels.insert("raw", krabka_promql::PromqlString::from(bytes));
-        store.push_float("tenant-a", labels, 10_000, value);
+        let mut labels = krabka_promql::PromqlLabels::from_pairs([MetricLabelPair::new(
+            "__name__",
+            "byte_input",
+        )]);
+        labels.insert("raw", krabka_promql::PromqlString::from(sample.bytes));
+        store.push_float("tenant-a", labels, 10_000, sample.value);
     }
     let app = prometheus_router(api_state(store));
-    for (response_type, selected) in [
-        (0, None),
-        (0, Some(vec![0xff])),
-        (1, None),
-        (1, Some(vec![0xfe])),
+    for selection in [
+        RemoteReadSelection {
+            response_type: 0,
+            selected: None,
+        },
+        RemoteReadSelection {
+            response_type: 0,
+            selected: Some(vec![0xff]),
+        },
+        RemoteReadSelection {
+            response_type: 1,
+            selected: None,
+        },
+        RemoteReadSelection {
+            response_type: 1,
+            selected: Some(vec![0xfe]),
+        },
     ] {
         let mut matchers = vec![raw::LabelMatcher {
             r#type: 0,
             name: "__name__".into(),
             value: b"byte_input".to_vec(),
         }];
-        if let Some(bytes) = &selected {
+        if let Some(bytes) = &selection.selected {
             matchers.push(raw::LabelMatcher {
                 r#type: 0,
                 name: "raw".into(),
@@ -3506,7 +3987,7 @@ async fn remote_read_preserves_go_byte_labels_in_samples_and_chunked_frames() {
                 matchers,
                 hints: None,
             }],
-            accepted_response_types: vec![response_type],
+            accepted_response_types: vec![selection.response_type],
         };
         let compressed = SnappyEncoder::new()
             .compress_vec(&request.encode_to_vec())
@@ -3526,7 +4007,7 @@ async fn remote_read_preserves_go_byte_labels_in_samples_and_chunked_frames() {
         assert2::assert!(response.status() == StatusCode::OK);
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let mut actual = Vec::new();
-        if response_type == 0 {
+        if selection.response_type == 0 {
             let decoded = SnappyDecoder::new().decompress_vec(&body).unwrap();
             for series in raw::ReadResponse::decode(decoded.as_slice())
                 .unwrap()
@@ -3581,7 +4062,7 @@ async fn remote_read_preserves_go_byte_labels_in_samples_and_chunked_frames() {
             }
         }
         actual.sort();
-        let mut expected = selected.map_or_else(
+        let mut expected = selection.selected.map_or_else(
             || vec![vec![0xff], vec![0xfe], "�".as_bytes().to_vec()],
             |bytes| vec![bytes],
         );
@@ -3600,14 +4081,21 @@ async fn http_alert_templates_reuse_byte_identity_and_replayed_start_times() {
     ];
     let mut store = InMemoryMetricStore::new();
     for bytes in &values {
-        let mut labels = krabka_promql::PromqlLabels::from_pairs([("__name__", "byte_input")]);
+        let mut labels = krabka_promql::PromqlLabels::from_pairs([MetricLabelPair::new(
+            "__name__",
+            "byte_input",
+        )]);
         labels.insert("raw", krabka_promql::PromqlString::from(bytes.clone()));
         store.push_float("tenant-a", labels, 60_000, 2.0);
     }
     let state = api_state(store);
     state.set_ruler_evaluation_time_ms(60_000);
-    for (index, bytes) in values.iter().enumerate() {
-        let mut labels = krabka_promql::PromqlLabels::from_pairs([("alertname", "ByteAlert")]);
+    for index in 0..values.len() {
+        let bytes = &values[index];
+        let mut labels = krabka_promql::PromqlLabels::from_pairs([MetricLabelPair::new(
+            "alertname",
+            "ByteAlert",
+        )]);
         labels.insert("raw", krabka_promql::PromqlString::from(bytes.clone()));
         labels.insert("copied", krabka_promql::PromqlString::from(bytes.clone()));
         labels.insert(
@@ -3700,7 +4188,10 @@ async fn http_alerts_keep_histogram_expressions_and_typed_query_template_values(
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        krabka_promql::PromqlLabels::from_pairs([("__name__", "native_input"), ("job", "api")]),
+        krabka_promql::PromqlLabels::from_pairs([
+            MetricLabelPair::new("__name__", "native_input"),
+            MetricLabelPair::new("job", "api"),
+        ]),
         60_000,
         {
             let mut histogram = float_histogram(HistogramTotals {

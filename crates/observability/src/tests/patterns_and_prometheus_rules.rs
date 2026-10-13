@@ -1,8 +1,8 @@
 use super::prelude::{
     BTreeMap, BTreeSet, BlockIndex, CompactionFrontier, HeaderMap, LabelIndex, Labels,
-    PrometheusRulesFilters, QuerierState, StreamPlan, StreamQuery, TimeRange, check,
-    count_loki_metric_result_hot_tail_samples, format_metric_range_selector, json,
-    log_line_pattern, parse_metric_query, pattern_value_is_variable,
+    MetricEvaluationWindow, PrometheusRulesFilters, QuerierState, StreamPlan, StreamQuery,
+    TimeRange, check, count_loki_metric_result_hot_tail_samples, format_metric_range_selector,
+    json, log_line_pattern, parse_metric_query, pattern_value_is_variable,
 };
 
 mod a_patterns_scan_keeps_the_window_half_open;

@@ -30,12 +30,12 @@ where
         summary.replayed_records += result.replayed_records;
         summary.committed_offsets.extend(result.committed_offsets);
 
-        if let Some((assigned, caught_up)) = consumer.recovery_state().await {
+        if let Some(recovery) = consumer.recovery_state().await {
             if let Some(metrics) = metrics {
-                metrics.record_assignment(&assigned, caught_up);
+                metrics.record_assignment(&recovery.assignment, recovery.at_log_end);
             }
             if let Some(gate) = catch_up {
-                if caught_up {
+                if recovery.at_log_end {
                     gate.mark_ready();
                 } else {
                     gate.mark_unready();

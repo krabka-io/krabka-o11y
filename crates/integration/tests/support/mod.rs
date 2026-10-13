@@ -16,19 +16,60 @@ pub mod traces;
 
 use std::{
     fmt::Display,
+    future::Future,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
+use krabka_blockstore::{LabelPair, Labels};
 use object_store::ObjectStore;
 use serde_json::Value;
+use tokio::sync::Mutex as AsyncMutex;
+
+/// Builds blockstore labels from named test data.
+pub fn labels(entries: impl IntoIterator<Item = krabka_integration::LabelEntry>) -> Labels {
+    Labels::from_pairs(
+        entries
+            .into_iter()
+            .map(|entry| LabelPair::new(entry.name, entry.value)),
+    )
+}
 
 /// How long a reader serves from its cached index before it reloads it.
 ///
 /// The queriers poll their index on an interval. One second keeps a phase's
 /// reads close to its writes without turning every query into an index load.
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
+pub(crate) struct CachedEngine<T> {
+    pub loaded_at: Instant,
+    pub engine: Arc<T>,
+}
+
+pub(crate) async fn cached_engine<T, F, Fut>(
+    reader: &AsyncMutex<Option<CachedEngine<T>>>,
+    fresh: bool,
+    load: F,
+) -> Result<Arc<T>, String>
+where
+    T: Send + Sync,
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<Arc<T>, String>>,
+{
+    let mut reader = reader.lock().await;
+    if let Some(cached) = reader.as_ref()
+        && !due(Some(cached.loaded_at), fresh)
+    {
+        return Ok(Arc::clone(&cached.engine));
+    }
+    let engine = load().await?;
+    *reader = Some(CachedEngine {
+        loaded_at: Instant::now(),
+        engine: Arc::clone(&engine),
+    });
+    Ok(engine)
+}
 
 /// The tenants the phases write as. The noisy-tenant phase uses the last two.
 pub const TENANTS: [&str; 3] = ["soak", "quiet", "noisy"];
@@ -158,4 +199,20 @@ pub fn now_ns() -> i64 {
 /// Wall-clock milliseconds since the epoch.
 pub fn now_ms() -> i64 {
     now_ns() / 1_000_000
+}
+#[macro_export]
+macro_rules! query_signal_engine {
+    ($clock:expr, $start:expr, $body:block) => {
+        async fn query(
+            &self,
+            tenant: &str,
+            window: std::time::Duration,
+            fresh: bool,
+        ) -> Result<u64, String> {
+            let engine = self.engine(fresh).await?;
+            let end = $clock;
+            let start = $start;
+            $body
+        }
+    };
 }

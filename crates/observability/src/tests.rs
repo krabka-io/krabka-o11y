@@ -134,7 +134,11 @@ pub(crate) mod prelude {
                 aggregation_formatting::*, metric_formatting::*, request_formatting::*,
                 stream_formatting::*,
             },
-            response::{loki_responses::*, parquet_responses::*, query_stats::*},
+            response::{
+                loki_responses::*,
+                parquet_responses::{MetricEvaluationWindow, *},
+                query_stats::*,
+            },
             router::*,
         },
         limits::*,
@@ -163,6 +167,20 @@ pub(crate) mod prelude {
         service_runtime::*,
         wal::{hot_tail::*, pollers_and_records::*, traits_and_kafka::*},
     };
+
+    pub(crate) fn loki_streams_with_counts(counts: &[usize], app: &str) -> Vec<Value> {
+        counts
+            .iter()
+            .map(|count| {
+                json!({
+                    "stream": {"app": app},
+                    "values": (0..*count)
+                        .map(|index| json!([index.to_string(), "line"]))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect()
+    }
 }
 
 mod acl_quota_and_buffers;

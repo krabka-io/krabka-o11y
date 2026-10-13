@@ -1,5 +1,5 @@
 use super::{
-    Deserialize, Labels, ProfilesError, SerdeCompat, Serialize, WalSample, WalSymbolSet,
+    Deserialize, LabelPair, Labels, ProfilesError, SerdeCompat, Serialize, WalSample, WalSymbolSet,
     WincodeDeserialize, WincodeSerialize,
 };
 
@@ -7,7 +7,7 @@ use super::{
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileRecord {
     pub tenant: String,
-    pub labels: Vec<(String, String)>,
+    pub labels: Vec<LabelPair>,
     pub profile_type: String,
     pub samples: Vec<WalSample>,
     pub symbols: WalSymbolSet,
@@ -35,10 +35,6 @@ impl ProfileRecord {
     /// Series fingerprint from blockstore `Labels`, independent of label order.
     #[must_use]
     pub fn series_fingerprint(&self) -> u64 {
-        let mut labels = Labels::new();
-        for (name, value) in &self.labels {
-            labels.insert(name.clone(), value.clone());
-        }
-        labels.fingerprint()
+        Labels::from_pairs(self.labels.iter().cloned()).fingerprint()
     }
 }

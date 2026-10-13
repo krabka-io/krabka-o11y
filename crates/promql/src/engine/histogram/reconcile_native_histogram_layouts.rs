@@ -44,35 +44,44 @@ pub(crate) fn reconcile_native_histogram_layouts(histograms: &mut [NativeHistogr
 }
 
 fn align_bucket_counts(histograms: &mut [NativeHistogram], positive: bool) {
+    struct HistogramBucketSide<'a> {
+        spans: &'a [krabka_metrics::BucketSpan],
+        counts: &'a [f64],
+    }
+
+    fn side(histogram: &NativeHistogram, positive: bool) -> HistogramBucketSide<'_> {
+        if positive {
+            HistogramBucketSide {
+                spans: &histogram.positive_spans,
+                counts: &histogram.positive_counts,
+            }
+        } else {
+            HistogramBucketSide {
+                spans: &histogram.negative_spans,
+                counts: &histogram.negative_counts,
+            }
+        }
+    }
+
     let indices = histograms
         .iter()
         .flat_map(|histogram| {
-            let (spans, counts) = if positive {
-                (&histogram.positive_spans, &histogram.positive_counts)
-            } else {
-                (&histogram.negative_spans, &histogram.negative_counts)
-            };
-            spanned_histogram_counts(spans, counts).into_keys()
+            let side = side(histogram, positive);
+            spanned_histogram_counts(side.spans, side.counts).into_keys()
         })
         .collect::<BTreeSet<_>>();
-    let spans = compact_spanned_histogram_counts(
-        indices
-            .iter()
-            .map(|index| (*index, 1.0))
-            .collect::<BTreeMap<_, _>>(),
-    )
-    .0;
+    let mut unit_counts = BTreeMap::new();
+    for index in &indices {
+        unit_counts.insert(*index, 1.0);
+    }
+    let spans = compact_spanned_histogram_counts(unit_counts).spans;
     for histogram in &mut *histograms {
-        let (source_spans, source_counts) = if positive {
-            (&histogram.positive_spans, &histogram.positive_counts)
-        } else {
-            (&histogram.negative_spans, &histogram.negative_counts)
-        };
-        let counts = spanned_histogram_counts(source_spans, source_counts);
-        let counts = indices
-            .iter()
-            .map(|index| counts.get(index).copied().unwrap_or_default())
-            .collect();
+        let source = side(histogram, positive);
+        let source_counts = spanned_histogram_counts(source.spans, source.counts);
+        let mut counts = Vec::with_capacity(indices.len());
+        for index in &indices {
+            counts.push(source_counts.get(index).copied().unwrap_or_default());
+        }
         if positive {
             histogram.positive_spans.clone_from(&spans);
             histogram.positive_counts = counts;

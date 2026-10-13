@@ -4,9 +4,14 @@ use super::{
 };
 use crate::format_promql_expr;
 
-pub(crate) fn moment_partial_queries(
-    expr: &Expr,
-) -> Option<(String, String, String, MomentReduction)> {
+pub(crate) struct MomentPartialQueries {
+    pub(crate) sum: String,
+    pub(crate) count: String,
+    pub(crate) sum_squares: String,
+    pub(crate) reduction: MomentReduction,
+}
+
+pub(crate) fn moment_partial_queries(expr: &Expr) -> Option<MomentPartialQueries> {
     match expr {
         Expr::Aggregate(aggregate)
             if matches!(aggregate.op.id(), T_STDDEV | T_STDVAR)
@@ -31,12 +36,12 @@ pub(crate) fn moment_partial_queries(
             let mut sum_squares_aggregate = aggregate.clone();
             sum_squares_aggregate.op = TokenType::new(T_SUM);
             sum_squares_aggregate.expr = Box::new(squared_expr);
-            Some((
-                format_promql_expr(&Expr::Aggregate(sum_aggregate)),
-                format_promql_expr(&Expr::Aggregate(count_aggregate)),
-                format_promql_expr(&Expr::Aggregate(sum_squares_aggregate)),
-                kind,
-            ))
+            Some(MomentPartialQueries {
+                sum: format_promql_expr(&Expr::Aggregate(sum_aggregate)),
+                count: format_promql_expr(&Expr::Aggregate(count_aggregate)),
+                sum_squares: format_promql_expr(&Expr::Aggregate(sum_squares_aggregate)),
+                reduction: kind,
+            })
         }
         Expr::Paren(paren) => moment_partial_queries(&paren.expr),
         _ => None,

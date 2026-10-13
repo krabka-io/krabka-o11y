@@ -1,10 +1,27 @@
 use krabka_logql::{LogqlExpr, parse_logql_expr};
 
+pub(crate) struct SplitLeadingVectorMatchingModifier<'a> {
+    pub(crate) text: String,
+    pub(crate) remainder: &'a str,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct SplitLeadingVectorGroupModifier<'a> {
+    pub(crate) text: Option<String>,
+    pub(crate) remainder: &'a str,
+}
+
+pub(crate) struct SplitLeadingVectorBinaryModifiers<'a> {
+    pub(crate) modifiers: Option<FormattedVectorBinaryModifiers>,
+    pub(crate) remainder: &'a str,
+}
+
 use crate::{
     Bytes, ComparisonResult, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
     MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, decode_form_component,
-    format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
-    format_metric_and_vector_operands, format_metric_label_replace_query, format_metric_query,
+    decode_query_pair, format_label_replace_metric_scalar_expression,
+    format_label_replace_metric_vector_expression, format_metric_and_vector_operands,
+    format_metric_label_replace_query, format_metric_query,
     format_metric_scalar_arithmetic_expression, format_metric_scalar_arithmetic_operator,
     format_metric_scalar_comparison_expression, format_metric_scalar_comparison_operator,
     format_metric_vector_comparison_expression, format_metric_vector_set_expression,

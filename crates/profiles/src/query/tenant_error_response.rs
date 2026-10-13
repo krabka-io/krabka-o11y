@@ -1,4 +1,4 @@
-use super::{IntoResponse, Response, StatusCode, TenantResolveError};
+use super::{Response, StatusCode, TenantResolveError};
 
 /// Maps a tenant that does not resolve to the HTTP response of a legacy route.
 ///
@@ -9,5 +9,8 @@ use super::{IntoResponse, Response, StatusCode, TenantResolveError};
 /// `text/plain; charset=utf-8`, which is the content type that the pinned
 /// Mimir and Loki images send with a tenant error.
 pub(crate) fn tenant_error_response(error: &TenantResolveError) -> Response {
-    (StatusCode::BAD_REQUEST, error.to_string()).into_response()
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body(axum::body::Body::from(error.to_string()))
+        .expect("valid tenant error response")
 }

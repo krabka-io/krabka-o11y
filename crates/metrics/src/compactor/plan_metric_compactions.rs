@@ -31,14 +31,7 @@ pub fn plan_metric_compactions(
             let candidates: Vec<CompactionCandidate> = manifests
                 .iter()
                 .filter(|manifest| manifest.kind == kind)
-                .map(|manifest| CompactionCandidate {
-                    tenant: manifest.tenant.clone(),
-                    object_key: manifest.block_key.clone(),
-                    min_ts: manifest.min_ts,
-                    max_ts: manifest.max_ts,
-                    row_count: manifest.row_count,
-                    level: manifest.level,
-                })
+                .map(CompactionIndexManifest::compaction_candidate)
                 .collect();
             plan_compactions(&candidates, policy)
                 .into_iter()

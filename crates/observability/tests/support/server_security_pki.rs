@@ -5,6 +5,8 @@
 //!
 //! Each reaches this file with `#[path]`, so it names only external crates.
 
+use std::path::{Path, PathBuf};
+
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
@@ -14,6 +16,13 @@ use rcgen::{
 pub struct Pem {
     pub certificate: String,
     pub key: String,
+}
+
+#[allow(dead_code)]
+pub fn write_file(directory: &Path, name: &str, contents: impl AsRef<[u8]>) -> PathBuf {
+    let path = directory.join(name);
+    std::fs::write(&path, contents).expect("the temporary file is writable");
+    path
 }
 
 /// A self-signed certificate authority named `common_name`.

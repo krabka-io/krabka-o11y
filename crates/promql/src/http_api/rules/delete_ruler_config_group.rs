@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use super::{
     ApiError, Arc, ConnectInfo, Extension, HeaderMap, IntoResponse, MetricStore,
     OPERATION_RULE_GROUP_DELETE, Path, PeerAddr, Principal, PrometheusApiState,
-    RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT, Response, State, StatusCode,
-    accepted_response, authorized_tenant_from_headers, record_ruler_config_change, resource,
+    RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT, Response, RuleGroupPath, State,
+    StatusCode, accepted_response, record_ruler_config_change, resource, response_with_status,
 };
 
 pub(crate) async fn delete_ruler_config_group<S: MetricStore>(
@@ -12,21 +12,25 @@ pub(crate) async fn delete_ruler_config_group<S: MetricStore>(
     Extension(principal): Extension<Principal>,
     peer: Option<Extension<ConnectInfo<PeerAddr>>>,
     headers: HeaderMap,
-    Path((namespace, group_name)): Path<(String, String)>,
+    Path(RuleGroupPath {
+        namespace,
+        group_name,
+    }): Path<RuleGroupPath>,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
-    };
+    let tenant = super::authorized_ruler_group_tenant_or_return!(
+        &headers,
+        &principal,
+        super::authorized_ruler_group_tenant
+    );
     let previous_rules = state.ruler_rules.read().ok().map(|rules| rules.clone());
-    let mut response = match state.ruler_rules.write() {
+    let response = match state.ruler_rules.write() {
         Ok(mut rules) => {
             if let Some(groups) = rules
                 .get_mut(&tenant)
                 .and_then(|namespaces| namespaces.get_mut(&namespace))
             {
                 if groups.remove(&group_name).is_none() {
-                    return (StatusCode::NOT_FOUND, "group does not exist\n").into_response();
+                    return response_with_status(StatusCode::NOT_FOUND, "group does not exist\n");
                 }
                 if groups.is_empty() {
                     rules
@@ -39,25 +43,13 @@ pub(crate) async fn delete_ruler_config_group<S: MetricStore>(
                 }
                 accepted_response()
             } else {
-                (StatusCode::NOT_FOUND, "group does not exist\n").into_response()
+                response_with_status(StatusCode::NOT_FOUND, "group does not exist\n")
             }
         }
         Err(_) => ApiError::internal("ruler rules lock poisoned").into_response(),
     };
-    if response.status().is_success()
-        && let Err(error) = state.persist_ruler_config(&tenant).await
-    {
-        if let Some(previous_rules) = previous_rules
-            && let Ok(mut rules) = state.ruler_rules.write()
-        {
-            *rules = previous_rules;
-        }
-        response = (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to persist ruler config: {error}\n"),
-        )
-            .into_response();
-    }
+    let response =
+        super::persist_ruler_config_or_restore(&state, &tenant, previous_rules, response).await;
     record_ruler_config_change(
         &state.audit,
         &principal,

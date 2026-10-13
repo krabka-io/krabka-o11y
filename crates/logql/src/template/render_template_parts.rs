@@ -23,8 +23,8 @@ pub(crate) fn render_template_parts<'a>(
                 if context.flow.replace(0) == 1 {
                     continue;
                 }
-                if let Some((key, value)) = entries.next() {
-                    let child = range.iteration(&context, key, value);
+                if let Some(entry) = entries.next() {
+                    let child = range.iteration(&context, entry.key, entry.value);
                     frames.push(Frame::Range(range, entries, context));
                     frames.push(Frame::Parts(&range.parts, 0, child));
                 }
@@ -78,18 +78,20 @@ pub(crate) fn render_template_parts<'a>(
                     TemplatePart::Conditional(conditional) => {
                         let mut child = context.clone();
                         let mut selected = &conditional.else_parts;
-                        for (condition, parts) in &conditional.branches {
-                            let (value, branch) = condition.evaluate(&child);
-                            child = branch;
-                            if value.is_truthy() {
-                                selected = parts;
+                        for branch in &conditional.branches {
+                            let evaluated = branch.condition.evaluate(&child);
+                            child = evaluated.context;
+                            if evaluated.value.is_truthy() {
+                                selected = &branch.parts;
                                 break;
                             }
                         }
                         frames.push(Frame::Parts(selected, 0, child));
                     }
                     TemplatePart::With(with) => {
-                        let (value, child) = with.expression.evaluate(&context);
+                        let evaluated = with.expression.evaluate(&context);
+                        let value = evaluated.value;
+                        let child = evaluated.context;
                         if value.is_truthy() {
                             frames.push(Frame::Parts(
                                 &with.parts,

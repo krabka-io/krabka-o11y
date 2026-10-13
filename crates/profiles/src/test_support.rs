@@ -5,7 +5,9 @@ mod cpu_record;
 
 use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
-use krabka_blockstore::{BlockIndex as _, BlockMeta, Labels, ObjectStoreMetrics, ProfileIndex};
+use krabka_blockstore::{
+    BlockIndex as _, BlockMeta, Labels, ObjectStoreMetrics, OffsetRange, ProfileIndex,
+};
 use krabka_observability::server_security::ServerSecurity;
 use krabka_pprof::{EngineOpts, FlameEngine, FlameGraph, NativeResolver, SymbolizeRequest};
 use object_store::ObjectStore;
@@ -47,7 +49,7 @@ pub async fn build_test_block(
         "t",
         0,
         records,
-        (wal_offset, wal_offset),
+        OffsetRange::new(wal_offset, wal_offset),
         &ObjectStoreMetrics::unregistered(),
     )
     .await
@@ -110,14 +112,20 @@ pub fn otlp_value_type() -> ValueType {
 /// The shutdown signal a test server waits on.
 pub type Shutdown = Pin<Box<dyn Future<Output = ()> + Send>>;
 
+pub struct BoundTestServer {
+    pub address: SocketAddr,
+    pub shutdown: tokio::sync::oneshot::Sender<()>,
+}
+
 /// Starts a server on an ephemeral loopback port with default security.
 ///
 /// `serve` is the role's `serve` entry point. The server runs until the
 /// returned sender fires or is dropped.
 pub async fn serve_on_loopback_with(
     serve: impl AsyncFnOnce(SocketAddr, &ServerSecurity, Shutdown) -> std::io::Result<SocketAddr>,
-) -> (SocketAddr, tokio::sync::oneshot::Sender<()>) {
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+) -> BoundTestServer {
+    let shutdown = tokio::sync::oneshot::channel::<()>();
+    let shutdown_rx = shutdown.1;
     let bound = serve(
         "127.0.0.1:0".parse().unwrap(),
         &ServerSecurity::default(),
@@ -127,7 +135,10 @@ pub async fn serve_on_loopback_with(
     )
     .await
     .unwrap();
-    (bound, shutdown_tx)
+    BoundTestServer {
+        address: bound,
+        shutdown: shutdown.0,
+    }
 }
 
 /// Checks that `resolver`, asked about an address in a file that does not

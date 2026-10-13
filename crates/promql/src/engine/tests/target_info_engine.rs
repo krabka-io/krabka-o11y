@@ -4,11 +4,11 @@ use super::*;
 /// `target_info` series carrying `region="east"` and `cluster="prod"`, at 10s.
 pub(crate) fn target_info_engine() -> PromqlEngine<InMemoryMetricStore> {
     info_metrics_engine(vec![labels(&[
-        ("__name__", "target_info"),
-        ("job", "api"),
-        ("instance", "a"),
-        ("region", "east"),
-        ("cluster", "prod"),
+        crate::test_support::TestLabelPair::new("__name__", "target_info"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+        crate::test_support::TestLabelPair::new("instance", "a"),
+        crate::test_support::TestLabelPair::new("region", "east"),
+        crate::test_support::TestLabelPair::new("cluster", "prod"),
     ])])
 }
 
@@ -19,9 +19,9 @@ pub(crate) fn info_metrics_engine(info_series: Vec<Labels>) -> PromqlEngine<InMe
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "http_requests_total"),
-            ("job", "api"),
-            ("instance", "a"),
+            crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
         ]),
         10_000,
         7.0,

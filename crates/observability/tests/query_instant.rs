@@ -36,7 +36,10 @@ async fn query_endpoint_returns_loki_streams_json_for_tenant() {
 
 #[tokio::test]
 async fn query_endpoint_fans_out_pipe_separated_tenant_header() {
-    let (state, prod_bytes, stage_bytes) = loki_forwarded_multi_tenant_fixture();
+    let fixture = loki_forwarded_multi_tenant_fixture();
+    let state = fixture.state;
+    let prod_bytes = fixture.prod_block_bytes;
+    let stage_bytes = fixture.stage_block_bytes;
     let app = loki_router(state);
 
     let response = Tenant("tenant-a|tenant-b").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
@@ -150,7 +153,9 @@ async fn query_endpoint_includes_loki_stats_object() {
 
 #[tokio::test]
 async fn query_endpoint_populates_loki_stats_from_planned_cold_blocks() {
-    let (app, expected_block_bytes) = api_seconds_block_app();
+    let api_fixture = api_seconds_block_app();
+    let app = api_fixture.router;
+    let expected_block_bytes = api_fixture.block_bytes;
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
 
@@ -199,7 +204,10 @@ async fn query_endpoint_uses_updated_shared_compaction_frontier_for_hot_tail() {
     hot_tail
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
+            labels: labels([
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("env", "prod"),
+            ]),
             timestamp_ns: 20,
             line: "api hot error".to_string(),
             structured_metadata: BTreeMap::new(),

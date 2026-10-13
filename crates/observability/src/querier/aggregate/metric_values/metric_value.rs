@@ -1,6 +1,7 @@
 use super::*;
 
 impl_rational_division_ops!(MetricValue);
+impl_rational_float_conversion!(MetricValue);
 
 impl MetricValue {
     pub(crate) fn zero() -> Self {
@@ -109,17 +110,6 @@ impl MetricValue {
             &(other.numerator
                 * i128::try_from(self.denominator).expect("denominator fits in i128")),
         )
-    }
-
-    pub(crate) fn to_f64(self) -> Option<f64> {
-        rational_to_f64(self.numerator, self.denominator)
-    }
-
-    pub(crate) fn from_f64(value: f64) -> Option<Self> {
-        Some(Self::new(
-            decimal_scaled_numerator(value)?,
-            METRIC_DECIMAL_SCALE,
-        ))
     }
 }
 

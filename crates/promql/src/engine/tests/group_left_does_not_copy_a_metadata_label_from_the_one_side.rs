@@ -6,17 +6,33 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn group_left_does_not_copy_a_metadata_label_from_the_one_side() {
     let mut store = InMemoryMetricStore::new();
-    for (instance, value) in [("1", 3.0), ("2", 4.0)] {
+    for case in [
+        InstanceValueCase {
+            instance: "1",
+            value: 3.0,
+        },
+        InstanceValueCase {
+            instance: "2",
+            value: 4.0,
+        },
+    ] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "a"), ("job", "x"), ("instance", instance)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "a"),
+                crate::test_support::TestLabelPair::new("job", "x"),
+                crate::test_support::TestLabelPair::new("instance", case.instance),
+            ]),
             10_000,
-            value,
+            case.value,
         );
     }
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "b"), ("job", "x")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "b"),
+            crate::test_support::TestLabelPair::new("job", "x"),
+        ]),
         10_000,
         10.0,
     );

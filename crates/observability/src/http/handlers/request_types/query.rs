@@ -1,6 +1,6 @@
 use super::{
-    HeaderMap, Instant, QuerierState, QueryKind, RawQuery, RequestSecurity, Response, State,
-    handle_query,
+    HeaderMap, QuerierState, QueryKind, RawQuery, RequestSecurity, Response, State,
+    handle_instant_or_range_query,
 };
 
 pub(crate) async fn query(
@@ -9,15 +9,13 @@ pub(crate) async fn query(
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
-    let start = Instant::now();
-    let resp = handle_query(
+    handle_instant_or_range_query(
         state.clone(),
         security,
         headers,
         raw_query.as_deref(),
         QueryKind::Instant,
+        "query",
     )
-    .await;
-    state.record_query("query", resp.status(), start);
-    resp
+    .await
 }

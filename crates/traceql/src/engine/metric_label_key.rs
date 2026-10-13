@@ -77,13 +77,34 @@ mod tests {
 
     #[test]
     fn scoped_aliases_keep_pinned_unscoped_metric_intrinsic_names() {
-        for (intrinsic, key) in [
-            (Intrinsic::Name, "name"),
-            (Intrinsic::Duration, "duration"),
-            (Intrinsic::Status, "status"),
-            (Intrinsic::StatusMessage, "statusMessage"),
-            (Intrinsic::Kind, "kind"),
+        struct AliasCase {
+            intrinsic: Intrinsic,
+            key: &'static str,
+        }
+
+        for case in [
+            AliasCase {
+                intrinsic: Intrinsic::Name,
+                key: "name",
+            },
+            AliasCase {
+                intrinsic: Intrinsic::Duration,
+                key: "duration",
+            },
+            AliasCase {
+                intrinsic: Intrinsic::Status,
+                key: "status",
+            },
+            AliasCase {
+                intrinsic: Intrinsic::StatusMessage,
+                key: "statusMessage",
+            },
+            AliasCase {
+                intrinsic: Intrinsic::Kind,
+                key: "kind",
+            },
         ] {
+            let AliasCase { intrinsic, key } = case;
             assert!(
                 metric_label_key(&Field {
                     scope: Scope::Intrinsic(intrinsic),

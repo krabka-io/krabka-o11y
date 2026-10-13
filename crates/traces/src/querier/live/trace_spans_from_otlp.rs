@@ -22,8 +22,8 @@ pub(crate) fn trace_spans_from_otlp(trace_id: &[u8; 16], data: TracesData) -> Re
         if trace.root_service_name.is_empty() {
             trace.root_service_name = resource_attrs
                 .iter()
-                .find_map(|(key, value)| {
-                    (key == "service.name").then(|| match value {
+                .find_map(|attribute| {
+                    (attribute.key == "service.name").then(|| match &attribute.value {
                         AttrValue::Str(value) => Some(value.clone()),
                         _ => None,
                     })?
@@ -31,9 +31,9 @@ pub(crate) fn trace_spans_from_otlp(trace_id: &[u8; 16], data: TracesData) -> Re
                 .unwrap_or_default();
         }
         for scope_spans in resource_spans.scope_spans {
-            let (instrumentation_name, instrumentation_version) = scope_spans
-                .scope
-                .map_or_else(Default::default, |scope| (scope.name, scope.version));
+            let instrumentation_scope = scope_spans.scope.unwrap_or_default();
+            let instrumentation_name = instrumentation_scope.name;
+            let instrumentation_version = instrumentation_scope.version;
             for span in scope_spans.spans {
                 let span_id = fixed_8(&span.span_id)?;
                 let parent_span_id = if span.parent_span_id.is_empty() {

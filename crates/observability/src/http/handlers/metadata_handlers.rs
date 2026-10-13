@@ -1,10 +1,12 @@
+use std::future::Future;
+
 use axum::response::IntoResponse;
 
 use crate::{
     Bytes, HeaderMap, HttpQueryError, Instant, LabelValuesRequest, LokiStreamEncoding, Path,
     PostedQueryRequest, QuerierState, QueryKind, QueryParams, RawQuery, RequestSecurity, Response,
-    State, StatusCode, TenantErrorSurface, TenantId, Value, VolumeKind, WebSocketUpgrade,
-    add_loki_encoding_flags, add_loki_query_stats, authorized_tenants,
+    SeriesParams, State, StatusCode, TenantErrorSurface, TenantId, Value, VolumeKind,
+    WebSocketUpgrade, add_loki_encoding_flags, add_loki_query_stats, authorized_tenants,
     execute_api_prom_label_names_query, execute_api_prom_series_query,
     execute_http_query_for_tenant, execute_index_stats_query, execute_index_volume_query,
     execute_label_values_query, execute_series_query, json, json_response, loki_encoding_flags,
@@ -42,6 +44,21 @@ mod posted_index_volume_query;
 mod series;
 mod series_post;
 mod tail;
+
+async fn api_prom_series_query<F, Fut>(raw_query: Option<&str>, execute: F) -> Response
+where
+    F: FnOnce(SeriesParams) -> Fut,
+    Fut: Future<Output = Result<Response, HttpQueryError>>,
+{
+    let params = match parse_series_params(raw_query) {
+        Ok(params) => params,
+        Err(error) => return error.into_response(),
+    };
+    match execute(params).await {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
+    }
+}
 
 pub(crate) use api_prom_label_names::api_prom_label_names;
 pub(crate) use api_prom_label_names_post::api_prom_label_names_post;

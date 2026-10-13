@@ -1,5 +1,11 @@
 use super::*;
 
+fn app_labels(app: &str) -> BTreeMap<String, String> {
+    let mut labels = BTreeMap::new();
+    labels.insert("app".into(), app.into());
+    labels
+}
+
 #[tokio::test]
 pub(crate) async fn appending_log_index_shard_does_not_rewrite_historical_shards_or_full_manifest()
 {
@@ -10,11 +16,9 @@ pub(crate) async fn appending_log_index_shard_does_not_rewrite_historical_shards
     let old_range_b = TimeRange::new(200, 299).unwrap();
     let new_range = TimeRange::new(300, 399).unwrap();
     let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series(tenant, BTreeMap::from([("app".into(), "api".into())]));
-    let worker =
-        labels_index.insert_series(tenant, BTreeMap::from([("app".into(), "worker".into())]));
-    let admin =
-        labels_index.insert_series(tenant, BTreeMap::from([("app".into(), "admin".into())]));
+    let api = labels_index.insert_series(tenant, app_labels("api"));
+    let worker = labels_index.insert_series(tenant, app_labels("worker"));
+    let admin = labels_index.insert_series(tenant, app_labels("admin"));
     let mut block_index = BlockIndex::default();
     block_index.insert(BlockDescriptor::new(
         BlockKey::new(tenant, 0, 10, 19, old_range_a),

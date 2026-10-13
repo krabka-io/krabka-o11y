@@ -288,15 +288,29 @@ mod tests {
         let keys = keys.as_any().downcast_ref::<StringArray>().unwrap();
         let flags = col::<ListArray>(&batch, SCOL_ATTR_IS_ARRAY).value(0);
         let flags = flags.as_any().downcast_ref::<BooleanArray>().unwrap();
-        for (key, expected) in [
-            ("empty", true),
-            ("one", true),
-            ("many", true),
-            ("scalar", false),
-            ("mixed", false),
+        #[derive(bon::Builder)]
+        struct ArrayFlagCase {
+            key: &'static str,
+            expected: bool,
+        }
+        for case in [
+            ArrayFlagCase::builder().key("empty").expected(true).build(),
+            ArrayFlagCase::builder().key("one").expected(true).build(),
+            ArrayFlagCase::builder().key("many").expected(true).build(),
+            ArrayFlagCase::builder()
+                .key("scalar")
+                .expected(false)
+                .build(),
+            ArrayFlagCase::builder()
+                .key("mixed")
+                .expected(false)
+                .build(),
         ] {
-            let index = keys.iter().position(|value| value == Some(key)).unwrap();
-            check!(flags.value(index) == expected, "{key}");
+            let index = keys
+                .iter()
+                .position(|value| value == Some(case.key))
+                .unwrap();
+            check!(flags.value(index) == case.expected, "{}", case.key);
         }
     }
 

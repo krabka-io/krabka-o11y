@@ -1,14 +1,14 @@
-use super::{DefaultMs, NowMs, ProfileError, parse_render_time_param};
+use super::{DefaultMs, NowMs, ProfileError, QueryParameter, parse_render_time_param};
 
 pub(crate) fn query_param_render_time(
-    params: &[(String, String)],
+    params: &[QueryParameter],
     name: &str,
     now_ms: NowMs,
     default: DefaultMs,
 ) -> Result<i64, ProfileError> {
     let value = params
         .iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value.as_str());
+        .find(|parameter| parameter.key == name)
+        .map(|parameter| parameter.value.as_str());
     parse_render_time_param(value, now_ms, default)
 }

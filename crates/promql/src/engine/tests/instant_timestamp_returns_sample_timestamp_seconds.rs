@@ -5,7 +5,10 @@ pub(crate) async fn instant_timestamp_returns_sample_timestamp_seconds() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         60_000,
         1.0,
     );

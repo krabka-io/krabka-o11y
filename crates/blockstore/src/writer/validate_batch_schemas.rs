@@ -6,8 +6,8 @@ use super::{RecordBatch, Result, SchemaRef, validate_batch_schema};
 /// Returns [`BlockStoreError::InvalidBlock`](crate::BlockStoreError::InvalidBlock)
 /// naming the first batch that differs.
 pub(crate) fn validate_batch_schemas(schema: &SchemaRef, batches: &[RecordBatch]) -> Result<()> {
-    for (index, batch) in batches.iter().enumerate() {
-        validate_batch_schema(schema, batch, index)?;
+    for index in 0..batches.len() {
+        validate_batch_schema(schema, &batches[index], index)?;
     }
     Ok(())
 }

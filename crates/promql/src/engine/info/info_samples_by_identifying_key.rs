@@ -1,3 +1,5 @@
+use krabka_metrics::MetricLabelPair;
+
 use super::{
     BTreeMap, InstantSample, LabelMatcher, PromqlError, Result, SampleValue,
     compile_label_matchers, info_identifying_key,
@@ -24,13 +26,13 @@ pub(crate) fn info_samples_by_identifying_key(
         };
         let key = format!(
             "{key}{}",
-            super::Labels::from_pairs([(
+            super::Labels::from_pairs([MetricLabelPair::new(
                 "__name__",
                 sample
                     .labels
                     .get_value("__name__")
                     .cloned()
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
             )])
             .order_key()
         );

@@ -24,6 +24,46 @@ use krabka_logql::{
     parse_query,
 };
 
+struct SelectorMatchCase {
+    selector: &'static str,
+    matches: bool,
+}
+
+struct TemplateOutputCase {
+    template: &'static str,
+    expected: &'static str,
+}
+
+impl TemplateOutputCase {
+    const fn new(template: &'static str, expected: &'static str) -> Self {
+        Self { template, expected }
+    }
+}
+
+struct MetricOffsetCase {
+    text: &'static str,
+    offset_ns: OffsetNanos,
+}
+
+struct NamedMapEntry<K, V> {
+    key: K,
+    value: V,
+}
+
+impl<K, V> NamedMapEntry<K, V> {
+    fn new(key: K, value: V) -> Self {
+        Self { key, value }
+    }
+}
+
+fn named_map<K: Ord, V>(entries: impl IntoIterator<Item = NamedMapEntry<K, V>>) -> BTreeMap<K, V> {
+    let mut map = BTreeMap::new();
+    for entry in entries {
+        map.insert(entry.key, entry.value);
+    }
+    map
+}
+
 #[test]
 fn parses_selector_with_all_matcher_ops() {
     let query =
@@ -45,47 +85,67 @@ fn parses_selector_with_all_matcher_ops() {
 
 #[test]
 fn empty_pipeline_preserves_complete_metadata_fields_and_matches_original_stream_labels() {
-    let labels = BTreeMap::from([
-        ("app".into(), "api".into()),
-        ("collision".into(), "stream".into()),
-        ("collision_extracted".into(), "base-suffix".into()),
-        ("empty".into(), String::new()),
-        ("__error__".into(), "StreamError".into()),
-        ("__error_details__".into(), "stream-details".into()),
+    let labels = named_map([
+        NamedMapEntry::new("app".into(), "api".into()),
+        NamedMapEntry::new("collision".into(), "stream".into()),
+        NamedMapEntry::new("collision_extracted".into(), "base-suffix".into()),
+        NamedMapEntry::new("empty".into(), String::new()),
+        NamedMapEntry::new("__error__".into(), "StreamError".into()),
+        NamedMapEntry::new("__error_details__".into(), "stream-details".into()),
     ]);
-    let metadata = BTreeMap::from([
-        ("app".into(), "shadow".into()),
-        ("collision".into(), "metadata".into()),
-        ("collision_extracted".into(), "direct".into()),
-        ("empty".into(), "metadata-empty".into()),
-        ("only_metadata".into(), "present".into()),
-        ("__error__".into(), String::new()),
-        ("__error_details__".into(), "metadata-details".into()),
+    let metadata = named_map([
+        NamedMapEntry::new("app".into(), "shadow".into()),
+        NamedMapEntry::new("collision".into(), "metadata".into()),
+        NamedMapEntry::new("collision_extracted".into(), "direct".into()),
+        NamedMapEntry::new("empty".into(), "metadata-empty".into()),
+        NamedMapEntry::new("only_metadata".into(), "present".into()),
+        NamedMapEntry::new("__error__".into(), String::new()),
+        NamedMapEntry::new("__error_details__".into(), "metadata-details".into()),
     ]);
     // Metadata fields carry over; a stream label keeps its name and pushes a
     // colliding metadata field to an `_extracted` suffix.
     let mut expected_fields = metadata.clone();
-    expected_fields.extend(
-        [
-            ("app", "api"),
-            ("app_extracted", "shadow"),
-            ("collision", "stream"),
-            ("collision_extracted", "metadata"),
-            ("collision_extracted_extracted", "direct"),
-        ]
-        .map(|(name, field)| (name.to_owned(), field.to_owned())),
-    );
-    let line = "raw \0\u{1b}[31m\n東京";
-    for (selector, matches) in [
-        (r#"{app="api"}"#, true),
-        (r#"{app="shadow"}"#, false),
-        (r#"{only_metadata="present"}"#, false),
-        (r#"{app="api",empty=""}"#, true),
-        (r#"{app="api",empty="metadata-empty"}"#, false),
-        (r#"{app="api",collision_extracted="base-suffix"}"#, true),
+    for entry in [
+        NamedMapEntry::new("app".to_owned(), "api".to_owned()),
+        NamedMapEntry::new("app_extracted".to_owned(), "shadow".to_owned()),
+        NamedMapEntry::new("collision".to_owned(), "stream".to_owned()),
+        NamedMapEntry::new("collision_extracted".to_owned(), "metadata".to_owned()),
+        NamedMapEntry::new(
+            "collision_extracted_extracted".to_owned(),
+            "direct".to_owned(),
+        ),
     ] {
-        let query = parse_query(selector).unwrap();
-        let expected = matches.then(|| PipelineEvaluation {
+        expected_fields.insert(entry.key, entry.value);
+    }
+    let line = "raw \0\u{1b}[31m\n東京";
+    for case in [
+        SelectorMatchCase {
+            selector: r#"{app="api"}"#,
+            matches: true,
+        },
+        SelectorMatchCase {
+            selector: r#"{app="shadow"}"#,
+            matches: false,
+        },
+        SelectorMatchCase {
+            selector: r#"{only_metadata="present"}"#,
+            matches: false,
+        },
+        SelectorMatchCase {
+            selector: r#"{app="api",empty=""}"#,
+            matches: true,
+        },
+        SelectorMatchCase {
+            selector: r#"{app="api",empty="metadata-empty"}"#,
+            matches: false,
+        },
+        SelectorMatchCase {
+            selector: r#"{app="api",collision_extracted="base-suffix"}"#,
+            matches: true,
+        },
+    ] {
+        let query = parse_query(case.selector).unwrap();
+        let expected = case.matches.then(|| PipelineEvaluation {
             fields: expected_fields.clone(),
             line: line.into(),
         });
@@ -94,7 +154,8 @@ fn empty_pipeline_preserves_complete_metadata_fields_and_matches_original_stream
                 query.evaluate_with_fields(&labels, line, &metadata),
                 query.evaluate_with_fields_at(&labels, line, &metadata, 1_234_567_890),
             ] == [expected.clone(), expected],
-            "{selector}"
+            "{}",
+            case.selector
         );
     }
 }
@@ -234,11 +295,17 @@ fn query_evaluator_ignores_logql_comments_outside_strings() {
 fn decodes_common_escapes_in_quoted_strings() {
     let query =
         parse_query(r#"{app="api\nprod"} |= "line\tone" | logfmt | msg = "hello\"there""#).unwrap();
-    let labels = BTreeMap::from([("app".to_string(), "api\nprod".to_string())]);
+    let labels = named_map([NamedMapEntry::new(
+        "app".to_string(),
+        "api\nprod".to_string(),
+    )]);
 
     check!(query.matches(&labels, "line\tone msg=\"hello\\\"there\""));
     check!(!query.matches(
-        &BTreeMap::from([("app".to_string(), "api\\nprod".to_string())]),
+        &named_map([NamedMapEntry::new(
+            "app".to_string(),
+            "api\\nprod".to_string()
+        )]),
         "line\tone msg=\"hello\\\"there\""
     ));
     check!(!query.matches(&labels, "line\\tone msg=\"hello\\\"there\""));
@@ -247,15 +314,15 @@ fn decodes_common_escapes_in_quoted_strings() {
 #[test]
 fn query_evaluator_applies_matchers_and_pipeline() {
     let query = parse_query(r#"{app="api", env!="dev"} |= "error" !~ "debug""#).unwrap();
-    let labels = BTreeMap::from([
-        ("app".to_string(), "api".to_string()),
-        ("env".to_string(), "prod".to_string()),
+    let labels = named_map([
+        NamedMapEntry::new("app".to_string(), "api".to_string()),
+        NamedMapEntry::new("env".to_string(), "prod".to_string()),
     ]);
 
     check!(query.matches(&labels, "error status=500"));
     check!(!query.matches(&labels, "debug error status=500"));
     check!(!query.matches(
-        &BTreeMap::from([("app".to_string(), "worker".to_string())]),
+        &named_map([NamedMapEntry::new("app".to_string(), "worker".to_string())]),
         "error"
     ));
 }
@@ -294,14 +361,14 @@ fn query_evaluator_treats_empty_compatible_regex_matcher_as_matching_absent_labe
 
     check!(query.matches(&app_api_labels(), "api line"));
     check!(query.matches(
-        &BTreeMap::from([
-            ("app".to_string(), "api".to_string()),
-            ("env".to_string(), "prod".to_string()),
+        &named_map([
+            NamedMapEntry::new("app".to_string(), "api".to_string()),
+            NamedMapEntry::new("env".to_string(), "prod".to_string()),
         ]),
         "api line"
     ));
     check!(!query.matches(
-        &BTreeMap::from([("app".to_string(), "worker".to_string())]),
+        &named_map([NamedMapEntry::new("app".to_string(), "worker".to_string())]),
         "worker line"
     ));
 }
@@ -311,16 +378,16 @@ fn query_evaluator_applies_negative_regex_label_matchers_to_present_labels() {
     let query = parse_query(r#"{app="api", zone!~"test|stage"}"#).unwrap();
 
     check!(query.matches(
-        &BTreeMap::from([
-            ("app".to_string(), "api".to_string()),
-            ("zone".to_string(), "prod".to_string()),
+        &named_map([
+            NamedMapEntry::new("app".to_string(), "api".to_string()),
+            NamedMapEntry::new("zone".to_string(), "prod".to_string()),
         ]),
         "api line"
     ));
     check!(!query.matches(
-        &BTreeMap::from([
-            ("app".to_string(), "api".to_string()),
-            ("zone".to_string(), "stage".to_string()),
+        &named_map([
+            NamedMapEntry::new("app".to_string(), "api".to_string()),
+            NamedMapEntry::new("zone".to_string(), "stage".to_string()),
         ]),
         "api line"
     ));
@@ -332,15 +399,15 @@ fn query_evaluator_anchors_regex_label_matchers() {
 
     check!(query.matches(&app_api_labels(), "api line"));
     check!(query.matches(
-        &BTreeMap::from([("app".to_string(), "worker".to_string())]),
+        &named_map([NamedMapEntry::new("app".to_string(), "worker".to_string())]),
         "worker line"
     ));
     check!(!query.matches(
-        &BTreeMap::from([("app".to_string(), "myapi".to_string())]),
+        &named_map([NamedMapEntry::new("app".to_string(), "myapi".to_string())]),
         "prefixed api line"
     ));
     check!(!query.matches(
-        &BTreeMap::from([("app".to_string(), "api-v2".to_string())]),
+        &named_map([NamedMapEntry::new("app".to_string(), "api-v2".to_string())]),
         "suffixed api line"
     ));
 }
@@ -348,16 +415,16 @@ fn query_evaluator_anchors_regex_label_matchers() {
 #[test]
 fn query_evaluator_applies_field_filter_to_original_labels() {
     let query = parse_query(r#"{app="api"} | env = "prod""#).unwrap();
-    let labels = BTreeMap::from([
-        ("app".to_string(), "api".to_string()),
-        ("env".to_string(), "prod".to_string()),
+    let labels = named_map([
+        NamedMapEntry::new("app".to_string(), "api".to_string()),
+        NamedMapEntry::new("env".to_string(), "prod".to_string()),
     ]);
 
     check!(query.matches(&labels, "api error"));
     check!(!query.matches(
-        &BTreeMap::from([
-            ("app".to_string(), "api".to_string()),
-            ("env".to_string(), "dev".to_string()),
+        &named_map([
+            NamedMapEntry::new("app".to_string(), "api".to_string()),
+            NamedMapEntry::new("env".to_string(), "dev".to_string()),
         ]),
         "api error"
     ));
@@ -365,9 +432,9 @@ fn query_evaluator_applies_field_filter_to_original_labels() {
 
 #[test]
 fn query_evaluator_suffixes_json_fields_that_collide_with_original_labels() {
-    let labels = BTreeMap::from([
-        ("app".to_string(), "api".to_string()),
-        ("env".to_string(), "prod".to_string()),
+    let labels = named_map([
+        NamedMapEntry::new("app".to_string(), "api".to_string()),
+        NamedMapEntry::new("env".to_string(), "prod".to_string()),
     ]);
 
     let query =
@@ -380,9 +447,9 @@ fn query_evaluator_suffixes_json_fields_that_collide_with_original_labels() {
 
 #[test]
 fn query_evaluator_suffixes_logfmt_fields_that_collide_with_original_labels() {
-    let labels = BTreeMap::from([
-        ("app".to_string(), "api".to_string()),
-        ("env".to_string(), "prod".to_string()),
+    let labels = named_map([
+        NamedMapEntry::new("app".to_string(), "api".to_string()),
+        NamedMapEntry::new("env".to_string(), "prod".to_string()),
     ]);
 
     let query =
@@ -740,7 +807,7 @@ fn query_evaluator_line_format_finds_outer_else_after_nested_control_blocks() {
         r#"{{ if .outer }}{{ if .inner }}I{{ else }}i{{ end }}{{ range fromJson "[1]" }}R{{ else }}r{{ end }}{{ with .inner }}W{{ else }}w{{ end }}{{ else }}O{{ end }}"#,
     )
     .unwrap();
-    let fields = BTreeMap::from([("outer".to_string(), "yes".to_string())]);
+    let fields = named_map([NamedMapEntry::new("outer".to_string(), "yes".to_string())]);
 
     check!(format.render("raw", &fields) == "iRw");
     check!(format.render("raw", &BTreeMap::new()) == "O");
@@ -1177,7 +1244,7 @@ fn query_evaluator_line_format_applies_template_trim_markers() {
 #[test]
 fn query_evaluator_line_format_does_not_trim_right_without_dash_marker() {
     let format = LineFormat::new("left {{ .method  }} right").unwrap();
-    let fields = BTreeMap::from([("method".to_string(), "GET".to_string())]);
+    let fields = named_map([NamedMapEntry::new("method".to_string(), "GET".to_string())]);
 
     check!(format.render("raw", &fields) == "left GET right");
 }
@@ -1185,7 +1252,7 @@ fn query_evaluator_line_format_does_not_trim_right_without_dash_marker() {
 #[test]
 fn query_evaluator_line_format_skips_trailing_whitespace_after_right_trim_marker() {
     let format = LineFormat::new("{{ .method -}}   ").unwrap();
-    let fields = BTreeMap::from([("method".to_string(), "GET".to_string())]);
+    let fields = named_map([NamedMapEntry::new("method".to_string(), "GET".to_string())]);
 
     check!(format.render("raw", &fields) == "GET");
 }
@@ -1193,7 +1260,7 @@ fn query_evaluator_line_format_skips_trailing_whitespace_after_right_trim_marker
 #[test]
 fn query_evaluator_line_format_trims_control_body_before_left_trimmed_else() {
     let format = LineFormat::new("{{ if .method }}hit \n\t {{- else }}miss{{ end }}").unwrap();
-    let fields = BTreeMap::from([("method".to_string(), "GET".to_string())]);
+    let fields = named_map([NamedMapEntry::new("method".to_string(), "GET".to_string())]);
 
     check!(format.render("raw", &fields) == "hit");
     check!(format.render("raw", &BTreeMap::new()) == "miss");
@@ -1319,28 +1386,34 @@ fn public_template_renderer_supports_prometheus_alert_variables_and_functions() 
         r#"{{ if $labels.job }}{{ title $labels.job }} {{ printf "%.1f" $value }} {{ humanize 1500 }} {{ humanizeDuration 90 }} {{ humanizePercentage $value }} {{ humanize1024 2048 }} {{ reReplaceAll "a.+" "service" $externalLabels.cluster }} {{ $externalURL }} {{ label "job" (first $samples) }}={{ value (first $samples) }}{{ end }}"#,
     )
     .unwrap();
-    let sample = TemplateData::Sample(std::sync::Arc::new(BTreeMap::from([
-        (
+    let sample = TemplateData::Sample(std::sync::Arc::new(named_map([
+        NamedMapEntry::new(
             "Labels".into(),
-            TemplateData::Labels(BTreeMap::from([("job".into(), "worker".into())])),
+            TemplateData::Labels(named_map([NamedMapEntry::new(
+                "job".into(),
+                "worker".into(),
+            )])),
         ),
-        ("Value".into(), TemplateData::Float(7.0)),
+        NamedMapEntry::new("Value".into(), TemplateData::Float(7.0)),
     ])));
-    let variables = BTreeMap::from([
-        ("value".to_string(), TemplateData::Float(0.125)),
-        (
+    let variables = named_map([
+        NamedMapEntry::new("value".to_string(), TemplateData::Float(0.125)),
+        NamedMapEntry::new(
             "labels".to_string(),
-            TemplateData::Labels(BTreeMap::from([("job".into(), "api".into())])),
+            TemplateData::Labels(named_map([NamedMapEntry::new("job".into(), "api".into())])),
         ),
-        (
+        NamedMapEntry::new(
             "externalLabels".to_string(),
-            TemplateData::Labels(BTreeMap::from([("cluster".into(), "alpha".into())])),
+            TemplateData::Labels(named_map([NamedMapEntry::new(
+                "cluster".into(),
+                "alpha".into(),
+            )])),
         ),
-        (
+        NamedMapEntry::new(
             "externalURL".to_string(),
             TemplateData::String("https://prom.example".into()),
         ),
-        (
+        NamedMapEntry::new(
             "samples".to_string(),
             TemplateData::QueryResult(vec![sample].into()),
         ),
@@ -1391,9 +1464,9 @@ fn query_evaluator_applies_label_format_to_later_filters_and_labels() {
         r#"{app="api",env="prod"} | logfmt | label_format namespace=env, summary="{{.method}} {{.status}}" | namespace = "prod" | summary = "GET 500""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([
-        ("app".to_string(), "api".to_string()),
-        ("env".to_string(), "prod".to_string()),
+    let labels = named_map([
+        NamedMapEntry::new("app".to_string(), "api".to_string()),
+        NamedMapEntry::new("env".to_string(), "prod".to_string()),
     ]);
 
     let evaluation = query
@@ -1708,10 +1781,10 @@ fn query_evaluator_applies_drop_and_keep_to_later_filters_and_labels() {
         r#"{app="api",env="prod"} | logfmt | drop env, level="debug" | keep app, method, status="500" | method = "GET""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([
-        ("app".to_string(), "api".to_string()),
-        ("env".to_string(), "prod".to_string()),
-        ("__error__".to_string(), "ParserErr".to_string()),
+    let labels = named_map([
+        NamedMapEntry::new("app".to_string(), "api".to_string()),
+        NamedMapEntry::new("env".to_string(), "prod".to_string()),
+        NamedMapEntry::new("__error__".to_string(), "ParserErr".to_string()),
     ]);
 
     let evaluation = query
@@ -1877,9 +1950,9 @@ fn pattern_regexp_and_line_format_accessors_return_source_text() {
     let pattern = PatternParser::new("prefix <method> suffix").unwrap();
     let regexp = RegexpParser::new(r"(?P<method>\w+) (?P<status>\d+)").unwrap();
     let format = LineFormat::new("{{.method}} {{.status}}").unwrap();
-    let fields = BTreeMap::from([
-        ("method".to_string(), "GET".to_string()),
-        ("status".to_string(), "500".to_string()),
+    let fields = named_map([
+        NamedMapEntry::new("method".to_string(), "GET".to_string()),
+        NamedMapEntry::new("status".to_string(), "500".to_string()),
     ]);
 
     check!(pattern.pattern() == "prefix <method> suffix");
@@ -1917,9 +1990,9 @@ fn query_evaluator_applies_unanchored_pattern_parser_and_collision_suffixes() {
     let query =
         parse_query(r#"{app="api",method="GET"} | pattern `<_> method=<method> status=<status>` | method = "GET" | method_extracted = "POST" | status = "500""#)
             .unwrap();
-    let labels = BTreeMap::from([
-        ("app".to_string(), "api".to_string()),
-        ("method".to_string(), "GET".to_string()),
+    let labels = named_map([
+        NamedMapEntry::new("app".to_string(), "api".to_string()),
+        NamedMapEntry::new("method".to_string(), "GET".to_string()),
     ]);
 
     check!(query.matches(&labels, "prefix method=POST status=500"));
@@ -1978,9 +2051,9 @@ fn query_evaluator_suffixes_regexp_captures_that_collide_with_original_labels() 
     let query =
         parse_query(r#"{app="api",method="GET"} | regexp `method=(?P<method>\w+) status=(?P<status>\d+)` | method = "GET" | method_extracted = "POST" | status = "500""#)
             .unwrap();
-    let labels = BTreeMap::from([
-        ("app".to_string(), "api".to_string()),
-        ("method".to_string(), "GET".to_string()),
+    let labels = named_map([
+        NamedMapEntry::new("app".to_string(), "api".to_string()),
+        NamedMapEntry::new("method".to_string(), "GET".to_string()),
     ]);
 
     check!(query.matches(&labels, "prefix method=POST status=500 suffix"));
@@ -3072,28 +3145,34 @@ fn parses_compound_prometheus_duration_metric_query() {
 
 #[test]
 fn parses_metric_query_with_positive_and_negative_range_offsets() {
-    for (text, offset_ns) in [
-        (
-            r#"count_over_time({app="api"} |= "error" [10s] offset 5m)"#,
-            OffsetNanos(300_000_000_000),
-        ),
-        (
-            r#"count_over_time({app="api"} |= "error" [10s] offset -5m)"#,
-            OffsetNanos(-300_000_000_000),
-        ),
+    for case in [
+        MetricOffsetCase {
+            text: r#"count_over_time({app="api"} |= "error" [10s] offset 5m)"#,
+            offset_ns: OffsetNanos(300_000_000_000),
+        },
+        MetricOffsetCase {
+            text: r#"count_over_time({app="api"} |= "error" [10s] offset -5m)"#,
+            offset_ns: OffsetNanos(-300_000_000_000),
+        },
     ] {
-        let query = parse_metric_query(text).unwrap();
+        let query = parse_metric_query(case.text).unwrap();
 
         check!(
             query.aggregation == RangeAggregation::CountOverTime,
-            "{text}"
+            "{}",
+            case.text
         );
         check!(
             query.stream == parse_query(r#"{app="api"} |= "error""#).unwrap(),
-            "{text}"
+            "{}",
+            case.text
         );
-        check!(query.range_ns == DurationNanos(10_000_000_000), "{text}");
-        check!(query.offset_ns == offset_ns, "{text}");
+        check!(
+            query.range_ns == DurationNanos(10_000_000_000),
+            "{}",
+            case.text
+        );
+        check!(query.offset_ns == case.offset_ns, "{}", case.text);
     }
 }
 
@@ -3417,57 +3496,58 @@ fn nested_vector_aggregations_preserve_metric_children_and_grouping() {
 #[test]
 fn template_logic_preserves_types_and_operand_values() {
     let cases = [
-        (
+        TemplateOutputCase::new(
             r#"{{ if "false" }}yes{{ else }}no{{ end }}|{{ if "0" }}yes{{ else }}no{{ end }}"#,
             "yes|yes",
         ),
-        (
+        TemplateOutputCase::new(
             r"{{ if false }}yes{{ else }}no{{ end }}|{{ if true }}yes{{ else }}no{{ end }}",
             "no|yes",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ and "left" "right" }}|{{ and "left" "" }}|{{ or "" "fallback" }}"#,
             "right||fallback",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ and 1 0 }}|{{ or 0 2 }}|{{ "last" | and "first" }}|{{ "last" | or "first" }}"#,
             "0|2|last|first",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ if contains "x" "no" }}bad{{ else }}no{{ end }}|{{ if not false }}yes{{ end }}"#,
             "no|yes",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ eq "b" "a" "b" }}|{{ if eq "b" "a" }}bad{{ else }}no{{ end }}"#,
             "true|no",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ default "fallback" false }}|{{ default "fallback" 0 }}|{{ default "fallback" "0" }}"#,
             "fallback|fallback|0",
         ),
-        (
+        TemplateOutputCase::new(
             r"{{ if sub 2 2 }}bad{{ else }}zero{{ end }}|{{ if addf 1 -1 }}bad{{ else }}zero{{ end }}",
             "zero|zero",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ lt "3" "10" }}|{{ lt 3 10 }}|{{ eq true false true }}"#,
             "false|true|true",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ len (fromJson "[1,2]") }}|{{ len (fromJson "{\"a\":1}") }}"#,
             "2|1",
         ),
-        (r#"{{ or (fromJson "[]") (fromJson "[1,2]") }}"#, "[1 2]"),
-        (
+        TemplateOutputCase::new(r#"{{ or (fromJson "[]") (fromJson "[1,2]") }}"#, "[1 2]"),
+        TemplateOutputCase::new(
             r#"{{ with or "" "chosen" }}{{ . | upper }}{{ else }}bad{{ end }}"#,
             "CHOSEN",
         ),
     ];
-    for (template, expected) in cases {
-        let format = LineFormat::new(template).unwrap();
+    for case in cases {
+        let format = LineFormat::new(case.template).unwrap();
         check!(
-            format.render("raw", &BTreeMap::new()) == expected,
-            "{template}"
+            format.render("raw", &BTreeMap::new()) == case.expected,
+            "{}",
+            case.template
         );
     }
 }
@@ -3524,28 +3604,29 @@ fn template_runtime_errors_keep_input_and_can_be_filtered() {
 #[test]
 fn template_variables_reassign_outer_bindings_without_leaking_declarations() {
     let cases = [
-        (
+        TemplateOutputCase::new(
             r#"{{ $sum := 0 }}{{ range $n := fromJson "[1,2,3]" }}{{ $sum = add $sum $n }}{{ . }}{{ end }}|{{ $sum }}"#,
             "123|6",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ $v := "outer" }}{{ if true }}{{ $v := "inner" }}{{ $v }}{{ end }}|{{ $v }}"#,
             "inner|outer",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ $v := "outer" }}{{ with "inner" }}{{ $v = . }}{{ end }}|{{ $v }}"#,
             "|inner",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ range $i, $v := fromJson "[\"a\",\"b\"]" }}{{ $i }}={{ . }}={{ $v }};{{ end }}"#,
             "0=a=a;1=b=b;",
         ),
     ];
-    for (template, expected) in cases {
-        let format = LineFormat::new(template).unwrap();
+    for case in cases {
+        let format = LineFormat::new(case.template).unwrap();
         check!(
-            format.render("raw", &BTreeMap::new()) == expected,
-            "{template}"
+            format.render("raw", &BTreeMap::new()) == case.expected,
+            "{}",
+            case.template
         );
     }
 }
@@ -3553,32 +3634,33 @@ fn template_variables_reassign_outer_bindings_without_leaking_declarations() {
 #[test]
 fn template_range_supports_integer_counts_and_nested_flow() {
     let cases = [
-        (
+        TemplateOutputCase::new(
             r"{{ range 3 }}{{ . }}{{ end }}|{{ range 0 }}bad{{ else }}empty{{ end }}",
             "012|empty",
         ),
-        (
+        TemplateOutputCase::new(
             r"{{ range 5 }}{{ if eq . 2 }}{{ break }}{{ end }}{{ . }}{{ end }}done",
             "01done",
         ),
-        (
+        TemplateOutputCase::new(
             r"{{ range 4 }}{{ if eq . 1 }}{{ continue }}{{ end }}{{ . }}{{ end }}done",
             "023done",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ range $v := fromJson "[\"a\",\"b\"]" }}{{ range 3 }}{{ if eq . 1 }}{{ break }}{{ end }}{{ . }}{{ end }}{{ $v }}{{ end }}"#,
             "0a0b",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ range $i, $v := fromJson "{\"a\":1,\"b\":2,\"c\":3}" }}{{ if eq $i "b" }}{{ continue }}{{ end }}{{ $i }};{{ end }}"#,
             "a;c;",
         ),
     ];
-    for (template, expected) in cases {
-        let format = LineFormat::new(template).unwrap();
+    for case in cases {
+        let format = LineFormat::new(case.template).unwrap();
         check!(
-            format.render("raw", &BTreeMap::new()) == expected,
-            "{template}"
+            format.render("raw", &BTreeMap::new()) == case.expected,
+            "{}",
+            case.template
         );
     }
     for template in [
@@ -3593,32 +3675,33 @@ fn template_range_supports_integer_counts_and_nested_flow() {
 #[test]
 fn template_definitions_reset_dot_root_and_variable_scope() {
     let cases = [
-        (
+        TemplateOutputCase::new(
             r#"{{ template "suffix" "chosen" }}{{ define "suffix" }}{{ . | upper }}={{ $ }}{{ end }}"#,
             "CHOSEN=chosen",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ block "body" "fallback" }}{{ . }}{{ end }}"#,
             "fallback",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ define "item" }}{{ .name }}{{ end }}{{ range fromJson "[{\"name\":\"a\"},{\"name\":\"b\"}]" }}{{ template "item" . }};{{ end }}"#,
             "a;b;",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ define "tree" }}{{ .name }}{{ range .children }}{{ template "tree" . }}{{ end }}{{ end }}{{ template "tree" (fromJson "{\"name\":\"a\",\"children\":[{\"name\":\"b\"}]}") }}"#,
             "ab",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ with fromJson "{}" }}bad{{ else }}{{ template "item" "chosen" }}{{ end }}{{ define "item" }}{{ . }}{{ end }}"#,
             "chosen",
         ),
     ];
-    for (template, expected) in cases {
-        let format = LineFormat::new(template).unwrap();
+    for case in cases {
+        let format = LineFormat::new(case.template).unwrap();
         check!(
-            format.render("raw", &BTreeMap::new()) == expected,
-            "{template}"
+            format.render("raw", &BTreeMap::new()) == case.expected,
+            "{}",
+            case.template
         );
     }
     let query =
@@ -3633,11 +3716,13 @@ fn template_definitions_reset_dot_root_and_variable_scope() {
 
 #[test]
 fn supported_template_function_catalog_matches_independent_values() {
-    for (name, expression, expected) in template_functions::CASES {
-        let format = LineFormat::new(format!("{{{{ {expression} }}}}")).unwrap();
+    for case in template_functions::CASES {
+        let format = LineFormat::new(format!("{{{{ {} }}}}", case.expression)).unwrap();
         check!(
-            format.render("raw", &BTreeMap::new()) == *expected,
-            "{name}: {expression}"
+            format.render("raw", &BTreeMap::new()) == case.expected,
+            "{}: {}",
+            case.name,
+            case.expression
         );
     }
 }
@@ -3657,64 +3742,68 @@ fn printf_keeps_go_types_through_nested_functions_pipelines_and_json() {
         r#"{app="api"} | line_format `{{ .status | printf "%d" }}` |= "%!d(string=200)""#,
     )
     .unwrap();
-    let labels = BTreeMap::from([
-        ("app".into(), "api".into()),
-        ("status".into(), "200".into()),
+    let labels = named_map([
+        NamedMapEntry::new("app".into(), "api".into()),
+        NamedMapEntry::new("status".into(), "200".into()),
     ]);
     check!(query.matches(&labels, "raw"));
-    let wrong = BTreeMap::from([
-        ("app".into(), "api".into()),
-        ("status".into(), "404".into()),
+    let wrong = named_map([
+        NamedMapEntry::new("app".into(), "api".into()),
+        NamedMapEntry::new("status".into(), "404".into()),
     ]);
     check!(!query.matches(&wrong, "raw"));
 }
 
 #[test]
 fn template_action_delimiters_inside_strings_and_comments_are_literal() {
-    for (template, expected) in [
-        (r#"{{ printf "%s" "}}" }}"#, "}}"),
-        (r"{{/* }} ignored */}}ok", "ok"),
-        (r#"{{ if true }}{{ printf "%s" "}}" }}{{ end }}"#, "}}"),
+    for case in [
+        TemplateOutputCase::new(r#"{{ printf "%s" "}}" }}"#, "}}"),
+        TemplateOutputCase::new(r"{{/* }} ignored */}}ok", "ok"),
+        TemplateOutputCase::new(r#"{{ if true }}{{ printf "%s" "}}" }}{{ end }}"#, "}}"),
     ] {
-        let format = LineFormat::new(template).unwrap();
-        check!(format.render("raw", &BTreeMap::new()) == expected);
+        let format = LineFormat::new(case.template).unwrap();
+        check!(format.render("raw", &BTreeMap::new()) == case.expected);
     }
 }
 
 #[test]
 fn typed_time_functions_compose_layouts_zones_printf_and_wrapping_epochs() {
-    let labels = BTreeMap::from([("app".into(), "api".into())]);
-    for (template, expected) in [
-        (
+    let labels = named_map([NamedMapEntry::new("app".into(), "api".into())]);
+    for case in [
+        TemplateOutputCase::new(
             r#"{{ printf "%T" (__timestamp__) }}|{{ date "January Mon _2 3:04:05PM MST" (__timestamp__) }}"#,
             "time.Time|January Tue  2 12:04:05PM UTC",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ toDateInZone "2006-01-02 15:04:05" "America/New_York" "2024-03-10 02:30:00" | printf "%s" }}"#,
             "2024-03-10 01:30:00 -0500 EST",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ toDateInZone "2006-01-02 15:04:05" "Europe/Berlin" "2024-10-27 02:30:00" | date "15:04 MST" }}"#,
             "01:30 UTC",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ toDate "2006-01-02" "invalid" | unixEpoch }}|{{ toDate "2006-01-02" "invalid" | printf "%#v" }}"#,
             "-62135596800|time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ toDateInZone "15:04:05.000" "UTC" "12:34:56,123" | unixEpochNanos }}|{{ toDateInZone "15:04:05.000" "UTC" "12:34:56,123" | printf "%s" }}"#,
             "-6826941682748345152|0000-01-01 12:34:56.123 +0000 UTC",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ unixToTime "9999999999999" | unixEpochNanos }}|{{ date "2006-01-02T15:04:05" 1 }}|{{ date "2006-01-02T15:04:05" (add 1 1) }}"#,
             "-8446744073710551616|1970-01-01T00:00:01|1970-01-01T00:00:02",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{ toDateInZone "15:04 MST" "America/New_York" "12:00 EST" | printf "%s" }}"#,
             "0000-01-01 12:03:58 -0456 LMT",
         ),
     ] {
-        let query = parse_query(&format!(r#"{{app="api"}} | line_format `{template}`"#)).unwrap();
+        let query = parse_query(&format!(
+            r#"{{app="api"}} | line_format `{}`"#,
+            case.template
+        ))
+        .unwrap();
         let result = query
             .evaluate_with_fields_at(
                 &labels,
@@ -3723,7 +3812,7 @@ fn typed_time_functions_compose_layouts_zones_printf_and_wrapping_epochs() {
                 1_704_197_045_123_456_789,
             )
             .unwrap();
-        check!(result.line == expected);
+        check!(result.line == case.expected);
         check!(!result.fields.contains_key("__error__"));
     }
     check_line_format_fails_at_runtime(r#"{{ unixToTime "soon" | date "2006" }}"#);
@@ -3731,22 +3820,25 @@ fn typed_time_functions_compose_layouts_zones_printf_and_wrapping_epochs() {
 
 #[test]
 fn rule_template_bytes_survive_variables_queries_and_control_flow() {
-    let variables = BTreeMap::from([(
+    let variables = named_map([NamedMapEntry::new(
         "labels".into(),
-        TemplateData::ByteLabels(BTreeMap::from([
-            ("a".into(), vec![0xff]),
-            ("b".into(), vec![0xfe]),
+        TemplateData::ByteLabels(named_map([
+            NamedMapEntry::new("a".into(), vec![0xff]),
+            NamedMapEntry::new("b".into(), vec![0xfe]),
         ])),
     )]);
-    let queries = BTreeMap::from([(
+    let queries = named_map([NamedMapEntry::new(
         "up".into(),
         TemplateData::QueryResult(
-            vec![TemplateData::Sample(std::sync::Arc::new(BTreeMap::from([
-                (
+            vec![TemplateData::Sample(std::sync::Arc::new(named_map([
+                NamedMapEntry::new(
                     "Labels".into(),
-                    TemplateData::ByteLabels(BTreeMap::from([("raw".into(), vec![0xe2, 0x82])])),
+                    TemplateData::ByteLabels(named_map([NamedMapEntry::new(
+                        "raw".into(),
+                        vec![0xe2, 0x82],
+                    )])),
                 ),
-                ("Value".into(), TemplateData::Float(7.0)),
+                NamedMapEntry::new("Value".into(), TemplateData::Float(7.0)),
             ])))]
             .into(),
         ),
@@ -3771,39 +3863,43 @@ fn rule_template_bytes_survive_variables_queries_and_control_flow() {
 
 #[test]
 fn go_numeric_constants_keep_float_complex_and_execution_overflow_semantics() {
-    let labels = BTreeMap::from([("app".into(), "api".into())]);
-    for (template, expected) in [
-        (
+    let labels = named_map([NamedMapEntry::new("app".into(), "api".into())]);
+    for case in [
+        TemplateOutputCase::new(
             r#"{{printf "%T|%v|%f|%x" .5 .5 .5 .5}}"#,
             "float64|0.5|0.500000|0x1p-01",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{printf "%T|%v|%f" 0x_1.fp2 0x_1.fp2 0x_1.fp2}}"#,
             "float64|7.75|7.750000",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{printf "%T|%v" 1e0 1e0}}|{{printf "%T|%v" 0755 0755}}"#,
             "float64|1|int|493",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{printf "%T|%v|%f|%x" 1+2i 1+2i 1+2i 1+2i}}"#,
             "complex128|(1+2i)|(1.000000+2.000000i)|(0x1p+00+0x1p+01i)",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{if 0i}}bad{{else}}zero{{end}}|{{eq 1+2i 1+2i}}|{{ne 1+2i 2i}}|{{printf "%d" 2i}}"#,
             "zero|true|true|%!d(complex128=(0+2i))",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{float64 "0x1.fp2"}}|{{addf "0x1p2" 1}}|{{float64 2i}}|{{int 2i}}|{{float64 "1e400"}}"#,
             "7.75|5|0|0|0",
         ),
-        (r#"{{printf "%T" now}}|{{repeat 2.0 "x"}}"#, "time.Time|xx"),
+        TemplateOutputCase::new(r#"{{printf "%T" now}}|{{repeat 2.0 "x"}}"#, "time.Time|xx"),
     ] {
-        let query = parse_query(&format!(r#"{{app="api"}} | line_format `{template}`"#)).unwrap();
+        let query = parse_query(&format!(
+            r#"{{app="api"}} | line_format `{}`"#,
+            case.template
+        ))
+        .unwrap();
         let result = query
             .evaluate_with_fields(&labels, "original", &BTreeMap::new())
             .unwrap();
-        check!(result.line == expected);
+        check!(result.line == case.expected);
         check!(!result.fields.contains_key("__error__"));
     }
     for template in [
@@ -3843,28 +3939,29 @@ fn template_execution_uses_go_depth_and_range_assignment_semantics() {
             .unwrap_err()
             .contains("depth")
     );
-    for (template, expected) in [
-        (
+    for case in [
+        TemplateOutputCase::new(
             r#"{{$i := 9}}{{$v := "before"}}{{range $i, $v = fromJson "[10,20]"}}{{$i}}={{$v}};{{end}}|{{$i}}:{{$v}}"#,
             "0=10;1=20;|1:20",
         ),
-        (r"{{$v := 9}}{{range $v = 3}}{{.}}{{end}}|{{$v}}", "012|2"),
-        (
+        TemplateOutputCase::new(r"{{$v := 9}}{{range $v = 3}}{{.}}{{end}}|{{$v}}", "012|2"),
+        TemplateOutputCase::new(
             r#"{{range $v := fromJson "[]"}}bad{{else}}{{len $v}}{{end}}|{{range (fromJson "null")}}bad{{else}}nil{{end}}"#,
             "0|nil",
         ),
-        (
+        TemplateOutputCase::new(
             r"{{range 2}}{{range 0}}bad{{else}}{{continue}}{{end}}bad{{end}}done",
             "done",
         ),
     ] {
-        let format = LineFormat::new(template).unwrap();
+        let format = LineFormat::new(case.template).unwrap();
         check!(
             format
                 .render_bytes_with_variables_and_queries(&BTreeMap::new(), &BTreeMap::new())
                 .unwrap()
-                == expected.as_bytes(),
-            "{template}"
+                == case.expected.as_bytes(),
+            "{}",
+            case.template
         );
     }
     for template in [
@@ -3887,11 +3984,11 @@ fn template_execution_uses_go_depth_and_range_assignment_semantics() {
 fn template_query_dependencies_survive_parenthesized_result_paths() {
     let format = LineFormat::new_prometheus(r#"{{ (index (query "counter") 0).Value }}|{{ printf "%d" (index (query "counter") 0).Value }}"#).unwrap();
     check!(format.query_calls().into_iter().collect::<Vec<_>>() == vec!["counter"]);
-    let queries = BTreeMap::from([(
+    let queries = named_map([NamedMapEntry::new(
         "counter".into(),
         TemplateData::QueryResult(
-            vec![TemplateData::Sample(std::sync::Arc::new(BTreeMap::from([
-                ("Value".into(), TemplateData::Integer64(7)),
+            vec![TemplateData::Sample(std::sync::Arc::new(named_map([
+                NamedMapEntry::new("Value".into(), TemplateData::Integer64(7)),
             ])))]
             .into(),
         ),
@@ -3907,56 +4004,57 @@ fn template_query_dependencies_survive_parenthesized_result_paths() {
 #[test]
 fn typed_time_methods_compose_with_chains_named_values_and_byte_results() {
     // Independent Go1.26.5 time.Time/template fixture, not derived from the Rust model.
-    for (suffix, expected) in [
-        (
+    for case in [
+        TemplateOutputCase::new(
             r#"{{$t.Format "2006"}}|{{$t.Unix}}|{{($t).Year}}|{{$t.YearDay}}|{{printf "%T:%v:%s:%d:%#v" $t.Month $t.Month $t.Month $t.Month $t.Month}}"#,
             "2024|1709211845|2024|60|time.Month:February:February:2:2",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{printf "%T:%v:%d" $t.Weekday $t.Weekday $t.Weekday}}"#,
             "time.Weekday:Thursday:4",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{($t.AddDate 1 1 -2).Format "2006-01-02 15:04:05.999999999 MST"}}"#,
             "2025-03-27 13:04:05.123456789 UTC",
         ),
-        (
+        TemplateOutputCase::new(
             r"{{$t.Add 1500000000}}",
             "2024-02-29 13:04:06.623456789 +0000 UTC",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{$d := $t.Sub ($t.Add -1500000000)}}{{printf "%T:%v:%.6f" $d $d $d.Seconds}}|{{$d.Abs.Nanoseconds}}"#,
             "time.Duration:1.5s:1.500000|1500000000",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{printf "%T:%x" $t.MarshalBinary $t.MarshalBinary}}"#,
             "[]uint8:010000000edd7277c5075bcd15ffff",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{printf "%T:%s" $t.MarshalText $t.MarshalText}}|{{printf "%s" $t.MarshalJSON}}"#,
             "[]uint8:2024-02-29T13:04:05.123456789Z|\"2024-02-29T13:04:05.123456789Z\"",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{printf "%T:%v" $t.Location $t.Location}}|{{$t.Before ($t.Add 1)}}|{{$t.Equal $t.UTC}}"#,
             "*time.Location:UTC|true|true",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{len ($t.AppendText nil)}}|{{printf "%x" (slice $t.MarshalBinary 0 3)}}|{{printf "%T" (index $t.MarshalBinary 0)}}"#,
             "30|010000|uint8",
         ),
-        (
+        TemplateOutputCase::new(
             r#"{{printf "%x" ($t.Format "2006\xff01")}}"#,
             "32303234ff3032",
         ),
     ] {
         let template = format!(
-            r#"{{{{$t := toDate "2006-01-02T15:04:05.999999999Z07:00" "2024-02-29T13:04:05.123456789Z"}}}}{suffix}"#
+            r#"{{{{$t := toDate "2006-01-02T15:04:05.999999999Z07:00" "2024-02-29T13:04:05.123456789Z"}}}}{}"#,
+            case.template
         );
         let output = LineFormat::new(template)
             .unwrap()
             .render_bytes_with_variables_and_queries(&BTreeMap::new(), &BTreeMap::new())
             .unwrap();
-        check!(output == expected.as_bytes(), "{suffix}");
+        check!(output == case.expected.as_bytes(), "{}", case.template);
     }
     for template in [
         "{{nil}}",
@@ -3994,13 +4092,13 @@ fn go_rune_byte_escapes_are_integer_constants_and_multi_escape_runes_fail() {
 #[test]
 fn prometheus_template_function_profile_matches_pinned_expander() {
     let sample = |job: &str, value: f64, strvalue: Option<&str>| {
-        let mut labels = BTreeMap::from([("job".into(), job.as_bytes().to_vec())]);
+        let mut labels = named_map([NamedMapEntry::new("job".into(), job.as_bytes().to_vec())]);
         if let Some(value) = strvalue {
             labels.insert("__value__".into(), value.as_bytes().to_vec());
         }
-        TemplateData::Sample(std::sync::Arc::new(BTreeMap::from([
-            ("Labels".into(), TemplateData::ByteLabels(labels)),
-            ("Value".into(), TemplateData::Float(value)),
+        TemplateData::Sample(std::sync::Arc::new(named_map([
+            NamedMapEntry::new("Labels".into(), TemplateData::ByteLabels(labels)),
+            NamedMapEntry::new("Value".into(), TemplateData::Float(value)),
         ])))
     };
     let vector = TemplateData::QueryResult(
@@ -4011,25 +4109,27 @@ fn prometheus_template_function_profile_matches_pinned_expander() {
         ]
         .into(),
     );
-    let variables = BTreeMap::from([(
+    let variables = named_map([NamedMapEntry::new(
         "externalURL".into(),
         TemplateData::String("https://prom.example/x%20y?arg=a%2Bb".into()),
     )]);
-    for (name, expression, expected, rejected) in prometheus_template_functions::CASES {
-        let format = LineFormat::new_prometheus(format!("{{{{ {expression} }}}}")).unwrap();
-        let query = match *name {
+    for case in prometheus_template_functions::CASES {
+        let format = LineFormat::new_prometheus(format!("{{{{ {} }}}}", case.expression)).unwrap();
+        let query = match case.name {
             "first_empty" => TemplateData::QueryResult(Vec::new().into()),
             "query_error" => TemplateData::QueryError("backend unavailable".into()),
             _ => vector.clone(),
         };
         let result =
             format.render_prometheus_bytes(&variables, &[query.clone(), query], 1_709_211_845_123);
-        if *rejected {
-            check!(result.is_err(), "{name}: {expression}");
+        if case.rejected {
+            check!(result.is_err(), "{}: {}", case.name, case.expression);
         } else {
             check!(
-                result.unwrap() == expected.as_bytes(),
-                "{name}: {expression}"
+                result.unwrap() == case.expected.as_bytes(),
+                "{}: {}",
+                case.name,
+                case.expression
             );
         }
     }
@@ -4102,22 +4202,23 @@ fn template_nested_pipelines_preserve_quotes_and_reject_unbalanced_groups() {
 #[test]
 fn json_parser_preserves_physical_key_order_duplicate_keys_and_numeric_text() {
     let query = parse_query(r#"{app="api"} | json"#).unwrap();
-    let labels = BTreeMap::from([("app".into(), "api".into())]);
-    for (line, expected) in [
-        (r#"{"a-b":"first","a_b":"second"}"#, "first"),
-        (r#"{"a_b":"second","a-b":"first"}"#, "second"),
-        (r#"{"a":{"b":"nested"},"a_b":"flat"}"#, "nested"),
-        (r#"{"a_b":"flat","a":{"b":"nested"}}"#, "flat"),
-        (r#"{"a_b":"first","a_b":"last"}"#, "first"),
-        (r#"{"a_b":"first"} trailing"#, "first"),
-        (r#"{"a_b":"one�two\uFFFDthree"}"#, "one two three"),
+    let labels = named_map([NamedMapEntry::new("app".into(), "api".into())]);
+    for case in [
+        TemplateOutputCase::new(r#"{"a-b":"first","a_b":"second"}"#, "first"),
+        TemplateOutputCase::new(r#"{"a_b":"second","a-b":"first"}"#, "second"),
+        TemplateOutputCase::new(r#"{"a":{"b":"nested"},"a_b":"flat"}"#, "nested"),
+        TemplateOutputCase::new(r#"{"a_b":"flat","a":{"b":"nested"}}"#, "flat"),
+        TemplateOutputCase::new(r#"{"a_b":"first","a_b":"last"}"#, "first"),
+        TemplateOutputCase::new(r#"{"a_b":"first"} trailing"#, "first"),
+        TemplateOutputCase::new(r#"{"a_b":"one�two\uFFFDthree"}"#, "one two three"),
     ] {
         let evaluation = query
-            .evaluate_with_fields(&labels, line, &BTreeMap::new())
+            .evaluate_with_fields(&labels, case.template, &BTreeMap::new())
             .unwrap();
         check!(
-            evaluation.fields.get("a_b").map(String::as_str) == Some(expected),
-            "{line}"
+            evaluation.fields.get("a_b").map(String::as_str) == Some(case.expected),
+            "{}",
+            case.template
         );
     }
     let evaluation = query.evaluate_with_fields(&labels,
@@ -4166,7 +4267,7 @@ fn check_line_format_fails_at_runtime(template: &str) {
 }
 
 fn app_api_labels() -> BTreeMap<String, String> {
-    BTreeMap::from([("app".to_string(), "api".to_string())])
+    named_map([NamedMapEntry::new("app".to_string(), "api".to_string())])
 }
 
 /// A log line of the `{app="api"}` stream, and the query to evaluate on it.

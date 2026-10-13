@@ -1,5 +1,11 @@
 use super::{Entry, HashMap, HashSet, SymbolError};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedLabel {
+    pub name: String,
+    pub value: String,
+}
+
 /// A string-interning table matching `remote_write` v2 semantics.
 #[derive(Debug)]
 pub struct SymbolTable {
@@ -36,8 +42,10 @@ impl SymbolTable {
         }
 
         let mut index = HashMap::with_capacity(symbols.len());
-        for (i, symbol) in symbols.iter().enumerate() {
-            let ref_ = u32::try_from(i).map_err(|_| SymbolError::TooManySymbols(symbols.len()))?;
+        for entry in symbols.iter().enumerate() {
+            let ref_ =
+                u32::try_from(entry.0).map_err(|_| SymbolError::TooManySymbols(symbols.len()))?;
+            let symbol = entry.1;
             match index.entry(symbol.clone()) {
                 Entry::Vacant(entry) => {
                     entry.insert(ref_);
@@ -79,7 +87,7 @@ impl SymbolTable {
     /// Resolves even-length `(name_ref, value_ref)` pairs into label pairs.
     /// # Errors
     /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-    pub fn resolve_label_refs(&self, refs: &[u32]) -> Result<Vec<(String, String)>, SymbolError> {
+    pub fn resolve_label_refs(&self, refs: &[u32]) -> Result<Vec<ResolvedLabel>, SymbolError> {
         if !refs.len().is_multiple_of(2) {
             return Err(SymbolError::OddRefs(refs.len()));
         }
@@ -96,7 +104,10 @@ impl SymbolTable {
             if !names.insert(name) {
                 return Err(SymbolError::DuplicateLabel(name.to_string()));
             }
-            labels.push((name.to_string(), value.to_string()));
+            labels.push(ResolvedLabel {
+                name: name.to_string(),
+                value: value.to_string(),
+            });
         }
 
         Ok(labels)

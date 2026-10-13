@@ -17,6 +17,11 @@ use crate::{
     store::{MetadataRecord, TsdbBlock},
 };
 
+struct InternedSeriesLabels {
+    fingerprint: SeriesFingerprint,
+    labels: Arc<Labels>,
+}
+
 impl InMemoryMetricStore {
     fn observe_sample_timestamp(&mut self, timestamp_ms: i64) {
         self.oldest_sample_timestamp_ms = Some(
@@ -62,18 +67,17 @@ impl InMemoryMetricStore {
             .find(|candidate| matches(candidate))
     }
 
-    fn intern_series_labels(
-        &mut self,
-        tenant: &str,
-        labels: Arc<Labels>,
-    ) -> (SeriesFingerprint, Arc<Labels>) {
+    fn intern_series_labels(&mut self, tenant: &str, labels: Arc<Labels>) -> InternedSeriesLabels {
         let fp = labels.fingerprint();
         // A live cache hit does not change the cache. Preserve its sharing
         // with query snapshots instead of copying every series' weak entries.
         if let Some(candidate) =
             self.live_series_labels(tenant, fp, |other| other == labels.as_ref())
         {
-            return (fp, candidate);
+            return InternedSeriesLabels {
+                fingerprint: fp,
+                labels: candidate,
+            };
         }
         let cache = self.series_labels.entry(tenant.to_string()).or_default();
         let candidates = Arc::make_mut(cache).entry(fp).or_default();
@@ -81,11 +85,17 @@ impl InMemoryMetricStore {
         for candidate in candidates.iter().filter_map(std::sync::Weak::upgrade) {
             // Equality matters even when two label sets have the same hash.
             if candidate.as_ref() == labels.as_ref() {
-                return (fp, candidate);
+                return InternedSeriesLabels {
+                    fingerprint: fp,
+                    labels: candidate,
+                };
             }
         }
         candidates.push(Arc::downgrade(&labels));
-        (fp, labels)
+        InternedSeriesLabels {
+            fingerprint: fp,
+            labels,
+        }
     }
 
     /// Appends a float sample.
@@ -114,10 +124,10 @@ impl InMemoryMetricStore {
         start_timestamp_ms: Option<i64>,
     ) {
         self.observe_sample_timestamp(ts_ms);
-        let (fp, labels) = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
+        let interned = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
         let row = FloatRow {
-            fp,
-            labels,
+            fp: interned.fingerprint,
+            labels: interned.labels,
             ts_ms,
             value,
             start_timestamp_ms,
@@ -151,13 +161,13 @@ impl InMemoryMetricStore {
         hist: impl Into<Arc<NativeHistogram>>,
     ) {
         self.observe_sample_timestamp(ts_ms);
-        let (fp, labels) = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
+        let interned = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
         self.hists
             .entry(tenant.to_string())
             .or_default()
             .push(HistRow {
-                fp,
-                labels,
+                fp: interned.fingerprint,
+                labels: interned.labels,
                 ts_ms,
                 hist: hist.into(),
             });
@@ -174,13 +184,12 @@ impl InMemoryMetricStore {
         value: f64,
     ) {
         self.observe_sample_timestamp(ts_ms);
-        let (_, series_labels) =
-            self.intern_series_labels(tenant, series_labels.into_metric_labels_arc());
+        let interned = self.intern_series_labels(tenant, series_labels.into_metric_labels_arc());
         self.exemplars
             .entry(tenant.to_string())
             .or_default()
             .push(ExemplarRow {
-                series_labels,
+                series_labels: interned.labels,
                 labels: labels.into_metric_labels_arc(),
                 ts_ms,
                 value,
@@ -234,12 +243,25 @@ impl InMemoryMetricStore {
         let series_labels = record
             .labels
             .windows(2)
-            .all(|pair| pair[0].0 < pair[1].0)
+            .all(|pair| pair[0].name < pair[1].name)
             .then(|| {
                 self.live_series_labels(&record.tenant, record.series_fingerprint(), |labels| {
-                    labels
-                        .iter()
-                        .eq(record.labels.iter().map(|(name, value)| (name, value)))
+                    if labels.len() != record.labels.len() {
+                        return false;
+                    }
+                    let mut cached_labels = labels.iter();
+                    for index in 0..labels.len() {
+                        let Some(cached) = cached_labels.next() else {
+                            return false;
+                        };
+                        let incoming = &record.labels[index];
+                        if cached.name.as_str() != incoming.name.as_str()
+                            || cached.value.as_bytes() != incoming.value.as_bytes()
+                        {
+                            return false;
+                        }
+                    }
+                    true
                 })
             })
             .flatten()
@@ -355,7 +377,11 @@ impl InMemoryMetricStore {
         // Fingerprints that had a sample before pruning.
         let mut seen: BTreeSet<SeriesFingerprint> = BTreeSet::new();
 
-        for (tenant, rows) in &mut self.floats {
+        let float_tenants = self.floats.keys().cloned().collect::<Vec<_>>();
+        for tenant in float_tenants {
+            let Some(rows) = self.floats.get_mut(&tenant) else {
+                continue;
+            };
             for row in rows.iter() {
                 seen.insert(row.fp);
             }
@@ -371,10 +397,9 @@ impl InMemoryMetricStore {
                 oldest = Some(oldest.map_or(row.ts_ms, |current| current.min(row.ts_ms)));
             }
             if rows.is_empty() {
-                self.float_head_summaries.remove(tenant);
+                self.float_head_summaries.remove(&tenant);
             } else {
-                self.float_head_summaries
-                    .insert(tenant.clone(), Arc::new(summary));
+                self.float_head_summaries.insert(tenant, Arc::new(summary));
             }
         }
         for rows in self.hists.values_mut() {

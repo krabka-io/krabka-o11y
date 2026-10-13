@@ -37,10 +37,27 @@ pub mod contract {
         pub status: StatusCode,
         pub status_message: String,
         pub service_name: String,
-        pub attributes: Vec<(String, String)>,
-        pub resource_attributes: Vec<(String, String)>,
+        pub attributes: Vec<SpanAttribute>,
+        pub resource_attributes: Vec<SpanAttribute>,
         /// The encoded size of the WAL record that this span was projected from.
         pub size: ByteSize,
+    }
+
+    /// Stringified OTLP attribute carried into a metrics-generator span.
+    #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    pub struct SpanAttribute {
+        pub key: String,
+        pub value: String,
+    }
+
+    impl SpanAttribute {
+        #[must_use]
+        pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+            Self {
+                key: key.into(),
+                value: value.into(),
+            }
+        }
     }
 
     /// A run of populated native histogram buckets.
@@ -69,11 +86,13 @@ pub use checkpoint::{
 pub use clock::{Clock, MockClock, SystemClock};
 pub use config::{DEFAULT_LATENCY_BUCKETS_NS, HostInfoConfig, MetricsGenConfig};
 pub use contract::{
-    BucketSpan, NativeHistogram, SpanKind, SpanRecord, StatusCode, TRACES_WAL_TOPIC,
+    BucketSpan, NativeHistogram, SpanAttribute, SpanKind, SpanRecord, StatusCode, TRACES_WAL_TOPIC,
 };
 pub use processor::MetricsGenerator;
 pub use remotewrite::{PrometheusRemoteWriteSink, WireTimeSeries, le_label, to_timeseries};
-pub use series::{Exemplar, Series, SeriesPayload, SeriesSample, sorted_labels};
+pub use series::{
+    Exemplar, HistogramBucket, HistogramSummary, Series, SeriesPayload, SeriesSample, sorted_labels,
+};
 pub use service::MetricsGenService;
 pub use servicegraph::{ConnectionType, EdgeStore, RecordOutcome};
 pub use sink::{

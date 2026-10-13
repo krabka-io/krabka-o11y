@@ -1,6 +1,6 @@
 use super::{
-    BlockBuildOptions, BlockMeta, BlockWriter, PromotedSpanAttr, SpanRecord, TraceIndex,
-    TracesError, build_blocks_with_options,
+    BlockBuildOptions, BlockMeta, BlockWriter, OffsetRange, PromotedSpanAttr, SpanRecord,
+    TraceIndex, TracesError, build_blocks_with_options,
 };
 
 ///
@@ -12,7 +12,7 @@ pub async fn build_blocks_with_promoted_attrs(
     tenant: &str,
     partition: i32,
     records: &[SpanRecord],
-    offset_range: (i64, i64),
+    offset_range: OffsetRange,
     promoted_attrs: &[PromotedSpanAttr],
 ) -> Result<Vec<BlockMeta>, TracesError> {
     build_blocks_with_options(

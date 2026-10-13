@@ -5,14 +5,27 @@ pub(in crate::template) fn string(value: i64) -> String {
         return "0s".into();
     }
     if magnitude < 1_000_000_000 {
-        let (scale, suffix) = if magnitude < 1000 {
-            (1, "ns")
+        let scale = if magnitude < 1000 {
+            DurationScale {
+                scale: 1,
+                suffix: "ns",
+            }
         } else if magnitude < 1_000_000 {
-            (1000, "µs")
+            DurationScale {
+                scale: 1000,
+                suffix: "µs",
+            }
         } else {
-            (1_000_000, "ms")
+            DurationScale {
+                scale: 1_000_000,
+                suffix: "ms",
+            }
         };
-        return format!("{sign}{}{suffix}", decimal(magnitude, scale));
+        return format!(
+            "{sign}{}{suffix}",
+            decimal(magnitude, scale.scale),
+            suffix = scale.suffix
+        );
     }
     let hours = magnitude / 3_600_000_000_000;
     let minutes = magnitude / 60_000_000_000 % 60;
@@ -32,6 +45,12 @@ pub(in crate::template) fn string(value: i64) -> String {
         decimal(seconds, 1_000_000_000)
     )
 }
+
+struct DurationScale {
+    scale: u64,
+    suffix: &'static str,
+}
+
 fn decimal(value: u64, scale: u64) -> String {
     let fraction = value % scale;
     if fraction == 0 {

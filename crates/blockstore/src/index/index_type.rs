@@ -1,9 +1,10 @@
 use super::{
     Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, ByteSize,
-    DEFAULT_INDEX_SHARD_WIDTH, Deserialize, IndexShardPayload, LabelMatcher, Labels,
+    DEFAULT_INDEX_SHARD_WIDTH, Deserialize, IndexShardPayload, LabelMatcher, LabelPair, Labels,
     MAX_INDEX_SNAPSHOT_BYTES, ObjectStore, QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint,
     TenantIndex, encode_index_shard, load_index_shards, matcher_matches_empty,
 };
+use crate::SeriesLabels;
 
 /// Multi-tenant in-memory index for label resolution and block pruning.
 ///
@@ -224,7 +225,7 @@ impl Index {
         let mut names = BTreeSet::new();
         for fp in fps {
             if let Some(labels) = tenant_index.series.get(fp) {
-                names.extend(labels.iter().map(|(name, _)| name.clone()));
+                names.extend(labels.iter().map(|pair| pair.name.to_string()));
             }
         }
         names.into_iter().collect()
@@ -275,7 +276,7 @@ impl Index {
         tenant: &str,
         matchers: &[LabelMatcher],
         label_names: &[String],
-    ) -> Result<Vec<Vec<(String, String)>>> {
+    ) -> Result<Vec<Vec<LabelPair>>> {
         let fps = self.matching_fingerprints(tenant, matchers)?;
         Ok(self.series_for_fingerprints(tenant, &fps, label_names))
     }
@@ -287,7 +288,7 @@ impl Index {
         tenant: &str,
         fps: &BTreeSet<SeriesFingerprint>,
         label_names: &[String],
-    ) -> Vec<Vec<(String, String)>> {
+    ) -> Vec<Vec<LabelPair>> {
         let Some(tenant_index) = self.tenants.get(tenant) else {
             return Vec::new();
         };
@@ -303,7 +304,7 @@ impl Index {
             let mut projected = if label_names.is_empty() {
                 labels
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .map(|pair| LabelPair::new(pair.name, pair.value))
                     .collect::<Vec<_>>()
             } else {
                 label_names
@@ -311,7 +312,7 @@ impl Index {
                     .filter_map(|name| {
                         labels
                             .get(name)
-                            .map(|value| (name.clone(), value.to_string()))
+                            .map(|value| LabelPair::new(name.clone(), value.to_string()))
                     })
                     .collect::<Vec<_>>()
             };
@@ -344,7 +345,12 @@ impl Index {
     /// Tightest `(min, max)` time bounds across the blocks that overlap the
     /// range.
     #[must_use]
-    pub fn block_time_bounds(&self, tenant: &str, min_ts: i64, max_ts: i64) -> Option<(i64, i64)> {
+    pub fn block_time_bounds(
+        &self,
+        tenant: &str,
+        min_ts: i64,
+        max_ts: i64,
+    ) -> Option<crate::block::BlockTimeBounds> {
         self.tenants.get(tenant)?.blocks.time_bounds(min_ts, max_ts)
     }
 
@@ -355,9 +361,10 @@ impl Index {
     /// takes `other`'s bounds. Removals are not expressed here; a caller that
     /// has any replays them with [`Index::replace_blocks`] after merging.
     pub(crate) fn merge_from(&mut self, other: &Self) {
-        for (tenant, tenant_index) in &other.tenants {
-            for (fingerprint, labels) in &tenant_index.series {
-                self.add_series(tenant, *fingerprint, labels);
+        for tenant in other.tenants.keys() {
+            let tenant_index = &other.tenants[tenant];
+            for fingerprint in tenant_index.series.keys() {
+                self.add_series(tenant, *fingerprint, &tenant_index.series[fingerprint]);
             }
             // One pass over the other side's postings rebuilds every block's
             // series set, so a merge inverts the map once rather than once per
@@ -420,8 +427,8 @@ impl Index {
     #[must_use]
     pub fn all_blocks_unscoped(&self) -> Vec<BlockMeta> {
         self.tenants
-            .iter()
-            .flat_map(|(tenant, tenant_index)| tenant_index.blocks.metas(tenant))
+            .keys()
+            .flat_map(|tenant| self.tenants[tenant].blocks.metas(tenant))
             .collect()
     }
 
@@ -474,13 +481,13 @@ impl Index {
             .ordinals_overlapping(i64::MIN, i64::MAX)
             .into_iter()
             .collect::<BTreeSet<_>>();
-        let (blocks, postings) = tenant_index.blocks.shard_local(&ordinals);
+        let local = tenant_index.blocks.shard_local(&ordinals);
         encode_index_shard(&IndexShardPayload {
             tenant,
             series: &tenant_index.series,
             selected: tenant_index.series.keys().copied().collect(),
-            blocks,
-            postings,
+            blocks: local.blocks,
+            postings: local.postings,
         })
     }
 
@@ -489,14 +496,17 @@ impl Index {
     /// The fingerprint comes from the map rather than from recomputing
     /// [`Labels::fingerprint`], so a caller that indexes by it agrees with
     /// every other lookup in the index.
-    pub(crate) fn series_pairs(&self, tenant: &str) -> Vec<(SeriesFingerprint, Labels)> {
+    pub(crate) fn series_pairs(&self, tenant: &str) -> Vec<SeriesLabels> {
         self.tenants
             .get(tenant)
             .map(|tenant_index| {
                 tenant_index
                     .series
-                    .iter()
-                    .map(|(fingerprint, labels)| (*fingerprint, labels.clone()))
+                    .keys()
+                    .map(|fingerprint| SeriesLabels {
+                        fingerprint: *fingerprint,
+                        labels: tenant_index.series[fingerprint].clone(),
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -511,16 +521,19 @@ impl Index {
     ///
     /// These have no span, so the time grid has nowhere to put them and they
     /// go into the tenant's unbounded shard instead.
-    pub(crate) fn unbound_series(&self, tenant: &str) -> Vec<(SeriesFingerprint, Labels)> {
+    pub(crate) fn unbound_series(&self, tenant: &str) -> Vec<SeriesLabels> {
         let Some(tenant_index) = self.tenants.get(tenant) else {
             return Vec::new();
         };
         let bound = tenant_index.blocks.live_fingerprints();
         tenant_index
             .series
-            .iter()
-            .filter(|(fingerprint, _)| !bound.contains(*fingerprint))
-            .map(|(fingerprint, labels)| (*fingerprint, labels.clone()))
+            .keys()
+            .filter(|fingerprint| !bound.contains(*fingerprint))
+            .map(|fingerprint| SeriesLabels {
+                fingerprint: *fingerprint,
+                labels: tenant_index.series[fingerprint].clone(),
+            })
             .collect()
     }
 
@@ -619,7 +632,7 @@ impl Index {
             store,
             object_key,
             Some(tenant),
-            Some((min_ts, max_ts)),
+            Some(crate::index::IndexShardRange::new(min_ts, max_ts)),
             max_bytes,
         )
         .await

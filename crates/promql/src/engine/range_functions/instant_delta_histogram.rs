@@ -46,9 +46,11 @@ pub(crate) fn instant_delta_histogram(
         add_compatible_native_histogram(&mut out, &negated).ok()?;
     }
     out.reset_hint = ResetHint::Gauge;
-    (out.positive_spans, out.positive_counts) =
-        compact_histogram_spans(&out.positive_spans, &out.positive_counts);
-    (out.negative_spans, out.negative_counts) =
-        compact_histogram_spans(&out.negative_spans, &out.negative_counts);
+    let positive = compact_histogram_spans(&out.positive_spans, &out.positive_counts);
+    out.positive_spans = positive.spans;
+    out.positive_counts = positive.counts;
+    let negative = compact_histogram_spans(&out.negative_spans, &out.negative_counts);
+    out.negative_spans = negative.spans;
+    out.negative_counts = negative.counts;
     Some(out)
 }

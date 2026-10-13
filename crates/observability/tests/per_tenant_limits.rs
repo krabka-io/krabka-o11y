@@ -58,7 +58,7 @@ fn push_body(timestamp_ns: &str, line: &str) -> Body {
 /// about the request differs except the `X-Scope-OrgID` header.
 #[tokio::test]
 async fn a_per_tenant_override_changes_what_the_querier_serves() {
-    let (state, _prod_bytes, _stage_bytes) = multi_tenant_fixture();
+    let state = multi_tenant_fixture().state;
     let app = loki_router(state.with_limits_overrides(provider()));
     let uri =
         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
@@ -135,7 +135,7 @@ async fn the_defaults_block_caps_a_tenant_with_no_entry_of_its_own() {
         "defaults:\n  max_query_read: \"1B\"\noverrides:\n  tenant-b:\n    max_query_read: \"1GiB\"\n",
     )
     .expect("the overrides file parses");
-    let (state, _prod_bytes, _stage_bytes) = multi_tenant_fixture();
+    let state = multi_tenant_fixture().state;
     let app = loki_router(state.with_limits_overrides(overrides));
     let uri =
         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
@@ -155,8 +155,14 @@ async fn the_defaults_block_caps_a_tenant_with_no_entry_of_its_own() {
 fn two_tenant_querier_config() -> ServiceConfig {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api")]));
-    label_index.insert_series("tenant-b", labels([("app", "api")]));
+    label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
+    label_index.insert_series(
+        "tenant-b",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
     ServiceConfig {
         target: Role::Querier,
@@ -278,7 +284,9 @@ async fn the_grpc_otlp_export_is_body_limited_and_timestamp_windowed() {
         ..ServiceConfig::default()
     };
 
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let listener = TcpListener::bind(std::net::SocketAddr::new("127.0.0.1".parse().unwrap(), 0))
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     let server_sink = sink.clone();
     let server = tokio::spawn(async move {
@@ -375,7 +383,7 @@ async fn a_lookback_cap_moves_the_query_start_rather_than_refusing_the_query() {
     let overrides =
         OverridesProvider::from_yaml("overrides:\n  tenant-a:\n    max_query_lookback: \"1h\"\n")
             .expect("the overrides file parses");
-    let (state, _prod_bytes, _stage_bytes) = multi_tenant_fixture();
+    let state = multi_tenant_fixture().state;
     let app = loki_router(state.with_limits_overrides(overrides));
     let uri =
         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
@@ -405,7 +413,7 @@ async fn an_entries_limit_caps_the_limit_parameter_per_tenant() {
         "overrides:\n  tenant-a:\n    max_entries_limit_per_query: 5\n",
     )
     .expect("the overrides file parses");
-    let (state, _prod_bytes, _stage_bytes) = multi_tenant_fixture();
+    let state = multi_tenant_fixture().state;
     let app = loki_router(state.with_limits_overrides(overrides));
     let uri = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030&limit=6";
 

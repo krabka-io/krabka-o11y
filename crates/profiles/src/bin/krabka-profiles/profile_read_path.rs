@@ -5,6 +5,11 @@ use super::{
     UnionProfileStore, WalTailProfileStore, spawn_profile_index_refresh, spawn_wal_tail,
 };
 
+pub(crate) struct ProfileReadBackgroundTask {
+    pub(crate) name: &'static str,
+    pub(crate) handle: tokio::task::JoinHandle<()>,
+}
+
 /// What a profiles read role queries: the WAL tail in front of the blocks.
 pub(crate) type ProfileUnionStore = UnionProfileStore<WalTailProfileStore, ColdProfileStore>;
 
@@ -60,11 +65,11 @@ impl ProfileReadPath {
         shutdown: &CancellationToken,
         wal_security: Option<&ClientSecurity>,
         catch_up: ReadinessGate,
-    ) -> [(&'static str, tokio::task::JoinHandle<()>); 2] {
+    ) -> [ProfileReadBackgroundTask; 2] {
         [
-            (
-                "profiles index refresher",
-                spawn_profile_index_refresh(
+            ProfileReadBackgroundTask {
+                name: "profiles index refresher",
+                handle: spawn_profile_index_refresh(
                     Arc::clone(&self.cold),
                     Arc::clone(&self.store),
                     self.index_key.clone(),
@@ -72,10 +77,10 @@ impl ProfileReadPath {
                     cli.index_refresh_interval,
                     shutdown.clone(),
                 ),
-            ),
-            (
-                "profiles WAL tail",
-                spawn_wal_tail(
+            },
+            ProfileReadBackgroundTask {
+                name: "profiles WAL tail",
+                handle: spawn_wal_tail(
                     cli,
                     self.hot.clone(),
                     metrics.wal_consumer.clone(),
@@ -83,7 +88,7 @@ impl ProfileReadPath {
                     wal_security.cloned(),
                     shutdown.clone(),
                 ),
-            ),
+            },
         ]
     }
 }

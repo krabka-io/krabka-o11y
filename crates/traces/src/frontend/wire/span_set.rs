@@ -8,7 +8,9 @@ impl From<&SpanSetJson> for SpanSet {
             attributes: ss
                 .attributes
                 .iter()
-                .map(|kv| (kv.key.clone(), AttrValue::from(&kv.value)))
+                .map(|kv| {
+                    krabka_traceql::Attribute::new(kv.key.clone(), AttrValue::from(&kv.value))
+                })
                 .collect(),
         }
     }

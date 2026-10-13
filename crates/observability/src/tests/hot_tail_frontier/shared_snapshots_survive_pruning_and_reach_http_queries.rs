@@ -20,27 +20,14 @@ impl LogHotTail for SharedOnly {
 }
 
 fn expected_response(result: &serde_json::Value, lines: u64) -> serde_json::Value {
+    let mut stats = crate::loki_query_stats();
+    stats["ingester"]["decompressedLines"] = json!(lines);
+    stats["ingester"]["totalLinesSent"] = json!(lines);
+    stats["summary"]["totalLinesProcessed"] = json!(lines);
     json!({
         "status": "success", "data": {"resultType": "streams", "result": result,
-        "stats": {
-            "ingester": {
-                "compressedBytes": 0, "decompressedBytes": 0, "decompressedLines": lines,
-                "headChunkBytes": 0, "headChunkLines": 0, "totalBatches": 0,
-                "totalChunksMatched": 0, "totalDuplicates": 0, "totalLinesSent": lines,
-                "totalReached": 0
-            },
-            "store": {
-                "compressedBytes": 0, "decompressedBytes": 0, "decompressedLines": 0,
-                "chunksDownloadTime": 0.0, "totalChunksRef": 0,
-                "totalChunksDownloaded": 0, "totalDuplicates": 0
-            },
-            "summary": {
-                "bytesProcessedPerSecond": 0, "execTime": 0.0,
-                "linesProcessedPerSecond": 0, "queueTime": 0.0,
-                "totalBytesProcessed": 0, "totalLinesProcessed": lines
-            }
-        }}
-    })
+        "stats": stats
+    }})
 }
 
 #[tokio::test]
@@ -82,23 +69,48 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
     let state = QuerierState::new(".", LabelIndex::default(), BlockIndex::default())
         .with_hot_tail_shared_frontier(SharedOnly(tail.clone()), frontier.clone());
     let range = TimeRange::new(80, 120).unwrap();
-    let (captured, captured_frontier) = hot_tail_snapshot(&state, range);
+    let snapshot = hot_tail_snapshot(&state, range);
+    let captured = &snapshot.records;
+    let captured_frontier = &snapshot.frontier;
     let expected_records = ledger[..6].to_vec();
     assert!(
         captured.iter().map(Arc::as_ref).collect::<Vec<_>>()
             == expected_records.iter().collect::<Vec<_>>()
     );
     let shared = dynamic.records_shared_in_range(80, 120);
-    assert!(shared.iter().zip(&captured).all(|(a, b)| Arc::ptr_eq(a, b)));
+    assert!(
+        shared
+            .iter()
+            .zip(captured.iter())
+            .all(|(a, b)| Arc::ptr_eq(a, b))
+    );
     assert!(shared.len() == captured.len());
     drop(shared);
     let weak = Arc::downgrade(&captured[1]);
-    for (start, end) in [(80, 120), (100, 100), (-1, 80), (121, 120)] {
+    struct RecordRangeCase {
+        start: i64,
+        end: i64,
+    }
+    for range in [
+        RecordRangeCase {
+            start: 80,
+            end: 120,
+        },
+        RecordRangeCase {
+            start: 100,
+            end: 100,
+        },
+        RecordRangeCase { start: -1, end: 80 },
+        RecordRangeCase {
+            start: 121,
+            end: 120,
+        },
+    ] {
         let expected = ledger
             .iter()
-            .filter(|r| r.timestamp_ns >= start && r.timestamp_ns <= end)
+            .filter(|r| r.timestamp_ns >= range.start && r.timestamp_ns <= range.end)
             .collect::<Vec<_>>();
-        let actual = dynamic.records_shared_in_range(start, end);
+        let actual = dynamic.records_shared_in_range(range.start, range.end);
         assert!(actual.iter().map(Arc::as_ref).collect::<Vec<_>>() == expected);
     }
     let sink = InMemoryWalSink::default();
@@ -122,6 +134,18 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
             "values": [["120", "second"]]}
     ]);
     let expected = expected_response(&result, 4);
+    let stream_query = HttpStreamQuery {
+        query: "{app=\"api\"}",
+        tenant: "tenant",
+        time_range: range,
+        options: LokiStreamOptions {
+            direction: LokiDirection::Forward,
+            limit: None,
+            interval: None,
+        },
+        end_exclusive: None,
+        encoding: LokiStreamEncoding::Folded,
+    };
     for object_store in [false, true] {
         let state = if object_store {
             state.clone().with_cold_object_store_source(
@@ -131,23 +155,9 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
         } else {
             state.clone()
         };
-        let actual = execute_http_stream_query(
-            &state,
-            HttpStreamQuery {
-                query: "{app=\"api\"}",
-                tenant: "tenant",
-                time_range: range,
-                options: LokiStreamOptions {
-                    direction: LokiDirection::Forward,
-                    limit: None,
-                    interval: None,
-                },
-                end_exclusive: None,
-                encoding: LokiStreamEncoding::Folded,
-            },
-        )
-        .await
-        .unwrap();
+        let actual = execute_http_stream_query(&state, stream_query)
+            .await
+            .unwrap();
         assert!(actual == expected);
     }
     let next_frontier =
@@ -185,23 +195,9 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
         {"stream": {"app": "api", "request": "b"},
             "values": [["120", "second"]]}
     ]);
-    let fresh = execute_http_stream_query(
-        &state,
-        HttpStreamQuery {
-            query: "{app=\"api\"}",
-            tenant: "tenant",
-            time_range: range,
-            options: LokiStreamOptions {
-                direction: LokiDirection::Forward,
-                limit: None,
-                interval: None,
-            },
-            end_exclusive: None,
-            encoding: LokiStreamEncoding::Folded,
-        },
-    )
-    .await
-    .unwrap();
+    let fresh = execute_http_stream_query(&state, stream_query)
+        .await
+        .unwrap();
     assert!(fresh == expected_response(&fresh_result, 2));
     drop(captured);
     assert!(weak.upgrade().is_none());

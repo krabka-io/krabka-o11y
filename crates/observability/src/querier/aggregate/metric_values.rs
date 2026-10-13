@@ -3,8 +3,8 @@ use num_traits::{FromPrimitive as _, ToPrimitive};
 use crate::{
     ActiveLogDeleteFilter, BTreeMap, LabelIndex, Labels, LokiStreamEntry, METRIC_DECIMAL_SCALE,
     MetricValue, Ordering, Quantile, QueryError, QueryRow, Rational, StreamPlan, TimeRange,
-    VectorAggregationOp, decimal_scaled_numerator, gcd_signed, impl_rational_division_ops,
-    is_deleted_log_entry, matching_loki_stream_entry, rational_to_f64,
+    VectorAggregationOp, gcd_signed, impl_rational_division_ops, impl_rational_float_conversion,
+    is_deleted_log_entry, matching_loki_stream_entry,
 };
 
 mod append_matching_log_row;
@@ -18,6 +18,6 @@ mod vector_aggregation_state;
 pub(crate) use append_matching_log_row::append_matching_log_row;
 pub(crate) use eval_times::{checked_eval_times, eval_times};
 pub(crate) use format_metric_value::format_metric_value;
-pub(crate) use metric_sample_state::MetricSampleState;
+pub(crate) use metric_sample_state::{MetricSampleState, TimestampedMetricValue};
 pub(crate) use rate_metric_value::rate_metric_value;
 pub(crate) use vector_aggregation_state::VectorAggregationState;

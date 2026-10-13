@@ -19,11 +19,13 @@ pub(crate) fn lone_matrix_series(result: &QueryResult) -> &crate::RangeSeries {
 /// Checks that `series` holds exactly `points`, each value approximately.
 pub(crate) fn check_series_points(series: &crate::RangeSeries, points: &[ExpectedPoint]) {
     check!(series.samples.len() == points.len());
-    for (sample, point) in series.samples.iter().zip(points) {
+    for pair in series.samples.iter().zip(points) {
+        let sample = pair.0;
+        let point = pair.1;
         let want_ts = point.ts_ms;
-        check!(sample.0 == want_ts);
+        check!(sample.timestamp_ms == want_ts);
         check!(
-            approx_eq(float_value(&sample.1), point.value),
+            approx_eq(float_value(&sample.value), point.value),
             "at ts {want_ts}"
         );
     }

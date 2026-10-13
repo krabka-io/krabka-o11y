@@ -1,49 +1,101 @@
+use std::ops::{Deref, DerefMut};
+
 use super::{
     BT_BINARY, BT_BOOL, BT_BYTE, BT_DOUBLE, BT_I16, BT_I32, BT_I64, BT_LIST, BT_MAP, BT_SET,
-    BT_STOP, BT_STRUCT, CollectionHeader, MapHeader, WireError, check_collection_header,
-    check_map_header, descend_skip_depth, next_byte, take_bytes, utf8_string, wire_length,
+    BT_STOP, BT_STRUCT, CollectionHeader, FieldHeader, InputCursor, MapHeader, WireError,
+    check_collection_header, descend_skip_depth, read_length_prefixed_binary, wire_length,
 };
 
 pub(crate) struct BinaryInput<'a> {
-    pub(crate) bytes: &'a [u8],
-    pub(crate) pos: usize,
+    cursor: InputCursor<'a>,
+}
+
+impl<'a> Deref for BinaryInput<'a> {
+    type Target = InputCursor<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cursor
+    }
+}
+
+impl DerefMut for BinaryInput<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cursor
+    }
+}
+
+impl super::KeyValueReader for BinaryInput<'_> {
+    fn read_binary(&mut self) -> Result<Vec<u8>, WireError> {
+        BinaryInput::read_binary(self)
+    }
+
+    fn reset_key_value_fields(&mut self) {}
+
+    fn next_key_value_field(&mut self) -> Result<Option<FieldHeader>, WireError> {
+        self.read_field()
+    }
+
+    fn read_key_value_part(
+        &mut self,
+        field_type: u8,
+        field_id: i16,
+    ) -> Result<Option<super::KeyValuePart>, WireError> {
+        Ok(match field_id {
+            1 if field_type == BT_BINARY => Some(super::KeyValuePart::Key(self.read_string()?)),
+            3 if field_type == BT_BINARY => Some(super::KeyValuePart::Value(
+                super::AttrValue::Str(self.read_string()?),
+            )),
+            4 if field_type == BT_DOUBLE => Some(super::KeyValuePart::Value(
+                super::AttrValue::Double(self.read_double()?),
+            )),
+            5 if field_type == BT_BOOL => Some(super::KeyValuePart::Value(super::AttrValue::Bool(
+                self.read_bool()?,
+            ))),
+            6 if field_type == BT_I64 => Some(super::KeyValuePart::Value(super::AttrValue::Int(
+                self.read_i64()?,
+            ))),
+            7 if field_type == BT_BINARY => Some(super::KeyValuePart::Value(
+                super::AttrValue::Bytes(self.read_binary()?),
+            )),
+            _ => {
+                self.skip(field_type)?;
+                None
+            }
+        })
+    }
 }
 
 impl<'a> BinaryInput<'a> {
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, pos: 0 }
+        Self {
+            cursor: InputCursor::new(bytes),
+        }
     }
 
-    /// The bytes left to read, which bound what a collection header may
-    /// announce.
-    fn remaining(&self) -> usize {
-        self.bytes.len().saturating_sub(self.pos)
-    }
-
-    pub(crate) fn read_field(&mut self) -> Result<Option<(u8, i16)>, WireError> {
+    pub(crate) fn read_field(&mut self) -> Result<Option<FieldHeader>, WireError> {
         let field_type = self.read_u8()?;
         if field_type == BT_STOP {
             return Ok(None);
         }
-        Ok(Some((field_type, self.read_i16()?)))
+        Ok(Some(FieldHeader {
+            field_type,
+            field_id: self.read_i16()?,
+        }))
     }
 
     pub(crate) fn read_struct_list<T>(
         &mut self,
         read_one: fn(&mut BinaryInput<'_>) -> Result<T, WireError>,
     ) -> Result<Vec<T>, WireError> {
-        let (element_type, len) = self.read_list_header()?;
-        if element_type != BT_STRUCT {
-            return Err(WireError::Decode("expected struct list".into()));
-        }
-        (0..len).map(|_| read_one(self)).collect()
+        let CollectionHeader { element_type, len } = self.read_list_header()?;
+        super::read_struct_list(element_type, len, BT_STRUCT, || read_one(self))
     }
 
-    pub(crate) fn read_list_header(&mut self) -> Result<(u8, usize), WireError> {
+    pub(crate) fn read_list_header(&mut self) -> Result<CollectionHeader, WireError> {
         let element_type = self.read_u8()?;
         let len = wire_length(self.read_i32()?, "list length out of range")?;
         self.check_collection_header(element_type, len)?;
-        Ok((element_type, len))
+        Ok(CollectionHeader { element_type, len })
     }
 
     /// Refuse a collection header that no encoder could have produced.
@@ -63,28 +115,17 @@ impl<'a> BinaryInput<'a> {
         )
     }
 
-    pub(crate) fn read_map_header(&mut self) -> Result<(u8, u8, usize), WireError> {
+    pub(crate) fn read_map_header(&mut self) -> Result<MapHeader, WireError> {
         let key_type = self.read_u8()?;
         let value_type = self.read_u8()?;
         let len = wire_length(self.read_i32()?, "map length out of range")?;
-        check_map_header(
-            MapHeader {
-                key_type,
-                value_type,
-                len,
-            },
-            BT_STOP,
-            self.remaining(),
-        )
-    }
-
-    pub(crate) fn read_string(&mut self) -> Result<String, WireError> {
-        utf8_string(self.read_binary()?)
+        super::validate_map_header(key_type, value_type, len, BT_STOP, self.remaining())
     }
 
     pub(crate) fn read_binary(&mut self) -> Result<Vec<u8>, WireError> {
-        let len = wire_length(self.read_i32()?, "binary length out of range")?;
-        take_bytes(self.bytes, &mut self.pos, len)
+        let bytes = self.bytes;
+        let len = wire_length(self.read_i32()?, "binary length out of range");
+        read_length_prefixed_binary(bytes, &mut self.pos, len)
     }
 
     pub(crate) fn read_bool(&mut self) -> Result<bool, WireError> {
@@ -116,20 +157,11 @@ impl<'a> BinaryInput<'a> {
     }
 
     pub(crate) fn read_u8(&mut self) -> Result<u8, WireError> {
-        next_byte(self.bytes, &mut self.pos)
+        self.cursor.read_u8()
     }
 
     pub(crate) fn read_exact(&mut self, out: &mut [u8]) -> Result<(), WireError> {
-        let end = self
-            .pos
-            .checked_add(out.len())
-            .ok_or_else(|| WireError::Decode("read length overflow".into()))?;
-        if end > self.bytes.len() {
-            return Err(WireError::Decode("unexpected end of thrift payload".into()));
-        }
-        out.copy_from_slice(&self.bytes[self.pos..end]);
-        self.pos = end;
-        Ok(())
+        self.cursor.read_exact(out)
     }
 
     pub(crate) fn skip(&mut self, field_type: u8) -> Result<(), WireError> {
@@ -149,14 +181,18 @@ impl<'a> BinaryInput<'a> {
             BT_BINARY => self.read_binary().map(|_| ()),
             BT_STRUCT => {
                 let depth = descend_skip_depth(depth)?;
-                while let Some((inner_type, _)) = self.read_field()? {
+                while let Some(FieldHeader {
+                    field_type: inner_type,
+                    ..
+                }) = self.read_field()?
+                {
                     self.skip_value(inner_type, depth)?;
                 }
                 Ok(())
             }
             BT_LIST | BT_SET => {
                 let depth = descend_skip_depth(depth)?;
-                let (element_type, len) = self.read_list_header()?;
+                let CollectionHeader { element_type, len } = self.read_list_header()?;
                 for _ in 0..len {
                     self.skip_value(element_type, depth)?;
                 }
@@ -164,7 +200,11 @@ impl<'a> BinaryInput<'a> {
             }
             BT_MAP => {
                 let depth = descend_skip_depth(depth)?;
-                let (key_type, value_type, len) = self.read_map_header()?;
+                let MapHeader {
+                    key_type,
+                    value_type,
+                    len,
+                } = self.read_map_header()?;
                 for _ in 0..len {
                     self.skip_value(key_type, depth)?;
                     self.skip_value(value_type, depth)?;
@@ -196,7 +236,13 @@ mod tests {
 
         // One element in one byte is satisfiable, and still decodes.
         let mut input = BinaryInput::new(&[BT_STRUCT, 0, 0, 0, 1, 0x00]);
-        check!(input.read_list_header().expect("reads") == (BT_STRUCT, 1));
+        check!(
+            input.read_list_header().expect("reads")
+                == (CollectionHeader {
+                    element_type: BT_STRUCT,
+                    len: 1
+                })
+        );
 
         // A map header is a key type, a value type, and then the length.
         let mut input = BinaryInput::new(&[BT_BINARY, BT_I32, 0x7F, 0xFF, 0xFF, 0xFF]);
@@ -204,7 +250,13 @@ mod tests {
 
         // An empty collection declares nothing, so nothing has to fit.
         let mut input = BinaryInput::new(&[BT_STRUCT, 0, 0, 0, 0]);
-        check!(input.read_list_header().expect("reads") == (BT_STRUCT, 0));
+        check!(
+            input.read_list_header().expect("reads")
+                == (CollectionHeader {
+                    element_type: BT_STRUCT,
+                    len: 0
+                })
+        );
     }
 
     /// Stop terminates a struct; it is not a value type, and it is the one

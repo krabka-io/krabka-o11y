@@ -5,19 +5,28 @@ pub(crate) async fn frontend_range_execution_runs_against_promql_engine() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         0,
         1.0,
     );
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         60_000,
         2.0,
     );
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         120_000,
         3.0,
     );

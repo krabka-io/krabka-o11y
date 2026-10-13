@@ -2,6 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use super::{super::TemplateRuntimeValue as V, histogram::TemplateFloatHistogram};
 
+struct NilSliceField {
+    bit: u8,
+    is_empty: bool,
+}
+
 /// Mutable source histogram pointer, with operations supplied by its producer.
 /// This keeps the template engine independent of the metric engine.
 #[derive(Clone)]
@@ -47,13 +52,15 @@ impl TemplateHistogram {
     /// Panics if a shared histogram or slice lock is poisoned.
     pub fn replace(&self, value: TemplateFloatHistogram) {
         let mut slices = self.slices.lock().expect("histogram slices poisoned");
-        for (name, slice) in slices.iter_mut() {
+        for entry in slices.iter_mut() {
             let Some(V::FloatSlice(replacement) | V::HistogramSpans(replacement)) =
-                value.field(name)
+                value.field(entry.0)
             else {
                 continue;
             };
-            slice.replace(&replacement.snapshot(), replacement.is_nil());
+            entry
+                .1
+                .replace(&replacement.snapshot(), replacement.is_nil());
         }
         *self.value.lock().expect("template histogram poisoned") = value;
     }
@@ -64,14 +71,26 @@ impl TemplateHistogram {
     pub fn copy(&self) -> Self {
         let mut value = self.snapshot();
         value.nil_slices = 16;
-        for (bit, empty) in [
-            (1, value.positive_spans.is_empty()),
-            (2, value.negative_spans.is_empty()),
-            (4, value.positive_buckets.is_empty()),
-            (8, value.negative_buckets.is_empty()),
+        for field in [
+            NilSliceField {
+                bit: 1,
+                is_empty: value.positive_spans.is_empty(),
+            },
+            NilSliceField {
+                bit: 2,
+                is_empty: value.negative_spans.is_empty(),
+            },
+            NilSliceField {
+                bit: 4,
+                is_empty: value.positive_buckets.is_empty(),
+            },
+            NilSliceField {
+                bit: 8,
+                is_empty: value.negative_buckets.is_empty(),
+            },
         ] {
-            if empty {
-                value.nil_slices |= bit;
+            if field.is_empty {
+                value.nil_slices |= field.bit;
             }
         }
         if value.schema == -53 {
@@ -349,9 +368,13 @@ pub struct TemplateBucketIterator {
     pub kind: &'static str,
     reflection: Arc<dyn Fn() -> TemplateHistogramView + Send + Sync>,
 }
+pub struct TemplateBucketStep {
+    pub advanced: bool,
+    pub bucket: TemplateBucket,
+}
 struct IteratorState {
     current: TemplateBucket,
-    next: Box<dyn FnMut() -> (bool, TemplateBucket) + Send>,
+    next: Box<dyn FnMut() -> TemplateBucketStep + Send>,
 }
 impl std::fmt::Debug for TemplateBucketIterator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -367,7 +390,7 @@ impl TemplateBucketIterator {
     pub fn new(
         initial: TemplateBucket,
         kind: &'static str,
-        next: impl FnMut() -> (bool, TemplateBucket) + Send + 'static,
+        next: impl FnMut() -> TemplateBucketStep + Send + 'static,
         reflection: impl Fn() -> TemplateHistogramView + Send + Sync + 'static,
     ) -> Self {
         Self {
@@ -393,9 +416,9 @@ impl TemplateBucketIterator {
         let mut state = self.state.lock().expect("template iterator poisoned");
         match name {
             "Next" => {
-                let (advanced, current) = (state.next)();
-                state.current = current;
-                Ok(V::Json(advanced.into()))
+                let step = (state.next)();
+                state.current = step.bucket;
+                Ok(V::Json(step.advanced.into()))
             }
             "At" => Ok(V::HistogramBucket(state.current.clone())),
             _ => Err(format!("cannot evaluate field or method {name}")),
@@ -407,6 +430,19 @@ static EMPTY_BACKING: u8 = 0;
 
 /// Ordered, typed source fields needed by Go fmt reflection of histogram objects.
 #[derive(Clone, Debug)]
+pub struct TemplateHistogramField {
+    pub name: &'static str,
+    pub value: TemplateHistogramView,
+}
+
+impl TemplateHistogramField {
+    #[must_use]
+    pub fn new(name: &'static str, value: TemplateHistogramView) -> Self {
+        Self { name, value }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum TemplateHistogramView {
     Scalar(V),
     NamedScalar {
@@ -415,7 +451,7 @@ pub enum TemplateHistogramView {
     },
     Struct {
         name: &'static str,
-        fields: Vec<(&'static str, Self)>,
+        fields: Vec<TemplateHistogramField>,
     },
     Slice {
         name: &'static str,
@@ -435,7 +471,7 @@ impl TemplateHistogramView {
         Self::Scalar(value)
     }
     #[must_use]
-    pub fn structure(name: &'static str, fields: Vec<(&'static str, Self)>) -> Self {
+    pub fn structure(name: &'static str, fields: Vec<TemplateHistogramField>) -> Self {
         Self::Struct { name, fields }
     }
     #[must_use]
@@ -486,7 +522,7 @@ impl TemplateHistogram {
         ]
         .into_iter()
         .map(|name| {
-            (
+            TemplateHistogramField::new(
                 name,
                 TemplateHistogramView::Scalar(self.field(name).expect("histogram field")),
             )
@@ -520,7 +556,7 @@ impl TemplateBucket {
             ]
             .into_iter()
             .map(|name| {
-                (
+                TemplateHistogramField::new(
                     name,
                     TemplateHistogramView::Scalar(self.field(name).expect("bucket field")),
                 )

@@ -37,7 +37,7 @@ impl IngestRequestStart {
     pub(crate) fn respond(
         &self,
         state: &DistributorState,
-        result: Result<(PushSuccess, u64), PushError>,
+        result: Result<super::PushOutcome, PushError>,
     ) -> Response {
         record_ingest_outcome(
             state,
@@ -46,7 +46,7 @@ impl IngestRequestStart {
             self.started.elapsed().as_time(),
         );
         match result {
-            Ok((success, _items)) => success.into_response(),
+            Ok(outcome) => outcome.success.into_response(),
             Err(error) => error.into_response(),
         }
     }

@@ -57,7 +57,7 @@ pub(crate) use broker_access_policy::BrokerAccessPolicy;
 pub(crate) use broker_access_source::BrokerAccessSource;
 pub(crate) use broker_backed_ingest_limiter::BrokerBackedIngestLimiter;
 pub(crate) use broker_backed_query_authorizer::BrokerBackedQueryAuthorizer;
-pub(crate) use cached_lookup::{CachedLookup, CachedLookupDecision};
+pub(crate) use cached_lookup::{CachedFailure, CachedLookup, CachedLookupDecision, CachedSnapshot};
 pub(crate) use check_tenant_wal_read_acl::check_tenant_wal_read_acl;
 pub(crate) use check_tenant_wal_write_acl::check_tenant_wal_write_acl;
 pub(crate) use hot_tail_bucket_key::hot_tail_bucket_key;

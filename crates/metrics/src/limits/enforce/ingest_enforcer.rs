@@ -154,7 +154,9 @@ impl IngestEnforcer {
     /// # Errors
     /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
     pub fn check_labels(limits: &Limits, labels: &Labels) -> Result<(), LimitError> {
-        for (name, value) in labels.iter() {
+        for pair in labels.iter() {
+            let name = pair.name;
+            let value = pair.value;
             let name_len = ByteSize::from_bytes(u64::try_from(name.len()).unwrap_or(u64::MAX));
             if name_len > limits.max_label_name_length {
                 return Err(LimitError::LabelNameTooLong {

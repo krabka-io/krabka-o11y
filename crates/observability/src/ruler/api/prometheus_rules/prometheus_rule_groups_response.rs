@@ -13,7 +13,9 @@ pub(crate) async fn prometheus_rule_groups_response(
     evaluation_time: i64,
 ) -> Result<PrometheusRulesPage, HttpQueryError> {
     let mut response_groups = Vec::new();
-    for (namespace, groups) in namespaces {
+    for entry in namespaces {
+        let namespace = entry.0;
+        let groups = entry.1;
         if !filters.files.is_empty() && !filters.files.contains(namespace) {
             continue;
         }

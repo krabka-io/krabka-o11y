@@ -61,8 +61,9 @@ impl TempoMetricBounds {
             .map(|seconds| seconds * 1_000_000_000)
             .find(|precision| step_ns % precision == 0);
         for series in &mut response.series {
-            for (timestamp, _) in &mut series.points {
-                *timestamp = timestamp
+            for point in &mut series.points {
+                point.timestamp = point
+                    .timestamp
                     .checked_add(self.sample_shift)
                     .ok_or("metric sample timestamp overflow")?;
             }
@@ -88,63 +89,153 @@ mod tests {
 
     use assert2::assert;
     use krabka_traceql::{
-        EngineOpts, InMemorySpanStore, InputSpan, TraceMetricSeries, TraceqlEngine,
+        EngineOpts, InMemorySpanStore, InputSpan, MetricPoint, TraceMetricSeries, TraceqlEngine,
     };
     use krabka_units::{Time, convert::TimeExt as _};
     use serde_json::json;
 
     use super::*;
 
+    struct BoundsCase {
+        start_ns: i64,
+        end_ns: i64,
+        step_ns: i64,
+        expected: Option<TempoMetricBounds>,
+    }
+
+    struct BoundsInput {
+        start_ns: i64,
+        end_ns: i64,
+        step_ns: i64,
+    }
+
+    fn expected_bounds(
+        scan_start_ns: i64,
+        scan_end_ns: i64,
+        sample_shift: i64,
+    ) -> TempoMetricBounds {
+        TempoMetricBounds {
+            scan_start_ns,
+            scan_end_ns,
+            sample_shift,
+        }
+    }
+
     #[test]
     fn aligned_bounds_cover_rounded_edges_and_initial_bucket() {
-        for (start, end, step, expected) in [
-            (20, 40, 10, Some((11, 40, 9))),
-            (21, 41, 10, Some((11, 50, 9))),
-            (10, 20, 10, Some((11, 20, 9))),
-            (0, 20, 10, Some((1, 20, 9))),
-            (0, 0, 10, None),
-            (10, 10, 10, None),
-            (20, 20, 10, Some((11, 20, 9))),
-            (-11, -1, 10, Some((-19, 0, 9))),
-            (i64::MAX, i64::MAX, 1, Some((i64::MAX, i64::MAX, 0))),
+        for case in [
+            BoundsCase {
+                start_ns: 20,
+                end_ns: 40,
+                step_ns: 10,
+                expected: Some(expected_bounds(11, 40, 9)),
+            },
+            BoundsCase {
+                start_ns: 21,
+                end_ns: 41,
+                step_ns: 10,
+                expected: Some(expected_bounds(11, 50, 9)),
+            },
+            BoundsCase {
+                start_ns: 10,
+                end_ns: 20,
+                step_ns: 10,
+                expected: Some(expected_bounds(11, 20, 9)),
+            },
+            BoundsCase {
+                start_ns: 0,
+                end_ns: 20,
+                step_ns: 10,
+                expected: Some(expected_bounds(1, 20, 9)),
+            },
+            BoundsCase {
+                start_ns: 0,
+                end_ns: 0,
+                step_ns: 10,
+                expected: None,
+            },
+            BoundsCase {
+                start_ns: 10,
+                end_ns: 10,
+                step_ns: 10,
+                expected: None,
+            },
+            BoundsCase {
+                start_ns: 20,
+                end_ns: 20,
+                step_ns: 10,
+                expected: Some(expected_bounds(11, 20, 9)),
+            },
+            BoundsCase {
+                start_ns: -11,
+                end_ns: -1,
+                step_ns: 10,
+                expected: Some(expected_bounds(-19, 0, 9)),
+            },
+            BoundsCase {
+                start_ns: i64::MAX,
+                end_ns: i64::MAX,
+                step_ns: 1,
+                expected: Some(expected_bounds(i64::MAX, i64::MAX, 0)),
+            },
         ] {
             assert!(
-                tempo_metric_bounds(start, end, step).unwrap()
-                    == expected.map(|(scan_start_ns, scan_end_ns, sample_shift)| {
-                        TempoMetricBounds {
-                            scan_start_ns,
-                            scan_end_ns,
-                            sample_shift,
-                        }
-                    }),
-                "start={start}, end={end}, step={step}"
+                tempo_metric_bounds(case.start_ns, case.end_ns, case.step_ns).unwrap()
+                    == case.expected,
+                "start={}, end={}, step={}",
+                case.start_ns,
+                case.end_ns,
+                case.step_ns
             );
         }
-        for (start, end, step) in [
-            (20, 10, 10),
-            (0, 20, 0),
-            (0, 20, -1),
-            (i64::MAX - 1, i64::MAX, 10),
-            (i64::MIN, 0, 10),
-            (i64::MIN, 0, 1),
+        for input in [
+            BoundsInput {
+                start_ns: 20,
+                end_ns: 10,
+                step_ns: 10,
+            },
+            BoundsInput {
+                start_ns: 0,
+                end_ns: 20,
+                step_ns: 0,
+            },
+            BoundsInput {
+                start_ns: 0,
+                end_ns: 20,
+                step_ns: -1,
+            },
+            BoundsInput {
+                start_ns: i64::MAX - 1,
+                end_ns: i64::MAX,
+                step_ns: 10,
+            },
+            BoundsInput {
+                start_ns: i64::MIN,
+                end_ns: 0,
+                step_ns: 10,
+            },
+            BoundsInput {
+                start_ns: i64::MIN,
+                end_ns: 0,
+                step_ns: 1,
+            },
         ] {
-            assert!(tempo_metric_bounds(start, end, step).is_err());
+            assert!(tempo_metric_bounds(input.start_ns, input.end_ns, input.step_ns).is_err());
         }
     }
 
     #[tokio::test]
     async fn engine_adapter_excludes_left_edges_and_includes_right_edges() {
         let mut store = InMemorySpanStore::new();
-        let spans = [10, 11, 20, 21, 30, 31, 40, 41]
-            .into_iter()
-            .enumerate()
-            .map(|(index, timestamp)| InputSpan {
+        let timestamps = [10, 11, 20, 21, 30, 31, 40, 41];
+        let spans = (0..timestamps.len())
+            .map(|index| InputSpan {
                 trace_id: [1; 16],
                 span_id: [u8::try_from(index + 1).unwrap(); 8],
                 parent_span_id: None,
                 name: "boundary".into(),
                 kind: 0,
-                start_unix_nano: timestamp,
+                start_unix_nano: timestamps[index],
                 duration: Time::from_nanos(1),
                 status_code: 0,
                 status_message: String::new(),
@@ -182,7 +273,11 @@ mod tests {
                     series: vec![TraceMetricSeries {
                         label_types: BTreeMap::default(),
                         labels: Vec::new(),
-                        points: vec![(20, 2.0), (30, 2.0), (40, 2.0)],
+                        points: vec![
+                            MetricPoint::new(20, 2.0),
+                            MetricPoint::new(30, 2.0),
+                            MetricPoint::new(40, 2.0)
+                        ],
                         exemplars: Vec::new(),
                     }],
                 }
@@ -199,45 +294,87 @@ mod tests {
             .unwrap()],
         };
         let mut expected = response.clone();
-        expected.series[0].points = vec![(20, 3.0), (30, 0.0)];
+        expected.series[0].points = vec![MetricPoint::new(20, 3.0), MetricPoint::new(30, 0.0)];
         let bounds = tempo_metric_bounds(20, 40, 10).unwrap().unwrap();
         bounds.shift_points(&mut response).unwrap();
         assert!(response == expected);
-        response.series[0].points[0].0 = i64::MAX;
+        response.series[0].points[0].timestamp = i64::MAX;
         assert!(bounds.shift_points(&mut response).is_err());
     }
 
     #[test]
     fn exemplar_precision_uses_supported_step_divisors_and_right_boundaries() {
-        for (step_seconds, timestamp, expected) in [
-            (30, 100_000_000_i64, 15_000_000_000),
-            (30, 15_000_000_000, 15_000_000_000),
-            (30, 15_000_000_001, 30_000_000_000),
-            (30, -1, 0),
-            (30, -15_000_000_001, -15_000_000_000),
-            (60, 100_000_000, 60_000_000_000),
-            (300, 100_000_000, 300_000_000_000),
-            (3600, 100_000_000, 3_600_000_000_000),
-            (31, 100_000_000, 100_000_000),
+        struct ExemplarCase {
+            step_seconds: i64,
+            timestamp: i64,
+            expected_timestamp: i64,
+        }
+        for case in [
+            ExemplarCase {
+                step_seconds: 30,
+                timestamp: 100_000_000,
+                expected_timestamp: 15_000_000_000,
+            },
+            ExemplarCase {
+                step_seconds: 30,
+                timestamp: 15_000_000_000,
+                expected_timestamp: 15_000_000_000,
+            },
+            ExemplarCase {
+                step_seconds: 30,
+                timestamp: 15_000_000_001,
+                expected_timestamp: 30_000_000_000,
+            },
+            ExemplarCase {
+                step_seconds: 30,
+                timestamp: -1,
+                expected_timestamp: 0,
+            },
+            ExemplarCase {
+                step_seconds: 30,
+                timestamp: -15_000_000_001,
+                expected_timestamp: -15_000_000_000,
+            },
+            ExemplarCase {
+                step_seconds: 60,
+                timestamp: 100_000_000,
+                expected_timestamp: 60_000_000_000,
+            },
+            ExemplarCase {
+                step_seconds: 300,
+                timestamp: 100_000_000,
+                expected_timestamp: 300_000_000_000,
+            },
+            ExemplarCase {
+                step_seconds: 3600,
+                timestamp: 100_000_000,
+                expected_timestamp: 3_600_000_000_000,
+            },
+            ExemplarCase {
+                step_seconds: 31,
+                timestamp: 100_000_000,
+                expected_timestamp: 100_000_000,
+            },
         ] {
-            let step = step_seconds * 1_000_000_000;
+            let step = case.step_seconds * 1_000_000_000;
             let bounds = tempo_metric_bounds(step + 1, step * 3 - 1, step)
                 .unwrap()
                 .unwrap();
             let mut response = TraceMetricsResponse {
                 series: vec![serde_json::from_value(json!({
-                    "labels": [], "points": [], "exemplars":[{"labels": [["trace:id", "01"]], "value": 3.0, "timestamp_ns": timestamp}]
+                    "labels": [], "points": [], "exemplars":[{"labels": [["trace:id", "01"]], "value": 3.0, "timestamp_ns": case.timestamp}]
                 })).unwrap()],
             };
             let mut expected_response = response.clone();
-            expected_response.series[0].exemplars[0].timestamp_ns = expected;
+            expected_response.series[0].exemplars[0].timestamp_ns = case.expected_timestamp;
             bounds.shift_points(&mut response).unwrap();
             assert!(
                 response == expected_response,
-                "step={step}, timestamp={timestamp}"
+                "step={step}, timestamp={}",
+                case.timestamp
             );
             response.series[0].exemplars[0].timestamp_ns = i64::MAX;
-            assert!(bounds.shift_points(&mut response).is_err() == (step_seconds != 31));
+            assert!(bounds.shift_points(&mut response).is_err() == (case.step_seconds != 31));
         }
     }
 }

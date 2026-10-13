@@ -62,6 +62,11 @@ mod tests {
 
     use super::*;
 
+    struct IntrinsicTagCase {
+        intrinsic: Intrinsic,
+        expected_name: &'static str,
+    }
+
     /// The intrinsic tag names are Tempo's API surface: a client asking for
     /// `span:parentID` gets nothing back if this map spells it `span:parentId`.
     /// Every variant is named here, and the names are checked for being
@@ -70,36 +75,103 @@ mod tests {
     #[test]
     fn every_intrinsic_maps_to_its_tempo_tag_name() {
         let cases = [
-            (Intrinsic::Name, "span:name"),
-            (Intrinsic::Duration, "span:duration"),
-            (Intrinsic::Kind, "span:kind"),
-            (Intrinsic::Status, "span:status"),
-            (Intrinsic::StatusMessage, "span:statusMessage"),
-            (Intrinsic::Id, "span:id"),
-            (Intrinsic::ParentId, "span:parentID"),
-            (Intrinsic::ChildCount, "span:childCount"),
-            (Intrinsic::TraceDuration, "trace:duration"),
-            (Intrinsic::TraceRootName, "trace:rootName"),
-            (Intrinsic::TraceRootService, "trace:rootService"),
-            (Intrinsic::TraceId, "trace:id"),
-            (Intrinsic::EventName, "event:name"),
-            (Intrinsic::EventTimeSinceStart, "event:timeSinceStart"),
-            (Intrinsic::LinkTraceId, "link:traceID"),
-            (Intrinsic::LinkSpanId, "link:spanID"),
-            (Intrinsic::InstrumentationName, "instrumentation:name"),
-            (Intrinsic::InstrumentationVersion, "instrumentation:version"),
-            (Intrinsic::NestedSetLeft, "span:nestedSetLeft"),
-            (Intrinsic::NestedSetRight, "span:nestedSetRight"),
-            (Intrinsic::NestedSetParent, "span:nestedSetParent"),
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::Name,
+                expected_name: "span:name",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::Duration,
+                expected_name: "span:duration",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::Kind,
+                expected_name: "span:kind",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::Status,
+                expected_name: "span:status",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::StatusMessage,
+                expected_name: "span:statusMessage",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::Id,
+                expected_name: "span:id",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::ParentId,
+                expected_name: "span:parentID",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::ChildCount,
+                expected_name: "span:childCount",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::TraceDuration,
+                expected_name: "trace:duration",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::TraceRootName,
+                expected_name: "trace:rootName",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::TraceRootService,
+                expected_name: "trace:rootService",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::TraceId,
+                expected_name: "trace:id",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::EventName,
+                expected_name: "event:name",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::EventTimeSinceStart,
+                expected_name: "event:timeSinceStart",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::LinkTraceId,
+                expected_name: "link:traceID",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::LinkSpanId,
+                expected_name: "link:spanID",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::InstrumentationName,
+                expected_name: "instrumentation:name",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::InstrumentationVersion,
+                expected_name: "instrumentation:version",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::NestedSetLeft,
+                expected_name: "span:nestedSetLeft",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::NestedSetRight,
+                expected_name: "span:nestedSetRight",
+            },
+            IntrinsicTagCase {
+                intrinsic: Intrinsic::NestedSetParent,
+                expected_name: "span:nestedSetParent",
+            },
         ];
 
-        for (intrinsic, want) in &cases {
-            check!(intrinsic.tag_name() == *want, "{intrinsic:?}");
+        for IntrinsicTagCase {
+            intrinsic,
+            expected_name,
+        } in &cases
+        {
+            check!(intrinsic.tag_name() == *expected_name, "{intrinsic:?}");
         }
 
         let names = cases
             .iter()
-            .map(|(_, name)| *name)
+            .map(|case| case.expected_name)
             .collect::<std::collections::BTreeSet<_>>();
         check!(
             names.len() == cases.len(),

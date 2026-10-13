@@ -1,5 +1,10 @@
 use super::*;
 
+struct InfoSampleFixture {
+    labels: crate::PromqlLabels,
+    value: f64,
+}
+
 /// Differential parity for `info(v [, data_label_selector])` in the planner.
 ///
 /// The recursive planner recurses the input vector. It selects the
@@ -14,56 +19,67 @@ pub(crate) async fn info_planner_path_matches_interpreter() {
     // identifying labels don't match any target_info, a metric with an
     // overlapping data label, plus `target_info` and `build_info` series.
     let mut store = InMemoryMetricStore::new();
-    for (lbls, value) in [
-        (
-            labels(&[
-                ("__name__", "metric"),
-                ("instance", "a"),
-                ("job", "1"),
-                ("label", "value"),
-            ]),
-            2.0,
-        ),
-        (
-            labels(&[
-                ("__name__", "metric_not_matching_target_info"),
-                ("instance", "a"),
-                ("job", "2"),
-                ("label", "value"),
-            ]),
-            2.0,
-        ),
-        (
-            labels(&[
-                ("__name__", "metric_with_overlapping_label"),
-                ("instance", "a"),
-                ("job", "1"),
-                ("label", "value"),
-                ("data", "base"),
-            ]),
-            2.0,
-        ),
-        (
-            labels(&[
-                ("__name__", "target_info"),
-                ("instance", "a"),
-                ("job", "1"),
-                ("data", "info"),
-                ("another_data", "another info"),
-            ]),
-            1.0,
-        ),
-        (
-            labels(&[
-                ("__name__", "build_info"),
-                ("instance", "a"),
-                ("job", "1"),
-                ("build_data", "build"),
-            ]),
-            1.0,
-        ),
+    for fixture in [
+        InfoSampleFixture {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "metric"),
+                crate::test_support::TestLabelPair::new("instance", "a"),
+                crate::test_support::TestLabelPair::new("job", "1"),
+                crate::test_support::TestLabelPair::new("label", "value"),
+            ])
+            .into(),
+            value: 2.0,
+        },
+        InfoSampleFixture {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new(
+                    "__name__",
+                    "metric_not_matching_target_info",
+                ),
+                crate::test_support::TestLabelPair::new("instance", "a"),
+                crate::test_support::TestLabelPair::new("job", "2"),
+                crate::test_support::TestLabelPair::new("label", "value"),
+            ])
+            .into(),
+            value: 2.0,
+        },
+        InfoSampleFixture {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new(
+                    "__name__",
+                    "metric_with_overlapping_label",
+                ),
+                crate::test_support::TestLabelPair::new("instance", "a"),
+                crate::test_support::TestLabelPair::new("job", "1"),
+                crate::test_support::TestLabelPair::new("label", "value"),
+                crate::test_support::TestLabelPair::new("data", "base"),
+            ])
+            .into(),
+            value: 2.0,
+        },
+        InfoSampleFixture {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "target_info"),
+                crate::test_support::TestLabelPair::new("instance", "a"),
+                crate::test_support::TestLabelPair::new("job", "1"),
+                crate::test_support::TestLabelPair::new("data", "info"),
+                crate::test_support::TestLabelPair::new("another_data", "another info"),
+            ])
+            .into(),
+            value: 1.0,
+        },
+        InfoSampleFixture {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "build_info"),
+                crate::test_support::TestLabelPair::new("instance", "a"),
+                crate::test_support::TestLabelPair::new("job", "1"),
+                crate::test_support::TestLabelPair::new("build_data", "build"),
+            ])
+            .into(),
+            value: 1.0,
+        },
     ] {
-        store.push_float("t", lbls, 600_000, value);
+        store.push_float("t", fixture.labels, 600_000, fixture.value);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
@@ -90,8 +106,9 @@ pub(crate) async fn info_planner_path_matches_interpreter() {
     ];
 
     for query in queries {
-        let (via_operators, via_interpreter) =
-            planned_and_interpreted(&engine, query, 600_000).await;
+        let parity = planned_and_interpreted(&engine, query, 600_000).await;
+        let via_operators = parity.via_operators;
+        let via_interpreter = parity.via_interpreter;
 
         let normalize = |result: QueryResult| fingerprint_sorted(result, query);
 
@@ -106,17 +123,21 @@ pub(crate) async fn info_planner_path_matches_interpreter() {
     hist_store.push_float(
         "t",
         labels(&[
-            ("__name__", "metric"),
-            ("instance", "a"),
-            ("job", "1"),
-            ("label", "value"),
+            crate::test_support::TestLabelPair::new("__name__", "metric"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
+            crate::test_support::TestLabelPair::new("job", "1"),
+            crate::test_support::TestLabelPair::new("label", "value"),
         ]),
         600_000,
         2.0,
     );
     hist_store.push_histogram(
         "t",
-        labels(&[("__name__", "hist"), ("instance", "a"), ("job", "1")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "hist"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
+            crate::test_support::TestLabelPair::new("job", "1"),
+        ]),
         600_000,
         native_histogram(4.0, 10.0),
     );

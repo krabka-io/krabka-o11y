@@ -5,6 +5,11 @@ use super::{
     retained_prometheus_alerts, yaml_duration_ns_field, yaml_string_labels_field,
 };
 
+struct PrometheusAlertSample {
+    labels: BTreeMap<String, String>,
+    value: String,
+}
+
 pub(crate) fn prometheus_alerts_from_query_result(
     alert_states: &SharedPrometheusAlertStates,
     tenant: &str,
@@ -31,20 +36,23 @@ pub(crate) fn prometheus_alerts_from_query_result(
                 .and_then(Value::as_str)?;
             let mut labels = BTreeMap::new();
             if let Some(metric) = sample.get("metric").and_then(Value::as_object) {
-                for (key, value) in metric {
-                    if let Some(value) = value.as_str() {
-                        labels.insert(key.clone(), value.to_string());
+                for entry in metric {
+                    if let Some(value) = entry.1.as_str() {
+                        labels.insert(entry.0.clone(), value.to_string());
                     }
                 }
             }
-            for (key, template) in &rule_label_templates {
+            for entry in &rule_label_templates {
                 labels.insert(
-                    key.clone(),
-                    expand_prometheus_alert_template(template, &labels, value),
+                    entry.0.clone(),
+                    expand_prometheus_alert_template(entry.1, &labels, value),
                 );
             }
             labels.insert("alertname".to_string(), alert_name.to_string());
-            Some((labels, value.to_string()))
+            Some(PrometheusAlertSample {
+                labels,
+                value: value.to_string(),
+            })
         })
         .collect::<Vec<_>>();
 
@@ -55,22 +63,22 @@ pub(crate) fn prometheus_alerts_from_query_result(
     let mut active_keys = BTreeSet::new();
     let mut alerts = samples
         .into_iter()
-        .map(|(labels, value)| {
+        .map(|sample| {
             let key = PrometheusAlertKey {
                 tenant: tenant.to_string(),
                 alert_name: alert_name.to_string(),
                 query: query.to_string(),
-                labels: labels.clone(),
+                labels: sample.labels.clone(),
             };
             let alert = states
                 .entry(key.clone())
                 .or_insert_with(|| PrometheusAlertRuntimeState {
                     active_at: evaluation_time,
                     last_active_at: evaluation_time,
-                    value: value.clone(),
+                    value: sample.value.clone(),
             });
             alert.last_active_at = evaluation_time;
-            alert.value.clone_from(&value);
+            alert.value.clone_from(&sample.value);
             let state = if evaluation_time.saturating_sub(alert.active_at) >= hold_duration_ns {
                 "firing"
             } else {
@@ -79,15 +87,15 @@ pub(crate) fn prometheus_alerts_from_query_result(
             active_keys.insert(key);
             json!({
                 "activeAt": prometheus_active_at(alert.active_at),
-                "annotations": prometheus_alert_template_map(&annotation_templates, &labels, &value),
-                "labels": labels,
+                "annotations": prometheus_alert_template_map(&annotation_templates, &sample.labels, &sample.value),
+                "labels": sample.labels,
                 "state": state,
-                "value": value,
+                "value": sample.value,
             })
         })
         .collect::<Vec<_>>();
 
-    let (retained_alerts, retained_keys) = retained_prometheus_alerts(
+    let retained = retained_prometheus_alerts(
         &states,
         &PrometheusRetainedAlertParams {
             tenant,
@@ -100,14 +108,14 @@ pub(crate) fn prometheus_alerts_from_query_result(
             annotation_templates: &annotation_templates,
         },
     );
-    alerts.extend(retained_alerts);
+    alerts.extend(retained.alerts);
 
     states.retain(|key, _| {
         key.tenant != tenant
             || key.alert_name != alert_name
             || key.query != query
             || active_keys.contains(key)
-            || retained_keys.contains(key)
+            || retained.keys.contains(key)
     });
     alerts
 }

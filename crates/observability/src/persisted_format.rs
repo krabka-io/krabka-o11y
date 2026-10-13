@@ -2,6 +2,12 @@
 pub const PERSISTED_FORMAT_HEADER: &str = "krabka-format-version";
 pub const PERSISTED_FORMAT_VERSION: &[u8] = b"1";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PersistedHeader<'a> {
+    pub key: &'a str,
+    pub value: Option<&'a [u8]>,
+}
+
 #[derive(Debug, thiserror::Error, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum PersistedFormatError {
@@ -25,14 +31,14 @@ pub enum PersistedFormatError {
 /// Returns an error when the version header is absent, malformed, or
 /// unsupported.
 pub fn validate_persisted_format<'a>(
-    headers: impl IntoIterator<Item = (&'a str, Option<&'a [u8]>)>,
+    headers: impl IntoIterator<Item = PersistedHeader<'a>>,
 ) -> Result<(), PersistedFormatError> {
     let mut version = None;
-    for (key, value) in headers {
-        if key != PERSISTED_FORMAT_HEADER {
+    for header in headers {
+        if header.key != PERSISTED_FORMAT_HEADER {
             continue;
         }
-        if version.replace(value).is_some() {
+        if version.replace(header.value).is_some() {
             return Err(PersistedFormatError::Duplicate);
         }
     }
@@ -88,10 +94,10 @@ mod tests {
             },
         ];
         for case in cases {
-            let headers = case
-                .values
-                .iter()
-                .map(|value| (PERSISTED_FORMAT_HEADER, *value));
+            let headers = case.values.iter().map(|value| PersistedHeader {
+                key: PERSISTED_FORMAT_HEADER,
+                value: *value,
+            });
             check!(
                 validate_persisted_format(headers) == case.expected,
                 "{}",

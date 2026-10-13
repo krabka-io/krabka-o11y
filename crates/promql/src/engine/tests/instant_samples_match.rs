@@ -14,12 +14,28 @@ pub(crate) fn instant_samples_match(
     if left.len() != right.len() {
         return false;
     }
-    left.iter().zip(right.iter()).all(|(l, r)| {
-        l.labels == r.labels
-            && l.ts_ms == r.ts_ms
-            && match (&l.value, &r.value) {
-                (SampleValue::Float(a), SampleValue::Float(b)) => a.to_bits() == b.to_bits(),
-                (other_l, other_r) => other_l == other_r,
-            }
-    })
+    for index in 0..left.len() {
+        let left_sample = &left[index];
+        let right_sample = &right[index];
+        if left_sample.labels != right_sample.labels
+            || left_sample.ts_ms != right_sample.ts_ms
+            || !sample_values_match(&left_sample.value, &right_sample.value)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn sample_values_match(left: &SampleValue, right: &SampleValue) -> bool {
+    match left {
+        SampleValue::Float(left_value) => match right {
+            SampleValue::Float(right_value) => left_value.to_bits() == right_value.to_bits(),
+            SampleValue::Histogram(_) => false,
+        },
+        SampleValue::Histogram(left_histogram) => match right {
+            SampleValue::Float(_) => false,
+            SampleValue::Histogram(right_histogram) => left_histogram == right_histogram,
+        },
+    }
 }

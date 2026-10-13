@@ -309,23 +309,23 @@ fn scale(fraction: f64, exponent: i64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn pinned_bounds_keep_rounding_subnormals_and_last_finite_bucket() {
+    #[yare::parameterized(
+        negative_schema_one = { -1, 1, f64::from_bits(0x3fe6_a09e_667f_3bcc) },
+        negative_schema_eight = { -1, 8, f64::from_bits(0x3fef_e9d9_6b2a_23d6) },
+        small_finite = { 1, 8, 1.002_711_275_050_202_5 },
+        max_index_schema_zero = { 1024, 0, f64::MAX },
+        max_index_schema_eight = { 262_144, 8, f64::MAX },
+        first_infinite = { 1025, 0, f64::INFINITY },
+        smallest_subnormal = { -1074, 0, f64::from_bits(1) },
+        underflow = { -1075, 0, 0.0 },
+    )]
+    fn pinned_bounds_keep_rounding_subnormals_and_last_finite_bucket(
+        index: i32,
+        schema: i8,
+        expected: f64,
+    ) {
         // Go 1.26.5 source results. Negative indices exercise table wrapping.
-        for (index, schema, expected) in [
-            (-1, 1, f64::from_bits(0x3fe6_a09e_667f_3bcc)),
-            (-1, 8, f64::from_bits(0x3fef_e9d9_6b2a_23d6)),
-            (1, 8, 1.002_711_275_050_202_5),
-            (1024, 0, f64::MAX),
-            (262_144, 8, f64::MAX),
-            (1025, 0, f64::INFINITY),
-            (-1074, 0, f64::from_bits(1)),
-            (-1075, 0, 0.0),
-        ] {
-            assert2::assert!(
-                standard_histogram_bound(index, schema).to_bits() == expected.to_bits()
-            );
-        }
+        assert2::assert!(standard_histogram_bound(index, schema).to_bits() == expected.to_bits());
         assert2::assert!(bound(1, -1000).to_bits() == 1.0_f64.to_bits());
     }
 }

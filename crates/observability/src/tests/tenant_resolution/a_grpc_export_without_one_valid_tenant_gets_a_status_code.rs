@@ -1,5 +1,12 @@
 use super::*;
 
+struct GrpcTenantCase {
+    name: &'static str,
+    value: Option<&'static str>,
+    code: tonic::Code,
+    message: &'static str,
+}
+
 /// Loki has no OTLP gRPC door, so these codes follow the HTTP push: 401
 /// becomes `UNAUTHENTICATED` and 400 becomes `INVALID_ARGUMENT`, with the
 /// same message.
@@ -13,27 +20,38 @@ pub(crate) fn a_grpc_export_without_one_valid_tenant_gets_a_status_code() {
         metadata
     };
     let refused = [
-        ("absent", None, tonic::Code::Unauthenticated, "no org id"),
-        ("empty", Some(""), tonic::Code::Unauthenticated, "no org id"),
-        (
-            "separator",
-            Some("a/b"),
-            tonic::Code::InvalidArgument,
-            "tenant ID 'a/b' contains unsupported character '/'",
-        ),
-        (
-            "two tenants",
-            Some("a|b"),
-            tonic::Code::InvalidArgument,
-            "multiple org IDs present",
-        ),
+        GrpcTenantCase {
+            name: "absent",
+            value: None,
+            code: tonic::Code::Unauthenticated,
+            message: "no org id",
+        },
+        GrpcTenantCase {
+            name: "empty",
+            value: Some(""),
+            code: tonic::Code::Unauthenticated,
+            message: "no org id",
+        },
+        GrpcTenantCase {
+            name: "separator",
+            value: Some("a/b"),
+            code: tonic::Code::InvalidArgument,
+            message: "tenant ID 'a/b' contains unsupported character '/'",
+        },
+        GrpcTenantCase {
+            name: "two tenants",
+            value: Some("a|b"),
+            code: tonic::Code::InvalidArgument,
+            message: "multiple org IDs present",
+        },
     ];
 
-    for (name, value, code, message) in refused {
-        let status = grpc_tenant(&metadata(value)).expect_err("the export is refused");
+    for case in refused {
+        let status = grpc_tenant(&metadata(case.value)).expect_err("the export is refused");
         check!(
-            (status.code(), status.message()) == (code, message),
-            "{name}"
+            status.code() == case.code && status.message() == case.message,
+            "{}",
+            case.name
         );
     }
     check!(

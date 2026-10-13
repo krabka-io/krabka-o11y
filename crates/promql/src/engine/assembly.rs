@@ -13,7 +13,7 @@ use crate::{
     planner::{
         StepGrid, aggregate::AGGREGATE_VALUE_COLUMN, leaf, over_time_range, rate_range, scalar_math,
     },
-    result::{InstantSample, QueryResult, SampleValue},
+    result::{FloatSample, InstantSample, QueryResult, SampleValue},
 };
 
 mod assemble_aggregate_batches;

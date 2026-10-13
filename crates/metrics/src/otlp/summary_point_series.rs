@@ -1,6 +1,6 @@
 use super::{
     DecodedSeries, ExtraLabel, PointFamily, ScalarPointSeries, ScalarSeries, SummaryDataPoint,
-    ToPrimitive,
+    ToPrimitive, append_count_and_sum,
 };
 
 pub(crate) fn summary_point_series(
@@ -34,17 +34,12 @@ pub(crate) fn summary_point_series(
             exemplars: Vec::new(),
         }));
     }
-    out.push(scalar.series(ScalarSeries {
-        name: &format!("{name}_count"),
-        extra_label: None,
-        sample_value: point.count.to_f64().unwrap_or(f64::MAX),
-        exemplars: Vec::new(),
-    }));
-    out.push(scalar.series(ScalarSeries {
-        name: &format!("{name}_sum"),
-        extra_label: None,
-        sample_value: point.sum,
-        exemplars: Vec::new(),
-    }));
+    append_count_and_sum(
+        &mut out,
+        &scalar,
+        name,
+        point.count.to_f64().unwrap_or(f64::MAX),
+        Some(point.sum),
+    );
     out
 }

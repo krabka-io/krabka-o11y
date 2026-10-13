@@ -1,4 +1,4 @@
-use super::*;
+use super::{sample_exemplar_rows::ExemplarRow, *};
 
 pub(crate) fn assemble_metrics_response(
     batches: &[RecordBatch],
@@ -6,7 +6,7 @@ pub(crate) fn assemble_metrics_response(
     end_ns: UnixNano,
     step_ns: DurationNanos,
     metric: &MetricPlan,
-    metric_policy: (usize, &[Time]),
+    metric_policy: MetricExemplarPolicy<'_>,
     output_start_ns: UnixNano,
 ) -> Result<TraceMetricsResponse> {
     if step_ns.0 <= 0 {
@@ -22,9 +22,15 @@ pub(crate) fn assemble_metrics_response(
         usize::try_from((end_ns.0 - start_ns.0) / step_ns.0 + 1)
             .map_err(|e| TraceqlError::Plan(e.to_string()))?
     };
-    let exemplar_rows = sample_exemplar_rows(batches, start_ns, end_ns, metric_policy.0)?;
+    let exemplar_rows = sample_exemplar_rows(
+        batches,
+        start_ns,
+        end_ns,
+        metric_policy.max_exemplars_per_series,
+    )?;
     let mut buckets: BTreeMap<MetricLabels, Vec<MetricBucket>> = BTreeMap::new();
-    for (batch_index, batch) in batches.iter().enumerate() {
+    for batch_index in 0..batches.len() {
+        let batch = &batches[batch_index];
         let starts = span_start_column(batch)?;
         for row in 0..batch.num_rows() {
             let ts = UnixNano(starts.value(row));
@@ -75,23 +81,30 @@ pub(crate) fn assemble_metrics_response(
             } else {
                 value
             };
-            let (mut labels, mut label_types) = metric_labels(batch, row, &metric.by)?;
+            let mut metric_labels = metric_labels(batch, row, &metric.by)?;
             if metric.frontend_labels {
                 // A single unsharded scan pools observations under the decoded
                 // frontend key before reduction. This retains the sum/count
                 // weights for averages and the histogram population for
                 // quantiles; merging already reduced values would lose them.
-                super::metric_labels::decode_frontend_metric_labels(&mut labels, &mut label_types);
+                super::metric_labels::decode_frontend_metric_labels(
+                    &mut metric_labels.labels,
+                    &mut metric_labels.types,
+                );
             }
             // Tempo drops partial missing groups but preserves the first
             // "nil" label when all grouping attributes are absent.
-            if labels.is_empty()
+            if metric_labels.labels.is_empty()
                 && let Some(field) = metric.by.first()
             {
-                labels.push((metric_label_key(field), "nil".into()));
+                metric_labels
+                    .labels
+                    .push(MetricLabel::new(metric_label_key(field), "nil"));
             }
-            let labels = (labels, label_types);
-            let exemplar = if exemplar_rows.contains(&(batch_index, row)) {
+            let exemplar = if exemplar_rows.contains(&ExemplarRow {
+                batch_index,
+                row_index: row,
+            }) {
                 let mut exemplar =
                     metric_exemplar(batch, row, ts.0, exemplar_value, &metric.exemplar_fields)?;
                 if metric.frontend_labels {
@@ -105,7 +118,7 @@ pub(crate) fn assemble_metrics_response(
                 None
             };
             let series_buckets = buckets
-                .entry(labels)
+                .entry(metric_labels)
                 .or_insert_with(|| vec![MetricBucket::default(); bucket_count]);
             if let Some(bucket) = series_buckets.get_mut(idx) {
                 bucket.record(value, exemplar);
@@ -125,35 +138,47 @@ pub(crate) fn assemble_metrics_response(
         )
     {
         buckets.insert(
-            (Vec::new(), BTreeMap::new()),
+            MetricLabels {
+                labels: Vec::new(),
+                types: BTreeMap::new(),
+            },
             vec![MetricBucket::default(); bucket_count],
         );
     }
 
     let step = Time::from_nanos(step_ns.0);
-    let mut series: Vec<TraceMetricSeries> = buckets
-        .into_iter()
-        .map(|(labels, buckets)| {
-            metric_series_for_group(
-                labels,
-                buckets,
-                metric,
-                (output_start_ns.0, step_ns.0),
-                step,
-                (start_ns.0, end_ns.0),
-                metric_policy,
-            )
-        })
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .flatten()
-        .collect();
+    let mut grouped_series = Vec::new();
+    let labels = buckets.keys().cloned().collect::<Vec<_>>();
+    for labels in labels {
+        let group_buckets = buckets
+            .remove(&labels)
+            .expect("a collected metric label key exists");
+        grouped_series.push(metric_series_for_group(
+            labels,
+            group_buckets,
+            metric,
+            MetricGrid {
+                start_ns: output_start_ns.0,
+                step_ns: step_ns.0,
+            },
+            step,
+            ExemplarRange {
+                start_ns: start_ns.0,
+                end_ns: end_ns.0,
+            },
+            metric_policy,
+        )?);
+    }
+    let mut series: Vec<TraceMetricSeries> = grouped_series.into_iter().flatten().collect();
     if !matches!(
         metric.function,
         MetricFunction::HistogramOverTime | MetricFunction::QuantileOverTime
     ) {
-        let mut admission =
-            super::metric_exemplars::ExemplarBuckets::new(metric_policy.0, start_ns.0, end_ns.0);
+        let mut admission = super::metric_exemplars::ExemplarBuckets::new(
+            metric_policy.max_exemplars_per_series,
+            start_ns.0,
+            end_ns.0,
+        );
         for series in &mut series {
             series
                 .exemplars
@@ -170,8 +195,8 @@ pub(crate) fn assemble_metrics_response(
         )
     {
         for series in &mut series {
-            for (_, value) in &mut series.points {
-                *value *= metric.sampling_factor;
+            for point in &mut series.points {
+                point.value *= metric.sampling_factor;
             }
         }
     }

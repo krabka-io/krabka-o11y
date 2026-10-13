@@ -1,10 +1,10 @@
-pub(crate) fn group_frame_name(labels: &[(String, String)]) -> String {
+pub(crate) fn group_frame_name(labels: &[crate::ProfileLabel]) -> String {
     if labels.len() == 1 {
-        labels[0].1.clone()
+        labels[0].value.clone()
     } else {
         labels
             .iter()
-            .map(|(name, value)| format!("{name}={value}"))
+            .map(|label| format!("{}={}", label.name, label.value))
             .collect::<Vec<_>>()
             .join(", ")
     }

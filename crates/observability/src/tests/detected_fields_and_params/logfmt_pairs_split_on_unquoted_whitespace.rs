@@ -8,7 +8,10 @@ use super::*;
 #[test]
 pub(crate) fn logfmt_pairs_split_on_unquoted_whitespace() {
     let parse = super::super::prelude::parse_logfmt_pairs;
-    let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+    let pair = |k: &str, v: &str| crate::querier::analytics::detected_fields::ParsedLogfmtPair {
+        name: k.to_string(),
+        value: v.to_string(),
+    };
 
     check!(parse("a=1") == vec![pair("a", "1")]);
     // An unquoted value carrying letters, so a transformation of the slice

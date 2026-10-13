@@ -13,7 +13,9 @@ pub(crate) async fn instant_query_without_time_defaults_to_current_time() {
         EngineOpts::default(),
     ));
 
-    let (status, body) = annotated_query_body(state, "/api/v1/query?query=up").await;
+    let response = annotated_query_body(state, "/api/v1/query?query=up").await;
+    let status = response.status;
+    let body = response.body;
 
     assert2::assert!(status == StatusCode::OK);
     assert2::assert!(body["status"].as_str() == Some("success"));

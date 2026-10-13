@@ -63,8 +63,8 @@ mod tests {
         .unwrap();
         let got = job_values(&plan.ctx, plan.plan, RATE_VALUE_COLUMN).await;
         check!(got.len() == 1);
-        check!(got[0].0 == "a");
-        check!(approx_eq(got[0].1, 5.0 / 300.0));
+        check!(got[0].job == "a");
+        check!(approx_eq(got[0].value, 5.0 / 300.0));
     }
 
     /// `increase` reset correction flows through the chain: 1,2,1 -> 2.0.

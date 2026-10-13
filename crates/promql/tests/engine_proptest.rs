@@ -21,7 +21,8 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use krabka_blockstore::{Labels, TenantId};
+use krabka_blockstore::{LabelPair, LabelPairRef, Labels, TenantId};
+use krabka_metrics::MetricLabelRef;
 use krabka_promql::{EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult, SampleValue};
 use proptest::{prelude::*, test_runner::TestCaseError};
 use tokio::runtime::Runtime;
@@ -43,26 +44,55 @@ fn runtime() -> &'static Runtime {
 }
 
 /// Builds a label set from `(name, value)` pairs.
-fn labels(pairs: &[(&str, &str)]) -> Labels {
-    Labels::from_pairs(pairs.iter().map(|(name, value)| (*name, *value)))
+fn labels(pairs: &[LabelPair]) -> Labels {
+    Labels::from_pairs(pairs.iter().cloned())
+}
+
+trait NamedLabelRef {
+    fn name(&self) -> &str;
+    fn value(&self) -> &str;
+}
+
+impl NamedLabelRef for MetricLabelRef<'_> {
+    fn name(&self) -> &str {
+        self.name.as_str()
+    }
+    fn value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl NamedLabelRef for LabelPairRef<'_> {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn value(&self) -> &str {
+        self.value
+    }
 }
 
 /// Copies a label set into an owned map, so the expected side and the engine
 /// side compare as the same type.
-fn label_map<'a, V: AsRef<str> + 'a>(
-    labels: impl Iterator<Item = (&'a String, &'a V)>,
-) -> BTreeMap<String, String> {
-    labels
-        .map(|(name, value)| (name.clone(), value.as_ref().to_owned()))
-        .collect()
+fn label_map<T: NamedLabelRef>(labels: impl Iterator<Item = T>) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    for pair in labels {
+        map.insert(pair.name().to_owned(), pair.value().to_owned());
+    }
+    map
 }
 
 /// One row of an instant vector, as both sides of a property state it.
-type Row = (BTreeMap<String, String>, f64);
+#[derive(Clone, Debug, PartialEq)]
+struct Row {
+    labels: BTreeMap<String, String>,
+    value: f64,
+}
 
 /// Orders rows, so two sets of rows compare in one assertion.
 fn by_labels_then_value(left: &Row, right: &Row) -> Ordering {
-    left.0.cmp(&right.0).then(left.1.total_cmp(&right.1))
+    left.labels
+        .cmp(&right.labels)
+        .then(left.value.total_cmp(&right.value))
 }
 
 /// Evaluates `query` at `EVAL_MS` and returns the instant vector as a sorted
@@ -91,7 +121,10 @@ fn eval_sorted(
                 "{query}: expected a float sample, got a native histogram"
             )));
         };
-        rows.push((label_map(sample.labels.iter()), *value));
+        rows.push(Row {
+            labels: label_map(sample.labels.iter()),
+            value: *value,
+        });
     }
     rows.sort_by(by_labels_then_value);
     Ok(rows)
@@ -108,57 +141,98 @@ fn sorted(mut rows: Vec<Row>) -> Vec<Row> {
 ///
 /// The value is in half units. The property divides it by two, which keeps
 /// every generated value exactly representable as an `f64`.
-type AggregationSeries = (u8, i32);
+#[derive(Debug)]
+struct AggregationSeries {
+    job_index: u8,
+    half_units: i32,
+}
+
+prop_compose! {
+    fn arb_aggregation_series(job_count: u8)
+        (job_index in 0u8..job_count, half_units in -40i32..=40) -> AggregationSeries {
+        AggregationSeries { job_index, half_units }
+    }
+}
 
 /// Generates two or three `job` values, then the series that spread over them.
 fn aggregation_input() -> impl Strategy<Value = Vec<AggregationSeries>> {
-    (2u8..=3).prop_flat_map(|job_count| prop::collection::vec((0u8..job_count, -40i32..=40), 2..=6))
+    (2u8..=3)
+        .prop_flat_map(|job_count| prop::collection::vec(arb_aggregation_series(job_count), 2..=6))
 }
 
 /// A scrape interval, held as milliseconds and as the same value in seconds.
 ///
 /// The two forms are generated together, so the property never casts an
 /// integer millisecond count to a float.
-type ScrapeInterval = (i64, f64);
+#[derive(Debug)]
+struct ScrapeInterval {
+    milliseconds: i64,
+    seconds: f64,
+}
+
+#[derive(Debug)]
+struct RateInput {
+    interval: ScrapeInterval,
+    increment: f64,
+    scrapes: i64,
+}
 
 /// Generates the scrape interval, the per-scrape increment and the window
 /// length for the `rate` property.
-fn rate_input() -> impl Strategy<Value = (ScrapeInterval, f64, i64)> {
-    (
-        prop::sample::select(vec![
-            (1_000_i64, 1.0_f64),
-            (2_000, 2.0),
-            (5_000, 5.0),
-            (10_000, 10.0),
-            (15_000, 15.0),
-            (30_000, 30.0),
-        ]),
-        prop::sample::select(vec![0.5_f64, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0]),
-        3_i64..=10,
-    )
+prop_compose! {
+    fn rate_input()
+        (interval_ms in prop::sample::select(vec![1_000_i64, 2_000, 5_000, 10_000, 15_000, 30_000]),
+         increment in prop::sample::select(vec![0.5_f64, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0]),
+         scrapes in 3_i64..=10) -> RateInput {
+        RateInput {
+            interval: ScrapeInterval {
+                milliseconds: interval_ms,
+                seconds: interval_ms as f64 / 1_000.0,
+            },
+            increment,
+            scrapes,
+        }
+    }
 }
 
 /// Generates distinct series values and a `k` that can exceed the series count.
-fn topk_input() -> impl Strategy<Value = (Vec<f64>, usize)> {
+#[derive(Debug)]
+struct TopKInput {
+    values: Vec<f64>,
+    k: usize,
+}
+
+struct JobValue {
+    job: String,
+    value: f64,
+}
+
+prop_compose! {
+    fn distinct_topk_values(series_count: usize)
+        (base in -40i32..=40,
+         steps in prop::collection::vec(1i32..=9, series_count - 1)) -> Vec<f64> {
+        // Each step is at least one half unit, so the values are strictly
+        // increasing before the shuffle and therefore distinct.
+        let mut current = base;
+        let mut values = vec![f64::from(current) / 2.0];
+        for step in steps {
+            current += step;
+            values.push(f64::from(current) / 2.0);
+        }
+        values
+    }
+}
+
+fn topk_input() -> impl Strategy<Value = TopKInput> {
     (2usize..=6).prop_flat_map(|series_count| {
-        let values = (
-            -40i32..=40,
-            prop::collection::vec(1i32..=9, series_count - 1),
-        )
-            .prop_map(|(base, steps)| {
-                // Each step is at least one half unit, so the values are
-                // strictly increasing before the shuffle, and therefore
-                // distinct. Half units are exactly representable as an `f64`.
-                let mut current = base;
-                let mut values = vec![f64::from(current) / 2.0];
-                for step in steps {
-                    current += step;
-                    values.push(f64::from(current) / 2.0);
-                }
-                values
+        distinct_topk_values(series_count)
+            .prop_shuffle()
+            .prop_flat_map(move |values| {
+                (1usize..=series_count + 2).prop_map(move |k| TopKInput {
+                    values: values.clone(),
+                    k,
+                })
             })
-            .prop_shuffle();
-        (values, 1usize..=series_count + 2)
     })
 }
 
@@ -194,15 +268,15 @@ proptest! {
         series in aggregation_input()
     ) {
         let mut store = InMemoryMetricStore::new();
-        let mut points: Vec<(String, f64)> = Vec::with_capacity(series.len());
-        for (index, (job_index, half_units)) in series.iter().enumerate() {
-            let job = format!("job-{job_index}");
+        let mut points: Vec<JobValue> = Vec::with_capacity(series.len());
+        for (index, sample) in series.iter().enumerate() {
+            let job = format!("job-{}", sample.job_index);
             let instance = format!("instance-{index}");
-            let value = f64::from(*half_units) / 2.0;
+            let value = f64::from(sample.half_units) / 2.0;
             let series_labels = labels(&[
-                ("__name__", "prop_gauge"),
-                ("job", job.as_str()),
-                ("instance", instance.as_str()),
+                LabelPair::new("__name__", "prop_gauge"),
+                LabelPair::new("job", job.as_str()),
+                LabelPair::new("instance", instance.as_str()),
             ]);
             // Decoys well outside the range of the generated values. They are
             // inside the 5-minute lookback, so only the rule "most recent
@@ -210,13 +284,16 @@ proptest! {
             store.push_float(TENANT, series_labels.clone(), EVAL_MS - 30_000, value + 100.0);
             store.push_float(TENANT, series_labels.clone(), EVAL_MS - 15_000, value - 100.0);
             store.push_float(TENANT, series_labels, EVAL_MS, value);
-            points.push((job, value));
+            points.push(JobValue { job, value });
         }
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
         let mut groups: BTreeMap<String, Vec<f64>> = BTreeMap::new();
-        for (job, value) in &points {
-            groups.entry(job.clone()).or_default().push(*value);
+        for point in &points {
+            groups
+                .entry(point.job.clone())
+                .or_default()
+                .push(point.value);
         }
 
         for op in ["sum", "min", "max", "count"] {
@@ -232,7 +309,7 @@ proptest! {
                         };
                         let group_labels =
                             BTreeMap::from([("job".to_string(), job.clone())]);
-                        (group_labels, folded)
+                        Row { labels: group_labels, value: folded }
                     })
                     .collect(),
             );
@@ -282,8 +359,12 @@ proptest! {
     /// from it.
     #[test]
     fn rate_over_a_constant_increment_counter_is_that_increment_per_second(
-        ((scrape_ms, scrape_secs), increment, scrapes) in rate_input()
+        input in rate_input()
     ) {
+        let scrape_ms = input.interval.milliseconds;
+        let scrape_secs = input.interval.seconds;
+        let increment = input.increment;
+        let scrapes = input.scrapes;
         let window_ms = scrapes * scrape_ms;
         // Twice as many scrapes as the window holds, so the window sits well
         // inside the series and the left edge is never the start of the data.
@@ -292,7 +373,12 @@ proptest! {
         let mut value = 0.0_f64;
         let mut ts_ms = first_ms;
         while ts_ms <= EVAL_MS {
-            store.push_float(TENANT, labels(&[("__name__", "prop_counter")]), ts_ms, value);
+            store.push_float(
+                TENANT,
+                labels(&[LabelPair::new("__name__", "prop_counter")]),
+                ts_ms,
+                value,
+            );
             value += increment;
             ts_ms += scrape_ms;
         }
@@ -303,12 +389,12 @@ proptest! {
         let got = eval_sorted(&engine, &query)?;
         prop_assert_eq!(got.len(), 1, "{}", query);
         // `rate` drops `__name__`, and the series carries no other label.
-        prop_assert!(got[0].0.is_empty(), "{}: {:?}", query, got[0].0);
+        prop_assert!(got[0].labels.is_empty(), "{}: {:?}", query, got[0].labels);
         prop_assert!(
-            (got[0].1 - want).abs() <= 1e-9 * want.abs(),
+            (got[0].value - want).abs() <= 1e-9 * want.abs(),
             "{}: got {}, want {}",
             query,
-            got[0].1,
+            got[0].value,
             want
         );
     }
@@ -336,26 +422,31 @@ proptest! {
     /// mishandles a `k` above the series count moves the engine side away from
     /// it.
     #[test]
-    fn topk_returns_exactly_the_k_largest_samples((values, k) in topk_input()) {
+    fn topk_returns_exactly_the_k_largest_samples(input in topk_input()) {
+        let values = input.values;
+        let k = input.k;
         let mut store = InMemoryMetricStore::new();
         let mut rows: Vec<Row> = Vec::with_capacity(values.len());
         for (index, value) in values.iter().enumerate() {
             let instance = format!("instance-{index}");
             let series_labels = labels(&[
-                ("__name__", "prop_topk"),
-                ("instance", instance.as_str()),
+                LabelPair::new("__name__", "prop_topk"),
+                LabelPair::new("instance", instance.as_str()),
             ]);
             // An earlier decoy, so the answer depends on the sample at `t`.
             store.push_float(TENANT, series_labels.clone(), EVAL_MS - 30_000, value + 100.0);
             store.push_float(TENANT, series_labels.clone(), EVAL_MS, *value);
-            rows.push((label_map(series_labels.iter()), *value));
+            rows.push(Row {
+                labels: label_map(series_labels.iter()),
+                value: *value,
+            });
         }
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
         let taken = k.min(values.len());
         let mut ascending = rows.clone();
         ascending.sort_by(by_labels_then_value);
-        ascending.sort_by(|left, right| left.1.total_cmp(&right.1));
+        ascending.sort_by(|left, right| left.value.total_cmp(&right.value));
 
         let want_top = sorted(ascending.iter().rev().take(taken).cloned().collect());
         let top_query = format!("topk({k}, prop_topk)");

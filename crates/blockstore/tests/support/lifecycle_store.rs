@@ -181,8 +181,9 @@ impl LifecycleStore {
 
 fn provider_backing(raw: &str, signal: &str, test: &str) -> Backing {
     let url = Url::parse(raw).expect("the contract URL parses");
-    let (_, prefix) = object_store::parse_url_opts(&url, std::env::vars())
+    let parsed = object_store::parse_url_opts(&url, std::env::vars())
         .expect("provider configuration is valid before a lifecycle suite writes data");
+    let prefix = parsed.1;
     assert!(
         format!("{prefix}/").starts_with(CONTRACT_PREFIX),
         "refusing a destructive run outside a `{CONTRACT_PREFIX}` prefix"
@@ -207,8 +208,9 @@ fn connect(backing: &Backing, metrics: &ObjectStoreMetrics) -> Arc<dyn ObjectSto
     let store: Arc<dyn ObjectStore> = match backing {
         Backing::Memory(memory) => Arc::clone(memory) as Arc<dyn ObjectStore>,
         Backing::Provider { url, prefix } => {
-            let (client, _) = object_store::parse_url_opts(url, std::env::vars())
+            let parsed = object_store::parse_url_opts(url, std::env::vars())
                 .expect("the provider client builds");
+            let client = parsed.0;
             Arc::new(PrefixStore::new(client, prefix.clone()))
         }
     };

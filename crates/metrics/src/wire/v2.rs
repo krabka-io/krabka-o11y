@@ -1,6 +1,6 @@
 //! `remote_write` v2 (`io.prometheus.write.v2.Request`) request decoder.
 
-use krabka_blockstore::Labels;
+use krabka_blockstore::{LabelPair, Labels};
 use krabka_units::prelude::*;
 use prost::Message;
 
@@ -44,11 +44,11 @@ mod tests {
             }],
         };
 
-        let (decoded, counts) = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
+        let decoded = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
 
-        check_up_sample_with_trace_exemplar(&decoded);
+        check_up_sample_with_trace_exemplar(&decoded.series);
         check!(
-            counts
+            decoded.counts
                 == WrittenCounts {
                     samples: 1,
                     histograms: 0,
@@ -76,10 +76,10 @@ mod tests {
             }],
         };
 
-        let (decoded, counts) = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
+        let decoded = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
 
-        assert!(counts.histograms == 1);
-        assert!(decoded[0].histograms[0].1.positive_counts == vec![1.0, 3.0]);
+        assert!(decoded.counts.histograms == 1);
+        assert!(decoded.series[0].histograms[0].histogram.positive_counts == vec![1.0, 3.0]);
     }
 
     #[test]
@@ -130,10 +130,11 @@ mod tests {
             start_timestamp: 500,
         });
 
-        let (decoded, _) = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
+        let decoded = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
 
         assert!(
-            decoded[0].samples == vec![DecodedSample::with_start_timestamp(1000, 1.0, Some(500))]
+            decoded.series[0].samples
+                == vec![DecodedSample::with_start_timestamp(1000, 1.0, Some(500))]
         );
     }
 }
@@ -145,7 +146,7 @@ mod metadata_type;
 mod symbol_ref;
 mod written_counts;
 
-pub use decode_v2::decode_v2;
+pub use decode_v2::{DecodedV2Write, decode_v2};
 use labels_from_refs::labels_from_refs;
 use metadata_from_v2::metadata_from_v2;
 use metadata_type::metadata_type;

@@ -77,9 +77,11 @@ pub(super) fn render(value: f64, verb: char, mut spec: Spec) -> Option<String> {
 }
 
 fn exponent(value: &str, marker: char) -> String {
-    let Some((mantissa, exponent)) = value.split_once('e') else {
+    let Some(parts) = value.split_once('e') else {
         return value.into();
     };
+    let mantissa = parts.0;
+    let exponent = parts.1;
     let exponent: i32 = exponent.parse().unwrap_or(0);
     format!(
         "{mantissa}{marker}{}{exponent:02}",
@@ -94,7 +96,9 @@ fn general(value: f64, precision: Option<usize>, upper: bool, sharp: bool) -> St
         || format!("{value:e}"),
         |digits| format!("{value:.precision$e}", precision = digits - 1),
     );
-    let (mantissa, power) = scientific.split_once('e').unwrap_or((&scientific, "0"));
+    let split = scientific.split_once('e');
+    let mantissa = split.map_or(scientific.as_str(), |parts| parts.0);
+    let power = split.map_or("0", |parts| parts.1);
     let power: i32 = power.parse().unwrap_or(0);
     let threshold = digits.unwrap_or(6);
     let marker = if upper { 'E' } else { 'e' };
@@ -237,57 +241,91 @@ mod tests {
 
     use super::*;
 
+    struct FloatExpectationCase {
+        value: f64,
+        expected: &'static str,
+    }
+
+    struct FormatSpecCase {
+        verb: char,
+        spec: Spec,
+    }
+
     #[test]
     fn go_extreme_values_rounding_and_negative_zero() {
         // Independently captured from Go1.26.5 fmt source (byte-identical to
         // host 1.26.0), including subnormal and hexadecimal carry boundaries.
-        for (value, expected) in [
-            (
-                f64::from_bits(1),
-                "5e-324|4.94e-324|5.00000e-324|0x1p-1074|0x1p-1074|1p-1074",
-            ),
-            (
-                f64::MAX,
-                "1.7976931348623157e+308|1.8e+308|1.7976931348623157e+308|0x1.fffffffffffffp+1023|0x1p+1024|9007199254740991p+971",
-            ),
-            (-0.0, "-0|-0|-0.00000|-0x0p+00|-0x0p+00|-0p-1074"),
-            (f64::INFINITY, "+Inf|+Inf|+Inf|+Inf|+Inf|+Inf"),
-            (f64::NAN, "NaN|NaN|NaN|NaN|NaN|NaN"),
-            (
-                9.999,
-                "9.999|10|9.99900|0x1.3ff7ced916873p+03|0x1p+03|5628936584259699p-49",
-            ),
-            (
-                999_999.5,
-                "999999.5|1e+06|999999.5|0x1.e847fp+19|0x1p+20|8589930297032704p-33",
-            ),
-        ] {
-            let formats = [
-                ('g', Spec::default()),
-                (
-                    'g',
-                    Spec {
-                        precision: Some(3),
-                        ..Spec::default()
-                    },
-                ),
-                ('g', Spec { ..Spec::default() }.with_flag(Spec::SHARP, true)),
-                ('x', Spec::default()),
-                (
-                    'x',
-                    Spec {
-                        precision: Some(0),
-                        ..Spec::default()
-                    },
-                ),
-                ('b', Spec::default()),
-            ];
-            let actual = formats
-                .into_iter()
-                .map(|(verb, spec)| render(value, verb, spec).unwrap())
-                .collect::<Vec<_>>()
-                .join("|");
-            check!(actual == expected);
+        let cases = [
+            FloatExpectationCase {
+                value: f64::from_bits(1),
+                expected: "5e-324|4.94e-324|5.00000e-324|0x1p-1074|0x1p-1074|1p-1074",
+            },
+            FloatExpectationCase {
+                value: f64::MAX,
+                expected: "1.7976931348623157e+308|1.8e+308|1.7976931348623157e+308|0x1.fffffffffffffp+1023|0x1p+1024|9007199254740991p+971",
+            },
+            FloatExpectationCase {
+                value: -0.0,
+                expected: "-0|-0|-0.00000|-0x0p+00|-0x0p+00|-0p-1074",
+            },
+            FloatExpectationCase {
+                value: f64::INFINITY,
+                expected: "+Inf|+Inf|+Inf|+Inf|+Inf|+Inf",
+            },
+            FloatExpectationCase {
+                value: f64::NAN,
+                expected: "NaN|NaN|NaN|NaN|NaN|NaN",
+            },
+            FloatExpectationCase {
+                value: 9.999,
+                expected: "9.999|10|9.99900|0x1.3ff7ced916873p+03|0x1p+03|5628936584259699p-49",
+            },
+            FloatExpectationCase {
+                value: 999_999.5,
+                expected: "999999.5|1e+06|999999.5|0x1.e847fp+19|0x1p+20|8589930297032704p-33",
+            },
+        ];
+        let formats = [
+            FormatSpecCase {
+                verb: 'g',
+                spec: Spec::default(),
+            },
+            FormatSpecCase {
+                verb: 'g',
+                spec: Spec {
+                    precision: Some(3),
+                    ..Spec::default()
+                },
+            },
+            FormatSpecCase {
+                verb: 'g',
+                spec: Spec::default().with_flag(Spec::SHARP, true),
+            },
+            FormatSpecCase {
+                verb: 'x',
+                spec: Spec::default(),
+            },
+            FormatSpecCase {
+                verb: 'x',
+                spec: Spec {
+                    precision: Some(0),
+                    ..Spec::default()
+                },
+            },
+            FormatSpecCase {
+                verb: 'b',
+                spec: Spec::default(),
+            },
+        ];
+        for case_index in 0..cases.len() {
+            let case = &cases[case_index];
+            let mut actual_parts = Vec::with_capacity(formats.len());
+            for format_index in 0..formats.len() {
+                let format = &formats[format_index];
+                actual_parts.push(render(case.value, format.verb, format.spec).unwrap());
+            }
+            let actual = actual_parts.join("|");
+            check!(actual == case.expected);
         }
     }
 }

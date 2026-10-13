@@ -81,7 +81,9 @@ pub(crate) fn eval_one_to_many_vector_binary(
         });
     }
     if let Some(rhs_fill) = modifier.and_then(|modifier| modifier.fill_values.lhs) {
-        for (key, left_sample) in left_by_key {
+        for entry in left_by_key {
+            let key = entry.0;
+            let left_sample = entry.1;
             if matched.contains(&key) {
                 continue;
             }

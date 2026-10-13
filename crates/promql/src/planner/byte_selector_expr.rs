@@ -13,6 +13,11 @@ pub(crate) struct ByteSelectorExpr {
     pub(crate) matcher_sets: Vec<Vec<PromqlMatcher>>,
 }
 
+struct FormattedSelector {
+    selector: promql_parser::parser::VectorSelector,
+    range: String,
+}
+
 impl LeafExtension for ByteSelectorExpr {
     const NAME: &'static str = "byteSelector";
 
@@ -90,15 +95,21 @@ pub(crate) fn restore_byte_selector(expr: &mut Expr, values: &BTreeMap<String, P
 
 impl ByteSelectorExpr {
     pub(crate) fn format(&self) -> String {
-        let (mut selector, range) = match &self.child {
-            Expr::VectorSelector(selector) => (selector.clone(), String::new()),
-            Expr::MatrixSelector(selector) => (
-                selector.vs.clone(),
-                format!(
+        let FormattedSelector {
+            mut selector,
+            range,
+        } = match &self.child {
+            Expr::VectorSelector(selector) => FormattedSelector {
+                selector: selector.clone(),
+                range: String::new(),
+            },
+            Expr::MatrixSelector(selector) => FormattedSelector {
+                selector: selector.vs.clone(),
+                range: format!(
                     "[{}]",
                     promql_parser::util::display_duration(&selector.range)
                 ),
-            ),
+            },
             _ => unreachable!("byte selector has a selector child"),
         };
         let metric_name = selector.name.clone();
@@ -122,12 +133,7 @@ impl ByteSelectorExpr {
                                 .is_some_and(|name| matcher.value == *name))
                     })
                     .map(|matcher| {
-                        let name = if matcher.name.bytes().enumerate().all(|(index, byte)| {
-                            byte == b'_'
-                                || byte.is_ascii_alphabetic()
-                                || (index > 0 && byte.is_ascii_digit())
-                        }) && !matcher.name.is_empty()
-                        {
+                        let name = if valid_label_name(&matcher.name) {
                             matcher.name.clone()
                         } else {
                             serde_json::to_string(&matcher.name).expect("label name")
@@ -169,4 +175,18 @@ impl ByteSelectorExpr {
             suffix.trim_start_matches("byte_selector_suffix")
         )
     }
+}
+
+fn valid_label_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let bytes = name.as_bytes();
+    for index in 0..bytes.len() {
+        let byte = bytes[index];
+        if byte != b'_' && !byte.is_ascii_alphabetic() && !(index > 0 && byte.is_ascii_digit()) {
+            return false;
+        }
+    }
+    true
 }

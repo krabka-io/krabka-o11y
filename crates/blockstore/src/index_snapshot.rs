@@ -85,6 +85,13 @@ mod tests {
         const LABEL: &str = "test index snapshot";
         const KEY: &str = "index/test.json";
 
+        struct ShardRangeCase {
+            name: &'static str,
+            min_ts: i64,
+            max_ts: i64,
+            expected: Vec<IndexShardRange>,
+        }
+
         fn store() -> Arc<dyn ObjectStore> {
             Arc::new(InMemory::new())
         }
@@ -138,33 +145,55 @@ mod tests {
         /// span and nothing else.
         #[test]
         fn a_record_belongs_to_every_slot_its_span_crosses() {
-            for (name, min_ts, max_ts, expected) in [
-                ("inside one slot", 10_i64, 90_i64, vec![(0_i64, 99_i64)]),
-                ("exactly one slot", 0, 99, vec![(0, 99)]),
-                ("across a boundary", 90, 110, vec![(0, 99), (100, 199)]),
-                (
-                    "three slots",
-                    50,
-                    250,
-                    vec![(0, 99), (100, 199), (200, 299)],
-                ),
-                ("before the epoch", -10, -1, vec![(-100, -1)]),
-                (
-                    "reversed bounds",
-                    250,
-                    50,
-                    vec![(0, 99), (100, 199), (200, 299)],
-                ),
+            for case in [
+                ShardRangeCase {
+                    name: "inside one slot",
+                    min_ts: 10_i64,
+                    max_ts: 90_i64,
+                    expected: vec![IndexShardRange::new(0_i64, 99_i64)],
+                },
+                ShardRangeCase {
+                    name: "exactly one slot",
+                    min_ts: 0,
+                    max_ts: 99,
+                    expected: vec![IndexShardRange::new(0, 99)],
+                },
+                ShardRangeCase {
+                    name: "across a boundary",
+                    min_ts: 90,
+                    max_ts: 110,
+                    expected: vec![IndexShardRange::new(0, 99), IndexShardRange::new(100, 199)],
+                },
+                ShardRangeCase {
+                    name: "three slots",
+                    min_ts: 50,
+                    max_ts: 250,
+                    expected: vec![
+                        IndexShardRange::new(0, 99),
+                        IndexShardRange::new(100, 199),
+                        IndexShardRange::new(200, 299),
+                    ],
+                },
+                ShardRangeCase {
+                    name: "before the epoch",
+                    min_ts: -10,
+                    max_ts: -1,
+                    expected: vec![IndexShardRange::new(-100, -1)],
+                },
+                ShardRangeCase {
+                    name: "reversed bounds",
+                    min_ts: 250,
+                    max_ts: 50,
+                    expected: vec![
+                        IndexShardRange::new(0, 99),
+                        IndexShardRange::new(100, 199),
+                        IndexShardRange::new(200, 299),
+                    ],
+                },
             ] {
-                let got = shard_ranges_for_span(min_ts, max_ts, 100);
+                let got = shard_ranges_for_span(case.min_ts, case.max_ts, 100);
 
-                check!(
-                    got == expected
-                        .into_iter()
-                        .map(|(start, end)| IndexShardRange::new(start, end))
-                        .collect::<Vec<_>>(),
-                    "{name}"
-                );
+                check!(got == case.expected, "{}", case.name);
             }
         }
 
@@ -301,8 +330,10 @@ mod tests {
             let range = IndexShardRange::new(10, 20);
             let content = shard_payload_content_hash(b"payload");
 
-            for (name, tenant) in AWKWARD_TENANTS {
-                let key = shard_payload_object_key(KEY, tenant, range, &content);
+            for case in AWKWARD_TENANTS {
+                let name = case.name;
+                let tenant = case.tenant;
+                let key = shard_payload_object_key(KEY, case.tenant, range, &content);
                 let rest = key
                     .strip_prefix(&prefix)
                     .expect("a payload key sits under the payload prefix of its key");
@@ -319,7 +350,7 @@ mod tests {
                     segments[0]
                         .strip_prefix("tenant=")
                         .and_then(unescape_object_path_segment)
-                        == Some(tenant.to_string()),
+                        == Some(case.tenant.to_string()),
                     "{name}"
                 );
                 check!(is_shard_payload_location(KEY, &key), "{name}");
@@ -398,7 +429,7 @@ pub(crate) use manifest_snapshot_base::ManifestSnapshotBase;
 pub(crate) use max_shard_slots_per_record::MAX_SHARD_SLOTS_PER_RECORD;
 pub(crate) use parse_shard_payload_location::is_shard_payload_location;
 pub(crate) use pending_block_additions::PendingBlockAdditions;
-pub(crate) use pending_block_removals::PendingBlockRemovals;
+pub(crate) use pending_block_removals::{PendingBlockRemoval, PendingBlockRemovals};
 pub(crate) use pending_removal::PendingRemoval;
 pub(crate) use prune_old_index_snapshots::prune_old_index_snapshots;
 pub(crate) use put_manifest_snapshot::put_manifest_snapshot;

@@ -18,15 +18,13 @@ pub(crate) async fn histogram_quantiles_emits_one_sample_per_requested_quantile(
         panic!("expected vector");
     };
     assert2::assert!(samples.len() == 2);
-    let values = samples
-        .iter()
-        .map(|sample| {
-            (
-                sample.labels.get("quantile").expect("quantile label"),
-                float_value(&sample.value),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
+    let mut values = BTreeMap::new();
+    for sample in &samples {
+        values.insert(
+            sample.labels.get("quantile").expect("quantile label"),
+            float_value(&sample.value),
+        );
+    }
     check!(approx_eq(*values.get("0.5").expect("p50 sample"), 0.25));
     check!(approx_eq(*values.get("0.9").expect("p90 sample"), 0.37));
     check!(samples.iter().all(|sample| {

@@ -17,9 +17,9 @@ use krabka_client_coordination::{BrokerTransport, LeaseConfig, MemberId, Role};
 use krabka_client_core::{ClientSecurity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY};
 use krabka_metrics::{Limits, OverridesProvider, WAL_TOPIC};
 use krabka_metrics_service::{
-    MimirTenantAdminState, RULER_STATE_TOPIC, RulerAlertmanagerSink, WalHeadConsumerCommit,
-    WalHeadConsumerPoll, install_bundled_rule_groups, mimir_tenant_admin_router,
-    poll_ruler_state_consumer_once, run_fenced_ruler_evaluation_loop,
+    MimirTenantAdminState, RULER_STATE_TOPIC, RulerAlertmanagerSink, RulerTopics,
+    WalHeadConsumerCommit, WalHeadConsumerPoll, install_bundled_rule_groups,
+    mimir_tenant_admin_router, poll_ruler_state_consumer_once, run_fenced_ruler_evaluation_loop,
     run_ruler_state_consumer_loop, run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
 use krabka_observability::{
@@ -38,6 +38,18 @@ use krabka_promql::{
 use krabka_telemetry::OtlpConfig;
 use krabka_units::{parse, prelude::*};
 use object_store::ObjectStore;
+
+#[macro_export]
+macro_rules! server_or_critical_task_exit {
+    ($server:expr, $tasks:expr) => {
+        tokio::select! {
+            result = $server => result.map_err(Into::into),
+            name = $tasks.first_unexpected_exit() => Err(
+                Box::<dyn std::error::Error>::from(krabka_observability::CriticalTaskError(name)),
+            ),
+        }
+    };
+}
 
 #[cfg(test)]
 mod tests {
@@ -248,9 +260,9 @@ mod tests {
         assert2::assert!(
             cli.ruler_external_label
                 == [
-                    ("cluster".to_string(), "prod".to_string()),
-                    ("location".to_string(), "Paris, France".to_string()),
-                    ("route".to_string(), "blue;green".to_string()),
+                    parse_external_label("cluster=prod").unwrap(),
+                    parse_external_label("location=Paris, France").unwrap(),
+                    parse_external_label("route=blue;green").unwrap(),
                 ]
         );
         assert2::assert!(
@@ -288,9 +300,9 @@ mod tests {
                 assert2::assert!(
                     cli.ruler_external_label_env.unwrap().0
                         == [
-                            ("cluster".to_string(), "prod".to_string()),
-                            ("location".to_string(), "Paris, France".to_string()),
-                            ("route".to_string(), "blue;green".to_string()),
+                            parse_external_label("cluster=prod").unwrap(),
+                            parse_external_label("location=Paris, France").unwrap(),
+                            parse_external_label("route=blue;green").unwrap(),
                         ]
                 );
             },
@@ -626,21 +638,21 @@ mod tests {
         let lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
         let _guard = lock.lock().expect("environment lock");
 
-        temp_env::with_vars(
-            [
-                ("KRABKA_METRICS_SERVICE_TARGET", Some("querier")),
-                ("KRABKA_METRICS_WAL_POLL_TIMEOUT", Some("250ms")),
-                ("KRABKA_METRICS_QUERIER_WAL_HEAD_RETENTION", Some("10m")),
-            ],
-            || {
-                let cli =
-                    Cli::try_parse_from(["krabka-metrics-service"]).expect("parse environment");
-                assert2::assert!(matches!(cli.target, Target::Querier));
-                assert2::assert!(
-                    (cli.wal_poll_timeout, cli.wal_head_retention) == (millis(250), minutes(10))
+        temp_env::with_var("KRABKA_METRICS_SERVICE_TARGET", Some("querier"), || {
+            temp_env::with_var("KRABKA_METRICS_WAL_POLL_TIMEOUT", Some("250ms"), || {
+                temp_env::with_var(
+                    "KRABKA_METRICS_QUERIER_WAL_HEAD_RETENTION",
+                    Some("10m"),
+                    || {
+                        let cli = Cli::try_parse_from(["krabka-metrics-service"])
+                            .expect("parse environment");
+                        assert2::assert!(matches!(cli.target, Target::Querier));
+                        assert2::assert!(cli.wal_poll_timeout == millis(250));
+                        assert2::assert!(cli.wal_head_retention == minutes(10));
+                    },
                 );
-            },
-        );
+            });
+        });
     }
 
     #[test]
@@ -758,7 +770,8 @@ mod tests {
     #[tokio::test]
     async fn wal_head_consumer_startup_runs_in_background() {
         let shutdown = Shutdown::new();
-        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let channel = tokio::sync::oneshot::channel::<()>();
+        let rx = channel.1;
         let readiness = RoleReadiness::new();
 
         let task = spawn_wal_head_consumer_task(
@@ -784,7 +797,12 @@ mod tests {
     }
 
     /// `GET /ready` against a router, as a probe would ask it.
-    async fn probe_ready(router: &axum::Router) -> (axum::http::StatusCode, String) {
+    struct ProbeResult {
+        status: axum::http::StatusCode,
+        body: String,
+    }
+
+    async fn probe_ready(router: &axum::Router) -> ProbeResult {
         use tower::ServiceExt as _;
 
         let response = router
@@ -801,7 +819,10 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("readiness probe body");
-        (status, String::from_utf8_lossy(&body).into_owned())
+        ProbeResult {
+            status,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        }
     }
 
     /// The querier binds its listener before its WAL head consumer has reached
@@ -822,7 +843,9 @@ mod tests {
         let router = krabka_promql::metrics::metrics_router(metrics.registry.clone())
             .merge(readiness_router(readiness.clone()));
         let shutdown = Shutdown::new();
-        let (connect_tx, connect_rx) = tokio::sync::oneshot::channel::<()>();
+        let connect_channel = tokio::sync::oneshot::channel::<()>();
+        let connect_tx = connect_channel.0;
+        let connect_rx = connect_channel.1;
 
         let task = spawn_wal_head_consumer_task(
             || async move {
@@ -840,13 +863,11 @@ mod tests {
             },
         );
 
-        assert2::assert!(
-            probe_ready(&router).await
-                == (
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                    "not ready: wal-head\n".to_string()
-                )
-        );
+        assert2::assert!({
+            let probe = probe_ready(&router).await;
+            probe.status == axum::http::StatusCode::SERVICE_UNAVAILABLE
+                && probe.body == "not ready: wal-head\n"
+        });
 
         connect_tx.send(()).expect("release the consumer connect");
         // Progress poll, not a run-duration budget: wait for the connect the
@@ -858,9 +879,10 @@ mod tests {
             tokio::time::sleep(millis(1).to_std()).await;
         }
 
-        assert2::assert!(
-            probe_ready(&router).await == (axum::http::StatusCode::OK, "ready\n".to_string())
-        );
+        assert2::assert!({
+            let probe = probe_ready(&router).await;
+            probe.status == axum::http::StatusCode::OK && probe.body == "ready\n"
+        });
 
         task.abort();
     }

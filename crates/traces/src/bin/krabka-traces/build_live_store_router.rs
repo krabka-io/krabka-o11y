@@ -6,6 +6,7 @@ use super::{
     engine_opts_from_cli, limits_from_cli, live_span_batches, load_traces_limits_overrides_config,
     trace_querier,
 };
+use crate::live_span_batches::LiveStoreState;
 
 pub(crate) fn build_live_store_router(
     cli: &Cli,
@@ -51,6 +52,9 @@ pub(crate) fn build_live_store_router(
             "/api/krabka/live/span-batches",
             axum::routing::get(live_span_batches),
         )
-        .with_state((live_store, tenant_policy));
+        .with_state(LiveStoreState {
+            store: live_store,
+            tenant_policy,
+        });
     Ok(tempo_router.merge(internal_router))
 }

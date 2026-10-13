@@ -29,7 +29,13 @@ pub(crate) fn combine_instant_binary(
 
     if let Some(op) = SetOp::from_token(binary.op) {
         validate_set_modifier(modifier)?;
-        let (InstantValue::Vector(left), InstantValue::Vector(right)) = (lhs, rhs) else {
+        let InstantValue::Vector(left) = lhs else {
+            return Err(PromqlError::Plan(format!(
+                "set operator `{}` requires instant-vector operands",
+                binary.op
+            )));
+        };
+        let InstantValue::Vector(right) = rhs else {
             return Err(PromqlError::Plan(format!(
                 "set operator `{}` requires instant-vector operands",
                 binary.op
@@ -42,61 +48,73 @@ pub(crate) fn combine_instant_binary(
 
     validate_binary_modifier(modifier)?;
     let op = BinaryOp::try_from_token(binary.op)?;
-    match (lhs, rhs) {
-        (InstantValue::Scalar(left), InstantValue::Scalar(right)) => {
-            if matches!(op, BinaryOp::TrimUpper | BinaryOp::TrimLower) {
-                return Err(PromqlError::Exec(format!(
-                    "operator {:?} not allowed for Scalar operations",
-                    op.symbol()
-                )));
-            }
-            let Some(value) = op.apply_scalar(left, right, modifier) else {
-                return Err(PromqlError::Plan(
-                    "scalar comparison without bool cannot filter a scalar".to_string(),
-                ));
-            };
-            Ok(QueryResult::Scalar {
-                ts_ms: time_ms,
-                value,
-            })
-        }
-        (InstantValue::Vector(vector), InstantValue::Scalar(scalar)) => {
-            let samples = vector
-                .into_iter()
-                .filter_map(|sample| {
-                    op.apply_vector_scalar(sample, scalar, modifier, ScalarSide::Right)
-                })
-                .collect();
-            Ok(QueryResult::InstantVector(samples))
-        }
-        (InstantValue::Scalar(scalar), InstantValue::Vector(vector)) => {
-            let samples = vector
-                .into_iter()
-                .filter_map(|sample| {
-                    op.apply_vector_scalar(sample, scalar, modifier, ScalarSide::Left)
-                })
-                .collect();
-            Ok(QueryResult::InstantVector(samples))
-        }
-        (InstantValue::Vector(left), InstantValue::Vector(right)) => {
-            let mut samples = eval_vector_vector_binary(
-                VectorOperands { left, right },
-                VectorMatching { op, modifier },
-            )?;
-            if op.changes_metric_schema() {
-                // Unlike vector/scalar arithmetic, resultMetric clears schema
-                // metadata eagerly. A subquery must not treat the left metric
-                // as the origin of a newly computed vector/vector value.
-                for sample in &mut samples {
-                    sample.labels = sample
-                        .labels
-                        .iter()
-                        .filter(|(name, _)| !is_result_metadata_label(name))
-                        .map(|(name, value)| (name.clone(), value.clone()))
-                        .collect();
+    match lhs {
+        InstantValue::Scalar(left) => match rhs {
+            InstantValue::Scalar(right) => {
+                if matches!(op, BinaryOp::TrimUpper | BinaryOp::TrimLower) {
+                    return Err(PromqlError::Exec(format!(
+                        "operator {:?} not allowed for Scalar operations",
+                        op.symbol()
+                    )));
                 }
+                let Some(value) = op.apply_scalar(left, right, modifier) else {
+                    return Err(PromqlError::Plan(
+                        "scalar comparison without bool cannot filter a scalar".to_string(),
+                    ));
+                };
+                Ok(QueryResult::Scalar {
+                    ts_ms: time_ms,
+                    value,
+                })
             }
-            Ok(QueryResult::InstantVector(samples))
-        }
+            InstantValue::Vector(vector) => {
+                let samples = vector
+                    .into_iter()
+                    .filter_map(|sample| {
+                        op.apply_vector_scalar(sample, left, modifier, ScalarSide::Right)
+                    })
+                    .collect();
+                Ok(QueryResult::InstantVector(samples))
+            }
+        },
+        InstantValue::Vector(vector) => match rhs {
+            InstantValue::Scalar(scalar) => {
+                let samples = vector
+                    .into_iter()
+                    .filter_map(|sample| {
+                        op.apply_vector_scalar(sample, scalar, modifier, ScalarSide::Left)
+                    })
+                    .collect();
+                Ok(QueryResult::InstantVector(samples))
+            }
+            InstantValue::Vector(right) => {
+                let mut samples = eval_vector_vector_binary(
+                    VectorOperands {
+                        left: vector,
+                        right,
+                    },
+                    VectorMatching { op, modifier },
+                )?;
+                if op.changes_metric_schema() {
+                    // Unlike vector/scalar arithmetic, resultMetric clears schema
+                    // metadata eagerly. A subquery must not treat the left metric
+                    // as the origin of a newly computed vector/vector value.
+                    for sample in &mut samples {
+                        sample.labels = sample
+                            .labels
+                            .iter()
+                            .filter(|pair| !is_result_metadata_label(pair.name))
+                            .map(|pair| {
+                                krabka_metrics::MetricLabelPair::new(
+                                    pair.name.clone(),
+                                    pair.value.clone(),
+                                )
+                            })
+                            .collect();
+                    }
+                }
+                Ok(QueryResult::InstantVector(samples))
+            }
+        },
     }
 }

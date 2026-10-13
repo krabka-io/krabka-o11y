@@ -1,3 +1,5 @@
+use derive_more::Display;
+
 /// One stage of a signal's pipeline, named as the upstream this stack tracks
 /// names it.
 ///
@@ -13,11 +15,12 @@
 /// because only metrics evaluates recording and alerting rules, and
 /// [`Symbolizer`](Self::Symbolizer) is a profiles stage because only profiles
 /// resolves addresses to function names.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Display, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum RoleKind {
     /// Accepts pushes, applies limits, and writes the signal's WAL topic.
     ///
     /// All four upstreams call it this.
+    #[display("distributor")]
     Distributor,
     /// Consumes the WAL topic and writes blocks to object storage.
     ///
@@ -27,6 +30,7 @@ pub enum RoleKind {
     /// it `compactor` here, which put one word on two different jobs -- this
     /// stage in two signals, and [`Compactor`](Self::Compactor) in the other
     /// two. `block-builder` is the half with upstream behind it.
+    #[display("block-builder")]
     BlockBuilder,
     /// Holds the window of data that no block covers yet, and answers queries
     /// over it.
@@ -35,16 +39,19 @@ pub enum RoleKind {
     /// in memory ... so they're queryable within seconds of ingestion". It is
     /// the only upstream with the stage and so the only one that could name
     /// it.
+    #[display("live-store")]
     LiveStore,
     /// Answers a query over the blocks it is given, and over whatever live
     /// tier it can reach.
     ///
     /// All four upstreams call it this.
+    #[display("querier")]
     Querier,
     /// Splits a query into jobs, fans them out to queriers, and merges what
     /// comes back.
     ///
     /// All four upstreams call it this.
+    #[display("query-frontend")]
     QueryFrontend,
     /// Merges blocks that are already in object storage into larger ones, and
     /// enforces retention.
@@ -53,18 +60,23 @@ pub enum RoleKind {
     /// index, and carries the delete requests too. A compactor reads and
     /// writes object storage only: it never touches the WAL, which is what
     /// separates it from [`BlockBuilder`](Self::BlockBuilder).
+    #[display("compactor")]
     Compactor,
     /// Evaluates recording and alerting rules. Loki's and Mimir's `ruler`.
+    #[display("ruler")]
     Ruler,
     /// Derives metrics from spans and remote-writes them. Tempo's
     /// `metrics-generator`.
+    #[display("metrics-generator")]
     MetricsGenerator,
     /// Resolves profile addresses to function names. Pyroscope's `symbolizer`.
+    #[display("symbolizer")]
     Symbolizer,
     /// Every role of the signal, in one process.
     ///
     /// Loki, Mimir, Tempo and Pyroscope all spell the single-process mode
     /// `all`, so this does too.
+    #[display("all")]
     All,
 }
 
@@ -95,11 +107,5 @@ impl RoleKind {
     #[must_use]
     pub const fn is_composite(self) -> bool {
         matches!(self, Self::All)
-    }
-}
-
-impl std::fmt::Display for RoleKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
     }
 }

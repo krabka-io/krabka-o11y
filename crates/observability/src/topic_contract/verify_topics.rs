@@ -59,11 +59,22 @@ async fn report(
     let configs = admin
         .describe_configs(&resources, DescribeConfigsOptions::default())
         .await?;
-    let (observed, drift) = inspect_topics(topics, expectation, &metadata, &configs);
+    let inspection = inspect_topics(topics, expectation, &metadata, &configs);
 
-    let (fatal, advisory): (Vec<_>, Vec<_>) = drift.into_iter().partition(TopicDrift::is_fatal);
+    let mut fatal = Vec::new();
+    let mut advisory = Vec::new();
+    for drift in inspection.drift {
+        if drift.is_fatal() {
+            fatal.push(drift);
+        } else {
+            advisory.push(drift);
+        }
+    }
     if !fatal.is_empty() {
         return Err(TopicContractError::Contract { drift: fatal });
     }
-    Ok(TopicReport { observed, advisory })
+    Ok(TopicReport {
+        observed: inspection.observed,
+        advisory,
+    })
 }

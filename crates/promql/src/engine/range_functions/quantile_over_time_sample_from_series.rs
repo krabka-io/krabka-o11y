@@ -11,7 +11,7 @@ pub(crate) fn quantile_over_time_sample_from_series(
     note_histograms_ignored_in_range(series, range_end_ms, range);
     let mut values = float_range_samples(series, range_end_ms, range)
         .into_iter()
-        .map(|(_, value)| value)
+        .map(|sample| sample.value)
         .collect::<Vec<_>>();
     quantile_value(quantile, &mut values)
 }

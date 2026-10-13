@@ -6,7 +6,9 @@ pub(crate) fn first_unquoted_match<T>(
 ) -> Option<T> {
     let mut in_string = false;
     let mut escaped = false;
-    for (index, ch) in query.char_indices() {
+    for character in query.char_indices() {
+        let index = character.0;
+        let ch = character.1;
         if in_string {
             if escaped {
                 escaped = false;

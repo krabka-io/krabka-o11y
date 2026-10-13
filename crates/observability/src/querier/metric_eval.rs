@@ -1,3 +1,10 @@
+use crate::MetricValue;
+
+pub(crate) struct MetricOperandValues {
+    pub(crate) left: MetricValue,
+    pub(crate) right: MetricValue,
+}
+
 pub(crate) mod binary_arithmetic;
 pub(crate) mod binary_sets;
 pub(crate) mod expression_parser;

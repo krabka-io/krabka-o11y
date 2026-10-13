@@ -9,16 +9,18 @@ pub(crate) fn otlp_scope_spans(
     let groups = group_by_instrumentation(input_spans);
     groups
         .into_iter()
-        .map(|((name, version, attributes), spans)| OtlpScopeSpans {
-            scope: (!name.is_empty() || !version.is_empty() || !attributes.is_empty()).then_some(
-                InstrumentationScope {
-                    name,
-                    version,
-                    attributes: otlp_attrs(&attributes),
-                    ..InstrumentationScope::default()
-                },
-            ),
-            spans: spans
+        .map(|group| OtlpScopeSpans {
+            scope: (!group.key.name.is_empty()
+                || !group.key.version.is_empty()
+                || !group.key.attributes.is_empty())
+            .then_some(InstrumentationScope {
+                name: group.key.name,
+                version: group.key.version,
+                attributes: otlp_attrs(&group.key.attributes),
+                ..InstrumentationScope::default()
+            }),
+            spans: group
+                .spans
                 .into_iter()
                 .map(|span| otlp_span(trace_id, span))
                 .collect(),

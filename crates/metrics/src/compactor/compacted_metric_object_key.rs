@@ -17,7 +17,9 @@ use super::{CompactionJob, MetricBlockKind, escape_object_path_segment, input_ke
 /// tenant name cannot add a segment or step out of the `metrics/` prefix.
 #[must_use]
 pub fn compacted_metric_object_key(job: &CompactionJob, kind: MetricBlockKind) -> String {
-    let (level, min_ts, max_ts) = (job.output_level, job.min_ts, job.max_ts);
+    let level = job.output_level;
+    let min_ts = job.min_ts;
+    let max_ts = job.max_ts;
     let tenant = escape_object_path_segment(&job.tenant);
     let kind = kind.object_path();
     format!(

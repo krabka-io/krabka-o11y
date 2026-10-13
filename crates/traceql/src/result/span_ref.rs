@@ -1,4 +1,4 @@
-use super::{AttrValue, EventRef, LinkRef, Time};
+use super::{Attribute, EventRef, LinkRef, Time};
 
 /// One matched span in a result span set.
 ///
@@ -19,8 +19,8 @@ pub struct SpanRef {
     pub status_message: String,
     pub instrumentation_name: String,
     pub instrumentation_version: String,
-    pub resource_attributes: Vec<(String, AttrValue)>,
-    pub attributes: Vec<(String, AttrValue)>,
+    pub resource_attributes: Vec<Attribute>,
+    pub attributes: Vec<Attribute>,
     pub events: Vec<EventRef>,
     pub links: Vec<LinkRef>,
 }

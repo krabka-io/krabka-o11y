@@ -21,7 +21,7 @@ pub(crate) fn add_nested_intrinsic_columns_to_batch(
     .collect::<Vec<_>>();
     let missing_attrs = nested_attr_columns(matchers)
         .into_iter()
-        .filter(|(column, _)| schema.column_with_name(column).is_none())
+        .filter(|projection| schema.column_with_name(&projection.column).is_none())
         .collect::<Vec<_>>();
     if missing.is_empty() && missing_attrs.is_empty() {
         return Ok(batch.clone());
@@ -74,7 +74,8 @@ pub(crate) fn add_nested_intrinsic_columns_to_batch(
             _ => {}
         }
     }
-    for (column, _) in missing_attrs {
+    for projection in missing_attrs {
+        let column = projection.column;
         let array = nested
             .attr_columns
             .get(&column)

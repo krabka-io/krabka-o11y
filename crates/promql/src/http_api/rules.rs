@@ -26,9 +26,16 @@ use url::form_urlencoded;
 
 use super::{
     AlertStateKey, ApiError, AuditHandle, Extension, Principal, PrometheusApiState, Rejection,
-    RequestAuth, RulesParams, authorized_tenant_from_headers, sample_string, success_data_response,
+    RequestAuth, RulesParams, authorized_tenant_from_headers, response_with_status, sample_string,
+    success_data_response,
 };
 use crate::{MetricStore, PromqlError, QueryResult, SampleValue, parse_promql};
+
+#[derive(serde::Deserialize)]
+pub(super) struct RuleGroupPath {
+    pub(super) namespace: String,
+    pub(super) group_name: String,
+}
 
 mod accepted_response;
 mod alerts;
@@ -95,3 +102,43 @@ use yaml_optional_string::yaml_optional_string;
 use yaml_response::yaml_response;
 use yaml_string::yaml_string;
 use zero_evaluation_time::zero_evaluation_time;
+
+async fn persist_ruler_config_or_restore<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    tenant: &TenantId,
+    previous_rules: Option<super::RulerRuleStore>,
+    mut response: Response,
+) -> Response {
+    if response.status().is_success()
+        && let Err(error) = state.persist_ruler_config(tenant).await
+    {
+        if let Some(previous_rules) = previous_rules
+            && let Ok(mut rules) = state.ruler_rules.write()
+        {
+            *rules = previous_rules;
+        }
+        response = response_with_status(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to persist ruler config: {error}\n"),
+        );
+    }
+    response
+}
+
+fn authorized_ruler_group_tenant(
+    headers: &HeaderMap,
+    principal: &Principal,
+) -> Result<TenantId, Response> {
+    authorized_tenant_from_headers(headers, principal).map_err(IntoResponse::into_response)
+}
+
+macro_rules! authorized_ruler_group_tenant_or_return {
+    ($headers:expr, $principal:expr, $authorize:path) => {
+        match $authorize($headers, $principal) {
+            Ok(tenant) => tenant,
+            Err(response) => return response,
+        }
+    };
+}
+
+pub(crate) use authorized_ruler_group_tenant_or_return;

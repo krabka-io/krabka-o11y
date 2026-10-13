@@ -24,24 +24,25 @@ pub fn load_internal_client(
         }
     };
 
-    let identity = match (
-        args.internal_client_tls_cert_path.as_deref(),
-        args.internal_client_tls_key_path.as_deref(),
-    ) {
-        (None, None) => None,
-        (Some(_), None) => return Err(ServerSecurityError::InternalClientCertificateWithoutKey),
-        (None, Some(_)) => return Err(ServerSecurityError::InternalClientKeyWithoutCertificate),
-        (Some(certificate), Some(key)) => {
-            let pem = [read_file(certificate)?, read_file(key)?].concat();
-            let identity = reqwest::Identity::from_pem(&pem).map_err(|source| {
-                ServerSecurityError::InvalidInternalClientIdentity {
-                    certificate: certificate.to_owned(),
-                    key: key.to_owned(),
-                    source,
-                }
-            })?;
-            Some(identity)
-        }
+    let certificate = args.internal_client_tls_cert_path.as_deref();
+    let key = args.internal_client_tls_key_path.as_deref();
+    let identity = if let Some(certificate) = certificate {
+        let Some(key) = key else {
+            return Err(ServerSecurityError::InternalClientCertificateWithoutKey);
+        };
+        let pem = [read_file(certificate)?, read_file(key)?].concat();
+        let identity = reqwest::Identity::from_pem(&pem).map_err(|source| {
+            ServerSecurityError::InvalidInternalClientIdentity {
+                certificate: certificate.to_owned(),
+                key: key.to_owned(),
+                source,
+            }
+        })?;
+        Some(identity)
+    } else if key.is_some() {
+        return Err(ServerSecurityError::InternalClientKeyWithoutCertificate);
+    } else {
+        None
     };
 
     let trusted_roots = match args.internal_client_tls_ca_path.as_deref() {

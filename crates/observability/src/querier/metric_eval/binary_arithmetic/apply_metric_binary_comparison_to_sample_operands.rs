@@ -11,13 +11,13 @@ pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
     let Some(output_values) = output_sample.as_array_mut() else {
         return false;
     };
-    let Some((left_value, right_value)) = metric_binary_operand_values(operands) else {
+    let Some(values) = metric_binary_operand_values(operands) else {
         return false;
     };
     let matches = metric_scalar_comparison_matches(
         ScalarOperands {
-            sample: left_value,
-            scalar: right_value,
+            sample: values.left,
+            scalar: values.right,
             scalar_side: ScalarSide::Right,
         },
         comparison.op,
@@ -30,10 +30,10 @@ pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
             true
         }
         ComparisonResult::Filter => {
-            if matches
-                && let (Some(output), Some(left)) = (output_values.get_mut(1), operands.left.get(1))
-            {
-                *output = left.clone();
+            if matches && let Some(left) = operands.left.get(1) {
+                if let Some(output) = output_values.get_mut(1) {
+                    *output = left.clone();
+                }
             }
             matches
         }

@@ -1,8 +1,8 @@
 use super::{
-    ExtendedSelectorModifier, RangeFn, RangeSeries, RangeWindow, SampleValue, TimeExt,
-    count_changes, count_resets, count_step_transitions, emit_warning, extended_float_range_value,
-    extended_histogram_range_value, extrapolated_rate_with_starts, mixed_floats_histograms_warning,
-    range_histogram_sample,
+    ExtendedSelectorModifier, HistogramSample, RangeFn, RangeSeries, RangeWindow, SampleValue,
+    TimeExt, count_changes, count_resets, count_step_transitions, emit_warning,
+    extended_float_range_value, extended_histogram_range_value, extrapolated_rate_with_starts,
+    mixed_floats_histograms_warning, range_histogram_sample,
 };
 use crate::{
     engine::annotations::TypeAndUnitLabels,
@@ -27,18 +27,18 @@ pub(crate) fn range_function_sample_from_series(
     // handling.
     if matches!(kind, RangeFn::Changes | RangeFn::Resets) {
         if modifier == Some(ExtendedSelectorModifier::Anchored) {
-            if !series
-                .samples
-                .iter()
-                .any(|(timestamp, _)| *timestamp > range_start_ms && *timestamp <= range_end_ms)
-            {
+            if !series.samples.iter().any(|sample| {
+                sample.timestamp_ms > range_start_ms && sample.timestamp_ms <= range_end_ms
+            }) {
                 return None;
             }
             let anchor = series
                 .samples
                 .iter()
-                .rfind(|(timestamp, _)| *timestamp <= range_start_ms)
-                .map_or(range_start_ms, |(timestamp, _)| timestamp.saturating_sub(1));
+                .rfind(|sample| sample.timestamp_ms <= range_start_ms)
+                .map_or(range_start_ms, |sample| {
+                    sample.timestamp_ms.saturating_sub(1)
+                });
             return count_step_transitions(series, anchor, range_end_ms, kind)
                 .map(SampleValue::Float);
         }
@@ -48,11 +48,13 @@ pub(crate) fn range_function_sample_from_series(
     let mut timestamps = Vec::new();
     let mut values = Vec::new();
     let mut histograms = Vec::new();
-    for (timestamp, value) in &series.samples {
+    for sample in &series.samples {
+        let timestamp = sample.timestamp_ms;
+        let value = &sample.value;
         let in_range = match modifier {
-            Some(ExtendedSelectorModifier::Anchored) => *timestamp <= range_end_ms,
+            Some(ExtendedSelectorModifier::Anchored) => timestamp <= range_end_ms,
             Some(ExtendedSelectorModifier::Smoothed) => true,
-            None => *timestamp > range_start_ms && *timestamp <= range_end_ms,
+            None => timestamp > range_start_ms && timestamp <= range_end_ms,
         };
         if !in_range {
             continue;
@@ -62,14 +64,14 @@ pub(crate) fn range_function_sample_from_series(
                 if !histograms.is_empty() {
                     return warn_mixed_window(series);
                 }
-                timestamps.push(*timestamp);
+                timestamps.push(timestamp);
                 values.push(*value);
             }
             SampleValue::Histogram(histogram) => {
                 if !values.is_empty() {
                     return warn_mixed_window(series);
                 }
-                timestamps.push(*timestamp);
+                timestamps.push(timestamp);
                 histograms.push(histogram.clone());
             }
         }
@@ -78,7 +80,14 @@ pub(crate) fn range_function_sample_from_series(
     if let Some(modifier) = modifier {
         let smoothed = modifier == ExtendedSelectorModifier::Smoothed;
         if !histograms.is_empty() {
-            let points = timestamps.into_iter().zip(histograms).collect::<Vec<_>>();
+            let points = timestamps
+                .into_iter()
+                .zip(histograms)
+                .map(|point| HistogramSample {
+                    timestamp_ms: point.0,
+                    histogram: point.1,
+                })
+                .collect::<Vec<_>>();
             return extended_histogram_range_value(
                 &points,
                 range_start_ms,

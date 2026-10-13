@@ -16,9 +16,9 @@ pub fn wal_record_headers() -> Vec<ProducerHeader> {
     .chain(
         krabka_telemetry::propagation::current_trace_headers()
             .into_iter()
-            .map(|(key, value)| ProducerHeader {
-                key,
-                value: Some(Bytes::from(value.into_bytes())),
+            .map(|header| ProducerHeader {
+                key: header.0,
+                value: Some(Bytes::from(header.1.into_bytes())),
             }),
     )
     .collect()

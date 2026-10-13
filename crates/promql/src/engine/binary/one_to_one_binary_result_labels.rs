@@ -24,12 +24,13 @@ pub(crate) fn one_to_one_binary_result_labels(
         Some(LabelModifier::Exclude(exclude)) => {
             let excluded = exclude.labels.iter().collect::<BTreeSet<_>>();
             let mut labels = Labels::new();
-            for (name, value) in input.iter() {
-                if (!preserve_metadata && is_result_metadata_label(name)) || excluded.contains(name)
+            for pair in input.iter() {
+                if (!preserve_metadata && is_result_metadata_label(pair.name))
+                    || excluded.contains(pair.name)
                 {
                     continue;
                 }
-                labels.insert(name, value);
+                labels.insert(pair.name, pair.value);
             }
             labels
         }

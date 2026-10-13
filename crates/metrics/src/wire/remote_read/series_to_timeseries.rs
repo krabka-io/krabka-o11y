@@ -1,22 +1,54 @@
 use super::{Labels, v1};
 
+/// One float sample in a remote read series.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RemoteReadSample {
+    pub timestamp_ms: i64,
+    pub value: f64,
+}
+
+/// A label set and its float samples for a remote read response.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemoteReadSeries {
+    pub labels: Labels,
+    pub samples: Vec<RemoteReadSample>,
+}
+
+fn compare_labels(left: &[v1::Label], right: &[v1::Label]) -> std::cmp::Ordering {
+    for index in 0..left.len().min(right.len()) {
+        let ordering = left[index]
+            .name
+            .cmp(&right[index].name)
+            .then_with(|| left[index].value.cmp(&right[index].value));
+        if !ordering.is_eq() {
+            return ordering;
+        }
+    }
+    left.len().cmp(&right.len())
+}
+
 #[must_use]
-pub fn series_to_timeseries(series: Vec<(Labels, Vec<(i64, f64)>)>) -> v1::QueryResult {
+pub fn series_to_timeseries(series: Vec<RemoteReadSeries>) -> v1::QueryResult {
     let mut timeseries = series
         .into_iter()
-        .map(|(labels, samples)| {
+        .map(|series| {
+            let labels = series.labels;
             let mut labels = labels
                 .iter()
-                .map(|(name, value)| v1::Label {
-                    name: name.clone(),
-                    value: value.clone(),
+                .map(|pair| v1::Label {
+                    name: pair.name.to_owned(),
+                    value: pair.value.to_owned(),
                 })
                 .collect::<Vec<_>>();
             labels.sort_by(|left, right| left.name.cmp(&right.name));
 
-            let mut samples = samples
+            let mut samples = series
+                .samples
                 .into_iter()
-                .map(|(timestamp, value)| v1::Sample { value, timestamp })
+                .map(|sample| v1::Sample {
+                    value: sample.value,
+                    timestamp: sample.timestamp_ms,
+                })
                 .collect::<Vec<_>>();
             samples.sort_by_key(|sample| sample.timestamp);
 
@@ -28,11 +60,6 @@ pub fn series_to_timeseries(series: Vec<(Labels, Vec<(i64, f64)>)>) -> v1::Query
             }
         })
         .collect::<Vec<_>>();
-    timeseries.sort_by(|left, right| {
-        left.labels
-            .iter()
-            .map(|label| (&label.name, &label.value))
-            .cmp(right.labels.iter().map(|label| (&label.name, &label.value)))
-    });
+    timeseries.sort_by(|left, right| compare_labels(&left.labels, &right.labels));
     v1::QueryResult { timeseries }
 }

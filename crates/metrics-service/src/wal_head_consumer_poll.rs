@@ -9,7 +9,7 @@ pub trait WalHeadConsumerPoll: Send {
     where
         Self: Sized;
 
-    async fn recovery_state(&mut self) -> Option<(Vec<(String, i32)>, bool)> {
+    async fn recovery_state(&mut self) -> Option<super::WalHeadRecoveryState> {
         None
     }
 }

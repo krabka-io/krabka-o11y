@@ -24,7 +24,10 @@ pub fn serve(
     stopping: CancellationToken,
 ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
     serve_writer(
-        (cli.target, cli.writer),
+        WriterLaunch {
+            target: cli.target,
+            config: cli.writer,
+        },
         metrics,
         readiness,
         security,
@@ -33,18 +36,28 @@ pub fn serve(
     )
 }
 
+/// The target and configuration needed to start one writer role.
+pub struct WriterLaunch {
+    pub target: Target,
+    pub config: WriterConfig,
+}
+
 /// Runs an embedded writer role with its caller's process controls.
 /// Registers startup before the returned future is polled.
 /// # Errors
 /// Returns a topic, startup, I/O or supervision error.
 pub fn serve_writer(
-    (target, cli): (Target, WriterConfig),
+    launch: WriterLaunch,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     security: ServerSecurity,
     wal_security: Option<ClientSecurity>,
     stopping: CancellationToken,
 ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
+    let WriterLaunch {
+        target,
+        config: cli,
+    } = launch;
     let startup = readiness.gate("startup");
     // Register sources in role order before tasks start. The shared recovery
     // report can then identify the durable writer even before its first commit.

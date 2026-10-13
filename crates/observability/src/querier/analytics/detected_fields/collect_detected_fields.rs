@@ -15,7 +15,7 @@ pub(crate) async fn collect_detected_fields(
     let tenant =
         authorized_tenant(state, security, headers, TenantErrorSurface::QuerierRead).await?;
     let time_range = TimeRange::new(params.start, params.end)?;
-    let (state, plan, time_range) = plan_analytics_query(
+    let planned = plan_analytics_query(
         state,
         AnalyticsQuery {
             tenant: &tenant,
@@ -25,6 +25,9 @@ pub(crate) async fn collect_detected_fields(
         },
     )
     .await?;
+    let state = planned.state;
+    let plan = planned.plan;
+    let time_range = planned.time_range;
     let tenant = tenant.as_str();
     let delete_filters = active_log_delete_filters(&state, tenant, time_range)?;
     let read = PlannedRead {

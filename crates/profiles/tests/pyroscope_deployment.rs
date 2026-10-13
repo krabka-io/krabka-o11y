@@ -32,6 +32,23 @@ const SELECTOR: &str = r#"{service_name="checkout"}"#;
 const PUSH: &str = "/push.v1.PusherService/Push";
 const QUERY: &str = "/querier.v1.QuerierService";
 
+struct EncodedRequest {
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+struct LegacyUpload {
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+struct EndpointRequestCase {
+    method: Method,
+    content_type: &'static str,
+    body: Vec<u8>,
+    expected: StatusCode,
+}
+
 impl Deployment {
     async fn start() -> TestResult<Self> {
         let infrastructure = start_infrastructure("profiles", None).await?;
@@ -177,9 +194,15 @@ impl Deployment {
                         profile
                             .sample_type
                             .iter()
-                            .map(|kind| (text(&profile, kind.r#type), text(&profile, kind.unit)))
+                            .map(|kind| krabka_pprof::SampleType {
+                                name: text(&profile, kind.r#type).to_string(),
+                                unit: text(&profile, kind.unit).to_string(),
+                            })
                             .collect::<Vec<_>>()
-                            == vec![("cpu", "nanoseconds")]
+                            == vec![krabka_pprof::SampleType {
+                                name: "cpu".to_string(),
+                                unit: "nanoseconds".to_string(),
+                            }]
                     );
                     return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(());
                 }
@@ -202,14 +225,26 @@ impl Deployment {
     ) -> TestResult {
         let profile = profile(time_ms, values);
         let request = push_request(service, gzip(&profile.encode_to_vec())?);
-        let (content_type, body) = if binary {
-            ("application/proto", request.encode_to_vec())
+        let encoded = if binary {
+            EncodedRequest {
+                content_type: "application/proto",
+                body: request.encode_to_vec(),
+            }
         } else {
-            ("application/json", serde_json::to_vec(&request)?)
+            EncodedRequest {
+                content_type: "application/json",
+                body: serde_json::to_vec(&request)?,
+            }
         };
         accepted(
-            self.request(&self.distributor, tenant, PUSH, content_type, body)
-                .await?,
+            self.request(
+                &self.distributor,
+                tenant,
+                PUSH,
+                encoded.content_type,
+                encoded.body,
+            )
+            .await?,
         )
         .await
     }
@@ -322,15 +357,22 @@ fn profile(time_ms: i64, values: &[i64]) -> proto::Profile {
         sample: values
             .iter()
             .enumerate()
-            .map(|(i, value)| proto::Sample {
-                location_id: if i == 0 { vec![2, 1] } else { vec![1] },
-                value: vec![*value],
+            .map(|entry| proto::Sample {
+                location_id: if entry.0 == 0 { vec![2, 1] } else { vec![1] },
+                value: vec![*entry.1],
                 label: vec![],
             })
             .collect(),
         mapping: vec![proto::Mapping {
             id: 1,
-            symbolization: proto::MappingSymbolization::from_parts((true, true, true, false)),
+            symbolization: proto::MappingSymbolization::from_parts(
+                proto::MappingSymbolizationParts {
+                    functions: true,
+                    filenames: true,
+                    line_numbers: true,
+                    inline_frames: false,
+                },
+            ),
             ..Default::default()
         }],
         location: (1_u64..=2)
@@ -430,8 +472,8 @@ fn collapsed(profile: &proto::Profile) -> BTreeMap<Vec<String>, Vec<i64>> {
             .entry(stack)
             .or_insert_with(|| vec![0; sample.value.len()]);
         assert!(row.len() == sample.value.len());
-        for (sum, value) in row.iter_mut().zip(&sample.value) {
-            *sum += value;
+        for value_index in 0..row.len() {
+            row[value_index] += sample.value[value_index];
         }
     }
     rows
@@ -493,21 +535,22 @@ async fn speedscope_survives_storage_and_restart() -> TestResult {
 }
 async fn legacy(format: &str, compressed: bool) -> TestResult {
     let deployment = Deployment::start().await?;
-    let (content_type, mut body) = if format == "pprof" {
-        (
-            "binary/octet-stream",
-            profile(START, &[100, 40]).encode_to_vec(),
-        )
+    let upload = if format == "pprof" {
+        LegacyUpload {
+            content_type: "binary/octet-stream",
+            body: profile(START, &[100, 40]).encode_to_vec(),
+        }
     } else {
-        (
-            "application/json",
-            serde_json::to_vec(&json!({
+        LegacyUpload {
+            content_type: "application/json",
+            body: serde_json::to_vec(&json!({
                 "$schema":"https://www.speedscope.app/file-format-schema.json",
                 "shared":{"frames":[{"name":"main.work"},{"name":"main.hotloop"}]},
                 "profiles":[{"type":"sampled","name":"cpu","unit":"nanoseconds","startValue":0,"endValue":140,"samples":[[0,1],[0]],"weights":[100,40]}]
             }))?,
-        )
+        }
     };
+    let mut body = upload.body;
     if compressed {
         body = gzip(&body)?;
     }
@@ -515,21 +558,20 @@ async fn legacy(format: &str, compressed: bool) -> TestResult {
         "{}/ingest",
         base_url(&deployment.distributor, PORT).await?
     ))?;
-    url.query_pairs_mut().extend_pairs([
-        ("name", "checkout"),
-        ("format", format),
-        ("from", "1700000000"),
-        ("until", "1700000000"),
-        ("sampleRate", "100"),
-        ("units", "nanoseconds"),
-    ]);
+    url.query_pairs_mut()
+        .append_pair("name", "checkout")
+        .append_pair("format", format)
+        .append_pair("from", "1700000000")
+        .append_pair("until", "1700000000")
+        .append_pair("sampleRate", "100")
+        .append_pair("units", "nanoseconds");
     accepted(
         deployment
             .infrastructure
             .client
             .post(url)
             .header("X-Scope-OrgID", TENANT)
-            .header("Content-Type", content_type)
+            .header("Content-Type", upload.content_type)
             .body(body)
             .send()
             .await?,
@@ -885,65 +927,67 @@ async fn query_status_codes_match_upstream_cases() -> TestResult {
     let query = format!("{QUERY}/SelectMergeProfile");
     let valid = json!({"profileTypeID":PROFILE_TYPE,"labelSelector":SELECTOR,"start":START-1000,"end":START+1000});
     let cases = [
-        (
-            Method::POST,
-            "application/json",
-            serde_json::to_vec(&valid)?,
-            StatusCode::OK,
-        ),
-        (
-            Method::POST,
-            "application/json",
-            b"{broken".to_vec(),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            Method::POST,
-            "text/plain",
-            serde_json::to_vec(&valid)?,
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        ),
-        (
-            Method::GET,
-            "application/json",
-            vec![],
-            StatusCode::METHOD_NOT_ALLOWED,
-        ),
-        (
-            Method::POST,
-            "application/json",
-            serde_json::to_vec(
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "application/json",
+            body: serde_json::to_vec(&valid)?,
+            expected: StatusCode::OK,
+        },
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "application/json",
+            body: b"{broken".to_vec(),
+            expected: StatusCode::BAD_REQUEST,
+        },
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "text/plain",
+            body: serde_json::to_vec(&valid)?,
+            expected: StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        },
+        EndpointRequestCase {
+            method: Method::GET,
+            content_type: "application/json",
+            body: vec![],
+            expected: StatusCode::METHOD_NOT_ALLOWED,
+        },
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "application/json",
+            body: serde_json::to_vec(
                 &json!({"profileTypeID":PROFILE_TYPE,"labelSelector":"{broken","start":START-1000,"end":START+1000}),
             )?,
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            Method::POST,
-            "application/json",
-            serde_json::to_vec(
+            expected: StatusCode::BAD_REQUEST,
+        },
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "application/json",
+            body: serde_json::to_vec(
                 &json!({"profileTypeID":"bad","labelSelector":"{}","start":START-1000,"end":START+1000}),
             )?,
-            StatusCode::BAD_REQUEST,
-        ),
+            expected: StatusCode::BAD_REQUEST,
+        },
     ];
-    for (method, content_type, body, expected) in cases {
+    for case in cases {
         let response = deployment
             .infrastructure
             .client
             .request(
-                method.clone(),
+                case.method.clone(),
                 format!("{}{query}", base_url(&deployment.hot, PORT).await?),
             )
             .header("X-Scope-OrgID", TENANT)
-            .header("Content-Type", content_type)
-            .body(body)
+            .header("Content-Type", case.content_type)
+            .body(case.body)
             .send()
             .await?;
         let status = response.status();
         let body = response.text().await?;
         assert!(
-            status == expected,
-            "{method} {content_type}: {status}: {body}"
+            status == case.expected,
+            "{} {}: {status}: {body}",
+            case.method,
+            case.content_type
         );
     }
     Ok(())

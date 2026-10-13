@@ -13,7 +13,7 @@ pub(crate) async fn execute_http_metric_instant_query(
     delete_filters: &[ActiveLogDeleteFilter],
 ) -> Result<Value, HttpQueryError> {
     let response = if let Some(cold_store) = &state.cold_store {
-        let (records, frontier) = hot_tail_snapshot(state, plan.time_range);
+        let snapshot = hot_tail_snapshot(state, plan.time_range);
         execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes(
             ColdBlockScan {
                 store: Arc::clone(&cold_store.store),
@@ -24,8 +24,8 @@ pub(crate) async fn execute_http_metric_instant_query(
             query,
             &state.label_index,
             QueryHotTail {
-                records: &records,
-                frontier: &frontier,
+                records: &snapshot.records,
+                frontier: &snapshot.frontier,
                 delete_filters,
             },
         )

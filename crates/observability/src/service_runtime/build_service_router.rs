@@ -12,5 +12,5 @@ pub async fn build_service_router(
 ) -> Result<Router, ServiceConfigError> {
     build_service_router_with_shutdown(config, dependencies, object_store, CancellationToken::new())
         .await
-        .map(|(router, _)| router)
+        .map(|service_router| service_router.router)
 }

@@ -8,17 +8,19 @@ pub(crate) fn time_range(
     kind: QueryKind,
 ) -> Result<TimeRange, HttpQueryError> {
     match kind {
-        QueryKind::Instant => match (params.time, params.start, params.since, params.end) {
-            (Some(time), ..) => TimeRange::new(time, time).map_err(HttpQueryError::from),
-            // Loki evaluates an instant query with no `time` at the moment it
-            // receives it. An unbounded window here put a vector sample at
-            // `i64::MAX` instead.
-            (None, None, None, None) => {
+        QueryKind::Instant => {
+            if let Some(time) = params.time {
+                TimeRange::new(time, time).map_err(HttpQueryError::from)
+            } else if params.start.is_none() && params.since.is_none() && params.end.is_none() {
+                // Loki evaluates an instant query with no `time` at the moment it
+                // receives it. An unbounded window here put a vector sample at
+                // `i64::MAX` instead.
                 let now = current_unix_time_ns();
                 TimeRange::new(now, now).map_err(HttpQueryError::from)
+            } else {
+                optional_start_end_range(params.start, params.since, params.end)
             }
-            (None, start, since, end) => optional_start_end_range(start, since, end),
-        },
+        }
         QueryKind::Range => {
             let end = params.end.unwrap_or_else(current_unix_time_ns);
             let start = start_or_since(params.start, params.since, Some(end))?

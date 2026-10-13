@@ -10,10 +10,15 @@ pub(crate) fn effective_object_store_prefix(
     };
     let base = base.as_ref().trim_matches('/');
 
-    match (base.is_empty(), index_prefix.is_empty()) {
-        (true, true) => ObjectPath::from(""),
-        (true, false) => ObjectPath::from(index_prefix),
-        (false, true) => ObjectPath::from(base),
-        (false, false) => ObjectPath::from(format!("{base}/{index_prefix}")),
+    if base.is_empty() {
+        if index_prefix.is_empty() {
+            ObjectPath::from("")
+        } else {
+            ObjectPath::from(index_prefix)
+        }
+    } else if index_prefix.is_empty() {
+        ObjectPath::from(base)
+    } else {
+        ObjectPath::from(format!("{base}/{index_prefix}"))
     }
 }

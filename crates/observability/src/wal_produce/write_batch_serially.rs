@@ -20,7 +20,9 @@ where
     Error: std::error::Error + 'static,
 {
     let total = records.len();
-    for (appended, record) in records.into_iter().enumerate() {
+    for item in records.into_iter().enumerate() {
+        let appended = item.0;
+        let record = item.1;
         if let Err(source) = append(record).await {
             return Err(WalBatchError::new(appended, total, source));
         }

@@ -10,6 +10,11 @@ use super::Limits;
 
 #[cfg(test)]
 mod tests {
+    struct ExpirationOverrideCase<'a> {
+        yaml: &'a str,
+        expected: bool,
+    }
+
     use assert2::{assert, check};
 
     use super::*;
@@ -176,28 +181,28 @@ overrides:
     /// with no tenant entry at all still expires blocks.
     #[test]
     fn a_deployment_with_no_window_anywhere_expires_nothing() {
-        let cases: &[(&str, bool)] = &[
-            (
-                "overrides:\n  tenant-a:\n    max_series_per_request: 3\n",
-                false,
-            ),
-            (
-                "overrides:\n  tenant-a:\n    compactor_blocks_retention_period: \"0s\"\n",
-                false,
-            ),
-            (
-                "overrides:\n  tenant-a:\n    compactor_blocks_retention_period: \"1ms\"\n",
-                true,
-            ),
-            (
-                "defaults:\n  compactor_blocks_retention_period: \"1h\"\n",
-                true,
-            ),
+        let cases = [
+            ExpirationOverrideCase {
+                yaml: "overrides:\n  tenant-a:\n    max_series_per_request: 3\n",
+                expected: false,
+            },
+            ExpirationOverrideCase {
+                yaml: "overrides:\n  tenant-a:\n    compactor_blocks_retention_period: \"0s\"\n",
+                expected: false,
+            },
+            ExpirationOverrideCase {
+                yaml: "overrides:\n  tenant-a:\n    compactor_blocks_retention_period: \"1ms\"\n",
+                expected: true,
+            },
+            ExpirationOverrideCase {
+                yaml: "defaults:\n  compactor_blocks_retention_period: \"1h\"\n",
+                expected: true,
+            },
         ];
 
-        for (yaml, expected) in cases {
-            let p = OverridesProvider::from_yaml(yaml).unwrap();
-            check!(p.expires_any_blocks() == *expected, "{yaml}");
+        for case in cases {
+            let p = OverridesProvider::from_yaml(case.yaml).unwrap();
+            check!(p.expires_any_blocks() == case.expected, "{}", case.yaml);
         }
     }
 

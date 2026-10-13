@@ -11,7 +11,7 @@ use super::{
 pub fn decode_histogram_chunk(
     chunk: &[u8],
     max_buckets: u64,
-) -> Result<Vec<(i64, NativeHistogram)>, ChunkError> {
+) -> Result<Vec<super::TimestampedHistogramSample>, ChunkError> {
     decode_histogram_samples::<IntegerState>(chunk, max_buckets)
 }
 
@@ -93,15 +93,15 @@ impl HistogramChunkState for IntegerState {
         if self.sum.to_bits() == STALE_NAN_BITS {
             return Ok(true);
         }
-        for (bucket, delta) in self
+        for bucket_delta in self
             .positive
             .iter_mut()
             .zip(self.positive_delta.iter_mut())
             .chain(self.negative.iter_mut().zip(self.negative_delta.iter_mut()))
         {
             let dod = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
-            *delta = delta.wrapping_add(dod);
-            *bucket = bucket.wrapping_add(*delta);
+            *bucket_delta.1 = bucket_delta.1.wrapping_add(dod);
+            *bucket_delta.0 = bucket_delta.0.wrapping_add(*bucket_delta.1);
         }
         Ok(false)
     }

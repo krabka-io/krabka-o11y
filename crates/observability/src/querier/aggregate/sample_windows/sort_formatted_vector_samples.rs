@@ -8,12 +8,12 @@ pub(crate) fn sort_formatted_vector_samples(
         VectorAggregationOp::Sort | VectorAggregationOp::SortDesc => {
             series.sort_by(|left, right| {
                 let left_value = left
-                    .1
+                    .values
                     .first()
                     .and_then(|sample| parse_metric_sample_value(&sample[1]))
                     .unwrap_or_default();
                 let right_value = right
-                    .1
+                    .values
                     .first()
                     .and_then(|sample| parse_metric_sample_value(&sample[1]))
                     .unwrap_or_default();
@@ -22,7 +22,7 @@ pub(crate) fn sort_formatted_vector_samples(
                     VectorAggregationOp::SortDesc => right_value.cmp_value(left_value),
                     _ => Ordering::Equal,
                 };
-                value_order.then_with(|| left.0.cmp(&right.0))
+                value_order.then_with(|| left.labels.cmp(&right.labels))
             });
         }
         _ => {}

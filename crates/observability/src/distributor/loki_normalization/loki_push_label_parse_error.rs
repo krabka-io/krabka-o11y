@@ -5,8 +5,8 @@ pub(crate) fn loki_push_label_parse_error(labels: &Labels, invalid_name: &str) -
     let name_start = rendered.find(invalid_name).unwrap_or(1);
     let invalid_offset = invalid_name
         .char_indices()
-        .find_map(|(offset, value)| {
-            (!is_loki_label_name_char(value, offset == 0)).then_some(offset)
+        .find_map(|character| {
+            (!is_loki_label_name_char(character.1, character.0 == 0)).then_some(character.0)
         })
         .unwrap_or(0);
     let column = name_start + invalid_offset + 1;

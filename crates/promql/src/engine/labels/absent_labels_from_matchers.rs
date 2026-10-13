@@ -26,7 +26,7 @@ pub(crate) fn absent_labels_from_matchers(matchers: &[LabelMatcher]) -> Labels {
     }
     labels
         .iter()
-        .filter(|(name, _)| !dropped.contains(name.as_str()))
-        .map(|(name, value)| (name.clone(), value.clone()))
+        .filter(|pair| !dropped.contains(pair.name.as_str()))
+        .map(|pair| krabka_metrics::MetricLabelPair::new(pair.name.clone(), pair.value.clone()))
         .collect()
 }

@@ -20,7 +20,9 @@ impl From<&SpanJson> for SpanRef {
             attributes: s
                 .attributes
                 .iter()
-                .map(|kv| (kv.key.clone(), AttrValue::from(&kv.value)))
+                .map(|kv| {
+                    krabka_traceql::Attribute::new(kv.key.clone(), AttrValue::from(&kv.value))
+                })
                 .collect(),
             events: Vec::new(),
             links: Vec::new(),

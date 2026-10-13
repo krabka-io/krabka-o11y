@@ -16,7 +16,8 @@ pub(crate) async fn recording_rule_fails_on_labelset_collision_after_rule_labels
             value: 1.0,
         },
     ]);
-    let rule_labels = BTreeMap::from([("job".to_string(), "merged".to_string())]);
+    let mut rule_labels = BTreeMap::new();
+    rule_labels.insert("job".to_string(), "merged".to_string());
 
     let result = super::super::evaluate_recording_rule(
         &engine,

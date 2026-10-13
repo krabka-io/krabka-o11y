@@ -87,15 +87,11 @@ impl QueryFrontendAdapter for TestAdapter {
     type Error = TestError;
 
     fn plan(&self, (): &()) -> Result<Vec<PlannedQuery<usize>>, TestError> {
-        Ok(self
-            .queries
-            .iter()
-            .copied()
-            .zip(self.ends.iter().copied())
-            .map(|(id, end_epoch_millis)| PlannedQuery {
-                query: id,
-                cache_key: CacheKey::new("test", id.to_le_bytes()),
-                end_epoch_millis,
+        Ok((0..self.queries.len())
+            .map(|index| PlannedQuery {
+                query: self.queries[index],
+                cache_key: CacheKey::new("test", self.queries[index].to_le_bytes()),
+                end_epoch_millis: self.ends[index],
                 estimated_bytes: 0,
             })
             .collect())
@@ -531,18 +527,25 @@ async fn concurrent_cache_mutations_are_idempotent() {
         Duration::from_mins(1),
     ));
     let key = CacheKey::new("tenant-a", b"same");
-    let (left, right) = tokio::join!(
-        QueryCache::insert(&cache, &key, &1),
-        QueryCache::insert(&cache, &key, &1),
-    );
-    left.unwrap();
-    right.unwrap();
+    let left_cache = Arc::clone(&cache);
+    let left_key = key.clone();
+    let left = tokio::spawn(async move { QueryCache::insert(&left_cache, &left_key, &1).await });
+    let right_cache = Arc::clone(&cache);
+    let right_key = key.clone();
+    let right = tokio::spawn(async move { QueryCache::insert(&right_cache, &right_key, &1).await });
+    left.await.unwrap().unwrap();
+    right.await.unwrap().unwrap();
 
-    let (left, right) = tokio::join!(
-        QueryCache::<usize>::invalidate_tenant(&cache, "tenant-a"),
-        QueryCache::<usize>::invalidate_tenant(&cache, "tenant-a"),
-    );
-    assert!(left.unwrap() + right.unwrap() == 1);
+    let left_cache = Arc::clone(&cache);
+    let left = tokio::spawn(async move {
+        QueryCache::<usize>::invalidate_tenant(&left_cache, "tenant-a").await
+    });
+    let right_cache = Arc::clone(&cache);
+    let right = tokio::spawn(async move {
+        QueryCache::<usize>::invalidate_tenant(&right_cache, "tenant-a").await
+    });
+    let removed = left.await.unwrap().unwrap() + right.await.unwrap().unwrap();
+    assert!(removed == 1);
     assert!(QueryCache::get(&cache, &key).await.unwrap() == None);
 }
 
@@ -564,12 +567,16 @@ async fn concurrent_cache_instances_converge_on_the_same_bound() {
     let left_key = CacheKey::new("tenant-a", b"left");
     let right_key = CacheKey::new("tenant-a", b"right");
 
-    let (left_result, right_result) = tokio::join!(
-        QueryCache::insert(&left, &left_key, &1),
-        QueryCache::insert(&right, &right_key, &2),
-    );
-    left_result.unwrap();
-    right_result.unwrap();
+    let left = Arc::new(left);
+    let right = Arc::new(right);
+    let left_cache = Arc::clone(&left);
+    let left_result =
+        tokio::spawn(async move { QueryCache::insert(&left_cache, &left_key, &1).await });
+    let right_cache = Arc::clone(&right);
+    let right_result =
+        tokio::spawn(async move { QueryCache::insert(&right_cache, &right_key, &2).await });
+    left_result.await.unwrap().unwrap();
+    right_result.await.unwrap().unwrap();
 
     let objects = store
         .list(Some(&Path::from("query-cache")))

@@ -50,7 +50,11 @@ pub(crate) struct AlertTemplateDefaults {
 
 impl AlertTemplateDefaults {
     pub(crate) fn external_labels(&self) -> krabka_blockstore::Labels {
-        krabka_blockstore::Labels::from_pairs(self.external_labels.clone())
+        krabka_blockstore::Labels::from_pairs(
+            self.external_labels
+                .iter()
+                .map(|pair| krabka_blockstore::LabelPair::new(pair.0.clone(), pair.1.clone())),
+        )
     }
 
     pub(crate) fn external_url(&self, alert_name: &str) -> String {
@@ -104,11 +108,11 @@ impl AlertmanagerHttpSink {
 
     fn enrich(&self, alerts: &mut [krabka_promql::AlertmanagerAlert]) {
         for alert in alerts {
-            for (name, value) in &self.alert_templates.external_labels {
+            for label in &self.alert_templates.external_labels {
                 alert
                     .labels
-                    .entry(name.clone())
-                    .or_insert_with(|| value.clone());
+                    .entry(label.0.clone())
+                    .or_insert_with(|| label.1.clone());
             }
             if alert.generator_url.is_empty()
                 && let Some(template) = &self.alert_templates.generator_url_template
@@ -132,7 +136,9 @@ impl AlertmanagerHttpSink {
         let payload = alertmanager_payload(alerts);
         let mut failures = Vec::new();
         let mut retryable = false;
-        for (endpoint_index, endpoint) in self.endpoints.iter().enumerate() {
+        for indexed_endpoint in self.endpoints.iter().enumerate() {
+            let endpoint_index = indexed_endpoint.0;
+            let endpoint = indexed_endpoint.1;
             for attempt in 1..=self.max_attempts {
                 let mut request = self.client.post(endpoint).timeout(self.request_timeout);
                 if let Some(tenant) = tenant {

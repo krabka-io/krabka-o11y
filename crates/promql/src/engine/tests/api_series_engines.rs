@@ -3,11 +3,14 @@ use super::*;
 /// An engine over `metric_name{job="api"}`: 0 at 0s, 1 at 60s and 3 at 90s, so
 /// the last two samples rise by 2 over 30s.
 pub(crate) fn late_jump_engine(metric_name: &str) -> PromqlEngine<InMemoryMetricStore> {
-    let store = SeriesFixture::new(labels(&[("__name__", metric_name), ("job", "api")]))
-        .at(0_i64, 0.0)
-        .at(60_000, 1.0)
-        .at(90_000, 3.0)
-        .store();
+    let store = SeriesFixture::new(labels(&[
+        crate::test_support::TestLabelPair::new("__name__", metric_name),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]))
+    .at(0_i64, 0.0)
+    .at(60_000, 1.0)
+    .at(90_000, 3.0)
+    .store();
     default_engine(store)
 }
 
@@ -16,8 +19,8 @@ pub(crate) fn late_jump_engine(metric_name: &str) -> PromqlEngine<InMemoryMetric
 pub(crate) fn requests_counter_engine(last_minute: i32) -> PromqlEngine<InMemoryMetricStore> {
     let fixture = (0..=last_minute).fold(
         SeriesFixture::new(labels(&[
-            ("__name__", "http_requests_total"),
-            ("job", "api"),
+            crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+            crate::test_support::TestLabelPair::new("job", "api"),
         ])),
         |fixture, minute| fixture.at(i64::from(minute) * 60_000, f64::from(minute)),
     );
@@ -27,18 +30,16 @@ pub(crate) fn requests_counter_engine(last_minute: i32) -> PromqlEngine<InMemory
 /// An engine over `latency_seconds{job="api"}` at 10s, with one series per
 /// entry of `latencies`, whose `instance` label is the entry's index.
 pub(crate) fn api_latency_engine(latencies: &[f64]) -> PromqlEngine<InMemoryMetricStore> {
-    latencies
-        .iter()
-        .enumerate()
-        .fold(FloatStore::default(), |store, (instance, latency)| {
-            store.sample(
-                labels(&[
-                    ("__name__", "latency_seconds"),
-                    ("job", "api"),
-                    ("instance", &instance.to_string()),
-                ]),
-                *latency,
-            )
-        })
-        .engine()
+    let mut store = FloatStore::default();
+    for instance in 0..latencies.len() {
+        store = store.sample(
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", &instance.to_string()),
+            ]),
+            latencies[instance],
+        );
+    }
+    store.engine()
 }

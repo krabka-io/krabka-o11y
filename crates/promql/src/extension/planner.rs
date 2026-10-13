@@ -49,6 +49,12 @@ mod tests {
     };
 
     use super::*;
+
+    #[derive(Debug, PartialEq)]
+    struct PlannerSample {
+        job: String,
+        value: f64,
+    }
     use crate::extension::{
         instant_manipulate::InstantManipulate, normalize::SeriesNormalize,
         series_divide::SeriesDivide,
@@ -135,14 +141,28 @@ mod tests {
                 .downcast_ref::<Float64Array>()
                 .unwrap();
             for row in 0..batch.num_rows() {
-                got.push((job.value(row).to_string(), value.value(row)));
+                got.push(PlannerSample {
+                    job: job.value(row).to_string(),
+                    value: value.value(row),
+                });
             }
         }
-        got.sort_by(|left, right| left.0.cmp(&right.0));
+        got.sort_by(|left, right| left.job.cmp(&right.job));
 
         // At grid step 120_000 within a 300_000 lookback, the latest sample for
         // each series (ts=60_000) is selected.
-        assert2::assert!(got == vec![("a".to_string(), 2.0), ("b".to_string(), 20.0)]);
+        assert2::assert!(
+            got == vec![
+                PlannerSample {
+                    job: "a".to_string(),
+                    value: 2.0,
+                },
+                PlannerSample {
+                    job: "b".to_string(),
+                    value: 20.0,
+                },
+            ]
+        );
     }
 }
 

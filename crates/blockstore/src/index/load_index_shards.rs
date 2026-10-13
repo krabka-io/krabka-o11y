@@ -30,7 +30,7 @@ pub(crate) async fn load_index_shards(
     store: &Arc<dyn ObjectStore>,
     key: &str,
     tenant: Option<&str>,
-    window: Option<(i64, i64)>,
+    window: Option<super::IndexShardRange>,
     max_bytes: ByteSize,
 ) -> Result<Index> {
     if let Some(tenant) = tenant {
@@ -47,14 +47,13 @@ pub(crate) async fn load_index_shards(
     let mut listing = store.list(Some(&Path::from(listing_prefix)));
     while let Some(meta) = listing.next().await {
         let location = meta?.location;
-        let Some((_, object)) = parse_index_shard_location(&shards_prefix, location.as_ref())
-        else {
+        let Some(parsed) = parse_index_shard_location(&shards_prefix, location.as_ref()) else {
             continue;
         };
-        match object {
+        match parsed.object {
             IndexShardObject::Shard(range) => {
                 listed += 1;
-                if window.is_none_or(|(min_ts, max_ts)| range.overlaps(min_ts, max_ts)) {
+                if window.is_none_or(|query| range.overlaps(query.start, query.end)) {
                     wanted.push(location);
                 }
             }

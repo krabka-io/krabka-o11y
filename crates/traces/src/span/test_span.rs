@@ -1,6 +1,6 @@
 //! Span fixtures shared by unit tests.
 
-use super::{AttrValue, KeyValue, Span, SpanKind, StatusCode};
+use super::{AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode};
 
 /// A string-valued attribute.
 pub(crate) fn string_attr(key: &str, value: &str) -> KeyValue {
@@ -20,6 +20,33 @@ pub(crate) fn api_server_span() -> Span {
         status: StatusCode::Ok,
         resource_attrs: vec![string_attr("service.name", "api")],
         ..Span::default()
+    }
+}
+
+pub(crate) fn server_span_with_event_and_link(
+    name: &str,
+    duration_ns: i64,
+    span_attrs: Vec<KeyValue>,
+    event_time_unix_nano: i64,
+    event_attrs: Vec<KeyValue>,
+) -> Span {
+    Span {
+        name: name.into(),
+        duration_ns,
+        span_attrs,
+        events: vec![EventRecord {
+            time_unix_nano: event_time_unix_nano,
+            name: "exception".into(),
+            attrs: event_attrs,
+        }],
+        links: vec![LinkRecord {
+            trace_id: [9; 16],
+            span_id: [8; 8],
+            attrs: vec![string_attr("link.kind", "retry")],
+        }],
+        instrumentation_scope: "otel-rust".into(),
+        instrumentation_version: "1.2.3".into(),
+        ..api_server_span()
     }
 }
 

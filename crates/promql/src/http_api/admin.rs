@@ -7,6 +7,11 @@ use super::{
     put_erasure_request, selector_matchers,
 };
 
+struct SeriesDeleteRequest {
+    selector: String,
+    matcher_sets: Vec<Vec<crate::PromqlMatcher>>,
+}
+
 pub(crate) async fn delete_series<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     Extension(principal): Extension<Principal>,
@@ -43,14 +48,19 @@ pub(crate) async fn delete_series<S: MetricStore>(
                 return ApiError::bad_data(error.to_string()).into_response();
             }
         }
-        requests.push((selector, typed_matcher_sets));
+        requests.push(SeriesDeleteRequest {
+            selector: selector.clone(),
+            matcher_sets: typed_matcher_sets,
+        });
     }
     let created_at_ns = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |duration| {
             i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX)
         });
-    for (selector, matcher_sets) in requests {
+    for request_case in requests {
+        let selector = request_case.selector;
+        let matcher_sets = request_case.matcher_sets;
         let mut request = ErasureRequest::new(
             tenant.as_str(),
             selector,
@@ -71,20 +81,16 @@ pub(crate) async fn delete_series<S: MetricStore>(
             .flatten()
             .any(|matcher| matcher.value.utf8().is_none())
         {
-            request = request.with_byte_matchers(
-                matcher_sets
-                    .iter()
-                    .map(|set| {
-                        set.iter()
-                            .map(|matcher| krabka_blockstore::ByteLabelMatcher {
-                                name: matcher.name.clone(),
-                                op: matcher.op,
-                                value: matcher.value.as_bytes().to_vec(),
-                            })
-                            .collect()
-                    })
-                    .collect(),
-            );
+            request = request.with_byte_matchers(krabka_blockstore::map_byte_matcher_sets(
+                matcher_sets,
+                |matcher| {
+                    krabka_blockstore::ByteLabelMatcher::new(
+                        matcher.name.clone(),
+                        matcher.op,
+                        matcher.value.as_bytes().to_vec(),
+                    )
+                },
+            ));
         }
         if let Err(error) =
             put_erasure_request(erasure_store, ERASURE_REQUEST_PREFIX, &request).await

@@ -13,10 +13,20 @@ pub(crate) async fn range_scalar_expr_planner_path_matches_interpreter() {
     // A store with one series so calendar functions over `time()` have a
     // defined eval timeline; scalars ignore the series entirely.
     let mut store = InMemoryMetricStore::new();
-    store.push_float("t", labels(&[("__name__", "m"), ("job", "a")]), 0, 1.0);
+    store.push_float(
+        "t",
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "m"),
+            crate::test_support::TestLabelPair::new("job", "a"),
+        ]),
+        0,
+        1.0,
+    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    let (start, end, step) = (0_i64, 300_000_i64, millis(60_000));
+    let start = 0_i64;
+    let end = 300_000_i64;
+    let step = millis(60_000);
 
     for query in ["42", "1 + 2", "time()", "2 * (3 + 4)"] {
         assert2::assert!(range_query_routes_through_planner(
@@ -42,8 +52,8 @@ pub(crate) async fn range_scalar_expr_planner_path_matches_interpreter() {
             "2 * (3 + 4)" => Some(14.0),
             _ => None,
         } {
-            for (_, value) in &series[0].samples {
-                assert2::assert!(float_value(value).to_bits() == expected.to_bits());
+            for sample in &series[0].samples {
+                assert2::assert!(float_value(&sample.value).to_bits() == expected.to_bits());
             }
         }
     }

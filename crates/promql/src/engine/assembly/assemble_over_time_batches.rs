@@ -45,7 +45,9 @@ pub(crate) fn assemble_over_time_batches(
 
     let samples = by_fp
         .into_iter()
-        .filter_map(|(fp, value)| {
+        .filter_map(|entry| {
+            let fp = entry.0;
+            let value = entry.1;
             labels_by_fp.get(&fp).map(|labels| {
                 let labels = labels.clone();
                 InstantSample {

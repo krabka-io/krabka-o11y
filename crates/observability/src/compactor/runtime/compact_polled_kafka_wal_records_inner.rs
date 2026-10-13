@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, BlockDescriptor, BlockIndex, CompactionError, CompactorRunError, KafkaWalRecord,
-    LabelIndex, LastCompactedPosition, LogCompactionIndexOutput, LogWalConsumer, ObjectPath,
+    BTreeMap, BlockDescriptor, CompactionError, CompactionWriteOptions, CompactorRunError,
+    KafkaWalRecord, LastCompactedPosition, LogCompactionIndexOutput, LogWalConsumer, ObjectPath,
     ObjectStore, Offset, PartitionIndex, SharedLogDeleteRequests, TenantCompactionIndexCache,
     WalPosition, active_log_delete_filters_from_requests,
     compact_wal_records_to_object_store_with_delete_filters_and_index_output,
@@ -28,9 +28,7 @@ pub(crate) async fn compact_polled_kafka_wal_records_inner(
             .ok_or(CompactionError::EmptyWalBatch)?
             .tenant
             .clone();
-        let (label_index, block_index) = tenant_indexes
-            .entry(tenant.clone())
-            .or_insert_with(|| (LabelIndex::default(), BlockIndex::default()));
+        let indexes = tenant_indexes.entry(tenant.clone()).or_default();
         let mut committer = LastCompactedPosition::default();
         let time_range = wal_record_time_range(&chunk)?;
         let delete_filters =
@@ -38,11 +36,14 @@ pub(crate) async fn compact_polled_kafka_wal_records_inner(
         let descriptor = compact_wal_records_to_object_store_with_delete_filters_and_index_output(
             store,
             prefix,
-            label_index,
-            block_index,
+            &mut indexes.label_index,
+            &mut indexes.block_index,
             &mut committer,
             chunk,
-            (&delete_filters, LogCompactionIndexOutput::ShardManifests),
+            CompactionWriteOptions {
+                delete_filters: &delete_filters,
+                index_output: LogCompactionIndexOutput::ShardManifests,
+            },
         )
         .await?;
         let position = committer
@@ -57,9 +58,12 @@ pub(crate) async fn compact_polled_kafka_wal_records_inner(
         }
     }
 
-    for (partition, offset) in commit_positions {
+    for position in commit_positions {
         consumer
-            .commit_compacted(WalPosition { partition, offset })
+            .commit_compacted(WalPosition {
+                partition: position.0,
+                offset: position.1,
+            })
             .await?;
     }
 

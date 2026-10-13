@@ -34,21 +34,24 @@ impl From<&SpanSet> for SpanSetJson {
             matched: ss.matched,
             attributes: {
                 let mut grouped = BTreeMap::<String, Vec<AnyValueJson>>::new();
-                for (key, value) in &ss.attributes {
+                for attribute in &ss.attributes {
                     grouped
-                        .entry(key.clone())
+                        .entry(attribute.key.clone())
                         .or_default()
-                        .push(AnyValueJson::from(value));
+                        .push(AnyValueJson::from(&attribute.value));
                 }
                 grouped
                     .into_iter()
-                    .map(|(key, mut values)| KeyValueJson {
-                        key,
-                        value: if values.len() == 1 {
-                            values.remove(0)
+                    .map(|mut entry| {
+                        let value = if entry.1.len() == 1 {
+                            entry.1.remove(0)
                         } else {
-                            AnyValueJson::ArrayValue(ArrayValueJson { values })
-                        },
+                            AnyValueJson::ArrayValue(ArrayValueJson { values: entry.1 })
+                        };
+                        KeyValueJson {
+                            key: entry.0,
+                            value,
+                        }
                     })
                     .collect()
             },

@@ -1,5 +1,11 @@
 use super::{BlockStore, CompactionIndexManifest, MetricBlockKind, apply_manifest_to_blockstore};
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct MetricLabelKey {
+    pub(crate) tenant: String,
+    pub(crate) fingerprint: u64,
+}
+
 /// `PromQL` metric store over compacted metric blocks.
 #[derive(Clone)]
 pub struct MetricBlockStore {
@@ -7,7 +13,7 @@ pub struct MetricBlockStore {
     pub(crate) histograms: Option<BlockStore>,
     pub(crate) exemplars: Option<BlockStore>,
     pub(crate) metadata: Option<BlockStore>,
-    pub(crate) metric_labels: std::collections::BTreeMap<(String, u64), crate::PromqlLabels>,
+    pub(crate) metric_labels: std::collections::BTreeMap<MetricLabelKey, crate::PromqlLabels>,
 }
 
 impl MetricBlockStore {
@@ -56,7 +62,10 @@ impl MetricBlockStore {
             for series in &manifest.series {
                 if series.labels.has_byte_values() {
                     metric_labels.insert(
-                        (manifest.tenant.clone(), series.fingerprint),
+                        MetricLabelKey {
+                            tenant: manifest.tenant.clone(),
+                            fingerprint: series.fingerprint,
+                        },
                         series.labels.clone(),
                     );
                 }

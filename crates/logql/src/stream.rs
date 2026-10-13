@@ -9,9 +9,15 @@ use crate::{
 #[cfg(test)]
 mod tests {
     use super::{
-        PatternParser, PatternPart, parse_pattern_parts, sanitize_json_field_name,
+        PatternCapture, PatternParser, PatternPart, parse_pattern_parts, sanitize_json_field_name,
         sanitize_logfmt_field_name,
     };
+
+    struct FieldNameCase {
+        input: &'static str,
+        logfmt: &'static str,
+        json: &'static str,
+    }
 
     /// `LabelMatcher::matches` decides which streams a selector admits, and
     /// `matches_empty_value` decides whether a *missing* label counts as
@@ -25,10 +31,8 @@ mod tests {
     fn label_matcher_covers_each_operator_including_absence() {
         use super::{LabelMatcher, MatchOp};
 
-        let labels: std::collections::BTreeMap<String, String> =
-            [("job".to_string(), "api".to_string())]
-                .into_iter()
-                .collect();
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert("job".to_string(), "api".to_string());
 
         let m = |op, value: &str| LabelMatcher::new("job", op, value).expect("valid matcher");
         let absent = |op, value: &str| LabelMatcher::new("missing", op, value).expect("valid");
@@ -70,32 +74,61 @@ mod tests {
     /// empty result, and the leading digit that must be pushed off the front.
     #[test]
     fn field_name_sanitizers_cover_each_branch() {
-        // (input, logfmt, json)
         let cases = [
-            ("ok_name", "ok_name", "ok_name"),
-            ("keeps:colon", "keeps:colon", "keeps:colon"),
-            ("Alpha9", "Alpha9", "Alpha9"),
+            FieldNameCase {
+                input: "ok_name",
+                logfmt: "ok_name",
+                json: "ok_name",
+            },
+            FieldNameCase {
+                input: "keeps:colon",
+                logfmt: "keeps:colon",
+                json: "keeps:colon",
+            },
+            FieldNameCase {
+                input: "Alpha9",
+                logfmt: "Alpha9",
+                json: "Alpha9",
+            },
             // A run of invalid characters: collapsed for logfmt, one-for-one
             // for json.
-            ("a...b", "a_b", "a___b"),
-            ("a b", "a_b", "a_b"),
+            FieldNameCase {
+                input: "a...b",
+                logfmt: "a_b",
+                json: "a___b",
+            },
+            FieldNameCase {
+                input: "a b",
+                logfmt: "a_b",
+                json: "a_b",
+            },
             // Nothing survives the filter, so a bare underscore stands in.
-            ("...", "_", "___"),
-            ("", "_", "_"),
+            FieldNameCase {
+                input: "...",
+                logfmt: "_",
+                json: "___",
+            },
+            FieldNameCase {
+                input: "",
+                logfmt: "_",
+                json: "_",
+            },
             // A leading digit is not a valid label start.
-            ("9lives", "_9lives", "_9lives"),
-            ("0", "_0", "_0"),
+            FieldNameCase {
+                input: "9lives",
+                logfmt: "_9lives",
+                json: "_9lives",
+            },
+            FieldNameCase {
+                input: "0",
+                logfmt: "_0",
+                json: "_0",
+            },
         ];
 
-        for (input, want_logfmt, want_json) in cases {
-            assert2::check!(
-                sanitize_logfmt_field_name(input) == want_logfmt,
-                "logfmt {input:?}"
-            );
-            assert2::check!(
-                sanitize_json_field_name(input) == want_json,
-                "json {input:?}"
-            );
+        for case in cases {
+            assert2::check!(sanitize_logfmt_field_name(case.input) == case.logfmt);
+            assert2::check!(sanitize_json_field_name(case.input) == case.json);
         }
     }
 
@@ -129,8 +162,14 @@ mod tests {
         assert_eq!(
             parser.captures("prefix GET suffix 500").unwrap(),
             vec![
-                ("method".to_string(), "GET".to_string()),
-                ("status".to_string(), "500".to_string()),
+                PatternCapture {
+                    name: "method".to_string(),
+                    value: "GET".to_string(),
+                },
+                PatternCapture {
+                    name: "status".to_string(),
+                    value: "500".to_string(),
+                },
             ]
         );
     }
@@ -142,8 +181,14 @@ mod tests {
         assert_eq!(
             parser.captures("status=500 msg=\"unterminated").unwrap(),
             vec![
-                ("status".to_string(), "500".to_string()),
-                ("msg".to_string(), "unterminated".to_string()),
+                PatternCapture {
+                    name: "status".to_string(),
+                    value: "500".to_string(),
+                },
+                PatternCapture {
+                    name: "msg".to_string(),
+                    value: "unterminated".to_string(),
+                },
             ]
         );
     }
@@ -195,6 +240,7 @@ use parse_pattern_parts::parse_pattern_parts;
 use parse_selected_logfmt_fields::parse_selected_logfmt_fields;
 pub use parser_stage::ParserStage;
 use pattern_parse_error::pattern_parse_error;
+pub(crate) use pattern_parser::PatternCapture;
 pub use pattern_parser::PatternParser;
 use pattern_part::PatternPart;
 pub use pipeline_evaluation::PipelineEvaluation;

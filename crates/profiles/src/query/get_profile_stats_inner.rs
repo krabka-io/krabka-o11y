@@ -1,7 +1,6 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, authorize_tenant, connect_error, pb, tenant_connect_error,
-    tenant_denied_connect_error, tenant_from_headers,
+    ProfileStore, QuerierState, connect_error, pb,
 };
 
 pub(crate) async fn get_profile_stats_inner<S>(
@@ -13,9 +12,7 @@ pub(crate) async fn get_profile_stats_inner<S>(
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
     // The v2 frontend still asks v1 ingesters for this legacy RPC; segment
     // writer data is not represented in its response.
     if state.query_architecture == super::PyroscopeQueryArchitecture::V2 {

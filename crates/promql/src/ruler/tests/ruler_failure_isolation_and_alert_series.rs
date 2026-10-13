@@ -16,16 +16,16 @@ rules:
 ",
     )
     .unwrap();
-    let rules = BTreeMap::from([(
-        "ns".to_string(),
-        BTreeMap::from([("mixed".to_string(), group)]),
-    )]);
+    let mut groups = BTreeMap::new();
+    groups.insert("mixed".to_string(), group);
+    let mut rules = BTreeMap::new();
+    rules.insert("ns".to_string(), groups);
     let wal = RecordingSink::default();
     let alerts = RecordingAlertmanagerSink::default();
     let states = RecordingRulerStateSink::default();
     let report = super::super::evaluate_and_persist_ruler_rule_set_with_report(
         &engine,
-        (&wal, &alerts, &states),
+        super::super::RulerSinks::new(&wal, &alerts, &states),
         &mut super::super::RulerAlertState::default(),
         &tenant,
         &rules,
@@ -67,7 +67,7 @@ rules:
 
     super::super::evaluate_and_persist_ruler_rule_group(
         &engine,
-        (&wal, &alerts, &states),
+        super::super::RulerSinks::new(&wal, &alerts, &states),
         &mut state,
         &tenant,
         &group,
@@ -85,7 +85,7 @@ rules:
 
     super::super::evaluate_and_persist_ruler_rule_group(
         &engine,
-        (&wal, &alerts, &states),
+        super::super::RulerSinks::new(&wal, &alerts, &states),
         &mut state,
         &tenant,
         &group,
@@ -100,7 +100,7 @@ rules:
 
     super::super::evaluate_and_persist_ruler_rule_group(
         &engine,
-        (&wal, &alerts, &states),
+        super::super::RulerSinks::new(&wal, &alerts, &states),
         &mut state,
         &tenant,
         &group,
@@ -123,7 +123,7 @@ fn label<'a>(record: &'a WalRecord, name: &str) -> Option<&'a str> {
     record
         .labels
         .iter()
-        .find_map(|(key, value)| (key == name).then_some(value.as_str()))
+        .find_map(|pair| (pair.name == name).then_some(pair.value.as_str()))
 }
 
 fn float_value(record: &WalRecord) -> f64 {

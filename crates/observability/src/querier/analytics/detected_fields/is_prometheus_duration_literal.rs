@@ -22,14 +22,14 @@ pub(crate) fn is_prometheus_duration_literal(value: &str) -> bool {
         {
             pos += 1;
         }
-        let Some((unit_order, _)) = detected_duration_unit(&value[unit_start..pos]) else {
+        let Some(unit) = detected_duration_unit(&value[unit_start..pos]) else {
             return false;
         };
-        if previous_unit_order.is_some_and(|previous| unit_order <= previous) {
+        if previous_unit_order.is_some_and(|previous| unit.order <= previous) {
             return false;
         }
 
-        previous_unit_order = Some(unit_order);
+        previous_unit_order = Some(unit.order);
         parsed_chunk = true;
     }
 

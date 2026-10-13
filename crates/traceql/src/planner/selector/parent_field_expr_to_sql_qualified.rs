@@ -3,6 +3,11 @@ use super::{
     qualified_field_ident,
 };
 
+struct ParentPredicateSides {
+    left: Option<String>,
+    right: Option<String>,
+}
+
 pub(crate) fn parent_field_expr_to_sql_qualified(
     fe: &FieldExpr,
     span_alias: &str,
@@ -25,18 +30,41 @@ pub(crate) fn parent_field_expr_to_sql_qualified(
         FieldExpr::And(a, b) => {
             let left = parent_field_expr_to_sql_qualified(a, span_alias, parent_alias)?;
             let right = parent_field_expr_to_sql_qualified(b, span_alias, parent_alias)?;
-            Ok(match (left, right) {
-                (Some(left), Some(right)) => Some(format!("({left} AND {right})")),
-                (Some(predicate), None) | (None, Some(predicate)) => Some(predicate),
-                (None, None) => None,
+            Ok(match (ParentPredicateSides { left, right }) {
+                ParentPredicateSides {
+                    left: Some(left),
+                    right: Some(right),
+                } => Some(format!("({left} AND {right})")),
+                ParentPredicateSides {
+                    left: Some(predicate),
+                    right: None,
+                }
+                | ParentPredicateSides {
+                    left: None,
+                    right: Some(predicate),
+                } => Some(predicate),
+                ParentPredicateSides {
+                    left: None,
+                    right: None,
+                } => None,
             })
         }
         FieldExpr::Or(a, b) => {
             let left = parent_field_expr_to_sql_qualified(a, span_alias, parent_alias)?;
             let right = parent_field_expr_to_sql_qualified(b, span_alias, parent_alias)?;
-            Ok(match (left, right) {
-                (Some(left), Some(right)) => Some(format!("({left} OR {right})")),
-                (Some(_) | None, None) | (None, Some(_)) => None,
+            Ok(match (ParentPredicateSides { left, right }) {
+                ParentPredicateSides {
+                    left: Some(left),
+                    right: Some(right),
+                } => Some(format!("({left} OR {right})")),
+                ParentPredicateSides {
+                    left: Some(_) | None,
+                    right: None,
+                }
+                | ParentPredicateSides {
+                    left: None,
+                    right: Some(_),
+                } => None,
             })
         }
         FieldExpr::Not(inner) => {

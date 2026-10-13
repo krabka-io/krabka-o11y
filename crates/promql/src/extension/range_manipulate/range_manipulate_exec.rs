@@ -83,14 +83,17 @@ impl RangeManipulateExec {
             let len = u32::try_from(hi - lo)
                 .map_err(|error| DataFusionError::Execution(error.to_string()))?;
             eval_timestamps.push(grid_ts);
-            ranges.push((offset, len));
+            ranges.push(crate::RangeWindow::new(offset, len));
 
             grid_ts = grid_ts
                 .checked_add(self.settings.interval_ms)
                 .ok_or_else(|| DataFusionError::Execution("grid timestamp overflow".to_string()))?;
         }
 
-        Ok((eval_timestamps, ranges))
+        Ok(StepWindows {
+            eval_timestamps_ms: eval_timestamps,
+            ranges,
+        })
     }
 
     pub(crate) fn manipulate_batch(&self, batch: &RecordBatch) -> DfResult<RecordBatch> {
@@ -129,7 +132,10 @@ impl RangeManipulateExec {
             return Ok(RecordBatch::new_empty(Arc::clone(&self.output_schema)));
         }
 
-        let (eval_timestamps, ranges) = self.windows(timestamps)?;
+        let StepWindows {
+            eval_timestamps_ms: eval_timestamps,
+            ranges,
+        } = self.windows(timestamps)?;
 
         let timestamps_values = Arc::new(timestamps.clone()) as ArrayRef;
         let values_values = Arc::new(values.clone()) as ArrayRef;
@@ -150,7 +156,9 @@ impl RangeManipulateExec {
             UInt32Array::from_iter_values(std::iter::repeat_n(0_u32, eval_timestamps.len()));
 
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.output_schema.fields().len());
-        for (index, column) in batch.columns().iter().enumerate() {
+        for column_entry in batch.columns().iter().enumerate() {
+            let index = column_entry.0;
+            let column = column_entry.1;
             if index == time_column_index || index == value_column_index {
                 continue;
             }

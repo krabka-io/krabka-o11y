@@ -1,5 +1,10 @@
 use super::*;
 
+struct TimeWindowProbe {
+    start: i64,
+    end: i64,
+}
+
 /// The time-bucketed `records_in_range` MUST return exactly the same records (and
 /// so the same label/field sets) as a full-buffer scan, for any inclusive
 /// `[start, end]`, even though records are appended in NO timestamp order. This is the
@@ -31,7 +36,7 @@ pub(crate) async fn hot_tail_records_in_range_matches_full_scan_under_out_of_ord
     let records: Vec<WalLogRecord> = timestamps
         .iter()
         .enumerate()
-        .map(|(i, &ts)| hot_tail_test_record(ts, apps[i % apps.len()]))
+        .map(|entry| hot_tail_test_record(*entry.1, apps[entry.0 % apps.len()]))
         .collect();
 
     // Append one at a time to exercise incremental bucket insertion of out-of-order data.
@@ -47,26 +52,40 @@ pub(crate) async fn hot_tail_records_in_range_matches_full_scan_under_out_of_ord
     // spanning many buckets, empty windows, and windows entirely outside the data.
     let min_ts = *timestamps.iter().min().unwrap();
     let max_ts = *timestamps.iter().max().unwrap();
-    let mut probes: Vec<(i64, i64)> = Vec::new();
+    let mut probes: Vec<TimeWindowProbe> = Vec::new();
     // Walk window starts at a coarse quarter-bucket stride from below the earliest
     // record to above the latest, pairing each with several spans.
     let stride = bucket / 4;
     let mut start = min_ts - 2 * bucket;
     while start <= max_ts + 2 * bucket {
         for span in [0_i64, 1, bucket - 1, bucket, bucket + 1, 3 * bucket] {
-            probes.push((start, start + span));
+            probes.push(TimeWindowProbe {
+                start,
+                end: start + span,
+            });
         }
         start += stride;
     }
     // Add exact per-record point windows and tight windows around each timestamp.
     for &ts in &timestamps {
-        probes.push((ts, ts));
-        probes.push((ts - 1, ts));
-        probes.push((ts, ts + 1));
-        probes.push((ts + 1, ts + 1));
+        probes.push(TimeWindowProbe { start: ts, end: ts });
+        probes.push(TimeWindowProbe {
+            start: ts - 1,
+            end: ts,
+        });
+        probes.push(TimeWindowProbe {
+            start: ts,
+            end: ts + 1,
+        });
+        probes.push(TimeWindowProbe {
+            start: ts + 1,
+            end: ts + 1,
+        });
     }
 
-    for (start, end) in probes {
+    for probe in probes {
+        let start = probe.start;
+        let end = probe.end;
         if start > end {
             // Mirror the guard: an inverted window yields nothing.
             assert!(hot_tail.records_in_range(start, end).is_empty());
@@ -91,10 +110,13 @@ pub(crate) async fn hot_tail_records_in_range_matches_full_scan_under_out_of_ord
 
     // The trait-object path the querier actually uses must agree with the inherent method.
     let dyn_tail: Arc<dyn LogHotTail> = Arc::new(hot_tail.clone());
-    let window = (2 * bucket, 6 * bucket);
+    let window = TimeWindowProbe {
+        start: 2 * bucket,
+        end: 6 * bucket,
+    };
     assert_eq!(
-        dyn_tail.records_in_range(window.0, window.1),
-        hot_tail.records_in_range(window.0, window.1),
+        dyn_tail.records_in_range(window.start, window.end),
+        hot_tail.records_in_range(window.start, window.end),
     );
 
     // The default trait impl (used by other LogHotTail implementors, e.g. the
@@ -107,7 +129,7 @@ pub(crate) async fn hot_tail_records_in_range_matches_full_scan_under_out_of_ord
     }
     let in_memory_dyn: Arc<dyn LogHotTail> = Arc::new(in_memory);
     assert_eq!(
-        in_memory_dyn.records_in_range(window.0, window.1),
-        brute_force_in_range(&records, window.0, window.1),
+        in_memory_dyn.records_in_range(window.start, window.end),
+        brute_force_in_range(&records, window.start, window.end),
     );
 }

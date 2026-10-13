@@ -21,7 +21,7 @@ use crate::error::{PromqlError, Result};
 use crate::{
     PromqlLabels as Labels,
     planner::ExtendedSelectorModifier,
-    result::{InstantSample, RangeSeries, SampleValue},
+    result::{FloatSample, InstantSample, RangeSeries, SampleValue},
 };
 
 mod align_subquery_start;
@@ -90,7 +90,8 @@ use double_exponential_smoothing::double_exponential_smoothing;
 #[cfg(feature = "experimental-functions")]
 use double_exponential_smoothing_sample_from_series::double_exponential_smoothing_sample_from_series;
 pub(super) use extended_range_value::{
-    extended_float_range_value, extended_histogram_range_value, interpolate_histogram,
+    HistogramSample, extended_float_range_value, extended_histogram_range_value,
+    interpolate_histogram,
 };
 use extrapolate_histogram_delta::extrapolate_histogram_delta;
 use extrapolated_histogram_component::extrapolated_histogram_component;
@@ -110,7 +111,7 @@ use instant_delta_sample_from_series::instant_delta_sample_from_series;
 pub(super) use instant_smoothed_boundary_value::instant_smoothed_boundary_value;
 use interpolate_boundary::interpolate_boundary;
 pub(super) use irate_fn::IrateFn;
-pub(super) use kahan_sum_inc::kahan_sum_inc;
+pub(crate) use kahan_sum_inc::kahan_sum_inc;
 pub(super) use native_histograms_equal::native_histograms_equal;
 use note_histograms_ignored_in_range::note_histograms_ignored_in_range;
 pub(super) use outer_range_fn::OuterRangeFn;
@@ -129,7 +130,7 @@ use range_function_sample_from_series::range_function_sample_from_series;
 pub(super) use range_has_samples::range_has_samples;
 use range_histogram_sample::range_histogram_sample;
 use range_sample_count::range_sample_count;
-use range_samples::range_samples;
+pub(super) use range_samples::{RangeSample, range_samples};
 use regression_slope::regression_slope;
 use regression_slope_and_intercept::regression_slope_and_intercept;
 #[cfg(feature = "experimental-functions")]

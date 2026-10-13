@@ -1,4 +1,5 @@
-use super::{AttrValue, EventRef, LinkRef, Time};
+use super::{EventRef, LinkRef, Time};
+use crate::result::{AttrValue, Attribute};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputSpan {
@@ -14,7 +15,7 @@ pub struct InputSpan {
     pub status_message: String,
     pub instrumentation_name: String,
     pub instrumentation_version: String,
-    pub attrs: Vec<(String, AttrValue)>,
+    pub attrs: Vec<Attribute>,
     pub events: Vec<EventRef>,
     pub links: Vec<LinkRef>,
 }

@@ -6,10 +6,10 @@ pub(crate) async fn info_function_keeps_base_label_when_info_label_overlaps() {
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "http_requests_total"),
-            ("job", "api"),
-            ("instance", "a"),
-            ("region", "base"),
+            crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
+            crate::test_support::TestLabelPair::new("region", "base"),
         ]),
         10_000,
         7.0,
@@ -17,11 +17,11 @@ pub(crate) async fn info_function_keeps_base_label_when_info_label_overlaps() {
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "target_info"),
-            ("job", "api"),
-            ("instance", "a"),
-            ("region", "info"),
-            ("cluster", "prod"),
+            crate::test_support::TestLabelPair::new("__name__", "target_info"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
+            crate::test_support::TestLabelPair::new("region", "info"),
+            crate::test_support::TestLabelPair::new("cluster", "prod"),
         ]),
         10_000,
         1.0,

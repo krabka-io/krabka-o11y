@@ -5,6 +5,27 @@ use super::{
     template_action_trim_left, template_parse_error,
 };
 
+pub(crate) struct TemplateControlBody<'a> {
+    pub(crate) parts: Vec<TemplatePart>,
+    pub(crate) expression: &'a str,
+    pub(crate) next_position: usize,
+}
+
+pub(crate) fn parse_template_control_body<'a>(
+    template: &'a str,
+    body_start: usize,
+) -> Result<TemplateControlBody<'a>, ParseError> {
+    let Some(control) = super::find_template_control_action(template, body_start)? else {
+        return Err(template_parse_error("expected template end action"));
+    };
+    let parts = parse_template_parts(&template[body_start..control.body_end])?;
+    Ok(TemplateControlBody {
+        parts,
+        expression: control.expression,
+        next_position: control.next_position,
+    })
+}
+
 pub(crate) fn parse_template_parts(template: &str) -> Result<Vec<TemplatePart>, ParseError> {
     let mut parts = Vec::new();
     let mut pos = 0;
@@ -57,13 +78,12 @@ pub(crate) fn parse_template_parts(template: &str) -> Result<Vec<TemplatePart>, 
             if expression.starts_with("block ") && argument.is_none() {
                 return Err(template_parse_error("expected block argument"));
             }
-            let (end, control, next_pos) =
-                super::find_template_control_action(template, action.next_pos)?
-                    .ok_or_else(|| template_parse_error("expected template end action"))?;
-            if control != "end" {
+            let control = super::find_template_control_action(template, action.next_pos)?
+                .ok_or_else(|| template_parse_error("expected template end action"))?;
+            if control.expression != "end" {
                 return Err(template_parse_error("unexpected definition control action"));
             }
-            let body = parse_template_parts(&template[action.next_pos..end])?;
+            let body = parse_template_parts(&template[action.next_pos..control.body_end])?;
             parts.push(TemplatePart::Definition {
                 name: name.clone(),
                 parts: body,
@@ -72,27 +92,25 @@ pub(crate) fn parse_template_parts(template: &str) -> Result<Vec<TemplatePart>, 
             if expression.starts_with("block ") {
                 parts.push(TemplatePart::Invocation { name, argument });
             }
-            pos = next_pos;
+            pos = control.next_position;
             continue;
         }
         if let Some(condition) = expression.strip_prefix("if ") {
-            let (conditional, next_pos) =
-                parse_template_conditional(template, action.next_pos, condition.trim())?;
-            parts.push(TemplatePart::Conditional(conditional));
-            pos = next_pos;
+            let parsed = parse_template_conditional(template, action.next_pos, condition.trim())?;
+            parts.push(TemplatePart::Conditional(parsed.value));
+            pos = parsed.next_position;
             continue;
         }
         if let Some(range_expression) = expression.strip_prefix("range ") {
-            let (range, next_pos) =
-                parse_template_range(template, action.next_pos, range_expression)?;
-            parts.push(TemplatePart::Range(range));
-            pos = next_pos;
+            let parsed = parse_template_range(template, action.next_pos, range_expression)?;
+            parts.push(TemplatePart::Range(parsed.value));
+            pos = parsed.next_position;
             continue;
         }
         if let Some(with_expression) = expression.strip_prefix("with ") {
-            let (with, next_pos) = parse_template_with(template, action.next_pos, with_expression)?;
-            parts.push(TemplatePart::With(with));
-            pos = next_pos;
+            let parsed = parse_template_with(template, action.next_pos, with_expression)?;
+            parts.push(TemplatePart::With(parsed.value));
+            pos = parsed.next_position;
             continue;
         }
         if is_template_comment_action(expression) {

@@ -5,7 +5,18 @@ use crate::{
     parse_metric_sample_value, querier::aggregate::sample_windows::vector_group_labels,
 };
 
-type TimestampStates = BTreeMap<(i128, u128), (Value, FloatAggregation)>;
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SampleTimestamp {
+    numerator: i128,
+    denominator: u128,
+}
+
+struct AggregatedSample {
+    timestamp: Value,
+    aggregation: FloatAggregation,
+}
+
+type TimestampStates = BTreeMap<SampleTimestamp, AggregatedSample>;
 
 // Match the pinned Loki VectorAggEvaluator, including first-sample initialization.
 struct FloatAggregation {
@@ -138,13 +149,14 @@ pub(crate) fn apply_nested_vector_aggregation(
         }
     }
     let mut result = Vec::new();
-    for (labels, states) in groups {
+    for labels in groups.keys().cloned().collect::<Vec<_>>() {
+        let states = groups.remove(&labels).expect("selected group exists");
         let mut samples = states
             .into_values()
-            .map(|(timestamp, state)| {
+            .map(|state| {
                 Ok(json!([
-                    timestamp,
-                    format_float_sample(state.finish(&aggregation.op)?)
+                    state.timestamp,
+                    format_float_sample(state.aggregation.finish(&aggregation.op)?)
                 ]))
             })
             .collect::<Result<Vec<_>, HttpQueryError>>()?;
@@ -194,11 +206,17 @@ fn record_sample(
             .filter(|value| value.is_finite())
             .ok_or_else(|| invalid_aggregation("invalid metric sample value"))?,
     };
-    match states.entry((timestamp.numerator, timestamp.denominator)) {
+    match states.entry(SampleTimestamp {
+        numerator: timestamp.numerator,
+        denominator: timestamp.denominator,
+    }) {
         Entry::Vacant(entry) => {
-            entry.insert((parts[0].clone(), FloatAggregation::new(value, op)));
+            entry.insert(AggregatedSample {
+                timestamp: parts[0].clone(),
+                aggregation: FloatAggregation::new(value, op),
+            });
         }
-        Entry::Occupied(mut entry) => entry.get_mut().1.record(value, op)?,
+        Entry::Occupied(mut entry) => entry.get_mut().aggregation.record(value, op)?,
     }
     Ok(())
 }
@@ -213,6 +231,18 @@ mod tests {
     use krabka_logql::VectorGrouping;
 
     use super::*;
+
+    struct InstantAggregationCase {
+        op: VectorAggregationOp,
+        api: &'static str,
+        cache: &'static str,
+    }
+
+    struct FloatAggregationCase {
+        op: VectorAggregationOp,
+        samples: Vec<&'static str>,
+        expected: &'static str,
+    }
 
     #[test]
     fn nested_max_of_grouped_averages_keeps_each_timestamp_separate() {
@@ -264,20 +294,48 @@ mod tests {
             {"metric": {"service": "api", "instance": "b"}, "value": [2.0, "3e0"]},
             {"metric": {"service": "cache", "instance": "a"}, "value": [2, "5"]}
         ]}});
-        for (op, api, cache) in [
-            (VectorAggregationOp::Sum, "4", "5"),
-            (VectorAggregationOp::Count, "2", "1"),
-            (VectorAggregationOp::Min, "1", "5"),
-            (VectorAggregationOp::Max, "3", "5"),
-            (VectorAggregationOp::Avg, "2", "5"),
-            (VectorAggregationOp::Stddev, "1", "0"),
-            (VectorAggregationOp::Stdvar, "1", "0"),
+        for case in [
+            InstantAggregationCase {
+                op: VectorAggregationOp::Sum,
+                api: "4",
+                cache: "5",
+            },
+            InstantAggregationCase {
+                op: VectorAggregationOp::Count,
+                api: "2",
+                cache: "1",
+            },
+            InstantAggregationCase {
+                op: VectorAggregationOp::Min,
+                api: "1",
+                cache: "5",
+            },
+            InstantAggregationCase {
+                op: VectorAggregationOp::Max,
+                api: "3",
+                cache: "5",
+            },
+            InstantAggregationCase {
+                op: VectorAggregationOp::Avg,
+                api: "2",
+                cache: "5",
+            },
+            InstantAggregationCase {
+                op: VectorAggregationOp::Stddev,
+                api: "1",
+                cache: "0",
+            },
+            InstantAggregationCase {
+                op: VectorAggregationOp::Stdvar,
+                api: "1",
+                cache: "0",
+            },
         ] {
             let mut actual = response.clone();
             apply_nested_vector_aggregation(
                 &mut actual,
                 &VectorAggregation {
-                    op,
+                    op: case.op,
                     grouping: Some(VectorGrouping::Without(vec!["instance".into()])),
                 },
             )
@@ -285,8 +343,8 @@ mod tests {
             assert!(
                 actual
                     == json!({"data": {"resultType": "vector", "result": [
-                        {"metric": {"service": "api"}, "value": [2, api]},
-                        {"metric": {"service": "cache"}, "value": [2, cache]}
+                        {"metric": {"service": "api"}, "value": [2, case.api]},
+                        {"metric": {"service": "cache"}, "value": [2, case.cache]}
                     ]}})
             );
         }
@@ -330,61 +388,120 @@ mod tests {
 
     #[test]
     fn float_reductions_match_lokis_nonfinite_and_large_value_rules() {
-        for (op, samples, expected) in [
-            (VectorAggregationOp::Sum, vec!["+Inf", "1"], "+Inf"),
-            (VectorAggregationOp::Sum, vec!["+Inf", "-Inf"], "NaN"),
-            (VectorAggregationOp::Sum, vec!["1e308", "1e308"], "+Inf"),
-            (VectorAggregationOp::Sum, vec!["-0", "-0"], "-0"),
-            (VectorAggregationOp::Avg, vec!["+Inf", "1"], "NaN"),
-            (VectorAggregationOp::Avg, vec!["1", "+Inf"], "+Inf"),
-            (VectorAggregationOp::Avg, vec!["NaN", "1"], "NaN"),
-            (VectorAggregationOp::Count, vec!["NaN", "+Inf", "-Inf"], "3"),
-            (VectorAggregationOp::Min, vec!["NaN", "3", "+Inf"], "3"),
-            (VectorAggregationOp::Max, vec!["-Inf", "NaN", "3"], "3"),
-            (VectorAggregationOp::Min, vec!["NaN", "NaN"], "NaN"),
-            (VectorAggregationOp::Stdvar, vec!["+Inf"], "0"),
-            (VectorAggregationOp::Stdvar, vec!["+Inf", "1"], "NaN"),
-            (VectorAggregationOp::Stddev, vec!["NaN", "1"], "NaN"),
-            (
-                VectorAggregationOp::Stdvar,
-                vec!["1000000000000", "1000000000002"],
-                "1",
-            ),
-            (
-                VectorAggregationOp::Stddev,
-                vec!["1000000000000", "1000000000002"],
-                "1",
-            ),
-            (
-                VectorAggregationOp::Min,
-                vec!["1e20", "2e20"],
-                "100000000000000000000",
-            ),
-            (
-                VectorAggregationOp::Max,
-                vec!["1e20", "2e20"],
-                "200000000000000000000",
-            ),
-            (
-                VectorAggregationOp::Avg,
-                vec!["1e20", "1e20"],
-                "100000000000000000000",
-            ),
+        for case in [
+            FloatAggregationCase {
+                op: VectorAggregationOp::Sum,
+                samples: vec!["+Inf", "1"],
+                expected: "+Inf",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Sum,
+                samples: vec!["+Inf", "-Inf"],
+                expected: "NaN",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Sum,
+                samples: vec!["1e308", "1e308"],
+                expected: "+Inf",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Sum,
+                samples: vec!["-0", "-0"],
+                expected: "-0",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Avg,
+                samples: vec!["+Inf", "1"],
+                expected: "NaN",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Avg,
+                samples: vec!["1", "+Inf"],
+                expected: "+Inf",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Avg,
+                samples: vec!["NaN", "1"],
+                expected: "NaN",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Count,
+                samples: vec!["NaN", "+Inf", "-Inf"],
+                expected: "3",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Min,
+                samples: vec!["NaN", "3", "+Inf"],
+                expected: "3",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Max,
+                samples: vec!["-Inf", "NaN", "3"],
+                expected: "3",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Min,
+                samples: vec!["NaN", "NaN"],
+                expected: "NaN",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Stdvar,
+                samples: vec!["+Inf"],
+                expected: "0",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Stdvar,
+                samples: vec!["+Inf", "1"],
+                expected: "NaN",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Stddev,
+                samples: vec!["NaN", "1"],
+                expected: "NaN",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Stdvar,
+                samples: vec!["1000000000000", "1000000000002"],
+                expected: "1",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Stddev,
+                samples: vec!["1000000000000", "1000000000002"],
+                expected: "1",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Min,
+                samples: vec!["1e20", "2e20"],
+                expected: "100000000000000000000",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Max,
+                samples: vec!["1e20", "2e20"],
+                expected: "200000000000000000000",
+            },
+            FloatAggregationCase {
+                op: VectorAggregationOp::Avg,
+                samples: vec!["1e20", "1e20"],
+                expected: "100000000000000000000",
+            },
         ] {
             let mut response = json!({"status": "success", "data": {
-                "resultType": "vector", "result": samples.iter().map(|sample|
+                "resultType": "vector", "result": case.samples.iter().map(|sample|
                     json!({"metric": {}, "value": [10, sample]})
                 ).collect::<Vec<_>>()
             }});
             apply_nested_vector_aggregation(
                 &mut response,
-                &VectorAggregation { op, grouping: None },
+                &VectorAggregation {
+                    op: case.op,
+                    grouping: None,
+                },
             )
             .unwrap();
             assert!(
                 response
                     == json!({"status": "success", "data": {
-                        "resultType": "vector", "result": [{"metric": {}, "value": [10, expected]}]
+                        "resultType": "vector", "result": [{"metric": {}, "value": [10, case.expected]}]
                     }})
             );
         }

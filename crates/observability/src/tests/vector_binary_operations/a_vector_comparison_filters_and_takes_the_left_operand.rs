@@ -47,7 +47,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         )
     );
     check!(
-        range_pairs(&output) == vec![(1, "10".to_string())],
+        range_pairs(&output) == vec![formatted_sample(1, "10")],
         "only 10 > 1 survives, carrying the LEFT value"
     );
 
@@ -67,9 +67,9 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     check!(
         range_pairs(&output)
             == vec![
-                (1, "1".to_string()),
-                (4, "0".to_string()),
-                (5, "0".to_string()),
+                formatted_sample(1, "1"),
+                formatted_sample(4, "0"),
+                formatted_sample(5, "0")
             ]
     );
 
@@ -86,7 +86,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
             },
         )
     );
-    check!(range_pairs(&output) == vec![(4, "20".to_string()), (5, "20".to_string())]);
+    check!(range_pairs(&output) == vec![formatted_sample(4, "20"), formatted_sample(5, "20")]);
 
     // Everything filtered out reports false so the caller drops the series.
     let mut output = range_series(&[timed_sample(1, "99")]);

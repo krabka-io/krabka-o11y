@@ -1,4 +1,6 @@
-use krabka_observability::persisted_format::{PersistedFormatError, validate_persisted_format};
+use krabka_observability::persisted_format::{
+    PersistedFormatError, PersistedHeader, validate_persisted_format,
+};
 
 use super::{ConsumerRecord, Offset, PartitionIndex};
 
@@ -21,12 +23,10 @@ pub(crate) fn checked_replay_records(
     topic: &str,
 ) -> Result<Vec<WalHeadConsumerRecord>, PersistedFormatError> {
     for record in records.iter().filter(|record| record.topic == topic) {
-        validate_persisted_format(
-            record
-                .headers
-                .iter()
-                .map(|header| (header.key.as_str(), header.value.as_deref())),
-        )?;
+        validate_persisted_format(record.headers.iter().map(|header| PersistedHeader {
+            key: header.key.as_str(),
+            value: header.value.as_deref(),
+        }))?;
     }
     Ok(records
         .into_iter()

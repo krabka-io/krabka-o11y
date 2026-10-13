@@ -4,15 +4,27 @@ use super::*;
 pub(crate) async fn instant_sum_by_groups_by_exact_labels_and_drops_metric_name() {
     let engine = FloatStore::default()
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", "a"),
+            ]),
             1.0,
         )
         .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", "b"),
+            ]),
             2.0,
         )
         .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("instance", "c")]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "web"),
+                crate::test_support::TestLabelPair::new("instance", "c"),
+            ]),
             4.0,
         )
         .engine();

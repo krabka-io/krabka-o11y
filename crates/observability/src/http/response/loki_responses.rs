@@ -77,3 +77,25 @@ pub(crate) use unix_ns_string_to_loki_seconds::unix_ns_string_to_loki_seconds;
 pub(crate) use wants_loki_parquet::wants_loki_parquet;
 
 use self::loki_timestamp::LokiTimestamp;
+
+fn update_loki_stream_values(value: &mut Value, mut update_values: impl FnMut(&mut Vec<Value>)) {
+    let Some(streams) = value
+        .pointer_mut("/data/result")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+
+    for stream in streams.iter_mut() {
+        if let Some(values) = stream.get_mut("values").and_then(Value::as_array_mut) {
+            update_values(values);
+        }
+    }
+
+    streams.retain(|stream| {
+        stream
+            .get("values")
+            .and_then(Value::as_array)
+            .is_some_and(|values| !values.is_empty())
+    });
+}

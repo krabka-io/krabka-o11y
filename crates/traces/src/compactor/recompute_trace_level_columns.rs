@@ -5,6 +5,11 @@ use super::{
     fixed_column, int64_column, set_column, string_column,
 };
 
+struct RootNames {
+    service: Option<String>,
+    span_name: Option<String>,
+}
+
 /// Recompute the trace-level denormalized columns over the FULL merged trace.
 ///
 /// The write path in `span/batch.rs::root_info` sets `trace_start_unix_nano`,
@@ -65,18 +70,22 @@ pub(crate) fn recompute_trace_level_columns(
             .copied()
             .find(|&row| parent_span_ids.is_null(row))
             .or_else(|| rows.iter().copied().min_by_key(|&row| start.value(row)));
-        let (service, span_name) = root_row.map_or((None, None), |row| {
-            (
-                (!root_service.is_null(row)).then(|| root_service.value(row).to_string()),
-                (!name.is_null(row)).then(|| name.value(row).to_string()),
-            )
-        });
+        let root_names = root_row.map_or(
+            RootNames {
+                service: None,
+                span_name: None,
+            },
+            |row| RootNames {
+                service: (!root_service.is_null(row)).then(|| root_service.value(row).to_string()),
+                span_name: (!name.is_null(row)).then(|| name.value(row).to_string()),
+            },
+        );
 
         for &row in rows {
             trace_start[row] = min_start;
             trace_duration[row] = dur;
-            root_service_out[row].clone_from(&service);
-            root_name_out[row].clone_from(&span_name);
+            root_service_out[row].clone_from(&root_names.service);
+            root_name_out[row].clone_from(&root_names.span_name);
         }
     }
 

@@ -11,22 +11,37 @@ const PARITY_TENANT: &str = "t";
 ///
 /// Panics when the query does not parse, when the recursive planner does not
 /// claim it, or when either path fails, naming the query.
+pub(crate) struct QueryPathResults {
+    pub(crate) via_operators: QueryResult,
+    pub(crate) via_interpreter: QueryResult,
+}
+
 pub(crate) async fn planned_and_interpreted<S: crate::MetricStore>(
     engine: &PromqlEngine<S>,
     query: &str,
     time_ms: i64,
-) -> (QueryResult, QueryResult) {
+) -> QueryPathResults {
     let parsed = ParsedQuery::at(query, time_ms);
-    (
-        via_operators(engine, &parsed).await,
-        via_interpreter(engine, &parsed).await,
-    )
+    QueryPathResults {
+        via_operators: via_operators(engine, &parsed).await,
+        via_interpreter: via_interpreter(engine, &parsed).await,
+    }
 }
 
 /// Both paths' vector samples for one query, each sorted by series fingerprint.
 pub(crate) struct SortedParity {
     pub(crate) via_operators: Vec<crate::InstantSample>,
     pub(crate) via_interpreter: Vec<crate::InstantSample>,
+}
+
+pub(crate) struct PathEvaluation {
+    pub result: QueryResult,
+    pub annotations: Annotations,
+}
+
+pub(crate) struct AnnotatedParity {
+    pub via_operators: PathEvaluation,
+    pub via_interpreter: PathEvaluation,
 }
 
 /// Like [`planned_and_interpreted`], with each path's vector sorted by
@@ -36,7 +51,9 @@ pub(crate) async fn sorted_planned_and_interpreted<S: crate::MetricStore>(
     query: &str,
     time_ms: i64,
 ) -> SortedParity {
-    let (via_operators, via_interpreter) = planned_and_interpreted(engine, query, time_ms).await;
+    let parity = planned_and_interpreted(engine, query, time_ms).await;
+    let via_operators = parity.via_operators;
+    let via_interpreter = parity.via_interpreter;
     SortedParity {
         via_operators: fingerprint_sorted(via_operators, query),
         via_interpreter: fingerprint_sorted(via_interpreter, query),
@@ -48,21 +65,27 @@ pub(crate) async fn annotated_planned_and_interpreted<S: crate::MetricStore>(
     engine: &PromqlEngine<S>,
     query: &str,
     time_ms: i64,
-) -> ((QueryResult, Annotations), (QueryResult, Annotations)) {
+) -> AnnotatedParity {
     let parsed = ParsedQuery::at(query, time_ms);
-    (
-        with_annotations(via_operators(engine, &parsed)).await,
-        with_annotations(via_interpreter(engine, &parsed)).await,
-    )
+    AnnotatedParity {
+        via_operators: with_annotations(via_operators(engine, &parsed)).await,
+        via_interpreter: with_annotations(via_interpreter(engine, &parsed)).await,
+    }
 }
 
 /// Runs `future` inside a fresh annotation sink and returns what it raised.
-async fn with_annotations<T>(future: impl Future<Output = T>) -> (T, Annotations) {
+async fn with_annotations<T>(future: impl Future<Output = T>) -> PathEvaluation
+where
+    T: Into<QueryResult>,
+{
     super::super::ANNOTATIONS
         .scope(RefCell::new(Annotations::new()), async {
             let future_output = future.await;
             let annotations = super::super::ANNOTATIONS.with(|sink| sink.borrow().clone());
-            (future_output, annotations)
+            PathEvaluation {
+                result: future_output.into(),
+                annotations,
+            }
         })
         .await
 }

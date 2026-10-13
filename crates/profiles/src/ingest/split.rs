@@ -66,15 +66,15 @@ mod tests {
         check!(space.samples[0].value == 4096);
         check!(objects.samples[0].timestamp_ns == 123_000_000);
         check!(objects.samples[0].stacktrace_location_refs == vec![6]);
-        for (name, want) in [
-            ("__profile_type__", objects.profile_type.as_str()),
-            ("__period_type__", "space"),
-            ("__period_unit__", "bytes"),
-            ("__type__", "alloc_objects"),
-            ("__unit__", "count"),
-            ("__service_name__", "api"),
+        for label in [
+            krabka_blockstore::LabelPair::new("__profile_type__", objects.profile_type.as_str()),
+            krabka_blockstore::LabelPair::new("__period_type__", "space"),
+            krabka_blockstore::LabelPair::new("__period_unit__", "bytes"),
+            krabka_blockstore::LabelPair::new("__type__", "alloc_objects"),
+            krabka_blockstore::LabelPair::new("__unit__", "count"),
+            krabka_blockstore::LabelPair::new("__service_name__", "api"),
         ] {
-            check!(objects.labels.get(name) == Some(want));
+            check!(objects.labels.get(&label.name) == Some(label.value.as_str()));
         }
     }
 

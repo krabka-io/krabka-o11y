@@ -6,7 +6,9 @@ use opentelemetry_proto::tonic::{
 };
 
 use super::WireError;
-use crate::span::{AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode};
+use crate::span::{
+    AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode, WireSpanStatus,
+};
 
 #[cfg(test)]
 mod tests {
@@ -160,7 +162,9 @@ mod tests {
                 0xff, 0x00,
             ])])]),
         ];
-        for (index, value) in values.iter().enumerate() {
+        for entry in values.iter().enumerate() {
+            let index = entry.0;
+            let value = entry.1;
             data.resource_spans[0].scope_spans[0].spans[0]
                 .attributes
                 .push(OtlpKv {
@@ -170,7 +174,9 @@ mod tests {
                 });
         }
         let spans = decode_otlp(&data).unwrap();
-        for (index, expected) in values.iter().enumerate() {
+        for entry in values.iter().enumerate() {
+            let index = entry.0;
+            let expected = entry.1;
             let actual = &spans[0]
                 .span_attrs
                 .iter()

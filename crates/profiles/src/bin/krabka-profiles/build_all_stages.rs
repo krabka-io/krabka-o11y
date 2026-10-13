@@ -147,8 +147,10 @@ pub(crate) async fn build_all_stages(
     let door = krabka_profiles::distributor::router(distributor)
         .merge(krabka_profiles::query::router(Arc::clone(&frontend_state)))
         .merge(krabka_observability::readiness_router(readiness.clone()));
-    let (bound, door_stage) =
+    let door_server =
         bind_all_stage_server(cli.listen, door, "profiles all-in-one", &security.server).await?;
+    let bound = door_server.address;
+    let door_stage = door_server.stage;
     let door_stage: AllStage = Box::new(move |token| {
         Box::pin(async move {
             let server = door_stage(token.clone());
@@ -170,13 +172,15 @@ pub(crate) async fn build_all_stages(
     // HTTP hop in this single-process composition.
     let querier_app = krabka_profiles::query::router(Arc::clone(&querier_state))
         .merge(krabka_observability::readiness_router(readiness.clone()));
-    let (loopback, loopback_stage) = bind_all_stage_server(
-        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+    let loopback_server = bind_all_stage_server(
+        SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
         querier_app,
         "profiles querier",
         &security.server,
     )
     .await?;
+    let loopback = loopback_server.address;
+    let loopback_stage = loopback_server.stage;
     let loopback_stage: AllStage = Box::new(move |token| {
         Box::pin(async move {
             let server = loopback_stage(token.clone());

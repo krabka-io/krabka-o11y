@@ -1,5 +1,16 @@
 use super::{Expr, MatrixSelector, OverTimeFamily, over_time_family_from_function_name};
 
+pub(crate) struct OverTimeRangeCall<'a> {
+    pub selector: &'a MatrixSelector,
+    pub family: OverTimeFamily,
+    pub phi: Option<&'a Expr>,
+}
+
+struct RangeArguments<'a> {
+    range: &'a Expr,
+    phi: Option<&'a Expr>,
+}
+
 /// Matches a top-level `*_over_time` range call eligible for the operator path.
 ///
 /// A call is eligible if and only if `expr` is a [`Call`] whose function is one
@@ -15,30 +26,38 @@ use super::{Expr, MatrixSelector, OverTimeFamily, over_time_family_from_function
 /// `absent_over_time`, subquery range arguments, `anchored`/`smoothed` selectors
 /// (which parse to [`Expr::Extension`]), and nested forms stay on the
 /// interpreter, and this function returns `None` for them.
-pub(crate) fn match_over_time_range_call(
-    expr: &Expr,
-) -> Option<(&MatrixSelector, OverTimeFamily, Option<&Expr>)> {
+pub(crate) fn match_over_time_range_call(expr: &Expr) -> Option<OverTimeRangeCall<'_>> {
     let Expr::Call(call) = expr else {
         return None;
     };
     let family = over_time_family_from_function_name(call.func.name)?;
-    let (range_arg, phi_arg) = if matches!(family, OverTimeFamily::Quantile) {
+    let arguments = if matches!(family, OverTimeFamily::Quantile) {
         let [phi, range] = call.args.args.as_slice() else {
             return None;
         };
-        (range.as_ref(), Some(phi.as_ref()))
+        RangeArguments {
+            range: range.as_ref(),
+            phi: Some(phi.as_ref()),
+        }
     } else {
         let [range] = call.args.args.as_slice() else {
             return None;
         };
-        (range.as_ref(), None)
+        RangeArguments {
+            range: range.as_ref(),
+            phi: None,
+        }
     };
-    let mut arg = range_arg;
+    let mut arg = arguments.range;
     while let Expr::Paren(paren) = arg {
         arg = paren.expr.as_ref();
     }
     let Expr::MatrixSelector(selector) = arg else {
         return None;
     };
-    Some((selector, family, phi_arg))
+    Some(OverTimeRangeCall {
+        selector,
+        family,
+        phi: arguments.phi,
+    })
 }

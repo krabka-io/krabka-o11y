@@ -6,7 +6,10 @@ pub(crate) async fn object_store_range_result_cache_persists_across_instances() 
     let first = ObjectStoreQueryFrontendCache::new(object_store.clone(), "query-cache".to_string());
     let second = ObjectStoreQueryFrontendCache::new(object_store, "query-cache".to_string());
     let query = up_range_query(0, Some(QueryShard { index: 1, total: 2 }));
-    let result = one_sample_matrix(labels(&[("__name__", "up"), ("job", "api")]));
+    let result = one_sample_matrix(labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]));
 
     first
         .insert("tenant-a", &query, result.clone())

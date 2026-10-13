@@ -1,8 +1,9 @@
 pub(crate) fn parse_seconds_to_ns(value: &str) -> Option<i64> {
-    let (negative, value) = value
-        .strip_prefix('-')
-        .map_or((false, value), |rest| (true, rest));
-    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    let negative = value.starts_with('-');
+    let value = value.strip_prefix('-').unwrap_or(value);
+    let separator = value.find('.');
+    let whole = separator.map_or(value, |index| &value[..index]);
+    let fraction = separator.map_or("", |index| &value[index + 1..]);
     if whole.is_empty()
         || !whole.bytes().all(|b| b.is_ascii_digit())
         || !fraction.bytes().all(|b| b.is_ascii_digit())

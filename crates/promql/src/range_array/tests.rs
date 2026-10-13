@@ -7,10 +7,11 @@ use arrow::{
 };
 use assert2::check;
 use krabka_metrics::{
-    BucketSpan, NativeHistogram, ResetHint, decode_native_histograms, encode_native_histograms,
+    BucketSpan, NativeHistogram, NativeHistogramRow, ResetHint, decode_native_histograms,
+    encode_native_histograms,
 };
 
-use super::RangeArray;
+use super::{RangeArray, RangeWindow};
 
 mod basic_accessors_report_empty_state_and_exact_ranges;
 mod cell_len_and_empty_cells;

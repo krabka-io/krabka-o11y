@@ -7,7 +7,7 @@ use krabka_blockstore::{
     SCOL_ROOT_SPAN_NAME, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, span_block_schema,
 };
 use krabka_traceql::{
-    AttrValue as TraceqlAttrValue, ScopedTag, TagCatalog as _, TagScope, TypedValue,
+    AttrValue as TraceqlAttrValue, Attribute, ScopedTag, TagCatalog as _, TagScope, TypedValue,
 };
 use krabka_traces::{
     AttrValue, EventRecord, KeyValue, LinkRecord, LiveStore, Span, SpanRecord,
@@ -61,112 +61,162 @@ fn evicts_spans_older_than_retention_window() {
     );
 }
 
-type RetentionRow = (&'static str, u8, i64, &'static str);
+#[derive(bon::Builder, Clone, Copy)]
+struct RetentionRow {
+    tenant: &'static str,
+    span_id: u8,
+    start_ns: i64,
+    name: &'static str,
+}
 
-fn retention_cases() -> [(i64, &'static [RetentionRow], &'static [RetentionRow]); 8] {
+fn retention_row(
+    tenant: &'static str,
+    span_id: u8,
+    start_ns: i64,
+    name: &'static str,
+) -> RetentionRow {
+    RetentionRow::builder()
+        .tenant(tenant)
+        .span_id(span_id)
+        .start_ns(start_ns)
+        .name(name)
+        .build()
+}
+
+struct RetentionCase {
+    retention_ns: i64,
+    inputs: Vec<RetentionRow>,
+    expected: Vec<RetentionRow>,
+}
+
+fn retention_case(
+    retention_ns: i64,
+    inputs: Vec<RetentionRow>,
+    expected: Vec<RetentionRow>,
+) -> RetentionCase {
+    RetentionCase {
+        retention_ns,
+        inputs,
+        expected,
+    }
+}
+
+fn retention_cases() -> [RetentionCase; 8] {
     [
-        (
+        retention_case(
             50,
-            &[
-                ("a", 1, 100, "old"),
-                ("a", 2, 151, "new"),
-                ("a", 3, 101, "first"),
-                ("a", 4, 100, "late-old"),
-                ("a", 3, 101, "second"),
-            ][..],
-            &[
-                ("a", 3, 101, "first"),
-                ("a", 3, 101, "second"),
-                ("a", 2, 151, "new"),
-            ][..],
+            vec![
+                retention_row("a", 1, 100, "old"),
+                retention_row("a", 2, 151, "new"),
+                retention_row("a", 3, 101, "first"),
+                retention_row("a", 4, 100, "late-old"),
+                retention_row("a", 3, 101, "second"),
+            ],
+            vec![
+                retention_row("a", 3, 101, "first"),
+                retention_row("a", 3, 101, "second"),
+                retention_row("a", 2, 151, "new"),
+            ],
         ),
-        (
+        retention_case(
             50,
-            &[
-                ("a", 1, 100, "old"),
-                ("b", 2, 200, "new"),
-                ("a", 3, 150, "edge"),
-                ("a", 4, 149, "late-old"),
-            ][..],
-            &[("a", 3, 150, "edge"), ("b", 2, 200, "new")][..],
+            vec![
+                retention_row("a", 1, 100, "old"),
+                retention_row("b", 2, 200, "new"),
+                retention_row("a", 3, 150, "edge"),
+                retention_row("a", 4, 149, "late-old"),
+            ],
+            vec![
+                retention_row("a", 3, 150, "edge"),
+                retention_row("b", 2, 200, "new"),
+            ],
         ),
-        (
+        retention_case(
             0,
-            &[
-                ("a", 1, 10, "old"),
-                ("b", 2, 10, "equal"),
-                ("a", 3, 11, "new"),
-                ("b", 4, 10, "late-old"),
-                ("a", 5, 11, "equal"),
-            ][..],
-            &[("a", 3, 11, "new"), ("a", 5, 11, "equal")][..],
+            vec![
+                retention_row("a", 1, 10, "old"),
+                retention_row("b", 2, 10, "equal"),
+                retention_row("a", 3, 11, "new"),
+                retention_row("b", 4, 10, "late-old"),
+                retention_row("a", 5, 11, "equal"),
+            ],
+            vec![
+                retention_row("a", 3, 11, "new"),
+                retention_row("a", 5, 11, "equal"),
+            ],
         ),
-        (
+        retention_case(
             -1,
-            &[
-                ("a", 1, i64::MIN, "sentinel"),
-                ("b", 2, i64::MIN, "sentinel"),
-            ][..],
-            &[
-                ("a", 1, i64::MIN, "sentinel"),
-                ("b", 2, i64::MIN, "sentinel"),
-            ][..],
+            vec![
+                retention_row("a", 1, i64::MIN, "sentinel"),
+                retention_row("b", 2, i64::MIN, "sentinel"),
+            ],
+            vec![
+                retention_row("a", 1, i64::MIN, "sentinel"),
+                retention_row("b", 2, i64::MIN, "sentinel"),
+            ],
         ),
-        (
+        retention_case(
             -1,
-            &[
-                ("a", 1, i64::MIN, "sentinel"),
-                ("a", 2, i64::MIN + 1, "rejected"),
-                ("b", 3, i64::MIN, "late-old"),
-            ][..],
-            &[][..],
+            vec![
+                retention_row("a", 1, i64::MIN, "sentinel"),
+                retention_row("a", 2, i64::MIN + 1, "rejected"),
+                retention_row("b", 3, i64::MIN, "late-old"),
+            ],
+            Vec::new(),
         ),
-        (
+        retention_case(
             i64::MAX,
-            &[
-                ("a", 1, i64::MAX, "new"),
-                ("b", 2, i64::MIN, "old"),
-                ("a", 3, i64::MIN, "old"),
-            ][..],
-            &[
-                ("a", 3, i64::MIN, "old"),
-                ("a", 1, i64::MAX, "new"),
-                ("b", 2, i64::MIN, "old"),
-            ][..],
+            vec![
+                retention_row("a", 1, i64::MAX, "new"),
+                retention_row("b", 2, i64::MIN, "old"),
+                retention_row("a", 3, i64::MIN, "old"),
+            ],
+            vec![
+                retention_row("a", 3, i64::MIN, "old"),
+                retention_row("a", 1, i64::MAX, "new"),
+                retention_row("b", 2, i64::MIN, "old"),
+            ],
         ),
-        (
+        retention_case(
             50,
-            &[
-                ("a", 1, i64::MIN + 20, "new"),
-                ("b", 2, i64::MIN, "edge"),
-                ("a", 3, i64::MIN + 10, "older"),
-            ][..],
-            &[
-                ("a", 3, i64::MIN + 10, "older"),
-                ("a", 1, i64::MIN + 20, "new"),
-                ("b", 2, i64::MIN, "edge"),
-            ][..],
+            vec![
+                retention_row("a", 1, i64::MIN + 20, "new"),
+                retention_row("b", 2, i64::MIN, "edge"),
+                retention_row("a", 3, i64::MIN + 10, "older"),
+            ],
+            vec![
+                retention_row("a", 3, i64::MIN + 10, "older"),
+                retention_row("a", 1, i64::MIN + 20, "new"),
+                retention_row("b", 2, i64::MIN, "edge"),
+            ],
         ),
-        (
+        retention_case(
             i64::MIN,
-            &[
-                ("a", 1, 1, "rejected"),
-                ("a", 2, i64::MAX, "edge"),
-                ("b", 3, i64::MAX, "equal"),
-            ][..],
-            &[("a", 2, i64::MAX, "edge"), ("b", 3, i64::MAX, "equal")][..],
+            vec![
+                retention_row("a", 1, 1, "rejected"),
+                retention_row("a", 2, i64::MAX, "edge"),
+                retention_row("b", 3, i64::MAX, "equal"),
+            ],
+            vec![
+                retention_row("a", 2, i64::MAX, "edge"),
+                retention_row("b", 3, i64::MAX, "equal"),
+            ],
         ),
     ]
 }
 
 #[test]
 fn wal_retention_keeps_complete_traces_at_timestamp_boundaries() {
-    let make_record = |(tenant, id, start_ns, name): (&str, u8, i64, &str)| {
-        let mut value = span([1; 16], id, start_ns);
-        value.name = name.into();
-        record(tenant, value)
+    let make_record = |row: RetentionRow| {
+        let mut value = span([1; 16], row.span_id, row.start_ns);
+        value.name = row.name.into();
+        record(row.tenant, value)
     };
-    for (retention, inputs, expected) in retention_cases() {
+    for case in retention_cases() {
+        let retention = case.retention_ns;
+        let inputs = case.inputs;
+        let expected = case.expected;
         for invalid_suffix in [false, true] {
             let mut store = LiveStore::new(retention);
             let mut payloads = inputs
@@ -176,7 +226,7 @@ fn wal_retention_keeps_complete_traces_at_timestamp_boundaries() {
             if invalid_suffix {
                 payloads.push(Vec::new());
                 payloads.push(
-                    make_record(("a", 9, i64::MAX, "after-error"))
+                    make_record(retention_row("a", 9, i64::MAX, "after-error"))
                         .encode()
                         .unwrap(),
                 );
@@ -190,7 +240,7 @@ fn wal_retention_keeps_complete_traces_at_timestamp_boundaries() {
             for tenant in ["a", "b", "missing"] {
                 let expected_trace = expected
                     .iter()
-                    .filter(|entry| entry.0 == tenant)
+                    .filter(|entry| entry.tenant == tenant)
                     .map(|entry| make_record(*entry).span)
                     .collect::<Vec<_>>();
                 assert2::assert!(store.trace_by_id(tenant, &[1; 16]) == expected_trace);
@@ -226,18 +276,15 @@ async fn live_source_exposes_trace_spans_and_tags() {
         .await
         .unwrap()
         .unwrap();
+    check!(trace.root_service_name == "api");
+    check!(trace.root_trace_name == "span-1");
+    check!(trace.spans.len() == 2);
     check!(
-        (
-            trace.root_service_name.as_str(),
-            trace.root_trace_name.as_str(),
-            trace.spans.len(),
-            trace.spans[0].attributes.as_slice(),
-        ) == (
-            "api",
-            "span-1",
-            2,
-            [("http.method".into(), TraceqlAttrValue::Str("GET".into()))].as_slice(),
-        )
+        trace.spans[0].attributes
+            == vec![Attribute::new(
+                "http.method",
+                TraceqlAttrValue::Str("GET".into())
+            )]
     );
 
     let names = store.tag_names("tenant-a", None, 0, 100).await.unwrap();
@@ -322,7 +369,10 @@ async fn live_trace_spans_keep_resource_attrs_out_of_span_attrs() {
 
     assert2::assert!(
         trace.spans[0].attributes
-            == vec![("http.method".into(), TraceqlAttrValue::Str("GET".into()))]
+            == vec![Attribute::new(
+                "http.method",
+                TraceqlAttrValue::Str("GET".into())
+            )]
     );
 }
 

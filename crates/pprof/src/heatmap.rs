@@ -8,7 +8,24 @@ mod tests {
 
     #[test]
     fn bin_counts_profiles_per_time_value_cell() {
-        let points = vec![(0, 0), (10, 5), (60, 30), (90, 35)];
+        let points = vec![
+            crate::TimestampTotalPoint {
+                timestamp_ms: 0,
+                total: 0,
+            },
+            crate::TimestampTotalPoint {
+                timestamp_ms: 10,
+                total: 5,
+            },
+            crate::TimestampTotalPoint {
+                timestamp_ms: 60,
+                total: 30,
+            },
+            crate::TimestampTotalPoint {
+                timestamp_ms: 90,
+                total: 35,
+            },
+        ];
 
         let heatmap = bin_heatmap(&points, 0, 100, 2, 2);
 
@@ -28,25 +45,70 @@ mod tests {
 
     #[test]
     fn bin_returns_empty_counts_for_invalid_ranges_or_zero_buckets() {
-        let invalid_range = bin_heatmap(&[(10, 1)], 20, 10, 2, 2);
+        let invalid_range = bin_heatmap(
+            &[crate::TimestampTotalPoint {
+                timestamp_ms: 10,
+                total: 1,
+            }],
+            20,
+            10,
+            2,
+            2,
+        );
         assert!(invalid_range.counts == vec![vec![0, 0], vec![0, 0]]);
 
-        let zero_time_buckets = bin_heatmap(&[(10, 1)], 0, 20, 0, 2);
+        let zero_time_buckets = bin_heatmap(
+            &[crate::TimestampTotalPoint {
+                timestamp_ms: 10,
+                total: 1,
+            }],
+            0,
+            20,
+            0,
+            2,
+        );
         assert!(zero_time_buckets.counts.is_empty());
 
-        let zero_value_buckets = bin_heatmap(&[(10, 1)], 0, 20, 2, 0);
+        let zero_value_buckets = bin_heatmap(
+            &[crate::TimestampTotalPoint {
+                timestamp_ms: 10,
+                total: 1,
+            }],
+            0,
+            20,
+            2,
+            0,
+        );
         assert!(zero_value_buckets.counts == vec![Vec::<u64>::new(), Vec::new()]);
     }
 
     #[test]
     fn bin_uses_offsets_and_excludes_points_outside_time_range() {
         let points = vec![
-            (99, 30),
-            (100, 10),
-            (149, 20),
-            (150, 20),
-            (199, 30),
-            (200, 10),
+            crate::TimestampTotalPoint {
+                timestamp_ms: 99,
+                total: 30,
+            },
+            crate::TimestampTotalPoint {
+                timestamp_ms: 100,
+                total: 10,
+            },
+            crate::TimestampTotalPoint {
+                timestamp_ms: 149,
+                total: 20,
+            },
+            crate::TimestampTotalPoint {
+                timestamp_ms: 150,
+                total: 20,
+            },
+            crate::TimestampTotalPoint {
+                timestamp_ms: 199,
+                total: 30,
+            },
+            crate::TimestampTotalPoint {
+                timestamp_ms: 200,
+                total: 10,
+            },
         ];
 
         let heatmap = bin_heatmap(&points, 100, 200, 2, 2);

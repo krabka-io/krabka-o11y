@@ -1,11 +1,12 @@
 /// Does one Kahan-compensated incremental sum step.
 ///
-/// This function adds `increment` to the running sum `(sum, comp)` and returns
-/// the updated `(sum, comp)`. It is a direct port of Prometheus' `kahanSumInc`
+/// This function adds `increment` to the running `sum` and `comp`. It is a direct port of Prometheus' `kahanSumInc`
 /// (`promql/engine.go`). The numerically stable mean and variance folds use it,
 /// so the operator and interpreter agree bit-for-bit.
-pub(crate) fn kahan_sum_inc(increment: f64, sum: f64, comp: f64) -> (f64, f64) {
-    let new_sum = sum + increment;
+pub(crate) fn kahan_sum_inc(increment: f64, sum: &mut f64, comp: &mut f64) {
+    let old_sum = *sum;
+    let old_comp = *comp;
+    let new_sum = old_sum + increment;
     // Recover the rounding error lost when `increment` is small relative to
     // `sum` (or vice versa), matching Prometheus' branch on magnitude.
     //
@@ -17,9 +18,10 @@ pub(crate) fn kahan_sum_inc(increment: f64, sum: f64, comp: f64) -> (f64, f64) {
     let new_comp = if new_sum.is_infinite() {
         0.0
     } else if sum.abs() >= increment.abs() {
-        comp + ((sum - new_sum) + increment)
+        old_comp + ((old_sum - new_sum) + increment)
     } else {
-        comp + ((increment - new_sum) + sum)
+        old_comp + ((increment - new_sum) + old_sum)
     };
-    (new_sum, new_comp)
+    *sum = new_sum;
+    *comp = new_comp;
 }

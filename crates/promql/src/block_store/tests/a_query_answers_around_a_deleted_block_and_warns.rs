@@ -1,17 +1,22 @@
 use super::*;
 
+struct ByteSeriesCase {
+    offset: i64,
+    raw: u8,
+}
+
 #[tokio::test]
 pub(crate) async fn a_query_answers_around_a_deleted_block_and_warns() {
-    let (block_store, kept_series) = deleted_api_block_store().await;
+    let fixture = deleted_api_block_store().await;
 
     let InstantUpQuery {
         samples,
         annotations,
-    } = instant_up_query(block_store).await;
+    } = instant_up_query(fixture.block_store).await;
     assert2::assert!(
         samples
             == vec![InstantSample {
-                labels: kept_series.into(),
+                labels: fixture.kept_series.into(),
                 ts_ms: 1_000,
                 value: SampleValue::Float(2.0),
                 drop_name: false,
@@ -34,9 +39,21 @@ async fn byte_series_selection_precedes_missing_block_warnings_for_every_kind() 
     let writer_store = BlockStore::new(object_store.clone(), base.clone());
     let sink = ObjectStoreCompactionIndexSink::new(object_store.clone());
     let mut manifests = Vec::new();
-    for (offset, raw) in [(0, 0xff), (1, 0xfe)] {
-        let mut series = crate::PromqlLabels::from_pairs([("__name__", "byte_input")]);
-        series.insert("raw", crate::PromqlString::from(vec![raw]));
+    for case in [
+        ByteSeriesCase {
+            offset: 0,
+            raw: 0xff,
+        },
+        ByteSeriesCase {
+            offset: 1,
+            raw: 0xfe,
+        },
+    ] {
+        let mut series = crate::PromqlLabels::from_pairs([krabka_metrics::MetricLabelPair::new(
+            "__name__",
+            "byte_input",
+        )]);
+        series.insert("raw", crate::PromqlString::from(vec![case.raw]));
         let fingerprint = series.fingerprint();
         let histogram = krabka_metrics::NativeHistogram {
             schema: 0,
@@ -55,7 +72,11 @@ async fn byte_series_selection_precedes_missing_block_warnings_for_every_kind() 
         };
         let rows = TenantCompactionRows {
             tenant: "tenant-a".into(),
-            series_labels: std::collections::BTreeMap::from([(fingerprint, series)]),
+            series_labels: {
+                let mut labels_by_fingerprint = std::collections::BTreeMap::new();
+                labels_by_fingerprint.insert(fingerprint, series);
+                labels_by_fingerprint
+            },
             float_rows: vec![FloatRow {
                 fingerprint,
                 timestamp_ms: 1_000,
@@ -85,11 +106,17 @@ async fn byte_series_selection_precedes_missing_block_warnings_for_every_kind() 
             clock_rows: Vec::new(),
         };
         manifests.extend(
-            write_compacted_tenant_blocks(&writer_store.writer(), &sink, &rows, offset, offset)
-                .await
-                .unwrap()
-                .into_iter()
-                .map(|written| written.manifest),
+            write_compacted_tenant_blocks(
+                &writer_store.writer(),
+                &sink,
+                &rows,
+                case.offset,
+                case.offset,
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|written| written.manifest),
         );
     }
     for manifest in &manifests {

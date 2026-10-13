@@ -129,27 +129,24 @@ impl DeploymentKafkaNames {
     /// every record of its WAL before a deployment cut is sealed.
     #[must_use]
     pub fn drained_groups(&self) -> Vec<DrainedGroup> {
-        [
-            (
-                self.metrics_block_builder_group_id.as_str(),
-                METRICS_WAL_TOPIC,
-            ),
-            (
-                self.logs_wal_group_id.as_str(),
-                self.logs_wal_topic.as_str(),
-            ),
-            (
-                self.profiles_block_builder_group_id.as_str(),
-                self.profiles_wal_topic.as_str(),
-            ),
-            (TRACES_BLOCK_BUILDER_GROUP, TRACES_WAL_TOPIC),
+        vec![
+            DrainedGroup {
+                group: self.metrics_block_builder_group_id.clone(),
+                topic: METRICS_WAL_TOPIC.into(),
+            },
+            DrainedGroup {
+                group: self.logs_wal_group_id.clone(),
+                topic: self.logs_wal_topic.clone(),
+            },
+            DrainedGroup {
+                group: self.profiles_block_builder_group_id.clone(),
+                topic: self.profiles_wal_topic.clone(),
+            },
+            DrainedGroup {
+                group: TRACES_BLOCK_BUILDER_GROUP.into(),
+                topic: TRACES_WAL_TOPIC.into(),
+            },
         ]
-        .into_iter()
-        .map(|(group, topic)| DrainedGroup {
-            group: group.into(),
-            topic: topic.into(),
-        })
-        .collect()
     }
 }
 

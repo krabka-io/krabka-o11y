@@ -2,9 +2,23 @@ use std::sync::Arc;
 
 use super::*;
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct TimestampLedgerEntry {
+    tenant: String,
+    kind: SampleKind,
+    timestamp_ms: i64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum SampleKind {
+    Float,
+    Histogram,
+    Exemplar,
+}
+
 #[test]
 fn prune_skips_unexpired_snapshots_and_handles_late_samples() {
-    let labels = lbls(&[("__name__", "up")]);
+    let labels = lbls(&[crate::test_support::TestLabelPair::new("__name__", "up")]);
     let mut store = InMemoryMetricStore::with_retention(secs(1));
     for timestamp in 1_000..1_000 + i64::try_from(ROW_CHUNK_LEN * 2).unwrap() {
         store.push_float("t", labels.clone(), timestamp, 1.0);
@@ -28,12 +42,12 @@ fn prune_skips_unexpired_snapshots_and_handles_late_samples() {
 
 #[test]
 fn retention_matches_a_timestamp_ledger_across_sample_kinds_and_tenants() {
-    let labels = lbls(&[("__name__", "up")]);
+    let labels = lbls(&[crate::test_support::TestLabelPair::new("__name__", "up")]);
     let mut store = InMemoryMetricStore::with_retention(secs(2));
     let mut ledger = Vec::new();
     // Independent row ledger: no cached minimum or chunked storage.
     let push = |store: &mut InMemoryMetricStore,
-                ledger: &mut Vec<(&str, u8, i64)>,
+                ledger: &mut Vec<TimestampLedgerEntry>,
                 tenant: &'static str,
                 kind,
                 timestamp| {
@@ -47,24 +61,48 @@ fn retention_matches_a_timestamp_ledger_across_sample_kinds_and_tenants() {
             ),
             _ => store.push_exemplar(tenant, labels.clone(), Labels::new(), timestamp, 1.0),
         }
-        ledger.push((tenant, kind, timestamp));
+        let kind = match kind {
+            0 => SampleKind::Float,
+            1 => SampleKind::Histogram,
+            _ => SampleKind::Exemplar,
+        };
+        ledger.push(TimestampLedgerEntry {
+            tenant: tenant.to_owned(),
+            kind,
+            timestamp_ms: timestamp,
+        });
     };
     let verify = |store: &mut InMemoryMetricStore,
-                  ledger: &mut Vec<(&str, u8, i64)>,
+                  ledger: &mut Vec<TimestampLedgerEntry>,
                   now_ms: i64,
                   retention_ms: i64| {
         let before = ledger.len();
-        ledger.retain(|(_, _, timestamp)| *timestamp >= now_ms.saturating_sub(retention_ms));
+        ledger.retain(|entry| entry.timestamp_ms >= now_ms.saturating_sub(retention_ms));
         assert2::assert!(store.prune(now_ms).samples_dropped == before - ledger.len());
         let mut actual = Vec::new();
-        for (tenant, rows) in &store.floats {
-            actual.extend(rows.iter().map(|row| (tenant.as_str(), 0, row.ts_ms)));
+        for tenant in store.floats.keys() {
+            let rows = &store.floats[tenant];
+            actual.extend(rows.iter().map(|row| TimestampLedgerEntry {
+                tenant: tenant.clone(),
+                kind: SampleKind::Float,
+                timestamp_ms: row.ts_ms,
+            }));
         }
-        for (tenant, rows) in &store.hists {
-            actual.extend(rows.iter().map(|row| (tenant.as_str(), 1, row.ts_ms)));
+        for tenant in store.hists.keys() {
+            let rows = &store.hists[tenant];
+            actual.extend(rows.iter().map(|row| TimestampLedgerEntry {
+                tenant: tenant.clone(),
+                kind: SampleKind::Histogram,
+                timestamp_ms: row.ts_ms,
+            }));
         }
-        for (tenant, rows) in &store.exemplars {
-            actual.extend(rows.iter().map(|row| (tenant.as_str(), 2, row.ts_ms)));
+        for tenant in store.exemplars.keys() {
+            let rows = &store.exemplars[tenant];
+            actual.extend(rows.iter().map(|row| TimestampLedgerEntry {
+                tenant: tenant.clone(),
+                kind: SampleKind::Exemplar,
+                timestamp_ms: row.ts_ms,
+            }));
         }
         actual.sort_unstable();
         let mut expected = ledger.clone();
@@ -84,7 +122,7 @@ fn retention_matches_a_timestamp_ledger_across_sample_kinds_and_tenants() {
     store.set_retention(secs(5));
     push(&mut store, &mut ledger, "c", 0, 100);
     store.delete_tenant("c");
-    ledger.retain(|(tenant, _, _)| *tenant != "c");
+    ledger.retain(|entry| entry.tenant != "c");
     verify(&mut store, &mut ledger, 8_000, 5_000);
     store.set_retention(secs(1));
     verify(&mut store, &mut ledger, 8_000, 1_000);

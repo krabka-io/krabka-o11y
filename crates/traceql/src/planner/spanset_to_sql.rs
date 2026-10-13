@@ -1,24 +1,25 @@
 use super::{
-    COL_SPAN_ID, COL_TRACE_ID, FieldExpr, Result, SpansetExpr, TraceqlError, selector,
-    structural_base_op, structural_is_negated, structural_is_union, structural_predicate_sql,
+    COL_SPAN_ID, COL_TRACE_ID, FieldExpr, Result, SpansetExpr, TraceqlError,
+    register_nested_selector_tables::NestedSelectorTable, selector, structural_base_op,
+    structural_is_negated, structural_is_union, structural_predicate_sql,
 };
 
 pub(crate) fn spanset_to_sql(
     expr: &SpansetExpr,
     table: &str,
-    nested_tables: &[(FieldExpr, String)],
+    nested_tables: &[NestedSelectorTable],
 ) -> Result<String> {
     match expr {
         SpansetExpr::Selector(fe) if selector::has_nested_scope(fe) => {
-            let Some((_, table_name)) = nested_tables
+            let Some(nested_selector_table) = nested_tables
                 .iter()
-                .find(|(candidate, _)| candidate == fe.as_ref())
+                .find(|candidate| candidate.selector == *fe.as_ref())
             else {
                 return Err(TraceqlError::Plan(
                     "nested selector table was not registered".into(),
                 ));
             };
-            let nested_table = selector::ident(table_name);
+            let nested_table = selector::ident(&nested_selector_table.table_name);
             if selector::has_parent_scope(fe) {
                 selector::selector_sql_with_parent_table(&nested_table, table, fe)
             } else if fe.has_field_comparison() {

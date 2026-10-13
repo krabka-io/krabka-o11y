@@ -47,6 +47,36 @@ mod range_query_params;
 mod range_query_params_from_form;
 mod run_timed_query;
 
+pub(super) struct QueryRangeFormFields {
+    pub(super) query: String,
+    pub(super) start: String,
+    pub(super) end: String,
+}
+
+pub(super) fn query_range_form_fields(
+    body: &[u8],
+    mut handle_extra: impl FnMut(&str, &str) -> Result<(), ApiError>,
+) -> Result<QueryRangeFormFields, ApiError> {
+    let mut query = None;
+    let mut start = None;
+    let mut end = None;
+    for pair in form_urlencoded::parse(body) {
+        let name = pair.0;
+        let value = pair.1;
+        match name.as_ref() {
+            "query" => query = Some(value.into_owned()),
+            "start" => start = Some(value.into_owned()),
+            "end" => end = Some(value.into_owned()),
+            _ => handle_extra(name.as_ref(), value.as_ref())?,
+        }
+    }
+    Ok(QueryRangeFormFields {
+        query: required_form_param(query, "query")?,
+        start: required_form_param(start, "start")?,
+        end: required_form_param(end, "end")?,
+    })
+}
+
 use evaluated_query_response::{EvaluatedQuery, evaluated_query_response};
 use exemplars_query_params::ExemplarsQueryParams;
 use exemplars_query_params_from_form::exemplars_query_params_from_form;

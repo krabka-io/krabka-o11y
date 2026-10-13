@@ -14,11 +14,19 @@ pub(crate) fn volume_metrics_for_labels(labels: &Labels, params: &VolumeParams) 
             Some(target_labels) => target_labels
                 .iter()
                 .filter(|name| labels.contains_key(*name))
-                .map(|name| BTreeMap::from([(name.clone(), String::new())]))
+                .map(|name| {
+                    let mut projected = BTreeMap::new();
+                    projected.insert(name.clone(), String::new());
+                    projected
+                })
                 .collect(),
             None => labels
                 .keys()
-                .map(|name| BTreeMap::from([(name.clone(), String::new())]))
+                .map(|name| {
+                    let mut projected = BTreeMap::new();
+                    projected.insert(name.clone(), String::new());
+                    projected
+                })
                 .collect(),
         },
     }

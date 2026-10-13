@@ -2,9 +2,16 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn tsdb_blocks_reports_compaction_manifest_blocks() {
-    let series_labels = labels(&[("__name__", "up"), ("job", "api")]);
+    let series_labels = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
     let fp = series_labels.fingerprint();
-    let batch = encode_float_samples(&[(fp, 1_000, 1.0, None), (fp, 2_000, 0.0, None)]).unwrap();
+    let batch = encode_float_samples(&[
+        float_sample_row(fp, 1_000, 1.0, None),
+        float_sample_row(fp, 2_000, 0.0, None),
+    ])
+    .unwrap();
     let store = manifest_store(ManifestBlock {
         kind: MetricBlockKind::Float,
         block_key: "metrics/float/0002.parquet",

@@ -51,15 +51,19 @@ pub async fn check_log_frontier(
     }
     let mut last_offsets: BTreeMap<i32, i64> = BTreeMap::new();
     let mut newest_ns: Option<i64> = None;
-    for (_, listed) in inventory.blocks(StorageSignal::Logs) {
+    for entry in inventory.blocks(StorageSignal::Logs) {
+        let listed = entry.listed;
         let Some(block) = listed.object.block() else {
             continue;
         };
-        if let (Some(partition), Some((_, last))) = (block.partition, block.offsets) {
-            let entry = last_offsets.entry(partition).or_insert(last);
-            *entry = (*entry).max(last);
+        if let Some(partition) = block.partition {
+            if let Some(offsets) = block.offsets {
+                let entry = last_offsets.entry(partition).or_insert(offsets.max);
+                *entry = (*entry).max(offsets.max);
+            }
         }
-        if let Some((_, end_ns)) = block.time_range {
+        if let Some(time_range) = block.time_range {
+            let end_ns = time_range.end_ns;
             newest_ns = Some(newest_ns.map_or(end_ns, |newest| newest.max(end_ns)));
         }
     }
@@ -74,10 +78,11 @@ pub async fn check_log_frontier(
     };
     let mut findings: Vec<StorageFinding> = frontier
         .partition_offsets
-        .iter()
-        .filter_map(|(partition, frontier_offset)| {
+        .keys()
+        .filter_map(|partition| {
+            let frontier_offset = frontier.partition_offsets[partition];
             let last = last_offsets.get(partition)?;
-            (frontier_offset > last).then(|| {
+            (frontier_offset > *last).then(|| {
                 stale(format!(
                     "partition {partition} is compacted through offset {frontier_offset}, \
                      and its newest block ends at offset {last}"

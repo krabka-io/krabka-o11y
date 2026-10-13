@@ -1,9 +1,14 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BrokerState, COPY_CHUNK_BYTES, DeploymentPart,
+    Arc, BTreeMap, BTreeSet, BackupManifest, BrokerState, COPY_CHUNK_BYTES, DeploymentPart,
     DeploymentRestoreReport, ObjectStore, RecoveryError, audit_deployment_backup,
     audit_recovery_target, compare_snapshots, copy_restored_part, load_backup_manifest, part_store,
     refuse_broker_findings, refuse_unsafe,
 };
+
+struct BackupPartSource {
+    store: object_store::prefix::PrefixStore<Arc<dyn ObjectStore>>,
+    manifest: BackupManifest,
+}
 
 /// Restores every part of a deployment backup set into empty targets.
 ///
@@ -64,11 +69,17 @@ pub async fn restore_deployment_backup(
         let manifest = load_backup_manifest(&source).await?;
         let before = audit_recovery_target(target.store.as_ref(), &manifest).await?;
         refuse_unsafe("restore target", &before, true)?;
-        manifests.push((source, manifest));
+        manifests.push(BackupPartSource {
+            store: source,
+            manifest,
+        });
     }
 
     let mut parts = BTreeMap::new();
-    for (target, (source, manifest)) in targets.iter().zip(&manifests) {
+    for index in 0..targets.len() {
+        let target = &targets[index];
+        let source = &manifests[index].store;
+        let manifest = &manifests[index].manifest;
         let report =
             copy_restored_part(source, target.store.as_ref(), manifest, COPY_CHUNK_BYTES).await?;
         parts.insert(target.name.clone(), report);

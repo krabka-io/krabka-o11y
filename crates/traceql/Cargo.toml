@@ -34,11 +34,13 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+bon = { workspace = true }
 num-traits = { workspace = true }
 assert2 = { workspace = true }
 datatest-stable = { workspace = true }
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+yare = { workspace = true }
 
 [[test]]
 name = "golden_corpus"

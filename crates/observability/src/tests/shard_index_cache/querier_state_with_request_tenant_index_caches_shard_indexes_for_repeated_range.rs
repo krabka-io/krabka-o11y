@@ -10,7 +10,10 @@ pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes
     let tenant = "tenant-a";
     let query_range = TimeRange::new(0, 100).unwrap();
     let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series(tenant, krabka_blockstore::labels([("app", "api")]));
+    let api = labels_index.insert_series(
+        tenant,
+        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let mut block_index = BlockIndex::default();
     let shard_range = TimeRange::new(10, 19).unwrap();
     block_index.insert(BlockDescriptor::new(

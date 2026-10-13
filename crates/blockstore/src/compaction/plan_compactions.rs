@@ -4,6 +4,13 @@ use super::{
     BTreeMap, BlockLevel, CompactionCandidate, CompactionJob, CompactionPolicy, job_from_run,
 };
 
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct CompactionGroupKey {
+    tenant: String,
+    level: BlockLevel,
+    bucket: i64,
+}
+
 /// Groups compactable blocks into merge jobs.
 ///
 /// Blocks meet only their own kind: same tenant, same level, same time bucket
@@ -30,7 +37,7 @@ pub fn plan_compactions(
     candidates: &[CompactionCandidate],
     policy: CompactionPolicy,
 ) -> Vec<CompactionJob> {
-    let mut groups: BTreeMap<(&str, u32, i64), Vec<&CompactionCandidate>> = BTreeMap::new();
+    let mut groups: BTreeMap<CompactionGroupKey, Vec<&CompactionCandidate>> = BTreeMap::new();
     for candidate in candidates {
         if candidate.level >= policy.max_level()
             || candidate.row_count >= policy.target_rows_per_block()
@@ -41,14 +48,19 @@ pub fn plan_compactions(
             .min_ts
             .div_euclid(policy.window_ticks_for(candidate.level));
         groups
-            .entry((candidate.tenant.as_str(), candidate.level.get(), bucket))
+            .entry(CompactionGroupKey {
+                tenant: candidate.tenant.clone(),
+                level: candidate.level,
+                bucket,
+            })
             .or_default()
             .push(candidate);
     }
 
     let mut jobs = Vec::new();
-    for ((tenant, level, _bucket), mut blocks) in groups {
-        let level = BlockLevel(level);
+    for entry in groups {
+        let group = entry.0;
+        let mut blocks = entry.1;
         blocks.sort_by(|left, right| {
             left.min_ts
                 .cmp(&right.min_ts)
@@ -68,7 +80,12 @@ pub fn plan_compactions(
             let rows = row_counts[start..end]
                 .iter()
                 .fold(0_usize, |sum, rows| sum.saturating_add(*rows));
-            jobs.extend(job_from_run(tenant, level, &blocks[start..end], rows));
+            jobs.extend(job_from_run(
+                &group.tenant,
+                group.level,
+                &blocks[start..end],
+                rows,
+            ));
             start = end;
         }
     }

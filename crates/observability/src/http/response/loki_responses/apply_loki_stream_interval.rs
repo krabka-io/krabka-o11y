@@ -7,17 +7,7 @@ pub(crate) fn apply_loki_stream_interval(value: &mut Value, interval: Option<i64
     if interval == 0 {
         return;
     }
-    let Some(streams) = value
-        .pointer_mut("/data/result")
-        .and_then(Value::as_array_mut)
-    else {
-        return;
-    };
-
-    for stream in streams.iter_mut() {
-        let Some(values) = stream.get_mut("values").and_then(Value::as_array_mut) else {
-            continue;
-        };
+    update_loki_stream_values(value, |values| {
         let mut next_timestamp = None;
         values.retain(|entry| {
             let Some(timestamp) = entry
@@ -36,11 +26,5 @@ pub(crate) fn apply_loki_stream_interval(value: &mut Value, interval: Option<i64
                 }
             }
         });
-    }
-    streams.retain(|stream| {
-        stream
-            .get("values")
-            .and_then(Value::as_array)
-            .is_some_and(|values| !values.is_empty())
     });
 }

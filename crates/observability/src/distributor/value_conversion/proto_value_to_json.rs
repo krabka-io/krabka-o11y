@@ -12,21 +12,21 @@ pub(crate) fn proto_value_to_json(value: &ProtoAnyValue) -> Value {
         Some(proto_any_value::Value::ArrayValue(value)) => {
             Value::Array(value.values.iter().map(proto_value_to_json).collect())
         }
-        Some(proto_any_value::Value::KvlistValue(value)) => Value::Object(
-            value
-                .values
-                .iter()
-                .map(|attribute| {
-                    (
+        Some(proto_any_value::Value::KvlistValue(value)) => {
+            Value::Object(value.values.iter().fold(
+                serde_json::Map::new(),
+                |mut values, attribute| {
+                    values.insert(
                         attribute.key.clone(),
                         attribute
                             .value
                             .as_ref()
                             .map_or(Value::Null, proto_value_to_json),
-                    )
-                })
-                .collect(),
-        ),
+                    );
+                    values
+                },
+            ))
+        }
         Some(proto_any_value::Value::StringValueStrindex(value)) => Value::Number((*value).into()),
         None => Value::Null,
     }

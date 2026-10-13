@@ -2,6 +2,7 @@ use super::{
     MetricBucket, MetricLabels, Result, Time, TraceMetricExemplar, TraceMetricSeries,
     f64_from_usize, histogram_points, quantile_label,
 };
+use crate::result::MetricLabel;
 
 pub(crate) fn histogram_series_for_group(
     labels: MetricLabels,
@@ -11,7 +12,8 @@ pub(crate) fn histogram_series_for_group(
     exemplars: &[TraceMetricExemplar],
     _histogram_buckets: &[Time],
 ) -> Result<Vec<TraceMetricSeries>> {
-    let (labels, label_types) = labels;
+    let label_types = labels.types;
+    let labels = labels.labels;
     let mut boundaries = buckets
         .iter()
         .flat_map(|bucket| bucket.values.iter().copied())
@@ -22,7 +24,7 @@ pub(crate) fn histogram_series_for_group(
         .into_iter()
         .map(|boundary| {
             let mut labels = labels.clone();
-            labels.insert(0, ("__bucket".into(), quantile_label(boundary)));
+            labels.insert(0, MetricLabel::new("__bucket", quantile_label(boundary)));
             Ok(TraceMetricSeries {
                 labels,
                 label_types: label_types.clone(),

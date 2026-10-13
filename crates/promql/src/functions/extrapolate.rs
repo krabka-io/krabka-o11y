@@ -28,6 +28,21 @@ mod tests {
         (left - right).abs() < 1e-9
     }
 
+    fn rate_over_minute(timestamps: &[i64], values: &[f64]) -> Option<f64> {
+        extrapolated_rate(
+            RateWindow {
+                timestamps,
+                values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 60_000,
+                },
+                range: millis(60_000),
+            },
+            RangeKind::Rate,
+        )
+    }
+
     /// Pins `rate` to `engine.rs::instant_rate_extrapolates_counter_window`:
     /// samples at 0..240s that step by 1.0, `rate(...[5m])` at t=300s == 5/300.
     #[test]
@@ -150,21 +165,7 @@ mod tests {
     fn single_sample_yields_none() {
         let timestamps = [60_000_i64];
         let values = [1.0];
-        assert2::assert!(
-            extrapolated_rate(
-                RateWindow {
-                    timestamps: &timestamps,
-                    values: &values,
-                    bounds: WindowBounds {
-                        range_start_ms: 0,
-                        range_end_ms: 60_000,
-                    },
-                    range: millis(60_000),
-                },
-                RangeKind::Rate,
-            )
-            .is_none()
-        );
+        assert2::assert!(rate_over_minute(&timestamps, &values).is_none());
         assert2::assert!(instant_delta(&timestamps, &values, InstantKind::Irate).is_none());
     }
 
@@ -173,21 +174,7 @@ mod tests {
     fn mismatched_range_lengths_yield_none() {
         let timestamps = [0_i64, 60_000];
         let values = [1.0];
-        assert2::assert!(
-            extrapolated_rate(
-                RateWindow {
-                    timestamps: &timestamps,
-                    values: &values,
-                    bounds: WindowBounds {
-                        range_start_ms: 0,
-                        range_end_ms: 60_000,
-                    },
-                    range: millis(60_000),
-                },
-                RangeKind::Rate,
-            )
-            .is_none()
-        );
+        assert2::assert!(rate_over_minute(&timestamps, &values).is_none());
     }
 
     /// Two coincident timestamps make a zero-width sampled interval, which
@@ -196,21 +183,7 @@ mod tests {
     fn zero_width_sampled_interval_yields_none() {
         let timestamps = [60_000_i64, 60_000];
         let values = [1.0, 2.0];
-        assert2::assert!(
-            extrapolated_rate(
-                RateWindow {
-                    timestamps: &timestamps,
-                    values: &values,
-                    bounds: WindowBounds {
-                        range_start_ms: 0,
-                        range_end_ms: 60_000,
-                    },
-                    range: millis(60_000),
-                },
-                RangeKind::Rate,
-            )
-            .is_none()
-        );
+        assert2::assert!(rate_over_minute(&timestamps, &values).is_none());
     }
 
     /// Pins `irate` to `engine.rs::instant_irate_uses_last_two_samples_per_second`:

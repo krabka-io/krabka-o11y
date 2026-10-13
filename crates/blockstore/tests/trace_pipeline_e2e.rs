@@ -14,9 +14,9 @@ use std::{
 use arrow::array::{FixedSizeBinaryArray, Int32Array};
 use assert2::check;
 use krabka_blockstore::{
-    AttrValue, BlockLevel, BlockWriter, CycleSpans, ShardedTraceBloom, SpanAttr, SpanKind,
-    SpanNode, SpanRow, StatusCode, SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set,
-    encode_span_rows, read_block, span_block_decl, span_block_schema,
+    BlockLevel, BlockWriter, CycleSpans, ShardedTraceBloom, SpanAttr, SpanKind, SpanNode, SpanRow,
+    StatusCode, SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set, encode_span_rows,
+    read_block, span_block_decl, span_block_schema,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, memory::InMemory};
@@ -31,35 +31,32 @@ fn sid(n: u8) -> [u8; 8] {
 /// `service.name` attribute.
 fn build_trace(trace_id: [u8; 16], nodes: &[SpanNode], service: &str) -> Vec<SpanRow> {
     let ns = assign_nested_set(nodes, CycleSpans::AssignIntervals);
-    nodes
-        .iter()
-        .zip(&ns)
-        .enumerate()
-        .map(|(i, (node, nset))| SpanRow {
-            trace_id,
-            span_id: node.span_id,
-            parent_span_id: node.parent_span_id,
-            nested_set: *nset,
-            child_count: 0,
-            root_service_name: Some(service.to_string()),
-            root_span_name: Some("POST /pay".into()),
-            trace_start_unix_nano: 1_000,
-            trace_duration: nanos(300),
-            name: Some(format!("span-{i}")),
-            kind: SpanKind::Server,
-            start_unix_nano: 1_000 + i64::try_from(i).unwrap(),
-            duration: nanos(10),
-            status_code: StatusCode::Ok,
-            status_message: None,
-            instrumentation_name: Some("tracer".into()),
-            instrumentation_version: None,
-            attrs: vec![SpanAttr {
-                key: "service.name".into(),
-                is_array: false,
-                value: AttrValue::Str(vec![service.to_string()]),
-            }],
-            events: vec![],
-            links: vec![],
+    (0..nodes.len())
+        .map(|i| {
+            let node = &nodes[i];
+            let nset = &ns[i];
+            SpanRow {
+                trace_id,
+                span_id: node.span_id,
+                parent_span_id: node.parent_span_id,
+                nested_set: *nset,
+                child_count: 0,
+                root_service_name: Some(service.to_string()),
+                root_span_name: Some("POST /pay".into()),
+                trace_start_unix_nano: 1_000,
+                trace_duration: nanos(300),
+                name: Some(format!("span-{i}")),
+                kind: SpanKind::Server,
+                start_unix_nano: 1_000 + i64::try_from(i).unwrap(),
+                duration: nanos(10),
+                status_code: StatusCode::Ok,
+                status_message: None,
+                instrumentation_name: Some("tracer".into()),
+                instrumentation_version: None,
+                attrs: vec![SpanAttr::string("service.name", service)],
+                events: vec![],
+                links: vec![],
+            }
         })
         .collect()
 }
@@ -185,26 +182,30 @@ async fn trace_block_built_indexed_and_located_by_id() {
     // INDEX-LESS by-id locate: the bloom (not a global map) finds each trace's
     // block, and only that block.
     let never = [0u8; 16];
-    for (_name, trace_id, expected) in [
-        (
-            "first trace in shared block",
-            trace_a,
-            vec!["blocks/t.parquet".to_string()],
-        ),
-        (
-            "second trace in shared block",
-            trace_b,
-            vec!["blocks/t.parquet".to_string()],
-        ),
-        (
-            "trace in other block",
-            trace_c,
-            vec!["blocks/other.parquet".to_string()],
-        ),
-        ("trace absent from blooms", never, Vec::new()),
+    struct CandidateCase {
+        trace_id: [u8; 16],
+        expected: Vec<String>,
+    }
+    for case in [
+        CandidateCase {
+            trace_id: trace_a,
+            expected: vec!["blocks/t.parquet".to_string()],
+        },
+        CandidateCase {
+            trace_id: trace_b,
+            expected: vec!["blocks/t.parquet".to_string()],
+        },
+        CandidateCase {
+            trace_id: trace_c,
+            expected: vec!["blocks/other.parquet".to_string()],
+        },
+        CandidateCase {
+            trace_id: never,
+            expected: Vec::new(),
+        },
     ] {
         assert2::assert!(
-            idx.candidate_blocks_for_trace("tenant", &trace_id, 0, 10_000) == expected
+            idx.candidate_blocks_for_trace("tenant", &case.trace_id, 0, 10_000) == case.expected
         );
     }
     let cand_a = idx.candidate_blocks_for_trace("tenant", &trace_a, 0, 10_000);

@@ -3,9 +3,12 @@ use super::{BTreeSet, RecordBatch, TraceqlError, string_value};
 pub(crate) fn insert_string_value(
     batch: &RecordBatch,
     row: usize,
-    values: &mut BTreeSet<(String, String)>,
+    values: &mut BTreeSet<super::TypedValue>,
     column: &str,
 ) -> Result<(), TraceqlError> {
-    values.insert(("string".to_string(), string_value(batch, column, row)?));
+    values.insert(super::TypedValue::new(
+        "string",
+        string_value(batch, column, row)?,
+    ));
     Ok(())
 }

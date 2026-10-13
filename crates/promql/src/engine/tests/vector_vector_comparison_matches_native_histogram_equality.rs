@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct HistogramFixture {
+    name: &'static str,
+    histogram: NativeHistogram,
+}
+
 #[tokio::test]
 pub(crate) async fn vector_vector_comparison_matches_native_histogram_equality() {
     let mut left = native_histogram(4.0, 10.0);
@@ -14,12 +20,29 @@ pub(crate) async fn vector_vector_comparison_matches_native_histogram_equality()
     different.sum = 11.0;
 
     let mut store = InMemoryMetricStore::new();
-    for (name, histogram) in [("a", left), ("b", equal), ("c", different)] {
+    for fixture in [
+        HistogramFixture::builder()
+            .name("a")
+            .histogram(left)
+            .build(),
+        HistogramFixture::builder()
+            .name("b")
+            .histogram(equal)
+            .build(),
+        HistogramFixture::builder()
+            .name("c")
+            .histogram(different)
+            .build(),
+    ] {
         store.push_histogram(
             "tenant-a",
-            labels(&[("__name__", name), ("job", "api"), ("x", "1")]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", fixture.name),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("x", "1"),
+            ]),
             10_000,
-            histogram,
+            fixture.histogram,
         );
     }
 
@@ -30,7 +53,10 @@ pub(crate) async fn vector_vector_comparison_matches_native_histogram_equality()
     ] {
         let samples = instant_vector(&engine, query, 10_000).await;
         assert2::assert!(samples.len() == 1, "{query}");
-        assert2::assert!(samples[0].labels == labels(&[("x", "1")]), "{query}");
+        assert2::assert!(
+            samples[0].labels == labels(&[crate::test_support::TestLabelPair::new("x", "1")]),
+            "{query}"
+        );
         assert2::assert!(samples[0].value == SampleValue::Float(4.0), "{query}");
     }
 

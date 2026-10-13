@@ -10,8 +10,8 @@ pub(crate) fn with_source_position(message: String) -> String {
                 let before = &query[..offset];
                 let line = before.bytes().filter(|byte| *byte == b'\n').count() + 1;
                 let column = before
-                    .rsplit_once('\n')
-                    .map_or(before.len(), |(_, line)| line.len())
+                    .rfind('\n')
+                    .map_or(before.len(), |newline| before.len() - newline - 1)
                     + 1;
                 format!("{message} ({line}:{column})")
             })
@@ -74,11 +74,7 @@ fn annotation_offset(query: &str, message: &str) -> Option<usize> {
             .find_map(|name| call_argument(query, name, 0));
     }
     if message.contains("mismatched custom buckets were reconciled during aggregation") {
-        return ["sum_over_time", "avg_over_time"]
-            .into_iter()
-            .find_map(|name| call_argument(query, name, 0))
-            .or_else(|| aggregate_argument(query, "sum", 0))
-            .or_else(|| aggregate_argument(query, "avg", 0));
+        return histogram_aggregation_source(query);
     }
     if message.contains("mismatched custom buckets were reconciled during subtraction") {
         return ["rate", "increase", "delta", "irate", "idelta"]
@@ -90,11 +86,7 @@ fn annotation_offset(query: &str, message: &str) -> Option<usize> {
         return first_expression_byte(query);
     }
     if message.contains("conflicting counter resets during histogram aggregation") {
-        return ["sum_over_time", "avg_over_time"]
-            .into_iter()
-            .find_map(|name| call_argument(query, name, 0))
-            .or_else(|| aggregate_argument(query, "sum", 0))
-            .or_else(|| aggregate_argument(query, "avg", 0));
+        return histogram_aggregation_source(query);
     }
     if message.contains("ignored histograms in a range containing both floats and histograms")
         && query.contains("quantile_over_time")
@@ -112,29 +104,37 @@ fn annotation_offset(query: &str, message: &str) -> Option<usize> {
     first_expression_byte(query)
 }
 
+fn histogram_aggregation_source(query: &str) -> Option<usize> {
+    ["sum_over_time", "avg_over_time"]
+        .into_iter()
+        .find_map(|name| call_argument(query, name, 0))
+        .or_else(|| aggregate_argument(query, "sum", 0))
+        .or_else(|| aggregate_argument(query, "avg", 0))
+}
+
 fn quoted_tail(message: &str) -> Option<&str> {
     let end = message.strip_suffix('"')?;
-    let (_, value) = end.rsplit_once('"')?;
-    Some(value)
+    let delimiter = end.rfind('"')?;
+    Some(&end[delimiter + 1..])
 }
 
 fn first_expression_byte(query: &str) -> Option<usize> {
-    query
-        .char_indices()
-        .find(|(_, ch)| !ch.is_whitespace())
-        .map(|(offset, _)| offset)
+    query.find(|character: char| !character.is_whitespace())
 }
 
 fn rfind_identifier(query: &str, identifier: &str) -> Option<usize> {
-    query
-        .match_indices(identifier)
-        .filter(|(offset, _)| {
-            let before = query[..*offset].chars().next_back();
-            let after = query[*offset + identifier.len()..].chars().next();
-            !before.is_some_and(is_identifier_char) && !after.is_some_and(is_identifier_char)
-        })
-        .map(|(offset, _)| offset)
-        .last()
+    let mut from = 0;
+    let mut found = None;
+    while let Some(relative) = query[from..].find(identifier) {
+        let offset = from + relative;
+        let before = query[..offset].chars().next_back();
+        let after = query[offset + identifier.len()..].chars().next();
+        if !before.is_some_and(is_identifier_char) && !after.is_some_and(is_identifier_char) {
+            found = Some(offset);
+        }
+        from = offset + identifier.len();
+    }
+    found
 }
 
 fn is_identifier_char(ch: char) -> bool {
@@ -162,20 +162,27 @@ fn counter_argument_offset(query: &str, metric: Option<&str>) -> Option<usize> {
             } else {
                 argument_at(query, open, 0)?
             };
-            candidates.push((
+            candidates.push(CounterArgumentCandidate {
                 start,
                 offset,
-                metric.is_some_and(|metric| rfind_identifier(argument, metric).is_some()),
-            ));
+                matches_metric: metric
+                    .is_some_and(|metric| rfind_identifier(argument, metric).is_some()),
+            });
         }
     }
-    candidates.sort_by_key(|(start, _, _)| *start);
+    candidates.sort_by_key(|candidate| candidate.start);
     candidates
         .iter()
         .rev()
-        .find(|(_, _, matches)| *matches)
+        .find(|candidate| candidate.matches_metric)
         .or_else(|| candidates.last())
-        .map(|(_, offset, _)| *offset)
+        .map(|candidate| candidate.offset)
+}
+
+struct CounterArgumentCandidate {
+    start: usize,
+    offset: usize,
+    matches_metric: bool,
 }
 
 fn inside_string(query: &str, offset: usize) -> bool {
@@ -255,8 +262,12 @@ fn argument_at(query: &str, open: usize, wanted: usize) -> Option<usize> {
     let mut argument = 0_usize;
     let mut quoted = false;
     let mut escaped = false;
-    for (relative, ch) in query[open + 1..].char_indices() {
-        let offset = open + 1 + relative;
+    let mut offset = open + 1;
+    while offset < query.len() {
+        let ch = query[offset..]
+            .chars()
+            .next()
+            .expect("offset is in the query");
         if argument == wanted && depth == 0 && !ch.is_whitespace() {
             return Some(skip_grouping_parens(query, offset));
         }
@@ -268,6 +279,7 @@ fn argument_at(query: &str, open: usize, wanted: usize) -> Option<usize> {
             if ch != '\\' {
                 escaped = false;
             }
+            offset += ch.len_utf8();
             continue;
         }
         match ch {
@@ -278,6 +290,7 @@ fn argument_at(query: &str, open: usize, wanted: usize) -> Option<usize> {
             ',' if depth == 0 => argument += 1,
             _ => {}
         }
+        offset += ch.len_utf8();
     }
     None
 }
@@ -294,15 +307,17 @@ fn skip_grouping_parens(query: &str, mut offset: usize) -> usize {
 }
 
 fn find_word(query: &str, word: &str, from: usize) -> Option<usize> {
-    query[from..]
-        .match_indices(word)
-        .find(|(relative, _)| {
-            let offset = from + relative;
-            let before = query[..offset].chars().next_back();
-            let after = query[offset + word.len()..].chars().next();
-            !before.is_some_and(is_identifier_char) && !after.is_some_and(is_identifier_char)
-        })
-        .map(|(relative, _)| from + relative)
+    let mut cursor = from;
+    while let Some(relative) = query[cursor..].find(word) {
+        let offset = cursor + relative;
+        let before = query[..offset].chars().next_back();
+        let after = query[offset + word.len()..].chars().next();
+        if !before.is_some_and(is_identifier_char) && !after.is_some_and(is_identifier_char) {
+            return Some(offset);
+        }
+        cursor = offset + word.len();
+    }
+    None
 }
 
 fn skip_space(query: &str, mut offset: usize) -> usize {
@@ -321,7 +336,12 @@ fn matching_paren(query: &str, open: usize) -> Option<usize> {
     let mut depth = 0_usize;
     let mut quote = None;
     let mut escaped = false;
-    for (relative, ch) in query[open..].char_indices() {
+    let mut offset = open;
+    while offset < query.len() {
+        let ch = query[offset..]
+            .chars()
+            .next()
+            .expect("offset is in the query");
         if let Some(delimiter) = quote {
             if escaped {
                 escaped = false;
@@ -330,10 +350,12 @@ fn matching_paren(query: &str, open: usize) -> Option<usize> {
             } else if ch == delimiter {
                 quote = None;
             }
+            offset += ch.len_utf8();
             continue;
         }
         if matches!(ch, '"' | '\'' | '`') {
             quote = Some(ch);
+            offset += ch.len_utf8();
             continue;
         }
         match ch {
@@ -341,11 +363,12 @@ fn matching_paren(query: &str, open: usize) -> Option<usize> {
             ')' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(open + relative);
+                    return Some(offset);
                 }
             }
             _ => {}
         }
+        offset += ch.len_utf8();
     }
     None
 }
@@ -354,77 +377,83 @@ fn matching_paren(query: &str, open: usize) -> Option<usize> {
 mod tests {
     use super::annotation_offset;
 
+    struct AnnotationSourceCase {
+        query: &'static str,
+        message: &'static str,
+        expected: usize,
+    }
+
     #[test]
     fn resolves_prometheus_annotation_sources() {
         let cases = [
-            (
-                "max({job=\"api-server\"})",
-                "PromQL info: ignored histogram in max aggregation",
-                4,
-            ),
-            (
-                "count(topk(1000, metric))",
-                "PromQL info: ignored histogram in topk aggregation",
-                6,
-            ),
-            (
-                "quantile without(point)(NaN, data)",
-                "PromQL warning: quantile value should be between 0 and 1, got NaN",
-                24,
-            ),
-            (
-                "histogram_quantile(0.5, series)",
-                "PromQL warning: vector contains a mix of classic and native histograms",
-                24,
-            ),
-            (
-                "histogram_fraction(-Inf, +Inf, histogram_nan)",
-                "PromQL info: input to histogram_fraction has NaN observations, which are excluded from all fractions",
-                19,
-            ),
-            (
-                "rate(metric[1m])",
-                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric\"",
-                5,
-            ),
-            (
-                "rate(metric_total[20s:5s])",
-                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
-                0,
-            ),
-            (
-                "sum by (__name__) (rate(metric_total{env=\"2\"}[5m]) or metric_total{env=\"1\"})",
-                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
-                24,
-            ),
-            (
-                "label_replace(rate({env=\"1\"}[1m]), \"name\", \"rate(fake[1m])\", \"__name__\", \".*\")",
-                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
-                19,
-            ),
-            (
-                "sum(rate(foo_total[1m]) + increase(bar_total[1m]))",
-                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"foo_total\"",
-                9,
-            ),
-            (
-                "sum(rate(sum_over_time(metric_total[30s:10s])[50s:10s]))",
-                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
-                0,
-            ),
-            (
-                "histogram_count(sum(metric))",
-                "PromQL warning: conflicting counter resets during histogram aggregation",
-                20,
-            ),
-            (
-                "metric{series=\"2\"} + ignoring (series) metric{series=\"3\"}",
-                "PromQL info: mismatched custom buckets were reconciled during addition",
-                0,
-            ),
+            AnnotationSourceCase {
+                query: "max({job=\"api-server\"})",
+                message: "PromQL info: ignored histogram in max aggregation",
+                expected: 4,
+            },
+            AnnotationSourceCase {
+                query: "count(topk(1000, metric))",
+                message: "PromQL info: ignored histogram in topk aggregation",
+                expected: 6,
+            },
+            AnnotationSourceCase {
+                query: "quantile without(point)(NaN, data)",
+                message: "PromQL warning: quantile value should be between 0 and 1, got NaN",
+                expected: 24,
+            },
+            AnnotationSourceCase {
+                query: "histogram_quantile(0.5, series)",
+                message: "PromQL warning: vector contains a mix of classic and native histograms",
+                expected: 24,
+            },
+            AnnotationSourceCase {
+                query: "histogram_fraction(-Inf, +Inf, histogram_nan)",
+                message: "PromQL info: input to histogram_fraction has NaN observations, which are excluded from all fractions",
+                expected: 19,
+            },
+            AnnotationSourceCase {
+                query: "rate(metric[1m])",
+                message: "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric\"",
+                expected: 5,
+            },
+            AnnotationSourceCase {
+                query: "rate(metric_total[20s:5s])",
+                message: "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
+                expected: 0,
+            },
+            AnnotationSourceCase {
+                query: "sum by (__name__) (rate(metric_total{env=\"2\"}[5m]) or metric_total{env=\"1\"})",
+                message: "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
+                expected: 24,
+            },
+            AnnotationSourceCase {
+                query: "label_replace(rate({env=\"1\"}[1m]), \"name\", \"rate(fake[1m])\", \"__name__\", \".*\")",
+                message: "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
+                expected: 19,
+            },
+            AnnotationSourceCase {
+                query: "sum(rate(foo_total[1m]) + increase(bar_total[1m]))",
+                message: "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"foo_total\"",
+                expected: 9,
+            },
+            AnnotationSourceCase {
+                query: "sum(rate(sum_over_time(metric_total[30s:10s])[50s:10s]))",
+                message: "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
+                expected: 0,
+            },
+            AnnotationSourceCase {
+                query: "histogram_count(sum(metric))",
+                message: "PromQL warning: conflicting counter resets during histogram aggregation",
+                expected: 20,
+            },
+            AnnotationSourceCase {
+                query: "metric{series=\"2\"} + ignoring (series) metric{series=\"3\"}",
+                message: "PromQL info: mismatched custom buckets were reconciled during addition",
+                expected: 0,
+            },
         ];
-        for (query, message, expected) in cases {
-            assert2::assert!(annotation_offset(query, message) == Some(expected));
+        for case in cases {
+            assert2::assert!(annotation_offset(case.query, case.message) == Some(case.expected));
         }
     }
 }

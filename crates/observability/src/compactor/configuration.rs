@@ -5,15 +5,11 @@ use crate::{
     BlockDescriptor, BrokerAccessPolicy, BrokerBackedIngestLimiter, ClientResourcePolicy,
     ConfiguredObjectStore, DeferredQueryAuthorizerConnect, DeferredWalConsumerConnect,
     KafkaLogWalConsumer, KafkaLogWalSink, ObjectPath, ObjectStore, Role, ServiceConfig,
-    ServiceConfigError, ServiceDependencies, ServiceRuntimeError, TenantCompactionIndexCache, Time,
+    ServiceConfigError, ServiceDependencies, ServiceRuntimeError, Time,
     advance_and_persist_compaction_frontier, build_configured_object_store,
-    compactor_delete_requests_for_config, effective_object_store_prefix,
-    load_existing_compaction_frontier,
-    materialize_delete_requests_in_existing_local_manifest_blocks,
-    materialize_deletes_then_compact_next_kafka_wal_batch, sleep,
+    effective_object_store_prefix, materialize_deletes_then_compact_next_kafka_wal_batch, sleep,
     wal_consumer_metrics::WalConsumerMetrics,
 };
-
 mod all_in_one_querier_group_id;
 mod build_compactor_configured_object_store;
 mod build_service_dependencies;

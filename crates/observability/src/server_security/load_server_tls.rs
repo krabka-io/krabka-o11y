@@ -7,6 +7,11 @@ use super::{
     read_private_key::read_private_key, server_tls::ServerTls,
 };
 
+struct ServerCertificatePaths<'a> {
+    certificate: &'a std::path::Path,
+    key: &'a std::path::Path,
+}
+
 /// Checks the `--server-tls-*` flags together, and builds the TLS configuration they describe.
 ///
 /// Returns `None` when no TLS flag is set.
@@ -15,32 +20,33 @@ pub fn load_server_tls(
 ) -> Result<Option<ServerTls>, ServerSecurityError> {
     let client_auth = args.server_tls_client_auth;
     let client_ca = args.server_tls_client_ca_path.as_deref();
-    let (certificate_path, key_path) = match (
-        args.server_tls_cert_path.as_deref(),
-        args.server_tls_key_path.as_deref(),
-    ) {
-        (Some(certificate), Some(key)) => (certificate, key),
-        (Some(_), None) => return Err(ServerSecurityError::CertificateWithoutKey),
-        (None, Some(_)) => return Err(ServerSecurityError::KeyWithoutCertificate),
-        (None, None) if client_ca.is_some() => {
-            return Err(ServerSecurityError::ClientCaWithoutCertificate);
-        }
-        (None, None) if client_auth != ClientAuth::NoClientCert => {
-            return Err(ServerSecurityError::ClientAuthWithoutCertificate { client_auth });
-        }
-        (None, None) => return Ok(None),
+    let certificate_paths = if let Some(certificate) = args.server_tls_cert_path.as_deref() {
+        let Some(key) = args.server_tls_key_path.as_deref() else {
+            return Err(ServerSecurityError::CertificateWithoutKey);
+        };
+        ServerCertificatePaths { certificate, key }
+    } else if args.server_tls_key_path.is_some() {
+        return Err(ServerSecurityError::KeyWithoutCertificate);
+    } else if client_ca.is_some() {
+        return Err(ServerSecurityError::ClientCaWithoutCertificate);
+    } else if client_auth != ClientAuth::NoClientCert {
+        return Err(ServerSecurityError::ClientAuthWithoutCertificate { client_auth });
+    } else {
+        return Ok(None);
     };
-    let client_ca = match (client_auth, client_ca) {
-        (ClientAuth::NoClientCert, None) => None,
-        (ClientAuth::NoClientCert, Some(_)) => {
+    let client_ca = if client_auth == ClientAuth::NoClientCert {
+        if client_ca.is_some() {
             return Err(ServerSecurityError::ClientCaWithoutClientAuth);
         }
-        (_, None) => return Err(ServerSecurityError::ClientAuthWithoutClientCa { client_auth }),
-        (_, Some(path)) => Some(path),
+        None
+    } else if let Some(path) = client_ca {
+        Some(path)
+    } else {
+        return Err(ServerSecurityError::ClientAuthWithoutClientCa { client_auth });
     };
 
-    let chain = read_certificates(certificate_path)?;
-    let key = read_private_key(key_path)?;
+    let chain = read_certificates(certificate_paths.certificate)?;
+    let key = read_private_key(certificate_paths.key)?;
 
     // Both `ring` and `aws-lc-rs` are compiled into this workspace. The
     // workspace `rustls` entry turns on `ring`, and `reqwest` turns on
@@ -83,8 +89,8 @@ pub fn load_server_tls(
 
     let mut config = builder.with_single_cert(chain, key).map_err(|source| {
         ServerSecurityError::InvalidServerCertificate {
-            certificate: certificate_path.to_owned(),
-            key: key_path.to_owned(),
+            certificate: certificate_paths.certificate.to_owned(),
+            key: certificate_paths.key.to_owned(),
             source,
         }
     })?;

@@ -141,14 +141,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         selector: &MatrixSelector,
         time_ms: i64,
     ) -> Result<bool> {
-        let range = selector_duration(selector.range)?;
-        let eval_end_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.vs.at.as_ref(),
-            selector.vs.offset.as_ref(),
-            None,
-        )?;
-        let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
+        let window = matrix_range_window(selector, time_ms)?;
+        let range_start_ms = window.start_ms;
+        let eval_end_ms = window.end_ms;
         let matcher_sets = label_matcher_sets(&selector.vs);
         self.histogram_rows_present_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms)
             .await
@@ -314,14 +309,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         at: MatrixSelectorAt<'_>,
     ) -> Result<MatrixRangeScan> {
         let MatrixSelectorAt { selector, time_ms } = at;
-        let range = selector_duration(selector.range)?;
-        let eval_end_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.vs.at.as_ref(),
-            selector.vs.offset.as_ref(),
-            None,
-        )?;
-        let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
+        let window = matrix_range_window(selector, time_ms)?;
+        let range = window.range;
+        let range_start_ms = window.start_ms;
+        let eval_end_ms = window.end_ms;
         let matcher_sets = label_matcher_sets(&selector.vs);
         let series = self
             .labeled_series_sets(LabeledSeriesScan {
@@ -340,4 +331,25 @@ impl<S: MetricStore> PromqlEngine<S> {
             },
         })
     }
+}
+
+struct MatrixRangeWindow {
+    range: Time,
+    start_ms: i64,
+    end_ms: i64,
+}
+
+fn matrix_range_window(selector: &MatrixSelector, time_ms: i64) -> Result<MatrixRangeWindow> {
+    let range = selector_duration(selector.range)?;
+    let end_ms = apply_selector_time_modifier(
+        time_ms,
+        selector.vs.at.as_ref(),
+        selector.vs.offset.as_ref(),
+        None,
+    )?;
+    Ok(MatrixRangeWindow {
+        range,
+        start_ms: end_ms.saturating_sub(range.millis_i64()),
+        end_ms,
+    })
 }

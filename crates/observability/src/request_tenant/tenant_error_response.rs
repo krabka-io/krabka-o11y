@@ -1,5 +1,5 @@
 use super::{
-    IntoResponse, Response, StatusCode, TenantErrorSurface, TenantRequestError, TenantResolveError,
+    Response, StatusCode, TenantErrorSurface, TenantRequestError, TenantResolveError,
     encode_otlp_status_message,
 };
 
@@ -24,12 +24,12 @@ pub(crate) fn tenant_error_response(
         TenantErrorSurface::Push => {
             plain_text_error(StatusCode::BAD_REQUEST, &format!("{error}\n"))
         }
-        TenantErrorSurface::OtlpPush => (
+        TenantErrorSurface::OtlpPush => response_with_content_type(
             StatusCode::BAD_REQUEST,
-            [("content-type", "application/octet-stream")],
+            "application/octet-stream",
             encode_otlp_status_message(&error.to_string()),
-        )
-            .into_response(),
+            false,
+        ),
         TenantErrorSurface::Read | TenantErrorSurface::QuerierRead if multiple => {
             plain_text_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
         }
@@ -55,14 +55,14 @@ pub(crate) fn tenant_error_response(
 // ruler route that way for a malformed or multiple tenant, including the
 // Prometheus-compatible `/prometheus/api/v1/rules` and `/alerts`.
 fn ruler_error(message: &str) -> Response {
-    (
+    response_with_content_type(
         StatusCode::INTERNAL_SERVER_ERROR,
-        [("content-type", "text/plain; charset=utf-8")],
+        "text/plain; charset=utf-8",
         format!(
             r#"{{"status":"error","data":null,"errorType":"server_error","error":"{message}"}}"#
         ),
+        false,
     )
-        .into_response()
 }
 
 // Go's `http.Error` sets `X-Content-Type-Options: nosniff` next to the
@@ -70,13 +70,22 @@ fn ruler_error(message: &str) -> Response {
 // answers its tenant errors through it, and `krabka-metrics` sends the same
 // header for the same reason.
 fn plain_text_error(status: StatusCode, body: &str) -> Response {
-    (
-        status,
-        [
-            ("content-type", "text/plain; charset=utf-8"),
-            ("x-content-type-options", "nosniff"),
-        ],
-        body.to_owned(),
-    )
-        .into_response()
+    response_with_content_type(status, "text/plain; charset=utf-8", body.to_owned(), true)
+}
+
+fn response_with_content_type(
+    status: StatusCode,
+    content_type: &'static str,
+    body: impl Into<axum::body::Body>,
+    nosniff: bool,
+) -> Response {
+    let mut builder = Response::builder()
+        .status(status)
+        .header("content-type", content_type);
+    if nosniff {
+        builder = builder.header("x-content-type-options", "nosniff");
+    }
+    builder
+        .body(body.into())
+        .expect("a static tenant error response is valid")
 }

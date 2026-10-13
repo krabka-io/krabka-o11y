@@ -23,12 +23,15 @@ use object_store::{ObjectStore, PutPayload, path::Path};
 
 use self::{
     block_builder_support::{
-        ConsumedBuilder, OneRecordBroker, RestartConsumer, indexed_block_count,
+        ConsumedBuilder, DrainOnlyConfig, OneRecordBroker, RestartConsumer, indexed_block_count,
     },
+    failure_budget::consume_failure_budget,
     hooked_store::{HookedStore, StoreHooks},
 };
 
 mod block_builder_support;
+#[path = "../../blockstore/tests/support/failure_budget.rs"]
+mod failure_budget;
 #[path = "../../blockstore/tests/support/hooked_store.rs"]
 mod hooked_store;
 
@@ -86,13 +89,7 @@ impl StoreHooks for FlakyIndexHooks {
     async fn before_put(&self, location: &Path, _payload: &PutPayload) -> object_store::Result<()> {
         if location.as_ref().starts_with("index/") {
             self.index_put_attempts.fetch_add(1, Ordering::SeqCst);
-            if self
-                .remaining_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                    (left > 0).then(|| left - 1)
-                })
-                .is_ok()
-            {
+            if consume_failure_budget(&self.remaining_failures) {
                 return Err((self.error)());
             }
         }
@@ -106,13 +103,13 @@ async fn a_drain_rides_out_a_transient_object_store_and_commits_once() {
     let flaky = Arc::new(FlakyIndexHooks::store(2, transient_failure));
     let store: Arc<dyn ObjectStore> = Arc::clone(&flaky) as Arc<dyn ObjectStore>;
 
-    let (drained, index_key) = broker.drain_with(&store, &flaky).await;
+    let drained = broker.drain_with(&store, &flaky).await;
 
-    assert!(drained.is_ok());
+    assert!(drained.result.is_ok());
     // The snapshot really was retried, not merely written once.
     check!(flaky.index_put_attempts() > 2);
     // The buffered record became a durable block ...
-    assert!(indexed_block_count(&store, &index_key).await > 0);
+    assert!(indexed_block_count(&store, &drained.index_key).await > 0);
     // ... and the offset behind it was committed exactly once, so a restart in
     // the same group replays nothing.
     check!(broker.replayed_records().await == 0);
@@ -124,10 +121,10 @@ async fn a_drain_refused_by_the_store_fails_at_once_and_leaves_the_offset() {
     let flaky = Arc::new(FlakyIndexHooks::store(usize::MAX, permanent_failure));
     let store: Arc<dyn ObjectStore> = Arc::clone(&flaky) as Arc<dyn ObjectStore>;
 
-    let (drained, _index_key) = broker.drain_with(&store, &flaky).await;
+    let drained = broker.drain_with(&store, &flaky).await;
 
     // Reported rather than retried: a 403 will read the same in four seconds.
-    assert!(drained.is_err());
+    assert!(drained.result.is_err());
     check!(flaky.index_put_attempts() == 1);
     // And the offset stays behind the data the flush failed to make durable,
     // so a restart re-reads the record instead of losing it.
@@ -139,6 +136,11 @@ async fn a_drain_refused_by_the_store_fails_at_once_and_leaves_the_offset() {
 struct TestBroker {
     broker: OneRecordBroker,
     group_id: String,
+}
+
+struct DrainResult {
+    result: Result<(), krabka_profiles::ProfilesError>,
+    index_key: String,
 }
 
 impl TestBroker {
@@ -156,8 +158,11 @@ impl TestBroker {
         &self,
         store: &Arc<dyn ObjectStore>,
         flaky: &Arc<FlakyIndexStore>,
-    ) -> (Result<(), krabka_profiles::ProfilesError>, String) {
-        let (mut config, metrics) = self.broker.drain_only_config(store, &self.group_id);
+    ) -> DrainResult {
+        let DrainOnlyConfig {
+            mut config,
+            metrics,
+        } = self.broker.drain_only_config(store, &self.group_id);
         let index_key = config.index_key.clone();
         // The injected schedule: the same number of attempts the default
         // allows, with none of its waiting. Raising the default cannot make
@@ -170,7 +175,10 @@ impl TestBroker {
             "no ordinary flush may fire before the drain"
         );
 
-        (builder.drain().await, index_key)
+        DrainResult {
+            result: builder.drain().await,
+            index_key,
+        }
     }
 
     /// What a restart in the block-builder's own consumer group would be

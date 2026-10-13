@@ -57,7 +57,9 @@ pub async fn evaluate_recording_rule<S: MetricStore>(
             tenant: tenant.to_string(),
             labels: labels
                 .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
+                .map(|pair| {
+                    krabka_metrics::MetricLabelPair::new(pair.name.clone(), pair.value.clone())
+                })
                 .collect(),
             payload,
             exemplars: Vec::new(),

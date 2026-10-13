@@ -23,6 +23,26 @@ pub(crate) struct MetadataRequest<'r> {
     pub(crate) end_ms: i64,
 }
 
+pub(crate) fn metadata_scope_for_request<S: ProfileStore>(
+    state: &QuerierState<S>,
+    principal: &Principal,
+    headers: &HeaderMap,
+    matchers: &[String],
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<MetadataScope, ConnectError> {
+    metadata_scope(
+        state,
+        MetadataRequest {
+            principal,
+            headers,
+            matchers,
+            start_ms,
+            end_ms,
+        },
+    )
+}
+
 /// Resolves and authorizes the request's tenant, then parses `matchers` and
 /// validates the `start`/`end` range of a label-metadata request.
 pub(crate) fn metadata_scope<S: ProfileStore>(

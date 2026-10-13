@@ -30,13 +30,13 @@ pub(crate) async fn keep_fresh_asks_the_broker_once_per_ttl_until_cancelled() {
     });
 
     tokio::time::sleep(millis(110).to_std()).await;
-    let (refreshes, _) = source.lookups();
+    let refreshes = source.lookups().acl;
     check!((3..=7).contains(&refreshes), "{refreshes} refreshes");
     check!(connected.load(AtomicOrdering::SeqCst));
 
     token.cancel();
     check!(task.await.is_ok());
-    let (stopped_at, _) = source.lookups();
+    let stopped_at = source.lookups().acl;
     tokio::time::sleep(millis(60).to_std()).await;
-    check!(source.lookups().0 == stopped_at);
+    check!(source.lookups().acl == stopped_at);
 }

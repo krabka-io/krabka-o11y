@@ -7,18 +7,24 @@ use super::{ProfileError, Time, TimeExt, days, hours, minutes, secs};
 /// [`Time`]. The instant that it resolves against stays epoch milliseconds at
 /// the call site.
 pub(crate) fn parse_render_offset(value: &str) -> Result<Time, ProfileError> {
-    let (number, unit) = value.split_at(value.len().saturating_sub(1));
+    let Some(unit_character) = value.chars().next_back() else {
+        return Err(ProfileError::Plan(format!(
+            "invalid render relative duration {value:?}"
+        )));
+    };
+    let number_end = value.len() - unit_character.len_utf8();
+    let number = &value[..number_end];
     let amount = number.parse::<i64>().map_err(|err| {
         ProfileError::Plan(format!("invalid render relative duration {value:?}: {err}"))
     })?;
-    let unit = match unit {
-        "s" => secs(1),
-        "m" => minutes(1),
-        "h" => hours(1),
-        "d" => days(1),
+    let unit = match unit_character {
+        's' => secs(1),
+        'm' => minutes(1),
+        'h' => hours(1),
+        'd' => days(1),
         _ => {
             return Err(ProfileError::Plan(format!(
-                "invalid render relative duration unit {unit:?}"
+                "invalid render relative duration unit {unit_character:?}"
             )));
         }
     };

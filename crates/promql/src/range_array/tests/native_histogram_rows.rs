@@ -1,11 +1,11 @@
 use super::*;
 
-pub(crate) fn native_histogram_rows() -> Vec<(u64, i64, NativeHistogram)> {
+pub(crate) fn native_histogram_rows() -> Vec<NativeHistogramRow> {
     vec![
-        (
-            7_u64,
-            99_i64,
-            NativeHistogram {
+        NativeHistogramRow {
+            fingerprint: 7_u64,
+            timestamp_ms: 99_i64,
+            hist: NativeHistogram {
                 schema: 2,
                 is_float: false,
                 reset_hint: ResetHint::No,
@@ -23,11 +23,11 @@ pub(crate) fn native_histogram_rows() -> Vec<(u64, i64, NativeHistogram)> {
                 custom_values: None,
                 start_timestamp_ms: None,
             },
-        ),
-        (
-            8_u64,
-            109_i64,
-            NativeHistogram {
+        },
+        NativeHistogramRow {
+            fingerprint: 8_u64,
+            timestamp_ms: 109_i64,
+            hist: NativeHistogram {
                 schema: -53,
                 is_float: true,
                 reset_hint: ResetHint::Gauge,
@@ -48,11 +48,11 @@ pub(crate) fn native_histogram_rows() -> Vec<(u64, i64, NativeHistogram)> {
                 custom_values: Some(vec![0.5, 1.0, 2.0]),
                 start_timestamp_ms: Some(123),
             },
-        ),
-        (
-            9_u64,
-            119_i64,
-            NativeHistogram {
+        },
+        NativeHistogramRow {
+            fingerprint: 9_u64,
+            timestamp_ms: 119_i64,
+            hist: NativeHistogram {
                 schema: 1,
                 is_float: false,
                 reset_hint: ResetHint::Unknown,
@@ -67,7 +67,7 @@ pub(crate) fn native_histogram_rows() -> Vec<(u64, i64, NativeHistogram)> {
                 custom_values: Some(Vec::new()),
                 start_timestamp_ms: Some(456),
             },
-        ),
+        },
     ]
 }
 

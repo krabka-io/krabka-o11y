@@ -182,12 +182,19 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
         .as_str()
         .expect("the query returns a trace id");
     check!(hex_id == hex::encode(TRACE_ID));
-    for (tenant, query) in [
-        ("tenant-b", "{app=\"orders\"}".to_string()),
-        (
-            TENANT,
-            r#"{app="orders"} | trace_id = "ffffffffffffffffffffffffffffffff""#.to_string(),
-        ),
+    struct NegativeQueryCase {
+        tenant: &'static str,
+        query: String,
+    }
+    for query_case in [
+        NegativeQueryCase {
+            tenant: "tenant-b",
+            query: "{app=\"orders\"}".to_string(),
+        },
+        NegativeQueryCase {
+            tenant: TENANT,
+            query: r#"{app="orders"} | trace_id = "ffffffffffffffffffffffffffffffff""#.to_string(),
+        },
     ] {
         let response = querier
             .clone()
@@ -195,11 +202,11 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
                 Request::builder()
                     .uri(format!(
                         "/loki/api/v1/query_range?query={}&start={}&end={}",
-                        urlencode(&query),
+                        urlencode(&query_case.query),
                         timestamp_ns - 1_000_000_000,
                         timestamp_ns + 1_000_000_000
                     ))
-                    .header("X-Scope-OrgID", tenant)
+                    .header("X-Scope-OrgID", query_case.tenant)
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )

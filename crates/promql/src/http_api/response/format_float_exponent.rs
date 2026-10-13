@@ -6,10 +6,11 @@
 /// suffix.
 pub(crate) fn format_float_exponent(f: f64) -> String {
     let rust = format!("{f:e}");
-    let (mantissa, exponent) = rust
-        .split_once('e')
+    let exponent_marker = rust
+        .find('e')
         .expect("Rust {:e} formatting always contains an exponent marker");
-    let exponent: i32 = exponent
+    let mantissa = &rust[..exponent_marker];
+    let exponent: i32 = rust[exponent_marker + 1..]
         .parse()
         .expect("Rust {:e} exponent is always a valid integer");
     let sign = if exponent < 0 { '-' } else { '+' };

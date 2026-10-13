@@ -3,7 +3,10 @@ use super::{
     alertmanager_http_sink::{AlertTemplateDefaults, impl_alertmanager_sink},
 };
 
-type AlertBatch = (Option<String>, Vec<krabka_promql::AlertmanagerAlert>);
+struct AlertBatch {
+    tenant: Option<String>,
+    alerts: Vec<krabka_promql::AlertmanagerAlert>,
+}
 type AlertSender = tokio::sync::mpsc::Sender<AlertBatch>;
 
 /// A bounded FIFO in front of Alertmanager delivery.
@@ -26,14 +29,16 @@ impl QueuedAlertmanagerSink {
         resend_delay: std::time::Duration,
     ) -> Self {
         let alert_templates = sink.alert_templates.clone();
-        let (sender, mut receiver) = tokio::sync::mpsc::channel::<(
-            Option<String>,
-            Vec<krabka_promql::AlertmanagerAlert>,
-        )>(capacity.max(1));
+        let channel = tokio::sync::mpsc::channel::<AlertBatch>(capacity.max(1));
+        let sender = channel.0;
+        let mut receiver = channel.1;
         let worker = tokio::spawn(async move {
-            while let Some((tenant, alerts)) = receiver.recv().await {
+            while let Some(batch) = receiver.recv().await {
                 loop {
-                    match sink.deliver(tenant.as_deref(), alerts.clone()).await {
+                    match sink
+                        .deliver(batch.tenant.as_deref(), batch.alerts.clone())
+                        .await
+                    {
                         Ok(()) => break,
                         Err(error) if error.is_retryable() => {
                             tracing::warn!(%error, "alertmanager delivery failed; retrying queued batch");
@@ -88,7 +93,10 @@ impl QueuedAlertmanagerSink {
             RulerWalError::Append("alertmanager delivery queue stopped".to_string())
         })?;
         sender
-            .send((tenant.map(str::to_owned), alerts))
+            .send(AlertBatch {
+                tenant: tenant.map(str::to_owned),
+                alerts,
+            })
             .await
             .map_err(|_| RulerWalError::Append("alertmanager delivery queue stopped".to_string()))
     }

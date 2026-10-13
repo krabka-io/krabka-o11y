@@ -67,11 +67,13 @@ pub async fn backup_deployment(
             COPY_CHUNK_BYTES,
         )
         .await?;
-        let (manifest, manifest_sha256) = load_backup_manifest_with_digest(&target)
+        let loaded_manifest = load_backup_manifest_with_digest(&target)
             .await?
             .ok_or_else(|| {
                 RecoveryError::InvalidManifest(format!("part `{}` has no manifest", part.name))
             })?;
+        let manifest = loaded_manifest.manifest;
+        let manifest_sha256 = loaded_manifest.digest;
         parts.push(CutPart {
             name: part.name.clone(),
             manifest_sha256,

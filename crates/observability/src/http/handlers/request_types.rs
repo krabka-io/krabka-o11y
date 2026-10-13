@@ -78,3 +78,17 @@ pub(crate) use status_metrics::status_metrics;
 pub(crate) use volume_aggregate_by::VolumeAggregateBy;
 pub(crate) use volume_kind::VolumeKind;
 pub(crate) use volume_params::VolumeParams;
+
+async fn handle_instant_or_range_query(
+    state: QuerierState,
+    security: RequestSecurity,
+    headers: HeaderMap,
+    raw_query: Option<&str>,
+    kind: QueryKind,
+    metric_name: &'static str,
+) -> Response {
+    let start = Instant::now();
+    let response = handle_query(state.clone(), security, headers, raw_query, kind).await;
+    state.record_query(metric_name, response.status(), start);
+    response
+}

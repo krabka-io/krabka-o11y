@@ -1,5 +1,10 @@
 use super::{Time, TimeExt};
 
+struct DurationUnit {
+    suffix: &'static str,
+    seconds: i64,
+}
+
 /// Renders an extent the way `Loki` spells a *limit* in its own error text.
 ///
 /// This is Prometheus `model.Duration`'s own format, which `Loki` uses for the
@@ -17,12 +22,29 @@ pub(crate) fn format_loki_model_duration(extent: Time) -> String {
         return "0s".to_string();
     }
     let mut rendered = String::new();
-    for (unit, size) in [("d", 86_400), ("h", 3_600), ("m", 60), ("s", 1)] {
-        let count = remaining / size;
+    for unit in [
+        DurationUnit {
+            suffix: "d",
+            seconds: 86_400,
+        },
+        DurationUnit {
+            suffix: "h",
+            seconds: 3_600,
+        },
+        DurationUnit {
+            suffix: "m",
+            seconds: 60,
+        },
+        DurationUnit {
+            suffix: "s",
+            seconds: 1,
+        },
+    ] {
+        let count = remaining / unit.seconds;
         if count > 0 {
             rendered.push_str(&count.to_string());
-            rendered.push_str(unit);
-            remaining -= count * size;
+            rendered.push_str(unit.suffix);
+            remaining -= count * unit.seconds;
         }
     }
     rendered

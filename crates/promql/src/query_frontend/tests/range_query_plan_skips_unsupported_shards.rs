@@ -1,9 +1,12 @@
 use super::*;
 
-#[test]
-pub(crate) fn range_query_plan_skips_nested_avg_until_rewrite_is_aggregate_aware() {
+#[yare::parameterized(
+    nested_average = { "avg(sum by (job)(up))" },
+    unsupported_quantile = { "quantile(0.9, up)" },
+)]
+fn range_query_plan_skips_shards_for_unsupported_reducers(query: &str) {
     let plan = plan_range_query(
-        "avg(sum by (job)(up))",
+        query,
         0,
         60_000,
         millis(60_000),

@@ -10,14 +10,25 @@ pub(crate) fn nan_equal_samples(
     if left.len() != right.len() {
         return false;
     }
-    left.iter().zip(right).all(|(a, b)| {
-        a.labels == b.labels
-            && a.ts_ms == b.ts_ms
-            && match (&a.value, &b.value) {
-                (SampleValue::Float(x), SampleValue::Float(y)) => {
-                    x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan())
+    for index in 0..left.len() {
+        let left_sample = &left[index];
+        let right_sample = &right[index];
+        if left_sample.labels != right_sample.labels || left_sample.ts_ms != right_sample.ts_ms {
+            return false;
+        }
+        match &left_sample.value {
+            SampleValue::Float(left_value) => match &right_sample.value {
+                SampleValue::Float(right_value) => {
+                    if left_value.to_bits() != right_value.to_bits()
+                        && !(left_value.is_nan() && right_value.is_nan())
+                    {
+                        return false;
+                    }
                 }
-                _ => false,
-            }
-    })
+                SampleValue::Histogram(_) => return false,
+            },
+            SampleValue::Histogram(_) => return false,
+        }
+    }
+    true
 }

@@ -29,13 +29,16 @@ pub fn decode_otlp(
                     Value::IntValue(value) => value.to_string(),
                     Value::StringValue(_) => return None,
                 };
-                Some((attribute.key.clone(), value))
+                Some(krabka_blockstore::LabelPair::new(
+                    attribute.key.clone(),
+                    value,
+                ))
             })
             .collect::<Vec<_>>();
         for scope_profiles in &resource_profiles.scope_profiles {
             for profile in &scope_profiles.profiles {
                 let sample_timestamps_ns = otlp_sample_timestamps(profile)?;
-                let (sample_span_ids, sample_trace_ids) = otlp_sample_links(profile, dict)?;
+                let sample_links = otlp_sample_links(profile, dict)?;
                 let profile_labels = profile_labels(profile, dict)?;
                 let profile_id =
                     (!profile.profile_id.is_empty()).then(|| encode_lower_hex(&profile.profile_id));
@@ -46,25 +49,25 @@ pub fn decode_otlp(
                 // exposes the label like any other one.
                 // `grafana/pyroscope:2.2.1` returns it from `LabelNames`.
                 labels.insert("__otel__", "true");
-                for (name, value) in &process_labels {
-                    labels.insert(name.clone(), value.clone());
+                for label in &process_labels {
+                    labels.insert(label.name.clone(), label.value.clone());
                 }
                 if let Some(profile_id) = profile_id {
                     labels.insert("__profile_id__", profile_id);
                 }
-                for (name, value) in profile_labels {
-                    labels.insert(name, value);
+                for label in profile_labels {
+                    labels.insert(label.name, label.value);
                 }
-                if let Some((name, _)) = profile.sample_types().first() {
-                    labels.insert("__name__", name.clone());
+                if let Some(sample_type) = profile.sample_types().first() {
+                    labels.insert("__name__", sample_type.name.clone());
                 }
                 out.push(RawProfile {
                     labels,
                     profile,
                     delta: false,
                     sample_timestamps_ns,
-                    sample_span_ids,
-                    sample_trace_ids,
+                    sample_span_ids: sample_links.span_ids,
+                    sample_trace_ids: sample_links.trace_ids,
                 });
             }
         }

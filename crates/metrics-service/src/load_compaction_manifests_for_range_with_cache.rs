@@ -1,5 +1,5 @@
 use super::{
-    Arc, BTreeMap, CompactionIndexManifest, MetricsServiceError, ObjectStore,
+    Arc, BTreeMap, CompactionIndexManifest, ManifestTimeRange, MetricsServiceError, ObjectStore,
     load_compaction_manifests_filtered_with_cache,
 };
 
@@ -13,7 +13,7 @@ pub(crate) async fn load_compaction_manifests_for_range_with_cache(
     load_compaction_manifests_filtered_with_cache(
         store,
         manifest_prefix,
-        Some((start_ms, end_ms)),
+        Some(ManifestTimeRange { start_ms, end_ms }),
         Some(cache),
     )
     .await

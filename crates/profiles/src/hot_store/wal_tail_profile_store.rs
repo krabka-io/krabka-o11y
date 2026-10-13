@@ -1,4 +1,19 @@
+use krabka_pprof::ProfileLabel;
+
 use super::*;
+
+#[derive(Clone, Debug)]
+pub(crate) struct PositionedWalRecord {
+    pub(crate) record: ProfileRecord,
+    pub(crate) position: Option<crate::wal::WalPosition>,
+}
+
+impl PositionedWalRecord {
+    #[must_use]
+    pub(crate) fn new(record: ProfileRecord, position: Option<crate::wal::WalPosition>) -> Self {
+        Self { record, position }
+    }
+}
 
 #[derive(Clone)]
 pub struct WalTailProfileStore {
@@ -62,12 +77,16 @@ impl WalTailProfileStore {
         &self,
         records: impl IntoIterator<Item = ProfileRecord>,
     ) -> Result<(), ProfilesError> {
-        self.append_records_with_positions(records.into_iter().map(|record| (record, None)))
+        self.append_records_with_positions(
+            records
+                .into_iter()
+                .map(|record| PositionedWalRecord::new(record, None)),
+        )
     }
 
     pub(crate) fn append_records_with_positions(
         &self,
-        records: impl IntoIterator<Item = (ProfileRecord, Option<crate::wal::WalPosition>)>,
+        records: impl IntoIterator<Item = PositionedWalRecord>,
     ) -> Result<(), ProfilesError> {
         let mut fresh = Vec::new();
         {
@@ -76,7 +95,9 @@ impl WalTailProfileStore {
                 .write()
                 .map_err(|_| ProfilesError::Wal("hot profile store lock poisoned".to_string()))?;
             let store = Arc::make_mut(&mut guard);
-            for (record, position) in records {
+            for positioned_record in records {
+                let record = positioned_record.record;
+                let position = positioned_record.position;
                 let max_ts_ms = record
                     .samples
                     .iter()
@@ -245,7 +266,7 @@ impl ProfileStore for WalTailProfileStore {
         label_names: &[String],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<Vec<(String, String)>>, ProfileError> {
+    ) -> Result<Vec<Vec<ProfileLabel>>, ProfileError> {
         self.snapshot()?
             .series(tenant, matchers, label_names, start_ms, end_ms)
             .await

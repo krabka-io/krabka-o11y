@@ -1,6 +1,13 @@
 #[cfg(creusot)]
 use creusot_std::prelude::*;
 
+/// Half-open slice bounds for blocks that may overlap a query time range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverlapWindow {
+    pub start: usize,
+    pub end: usize,
+}
+
 /// Returns the half-open window that can overlap a query range.
 ///
 /// `starts` is sorted by block start time. `prefix_ends[i]` is the greatest
@@ -12,13 +19,13 @@ use creusot_std::prelude::*;
 #[cfg_attr(creusot, requires(forall<i: Int, j: Int>
     0 <= i && i < j && j < prefix_ends@.len()
         ==> prefix_ends@[i]@ <= prefix_ends@[j]@))]
-#[cfg_attr(creusot, ensures(result.0@ <= result.1@))]
-#[cfg_attr(creusot, ensures(result.1@ <= starts@.len()))]
-#[cfg_attr(creusot, ensures(forall<i: Int> 0 <= i && i < result.0@
+#[cfg_attr(creusot, ensures(result.start@ <= result.end@))]
+#[cfg_attr(creusot, ensures(result.end@ <= starts@.len()))]
+#[cfg_attr(creusot, ensures(forall<i: Int> 0 <= i && i < result.start@
     ==> prefix_ends@[i]@ < min_ts@))]
-#[cfg_attr(creusot, ensures(forall<i: Int> result.0@ <= i && i < result.1@
+#[cfg_attr(creusot, ensures(forall<i: Int> result.start@ <= i && i < result.end@
     ==> prefix_ends@[i]@ >= min_ts@ && starts@[i]@ <= max_ts@))]
-#[cfg_attr(creusot, ensures(forall<i: Int> result.1@ <= i && i < starts@.len()
+#[cfg_attr(creusot, ensures(forall<i: Int> result.end@ <= i && i < starts@.len()
     ==> starts@[i]@ > max_ts@))]
 #[must_use]
 pub fn overlap_window(
@@ -26,7 +33,7 @@ pub fn overlap_window(
     prefix_ends: &[i64],
     min_ts: i64,
     max_ts: i64,
-) -> (usize, usize) {
+) -> OverlapWindow {
     let mut lower = 0_usize;
     let mut upper = starts.len();
     #[cfg_attr(creusot, invariant(lower@ <= upper@ && upper@ <= starts@.len()))]
@@ -62,14 +69,17 @@ pub fn overlap_window(
             upper = middle;
         }
     }
-    (lower, hi)
+    OverlapWindow {
+        start: lower,
+        end: hi,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use assert2::check;
 
-    use super::overlap_window;
+    use super::{OverlapWindow, overlap_window};
 
     #[test]
     fn matches_partition_points_for_bounded_inputs() {
@@ -81,10 +91,8 @@ mod tests {
                     encoded /= 5;
                 }
                 starts.sort_unstable();
-                let mut prefix_ends = starts
-                    .iter()
-                    .enumerate()
-                    .map(|(index, start)| *start + i64::try_from(index % 3).unwrap())
+                let mut prefix_ends = (0..starts.len())
+                    .map(|index| starts[index] + i64::try_from(index % 3).unwrap())
                     .collect::<Vec<_>>();
                 for index in 1..prefix_ends.len() {
                     prefix_ends[index] = prefix_ends[index].max(prefix_ends[index - 1]);
@@ -94,7 +102,10 @@ mod tests {
                     for max_ts in -3_i64..=3 {
                         let hi = starts.partition_point(|start| *start <= max_ts);
                         let lo = prefix_ends[..hi].partition_point(|end| *end < min_ts);
-                        check!(overlap_window(&starts, &prefix_ends, min_ts, max_ts) == (lo, hi));
+                        check!(
+                            overlap_window(&starts, &prefix_ends, min_ts, max_ts)
+                                == OverlapWindow { start: lo, end: hi }
+                        );
                     }
                 }
             }

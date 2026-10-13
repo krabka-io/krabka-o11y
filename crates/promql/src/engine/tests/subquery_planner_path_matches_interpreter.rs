@@ -1,5 +1,23 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct CounterSeriesFixture {
+    label: &'static str,
+    factor: f64,
+}
+
+#[derive(bon::Builder)]
+struct GaugeSeriesFixture {
+    label: &'static str,
+    group: &'static str,
+    base: f64,
+}
+
+struct SubqueryCase {
+    query: &'static str,
+    timestamp_ms: i64,
+}
+
 /// Differential parity for subqueries routed through the recursive planner.
 ///
 /// The query is a range call or a `*_over_time` call whose argument is
@@ -18,38 +36,73 @@ pub(crate) async fn subquery_planner_path_matches_interpreter() {
     //    member so the surviving series is observable.
     let mut store = InMemoryMetricStore::new();
     // Counters: slope = factor over 60s, sampled every 30s out to 20m.
-    for (l, factor) in [("a", 1.0), ("b", 2.0)] {
-        let lbls = labels(&[("__name__", "reqs_total"), ("l", l)]);
+    for fixture in [
+        CounterSeriesFixture::builder()
+            .label("a")
+            .factor(1.0)
+            .build(),
+        CounterSeriesFixture::builder()
+            .label("b")
+            .factor(2.0)
+            .build(),
+    ] {
+        let lbls = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "reqs_total"),
+            crate::test_support::TestLabelPair::new("l", fixture.label),
+        ]);
         for step in 0..=40_i32 {
             store.push_float(
                 "t",
                 lbls.clone(),
                 i64::from(step) * 30_000,
-                f64::from(step) * factor,
+                f64::from(step) * fixture.factor,
             );
         }
     }
     // Gauges in two groups (`sum by(l)` collapses the `g` member dimension).
-    for (l, g, base) in [
-        ("a", "0", 3.0),
-        ("a", "1", 5.0),
-        ("b", "0", 7.0),
-        ("b", "1", 11.0),
+    for fixture in [
+        GaugeSeriesFixture::builder()
+            .label("a")
+            .group("0")
+            .base(3.0)
+            .build(),
+        GaugeSeriesFixture::builder()
+            .label("a")
+            .group("1")
+            .base(5.0)
+            .build(),
+        GaugeSeriesFixture::builder()
+            .label("b")
+            .group("0")
+            .base(7.0)
+            .build(),
+        GaugeSeriesFixture::builder()
+            .label("b")
+            .group("1")
+            .base(11.0)
+            .build(),
     ] {
-        let lbls = labels(&[("__name__", "gauge"), ("l", l), ("g", g)]);
+        let lbls = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "gauge"),
+            crate::test_support::TestLabelPair::new("l", fixture.label),
+            crate::test_support::TestLabelPair::new("g", fixture.group),
+        ]);
         for step in 0..=40_i32 {
             store.push_float(
                 "t",
                 lbls.clone(),
                 i64::from(step) * 30_000,
-                base + f64::from(step),
+                fixture.base + f64::from(step),
             );
         }
     }
     // Sparse: l=dense has a full history; l=stranded has only one early
     // sample, so a tight late subquery window yields it no sub-grid points.
     {
-        let dense = labels(&[("__name__", "sparse"), ("l", "dense")]);
+        let dense = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "sparse"),
+            crate::test_support::TestLabelPair::new("l", "dense"),
+        ]);
         for step in 0..=40_i32 {
             store.push_float(
                 "t",
@@ -58,7 +111,10 @@ pub(crate) async fn subquery_planner_path_matches_interpreter() {
                 f64::from(step),
             );
         }
-        let stranded = labels(&[("__name__", "sparse"), ("l", "stranded")]);
+        let stranded = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "sparse"),
+            crate::test_support::TestLabelPair::new("l", "stranded"),
+        ]);
         store.push_float("t", stranded, 0, 1.0);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
@@ -69,36 +125,70 @@ pub(crate) async fn subquery_planner_path_matches_interpreter() {
     // on BOTH paths.
     let queries = [
         // Selector inner, explicit resolution.
-        ("rate(reqs_total[5m:1m])", 1_200_000_i64),
+        SubqueryCase {
+            query: "rate(reqs_total[5m:1m])",
+            timestamp_ms: 1_200_000_i64,
+        },
         // Nested: `*_over_time` over a `rate(...)` subquery — the inner rate is
         // itself planned per sub-step.
-        ("max_over_time(rate(reqs_total[1m])[10m:2m])", 1_200_000),
+        SubqueryCase {
+            query: "max_over_time(rate(reqs_total[1m])[10m:2m])",
+            timestamp_ms: 1_200_000,
+        },
         // Aggregating inner with DEFAULT resolution (`[5m:]` -> 60s stride).
-        ("sum_over_time((sum by(l)(gauge))[5m:])", 1_200_000),
-        ("avg_over_time((sum by(l)(gauge))[5m:])", 1_200_000),
+        SubqueryCase {
+            query: "sum_over_time((sum by(l)(gauge))[5m:])",
+            timestamp_ms: 1_200_000,
+        },
+        SubqueryCase {
+            query: "avg_over_time((sum by(l)(gauge))[5m:])",
+            timestamp_ms: 1_200_000,
+        },
         // `@` and offset on the subquery shift the evaluated end (and the
         // step-aligned start) identically on both paths.
-        ("sum_over_time(gauge[5m:1m] @ 600)", 1_200_000),
-        ("sum_over_time(gauge[5m:1m] offset 5m)", 1_200_000),
+        SubqueryCase {
+            query: "sum_over_time(gauge[5m:1m] @ 600)",
+            timestamp_ms: 1_200_000,
+        },
+        SubqueryCase {
+            query: "sum_over_time(gauge[5m:1m] offset 5m)",
+            timestamp_ms: 1_200_000,
+        },
         // Sparse: the stranded member yields an empty sub-grid window and is
         // dropped from the result; the dense member survives. A tight window
         // at a late time.
-        ("sum_over_time(sparse[1m:30s])", 1_200_000),
-        ("last_over_time(sparse[1m:30s])", 1_200_000),
+        SubqueryCase {
+            query: "sum_over_time(sparse[1m:30s])",
+            timestamp_ms: 1_200_000,
+        },
+        SubqueryCase {
+            query: "last_over_time(sparse[1m:30s])",
+            timestamp_ms: 1_200_000,
+        },
         // Binary inner.
-        ("rate((reqs_total + reqs_total)[5m:1m])", 1_200_000),
+        SubqueryCase {
+            query: "rate((reqs_total + reqs_total)[5m:1m])",
+            timestamp_ms: 1_200_000,
+        },
         // Unary-negation inner: `Expr::Unary` now routes through the planner,
         // so the subquery's structural gate accepts it and the inner negation
         // is planned per sub-step.
-        ("sum_over_time((-gauge)[5m:1m])", 1_200_000),
-        ("max_over_time((-gauge)[5m:1m])", 1_200_000),
+        SubqueryCase {
+            query: "sum_over_time((-gauge)[5m:1m])",
+            timestamp_ms: 1_200_000,
+        },
+        SubqueryCase {
+            query: "max_over_time((-gauge)[5m:1m])",
+            timestamp_ms: 1_200_000,
+        },
     ];
 
-    for (query, time_ms) in queries {
+    for case in queries {
+        let query = case.query;
         let SortedParity {
             via_operators,
             via_interpreter,
-        } = sorted_planned_and_interpreted(&engine, query, time_ms).await;
+        } = sorted_planned_and_interpreted(&engine, query, case.timestamp_ms).await;
         assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
 
         // Pin the sparse-window rule: the stranded member is dropped (no

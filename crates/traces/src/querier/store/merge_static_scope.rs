@@ -1,7 +1,7 @@
-use super::{BTreeMap, BTreeSet, TagScope, tag_scope_key};
+use super::{BTreeMap, BTreeSet, TagScope, TagScopeTags, tag_scope_key};
 
 pub(crate) fn merge_static_scope(
-    by_scope: &mut BTreeMap<&'static str, (TagScope, BTreeSet<String>)>,
+    by_scope: &mut BTreeMap<&'static str, TagScopeTags>,
     requested: Option<TagScope>,
     scope: TagScope,
     tags: &[&str],
@@ -9,8 +9,13 @@ pub(crate) fn merge_static_scope(
     if requested.is_some_and(|requested| requested != scope) {
         return;
     }
-    let (_, out) = by_scope
+    let scope_tags = by_scope
         .entry(tag_scope_key(scope))
-        .or_insert((scope, BTreeSet::new()));
-    out.extend(tags.iter().map(|tag| (*tag).to_string()));
+        .or_insert_with(|| TagScopeTags {
+            scope,
+            tags: BTreeSet::new(),
+        });
+    scope_tags
+        .tags
+        .extend(tags.iter().map(|tag| (*tag).to_string()));
 }

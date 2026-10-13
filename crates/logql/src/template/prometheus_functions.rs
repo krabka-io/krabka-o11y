@@ -126,12 +126,15 @@ fn run(name: &str, args: &[V], context: &TemplateRenderContext<'_>) -> Result<V,
             .or_else(|| sample(&args[0]).ok()?.get("value"))
             .cloned()
             .unwrap_or(V::Json(serde_json::Value::Null)),
-        "args" => V::Object(
-            args.iter()
-                .enumerate()
-                .map(|(index, value)| (format!("arg{index}"), value.clone()))
-                .collect::<BTreeMap<_, _>>(),
-        ),
+        "args" => {
+            let mut values = BTreeMap::new();
+            let mut index = 0;
+            while index < args.len() {
+                values.insert(format!("arg{index}"), args[index].clone());
+                index += 1;
+            }
+            V::Object(values)
+        }
         "safeHtml" => V::SafeHtml(string(0)?.to_vec()),
         "toUpper" | "toLower" => super::evaluate_template_byte_function(
             if name == "toUpper" { "upper" } else { "lower" },
@@ -175,7 +178,7 @@ fn run(name: &str, args: &[V], context: &TemplateRenderContext<'_>) -> Result<V,
 
         "stripPort" => V::Bytes(split_host_port(string(0)?).map_or_else(
             || string(0).expect("validated string").to_vec(),
-            |(host, _)| host.to_vec(),
+            |host_port| host_port.host.to_vec(),
         )),
         "stripDomain" => V::Bytes(strip_domain(string(0)?)),
         "externalURL" | "pathPrefix" => {
@@ -231,22 +234,35 @@ fn sample_label(value: &V, key: &[u8]) -> Result<Vec<u8>, String> {
     Ok(super::template_index_value(labels, key)
         .map_or_else(Vec::new, |value| value.rendered_bytes()))
 }
-fn split_host_port(value: &[u8]) -> Option<(&[u8], &[u8])> {
+struct HostPort<'a> {
+    host: &'a [u8],
+    port: &'a [u8],
+}
+
+fn split_host_port(value: &[u8]) -> Option<HostPort<'_>> {
     if value.first() == Some(&b'[') {
         let close = value.iter().position(|byte| *byte == b']')?;
         if value.get(close + 1) != Some(&b':') || value[close + 2..].contains(&b':') {
             return None;
         }
-        return Some((&value[1..close], &value[close + 2..]));
+        return Some(HostPort {
+            host: &value[1..close],
+            port: &value[close + 2..],
+        });
     }
     let colon = value.iter().position(|byte| *byte == b':')?;
     if value[colon + 1..].contains(&b':') || value.contains(&b'[') || value.contains(&b']') {
         return None;
     }
-    Some((&value[..colon], &value[colon + 1..]))
+    Some(HostPort {
+        host: &value[..colon],
+        port: &value[colon + 1..],
+    })
 }
 fn strip_domain(value: &[u8]) -> Vec<u8> {
-    let (host, port) = split_host_port(value).unwrap_or((value, b""));
+    let host_port = split_host_port(value);
+    let host = host_port.as_ref().map_or(value, |parts| parts.host);
+    let port = host_port.map_or(&b""[..], |parts| parts.port);
     if std::str::from_utf8(host)
         .ok()
         .and_then(|host| host.parse::<IpAddr>().ok())
@@ -281,16 +297,14 @@ fn url_path(value: &[u8]) -> Vec<u8> {
     let mut output = Vec::new();
     let mut index = 0;
     while index < value.len() {
-        if value[index] == b'%'
-            && index + 2 < value.len()
-            && let (Some(high), Some(low)) = (
-                hex_digit_value(value[index + 1]),
-                hex_digit_value(value[index + 2]),
-            )
-        {
-            output.push(high * 16 + low);
-            index += 3;
-            continue;
+        if value[index] == b'%' && index + 2 < value.len() {
+            if let Some(high) = hex_digit_value(value[index + 1]) {
+                if let Some(low) = hex_digit_value(value[index + 2]) {
+                    output.push(high * 16 + low);
+                    index += 3;
+                    continue;
+                }
+            }
         }
         output.push(value[index]);
         index += 1;

@@ -75,14 +75,15 @@ impl StreamQuery {
             return None;
         }
 
-        let (mut fields, metadata) = initial_pipeline_fields(labels, initial_fields);
+        let initial = initial_pipeline_fields(labels, initial_fields);
+        let mut fields = initial.fields;
         if self.pipeline.is_empty() {
             return Some(PipelineEvaluation {
                 fields,
                 line: line.to_string(),
             });
         }
-        let mut categories = PipelineLabels::new(labels, metadata);
+        let mut categories = PipelineLabels::new(labels, initial.metadata);
 
         let mut line = line.to_string();
         for stage in &self.pipeline {

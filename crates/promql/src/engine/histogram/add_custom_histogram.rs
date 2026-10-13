@@ -20,7 +20,9 @@ pub(crate) fn add_custom_histogram(left: &mut NativeHistogram, right: &NativeHis
         right_values,
         &target_values,
     );
-    (left.positive_spans, left.positive_counts) = add_bucket_maps(left_counts, right_counts);
+    let positive = add_bucket_maps(left_counts, right_counts);
+    left.positive_spans = positive.spans;
+    left.positive_counts = positive.counts;
     left.custom_values = Some(target_values);
     left.zero_threshold = 0.0;
     left.zero_count = 0.0;

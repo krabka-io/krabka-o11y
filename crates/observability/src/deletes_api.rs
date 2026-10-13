@@ -8,9 +8,9 @@ use crate::{
         AuditOutcome, OPERATION_DELETE_REQUEST_CANCEL, OPERATION_DELETE_REQUEST_CREATE,
         RESOURCE_DELETE_REQUEST, RESOURCE_TENANT, resource,
     },
-    current_unix_time_ns, decode_form_component, decode_query_pair, form_body_query, json,
-    json_response, parse_decimal_seconds_timestamp, parse_loki_duration_query_param, parse_query,
-    resolve_single_tenant, split_query_param_pairs, tenant_header_value,
+    current_unix_time_ns, decode_query_pair, form_body_query, json, json_response,
+    parse_decimal_seconds_timestamp, parse_loki_duration_query_param, parse_query,
+    resolve_single_tenant, tenant_header_value,
 };
 
 mod active_log_delete_filters;

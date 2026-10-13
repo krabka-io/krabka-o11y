@@ -1,5 +1,6 @@
 use super::{
-    BitReader, ChunkError, HistogramLayout, NativeHistogram, ResetHint, counter_reset_hint,
+    BitReader, ChunkError, HistogramLayout, NativeHistogram, ResetHint, TimestampedHistogramSample,
+    counter_reset_hint,
 };
 
 /// The per-sample decoding state of one native-histogram chunk encoding.
@@ -31,8 +32,10 @@ pub trait HistogramChunkState: Sized {
 pub fn decode_histogram_samples<S: HistogramChunkState>(
     chunk: &[u8],
     max_buckets: u64,
-) -> Result<Vec<(i64, NativeHistogram)>, ChunkError> {
-    let (header, body) = chunk.split_at_checked(3).ok_or(ChunkError::Truncated)?;
+) -> Result<Vec<TimestampedHistogramSample>, ChunkError> {
+    let parts = chunk.split_at_checked(3).ok_or(ChunkError::Truncated)?;
+    let header = parts.0;
+    let body = parts.1;
     let total = u16::from_be_bytes([header[0], header[1]]);
     let reset_header = header[2];
     if total == 0 {
@@ -54,7 +57,10 @@ pub fn decode_histogram_samples<S: HistogramChunkState>(
         } else {
             state.histogram(&layout, counter_reset_hint(reset_header, index))?
         };
-        samples.push((state.timestamp(), histogram));
+        samples.push(TimestampedHistogramSample {
+            timestamp_ms: state.timestamp(),
+            histogram,
+        });
     }
     Ok(samples)
 }

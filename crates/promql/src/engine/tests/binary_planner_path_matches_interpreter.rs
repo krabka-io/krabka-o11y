@@ -1,5 +1,19 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct VectorSampleCase {
+    metric_name: &'static str,
+    job: &'static str,
+    code: &'static str,
+    instance: &'static str,
+    value: f64,
+}
+
+struct ScalarResultCase {
+    query: &'static str,
+    expected: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn binary_planner_path_matches_interpreter() {
     use crate::{DurationExprContext, parse_promql_with_duration_context};
@@ -9,33 +23,116 @@ pub(crate) async fn binary_planner_path_matches_interpreter() {
     // matching; `code` differentiates the many side. A NaN row and a series
     // present only on one side exercise NaN preservation and no-match drops.
     let mut store = InMemoryMetricStore::new();
-    for (name, job, code, instance, value) in [
+    for case in [
         // `left`: one per job (the "one" side for group_left).
-        ("left", "api", "", "", 10.0),
-        ("left", "db", "", "", 20.0),
+        VectorSampleCase::builder()
+            .metric_name("left")
+            .job("api")
+            .code("")
+            .instance("")
+            .value(10.0)
+            .build(),
+        VectorSampleCase::builder()
+            .metric_name("left")
+            .job("db")
+            .code("")
+            .instance("")
+            .value(20.0)
+            .build(),
         // `right`: many per job (`code` dimension), the "many" side.
-        ("right", "api", "200", "", 1.0),
-        ("right", "api", "500", "", 2.0),
-        ("right", "db", "200", "", 4.0),
+        VectorSampleCase::builder()
+            .metric_name("right")
+            .job("api")
+            .code("200")
+            .instance("")
+            .value(1.0)
+            .build(),
+        VectorSampleCase::builder()
+            .metric_name("right")
+            .job("api")
+            .code("500")
+            .instance("")
+            .value(2.0)
+            .build(),
+        VectorSampleCase::builder()
+            .metric_name("right")
+            .job("db")
+            .code("200")
+            .instance("")
+            .value(4.0)
+            .build(),
         // A `right` series whose job has no `left` match (no-match drop).
-        ("right", "web", "200", "", 8.0),
+        VectorSampleCase::builder()
+            .metric_name("right")
+            .job("web")
+            .code("200")
+            .instance("")
+            .value(8.0)
+            .build(),
         // `m1`/`m2` for one-to-one on/ignoring matching.
-        ("m1", "api", "", "0", 3.0),
-        ("m1", "api", "", "1", 5.0),
-        ("m2", "api", "", "0", 7.0),
-        ("m2", "api", "", "1", 11.0),
+        VectorSampleCase::builder()
+            .metric_name("m1")
+            .job("api")
+            .code("")
+            .instance("0")
+            .value(3.0)
+            .build(),
+        VectorSampleCase::builder()
+            .metric_name("m1")
+            .job("api")
+            .code("")
+            .instance("1")
+            .value(5.0)
+            .build(),
+        VectorSampleCase::builder()
+            .metric_name("m2")
+            .job("api")
+            .code("")
+            .instance("0")
+            .value(7.0)
+            .build(),
+        VectorSampleCase::builder()
+            .metric_name("m2")
+            .job("api")
+            .code("")
+            .instance("1")
+            .value(11.0)
+            .build(),
         // A genuine-NaN row that must survive vector∘scalar arithmetic.
-        ("nanm", "api", "", "0", f64::NAN),
-        ("nanm", "api", "", "1", 13.0),
+        VectorSampleCase::builder()
+            .metric_name("nanm")
+            .job("api")
+            .code("")
+            .instance("0")
+            .value(f64::NAN)
+            .build(),
+        VectorSampleCase::builder()
+            .metric_name("nanm")
+            .job("api")
+            .code("")
+            .instance("1")
+            .value(13.0)
+            .build(),
     ] {
-        let mut pairs = vec![("__name__", name), ("job", job)];
-        if !code.is_empty() {
-            pairs.push(("code", code));
+        let mut pairs = vec![
+            krabka_metrics::MetricLabelPair::new("__name__", case.metric_name),
+            krabka_metrics::MetricLabelPair::new("job", case.job),
+        ];
+        if !case.code.is_empty() {
+            pairs.push(krabka_metrics::MetricLabelPair::new("code", case.code));
         }
-        if !instance.is_empty() {
-            pairs.push(("instance", instance));
+        if !case.instance.is_empty() {
+            pairs.push(krabka_metrics::MetricLabelPair::new(
+                "instance",
+                case.instance,
+            ));
         }
-        store.push_float("t", labels(&pairs), 60_000, value);
+        store.push_float(
+            "t",
+            crate::PromqlLabels::from_pairs(pairs),
+            60_000,
+            case.value,
+        );
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let time_ms = 60_000_i64;
@@ -127,26 +224,41 @@ pub(crate) async fn binary_planner_path_matches_interpreter() {
 
     // Scalar ∘ scalar now folds through the planner into a scalar planned
     // result; it must route AND match the interpreter's scalar value+ts.
-    for (query, expected) in [
-        ("1 + 2", 3.0_f64),
-        ("3 * 4 - 1", 11.0_f64),
-        ("2 > bool 1", 1.0_f64),
+    for case in [
+        ScalarResultCase {
+            query: "1 + 2",
+            expected: 3.0_f64,
+        },
+        ScalarResultCase {
+            query: "3 * 4 - 1",
+            expected: 11.0_f64,
+        },
+        ScalarResultCase {
+            query: "2 > bool 1",
+            expected: 1.0_f64,
+        },
     ] {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap();
+        let expr =
+            parse_promql_with_duration_context(case.query, DurationExprContext::instant(time_ms))
+                .unwrap();
         let planned = engine
             .plan_instant_expr("t", &expr, time_ms)
             .await
             .unwrap()
-            .unwrap_or_else(|| panic!("scalar∘scalar `{query}` must route through the planner"));
+            .unwrap_or_else(|| {
+                panic!(
+                    "scalar∘scalar `{}` must route through the planner",
+                    case.query
+                )
+            });
         let via_operators = engine
             .assemble_planned_instant(planned, time_ms)
             .await
             .unwrap();
         let QueryResult::Scalar { ts_ms, value } = via_operators else {
-            panic!("expected scalar for `{query}`");
+            panic!("expected scalar for `{}`", case.query);
         };
         assert2::assert!(ts_ms == time_ms);
-        assert2::assert!(value.to_bits() == expected.to_bits());
+        assert2::assert!(value.to_bits() == case.expected.to_bits());
     }
 }

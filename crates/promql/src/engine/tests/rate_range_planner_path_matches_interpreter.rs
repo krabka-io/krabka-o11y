@@ -1,5 +1,10 @@
 use super::*;
 
+struct RateRangeCase {
+    query: &'static str,
+    time_ms: i64,
+}
+
 #[tokio::test]
 pub(crate) async fn rate_range_planner_path_matches_interpreter() {
     use promql_parser::parser::Expr;
@@ -9,80 +14,185 @@ pub(crate) async fn rate_range_planner_path_matches_interpreter() {
     // Float-only counters with a reset, a gauge for delta, an offset
     // history, and a single-sample series (no rate value).
     let mut store = InMemoryMetricStore::new();
-    for (lbls, samples) in [
-        (
-            labels(&[("__name__", "http_requests_total"), ("job", "api")]),
-            vec![
-                (0_i64, 0.0),
-                (60_000, 1.0),
-                (120_000, 2.0),
-                (180_000, 3.0),
-                (240_000, 4.0),
-                (300_000, 5.0),
-            ],
-        ),
-        (
-            // A counter reset mid-window (5 -> 1) exercises reset correction.
-            labels(&[("__name__", "http_requests_total"), ("job", "db")]),
-            vec![
-                (0, 0.0),
-                (60_000, 3.0),
-                (120_000, 5.0),
-                (180_000, 1.0),
-                (240_000, 4.0),
-                (300_000, 8.0),
-            ],
-        ),
-        (
-            // A gauge with ups and downs for delta/idelta.
-            labels(&[("__name__", "temperature"), ("job", "api")]),
-            vec![(180_000, 10.0), (240_000, 7.0), (300_000, 9.0)],
-        ),
-        (
-            // Single sample in-window: rate-family yields no value. Both paths
-            // must DROP this series identically (NULL-drop on the operator
-            // path, no-value omission on the interpreter).
-            labels(&[("__name__", "http_requests_total"), ("job", "lonely")]),
-            vec![(295_000, 100.0)],
-        ),
-        (
-            // A gauge whose window holds a GENUINE NaN sample: `delta` computes
-            // a value (the window is non-empty with >=2 samples), and the
-            // arithmetic yields NaN. That NaN is a real value (non-null), so it
-            // must be KEPT and propagated on both paths — not dropped.
-            labels(&[("__name__", "nan_gauge"), ("job", "api")]),
-            vec![(240_000, f64::NAN), (300_000, 5.0)],
-        ),
-    ] {
-        for (ts, value) in samples {
-            store.push_float("t", lbls.clone(), ts, value);
-        }
-    }
+    push_float_series(
+        &mut store,
+        [
+            LabeledFloatSeries {
+                labels: labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+                    crate::test_support::TestLabelPair::new("job", "api"),
+                ]),
+                samples: vec![
+                    FloatSampleInput {
+                        timestamp_ms: 0,
+                        value: 0.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 60_000,
+                        value: 1.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 120_000,
+                        value: 2.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 180_000,
+                        value: 3.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 240_000,
+                        value: 4.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 300_000,
+                        value: 5.0,
+                    },
+                ],
+            },
+            LabeledFloatSeries {
+                // A counter reset mid-window (5 -> 1) exercises reset correction.
+                labels: labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+                    crate::test_support::TestLabelPair::new("job", "db"),
+                ]),
+                samples: vec![
+                    FloatSampleInput {
+                        timestamp_ms: 0,
+                        value: 0.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 60_000,
+                        value: 3.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 120_000,
+                        value: 5.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 180_000,
+                        value: 1.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 240_000,
+                        value: 4.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 300_000,
+                        value: 8.0,
+                    },
+                ],
+            },
+            LabeledFloatSeries {
+                // A gauge with ups and downs for delta/idelta.
+                labels: labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "temperature"),
+                    crate::test_support::TestLabelPair::new("job", "api"),
+                ]),
+                samples: vec![
+                    FloatSampleInput {
+                        timestamp_ms: 180_000,
+                        value: 10.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 240_000,
+                        value: 7.0,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 300_000,
+                        value: 9.0,
+                    },
+                ],
+            },
+            LabeledFloatSeries {
+                // Single sample in-window: rate-family yields no value. Both paths
+                // must DROP this series identically (NULL-drop on the operator
+                // path, no-value omission on the interpreter).
+                labels: labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+                    crate::test_support::TestLabelPair::new("job", "lonely"),
+                ]),
+                samples: vec![FloatSampleInput {
+                    timestamp_ms: 295_000,
+                    value: 100.0,
+                }],
+            },
+            LabeledFloatSeries {
+                // A gauge whose window holds a GENUINE NaN sample: `delta` computes
+                // a value (the window is non-empty with >=2 samples), and the
+                // arithmetic yields NaN. That NaN is a real value (non-null), so it
+                // must be KEPT and propagated on both paths — not dropped.
+                labels: labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "nan_gauge"),
+                    crate::test_support::TestLabelPair::new("job", "api"),
+                ]),
+                samples: vec![
+                    FloatSampleInput {
+                        timestamp_ms: 240_000,
+                        value: f64::NAN,
+                    },
+                    FloatSampleInput {
+                        timestamp_ms: 300_000,
+                        value: 5.0,
+                    },
+                ],
+            },
+        ],
+    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let queries = [
-        ("rate(http_requests_total[5m])", 300_000_i64),
-        ("increase(http_requests_total[5m])", 300_000),
-        ("delta(temperature[2m])", 300_000),
-        ("irate(http_requests_total[5m])", 300_000),
-        ("idelta(http_requests_total[5m])", 300_000),
+        RateRangeCase {
+            query: "rate(http_requests_total[5m])",
+            time_ms: 300_000,
+        },
+        RateRangeCase {
+            query: "increase(http_requests_total[5m])",
+            time_ms: 300_000,
+        },
+        RateRangeCase {
+            query: "delta(temperature[2m])",
+            time_ms: 300_000,
+        },
+        RateRangeCase {
+            query: "irate(http_requests_total[5m])",
+            time_ms: 300_000,
+        },
+        RateRangeCase {
+            query: "idelta(http_requests_total[5m])",
+            time_ms: 300_000,
+        },
         // @ and offset on the matrix selector exercise the time modifier.
-        ("rate(http_requests_total[3m] @ 300)", 999_999),
-        ("increase(http_requests_total[4m] offset 1m)", 360_000),
+        RateRangeCase {
+            query: "rate(http_requests_total[3m] @ 300)",
+            time_ms: 999_999,
+        },
+        RateRangeCase {
+            query: "increase(http_requests_total[4m] offset 1m)",
+            time_ms: 360_000,
+        },
         // Tighter window that strands the single-sample series.
-        ("rate(http_requests_total{job=\"api\"}[90s])", 300_000),
+        RateRangeCase {
+            query: "rate(http_requests_total{job=\"api\"}[90s])",
+            time_ms: 300_000,
+        },
         // A genuine-NaN delta: the computed value is NaN but non-null, so the
         // series is KEPT (not dropped). Both paths must agree, NaN-aware.
-        ("delta(nan_gauge[2m])", 300_000),
+        RateRangeCase {
+            query: "delta(nan_gauge[2m])",
+            time_ms: 300_000,
+        },
     ];
 
-    for (query, time_ms) in queries {
+    for query_index in 0..queries.len() {
+        let case = &queries[query_index];
+        let query = case.query;
+        let time_ms = case.time_ms;
         let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
             .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
         let Expr::Call(_) = &expr else {
             panic!("`{query}` did not parse to a call");
         };
-        let (selector, kind) = match_rate_range_call(&expr)
+        let call = match_rate_range_call(&expr)
             .unwrap_or_else(|| panic!("`{query}` is not an operator-path rate call"));
 
         let interpreter = engine
@@ -97,7 +207,14 @@ pub(crate) async fn rate_range_planner_path_matches_interpreter() {
             .await
             .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
         let planner = engine
-            .eval_rate_range_via_planner("t", MatrixSelectorAt { selector, time_ms }, kind)
+            .eval_rate_range_via_planner(
+                "t",
+                MatrixSelectorAt {
+                    selector: call.selector,
+                    time_ms,
+                },
+                call.kind,
+            )
             .await
             .unwrap_or_else(|error| panic!("planner `{query}`: {error}"));
 

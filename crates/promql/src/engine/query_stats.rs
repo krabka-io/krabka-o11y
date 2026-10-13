@@ -14,6 +14,11 @@ pub(crate) struct QuerySampleStats {
     pub(crate) per_step: BTreeMap<i64, u64>,
 }
 
+pub(crate) struct QuerySampleStatsResult<T> {
+    pub(crate) output: T,
+    pub(crate) stats: QuerySampleStats,
+}
+
 /// Whether [`collect_query_sample_stats`] breaks the queryable samples down
 /// by evaluation step, as Prometheus does for `stats=all`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,7 +41,7 @@ tokio::task_local! {
 pub(crate) async fn collect_query_sample_stats<F>(
     per_step: PerStepSampleStats,
     future: F,
-) -> (F::Output, QuerySampleStats)
+) -> QuerySampleStatsResult<F::Output>
 where
     F: Future,
 {
@@ -55,7 +60,7 @@ where
     let shared = Arc::new(Mutex::new(stats));
     let output = QUERY_SAMPLE_STATS.scope(Arc::clone(&shared), future).await;
     let stats = shared.lock().expect("query sample stats poisoned").clone();
-    (output, stats)
+    QuerySampleStatsResult { output, stats }
 }
 
 /// Associates sample observations made by `future` with an evaluation step.

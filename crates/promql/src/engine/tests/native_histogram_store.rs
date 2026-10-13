@@ -1,10 +1,23 @@
 use super::*;
 
+struct HistogramSample {
+    timestamp_ms: i64,
+    sum: f64,
+}
+
+struct NamedHistogram {
+    instance: &'static str,
+    histogram: NativeHistogram,
+}
+
 pub(crate) fn native_histogram_store() -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         10_000,
         native_histogram(4.0, 10.0),
     );
@@ -24,7 +37,10 @@ pub(crate) fn two_bucket_histogram_store(sum: f64) -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         10_000,
         histogram,
     );
@@ -35,12 +51,24 @@ pub(crate) fn two_bucket_histogram_store(sum: f64) -> InMemoryMetricStore {
 /// count 4 at 60s (sum 10) and 120s (sum 20).
 pub(crate) fn histogram_sum_series_store() -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
-    for (ts_ms, sum) in [(60_000, 10.0), (120_000, 20.0)] {
+    for sample in [
+        HistogramSample {
+            timestamp_ms: 60_000,
+            sum: 10.0,
+        },
+        HistogramSample {
+            timestamp_ms: 120_000,
+            sum: 20.0,
+        },
+    ] {
         store.push_histogram(
             "tenant-a",
-            labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
-            ts_ms,
-            native_histogram(4.0, sum),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]),
+            sample.timestamp_ms,
+            native_histogram(4.0, sample.sum),
         );
     }
     store
@@ -56,16 +84,25 @@ pub(crate) struct InstanceHistograms {
 /// native histogram per instance.
 pub(crate) fn instance_histogram_store(histograms: InstanceHistograms) -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
-    for (instance, histogram) in [("a", histograms.a), ("b", histograms.b)] {
+    for sample in [
+        NamedHistogram {
+            instance: "a",
+            histogram: histograms.a,
+        },
+        NamedHistogram {
+            instance: "b",
+            histogram: histograms.b,
+        },
+    ] {
         store.push_histogram(
             "tenant-a",
             labels(&[
-                ("__name__", "request_duration_seconds"),
-                ("job", "api"),
-                ("instance", instance),
+                crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", sample.instance),
             ]),
             10_000,
-            histogram,
+            sample.histogram,
         );
     }
     store
@@ -106,6 +143,11 @@ pub(crate) fn signed_bucket_histogram_engine(sum: f64) -> PromqlEngine<InMemoryM
     }];
     histogram.negative_counts = vec![3.0, 1.0];
     let mut store = InMemoryMetricStore::new();
-    store.push_histogram("tenant-a", labels(&[("__name__", "h")]), 10_000, histogram);
+    store.push_histogram(
+        "tenant-a",
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "h")]),
+        10_000,
+        histogram,
+    );
     PromqlEngine::new(Arc::new(store), EngineOpts::default())
 }

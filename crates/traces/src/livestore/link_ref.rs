@@ -7,7 +7,10 @@ pub(crate) fn link_ref(link: &LinkRecord) -> krabka_traceql::LinkRef {
         attributes: link
             .attrs
             .iter()
-            .filter_map(|attr| traceql_attr(attr).map(|value| (attr.key.clone(), value)))
+            .filter_map(|attr| {
+                traceql_attr(attr)
+                    .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+            })
             .collect(),
     }
 }

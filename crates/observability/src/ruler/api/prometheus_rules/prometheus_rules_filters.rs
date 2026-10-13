@@ -10,7 +10,9 @@ impl PrometheusRulesFilters {
         let Some(raw_query) = raw_query else {
             return Ok(filters);
         };
-        for (key, value) in url::form_urlencoded::parse(raw_query.as_bytes()) {
+        for pair in url::form_urlencoded::parse(raw_query.as_bytes()) {
+            let key = pair.0;
+            let value = pair.1;
             match key.as_ref() {
                 "type" if value == "alert" => filters.rule_kind = Some("alerting"),
                 "type" if value == "record" => filters.rule_kind = Some("recording"),

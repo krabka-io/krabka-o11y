@@ -11,7 +11,7 @@ use prost::Message as _;
 
 use crate::metricsgen::{
     BucketSpan, NativeHistogram,
-    series::{Exemplar, Series, SeriesPayload, SeriesSample},
+    series::{Exemplar, HistogramBucket, Series, SeriesPayload, SeriesSample},
     sink::{RemoteWriteSink, SinkError},
 };
 
@@ -21,7 +21,7 @@ mod tests {
     use super::*;
     use crate::metricsgen::{
         BucketSpan, NativeHistogram,
-        series::{Exemplar, Series, SeriesSample},
+        series::{Exemplar, HistogramBucket, Series, SeriesSample},
     };
 
     #[derive(Clone, PartialEq, prost::Message)]
@@ -124,21 +124,23 @@ mod tests {
     }
 
     fn has_label(ts: &WireTimeSeries, k: &str, v: &str) -> bool {
-        ts.labels.iter().any(|(lk, lv)| lk == k && lv == v)
+        ts.labels
+            .iter()
+            .any(|label| label.key == k && label.value == v)
     }
 
     #[test]
     fn encode_write_request_emits_snappy_protobuf_remote_write() {
         let rows = vec![WireTimeSeries {
             labels: vec![
-                ("__name__".into(), "traces_spanmetrics_calls_total".into()),
-                ("service".into(), "api".into()),
+                krabka_traceql::MetricLabel::new("__name__", "traces_spanmetrics_calls_total"),
+                krabka_traceql::MetricLabel::new("service", "api"),
             ],
             value: 7.0,
             timestamp_ms: 1_234,
             exemplars: vec![Exemplar {
                 value: 0.042,
-                labels: vec![("trace_id".into(), "0abc".into())],
+                labels: vec![krabka_traceql::MetricLabel::new("trace_id", "0abc")],
                 timestamp_ms: 1_235,
             }],
             native_histogram: None,
@@ -173,7 +175,7 @@ mod tests {
     fn counter_becomes_one_timeseries_with_name_label() {
         let s = Series {
             name: "traces_spanmetrics_calls_total".into(),
-            labels: vec![("service".into(), "api".into())],
+            labels: vec![krabka_traceql::MetricLabel::new("service", "api")],
             sample: SeriesSample::Counter(3.0),
             exemplars: vec![],
             timestamp_ms: 1_000,
@@ -184,8 +186,8 @@ mod tests {
         assert2::assert!(
             out == vec![WireTimeSeries {
                 labels: vec![
-                    ("__name__".into(), "traces_spanmetrics_calls_total".into()),
-                    ("service".into(), "api".into()),
+                    krabka_traceql::MetricLabel::new("__name__", "traces_spanmetrics_calls_total"),
+                    krabka_traceql::MetricLabel::new("service", "api"),
                 ],
                 value: 3.0,
                 timestamp_ms: 1_000,
@@ -199,15 +201,24 @@ mod tests {
     fn classic_histogram_fans_into_bucket_sum_count() {
         let s = Series {
             name: "traces_spanmetrics_latency".into(),
-            labels: vec![("service".into(), "api".into())],
+            labels: vec![krabka_traceql::MetricLabel::new("service", "api")],
             sample: SeriesSample::ClassicHistogram {
-                buckets: vec![(0.004, 0.0), (0.008, 2.0)],
+                buckets: vec![
+                    HistogramBucket {
+                        upper_bound: 0.004,
+                        cumulative_count: 0.0,
+                    },
+                    HistogramBucket {
+                        upper_bound: 0.008,
+                        cumulative_count: 2.0,
+                    },
+                ],
                 sum: 0.012,
                 count: 2.0,
             },
             exemplars: vec![Exemplar {
                 value: 0.005,
-                labels: vec![("trace_id".into(), "ab".into())],
+                labels: vec![krabka_traceql::MetricLabel::new("trace_id", "ab")],
                 timestamp_ms: 1_000,
             }],
             timestamp_ms: 1_000,
@@ -245,14 +256,14 @@ mod tests {
             })
             .unwrap();
         assert2::assert!(le_8.exemplars.len() == 1);
-        assert2::assert!(le_8.exemplars[0].labels[0].0.as_str() == "trace_id");
+        assert2::assert!(le_8.exemplars[0].labels[0].key == "trace_id");
     }
 
     #[test]
     fn native_histogram_encodes_remote_write_histogram() {
         let rows = to_timeseries(&[Series {
             name: "traces_spanmetrics_latency".into(),
-            labels: vec![("service".into(), "api".into())],
+            labels: vec![krabka_traceql::MetricLabel::new("service", "api")],
             sample: SeriesSample::NativeHistogram(NativeHistogram {
                 schema: 8,
                 zero_threshold: 0.001,
@@ -267,7 +278,7 @@ mod tests {
             }),
             exemplars: vec![Exemplar {
                 value: 0.12,
-                labels: vec![("trace_id".into(), "abc".into())],
+                labels: vec![krabka_traceql::MetricLabel::new("trace_id", "abc")],
                 timestamp_ms: 1_235,
             }],
             timestamp_ms: 1_234,

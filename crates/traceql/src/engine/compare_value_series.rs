@@ -11,8 +11,8 @@ pub(crate) fn compare_value_series(
 ) -> TraceMetricSeries {
     TraceMetricSeries {
         labels: vec![
-            (META_TYPE_KEY.to_string(), group.meta_type().to_string()),
-            (attr_key.to_string(), value.to_string()),
+            super::MetricLabel::new(META_TYPE_KEY, group.meta_type()),
+            super::MetricLabel::new(attr_key, value),
         ],
         label_types: BTreeMap::default(),
         points: compare_points(buckets, range),

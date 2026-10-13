@@ -21,15 +21,23 @@ impl AttrBuilder {
     }
 
     pub(crate) fn append(&mut self, value: Option<&AttrValue>) {
-        match (self, value) {
-            (Self::Str(b), Some(AttrValue::Str(v))) => b.append_value(v),
-            (Self::Str(b), _) => b.append_null(),
-            (Self::Int(b), Some(AttrValue::Int(v))) => b.append_value(*v),
-            (Self::Int(b), _) => b.append_null(),
-            (Self::Float(b), Some(AttrValue::Float(v))) => b.append_value(*v),
-            (Self::Float(b), _) => b.append_null(),
-            (Self::Bool(b), Some(AttrValue::Bool(v))) => b.append_value(*v),
-            (Self::Bool(b), _) => b.append_null(),
+        match self {
+            Self::Str(builder) => match value {
+                Some(AttrValue::Str(value)) => builder.append_value(value),
+                _ => builder.append_null(),
+            },
+            Self::Int(builder) => match value {
+                Some(AttrValue::Int(value)) => builder.append_value(*value),
+                _ => builder.append_null(),
+            },
+            Self::Float(builder) => match value {
+                Some(AttrValue::Float(value)) => builder.append_value(*value),
+                _ => builder.append_null(),
+            },
+            Self::Bool(builder) => match value {
+                Some(AttrValue::Bool(value)) => builder.append_value(*value),
+                _ => builder.append_null(),
+            },
         }
     }
 

@@ -52,12 +52,15 @@ pub(crate) fn apply_metric_binary_set_to_loki_result(
             metric_series_labels(series)
                 .is_some_and(|labels| metric_vector_matching_key(&labels, matching) == left_key)
         });
-        let keep = match (op, right_series) {
-            (MetricBinarySetOp::And | MetricBinarySetOp::Unless, Some(right_series)) => {
-                apply_metric_binary_set_to_series(&mut left_results[index], right_series, op)
+        let keep = match op {
+            MetricBinarySetOp::And | MetricBinarySetOp::Unless => {
+                if let Some(right_series) = right_series {
+                    apply_metric_binary_set_to_series(&mut left_results[index], right_series, op)
+                } else {
+                    matches!(op, MetricBinarySetOp::Unless)
+                }
             }
-            (MetricBinarySetOp::And, None) => false,
-            (MetricBinarySetOp::Unless, None) | (MetricBinarySetOp::Or, _) => true,
+            MetricBinarySetOp::Or => true,
         };
         if keep {
             index += 1;

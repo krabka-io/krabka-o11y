@@ -61,8 +61,8 @@ pub(crate) fn normalize_duration_expressions(
 
         if starts_offset_keyword(&chars, index) {
             let after_keyword = index + "offset".len();
-            if let Some((operand, end)) = offset_operand(&chars, after_keyword) {
-                let seconds = DurationExprParser::new(&operand, context).parse()?;
+            if let Some(operand) = offset_operand(&chars, after_keyword) {
+                let seconds = DurationExprParser::new(&operand.text, context).parse()?;
                 if !is_zero(seconds) {
                     out.push_str(&chars[index..after_keyword].iter().collect::<String>());
                     out.push(' ');
@@ -73,7 +73,7 @@ pub(crate) fn normalize_duration_expressions(
                         out.push_str(&seconds_to_duration_literal(seconds)?);
                     }
                 }
-                index = end;
+                index = operand.end;
                 continue;
             }
         }

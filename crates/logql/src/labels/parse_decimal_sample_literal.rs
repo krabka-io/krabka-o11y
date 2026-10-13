@@ -1,5 +1,26 @@
 use super::parse_decimal_exponent;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DecimalSampleRatio {
+    pub numerator: i128,
+    pub denominator: u128,
+}
+
+struct SignedDigits<'a> {
+    negative: bool,
+    digits: &'a str,
+}
+
+struct DecimalMantissa<'a> {
+    digits: &'a str,
+    exponent: i32,
+}
+
+struct WholeAndFraction<'a> {
+    whole: &'a str,
+    fractional: &'a str,
+}
+
 /// Parses a decimal sample literal, such as `-1.25e3`, into an exact
 /// `(numerator, denominator)` ratio.
 ///
@@ -7,37 +28,64 @@ use super::parse_decimal_exponent;
 /// optional `e`/`E` exponent. Returns `None` for anything else, or when the
 /// ratio overflows `i128`/`u128`.
 #[must_use]
-pub fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> {
+pub fn parse_decimal_sample_literal(value: &str) -> Option<DecimalSampleRatio> {
     if value.is_empty() {
         return None;
     }
-    let (negative, value) = match value.as_bytes().first() {
-        Some(b'-') => (true, &value[1..]),
-        Some(b'+') => (false, &value[1..]),
-        _ => (false, value),
+    let signed_digits = match value.as_bytes().first() {
+        Some(b'-') => SignedDigits {
+            negative: true,
+            digits: &value[1..],
+        },
+        Some(b'+') => SignedDigits {
+            negative: false,
+            digits: &value[1..],
+        },
+        _ => SignedDigits {
+            negative: false,
+            digits: value,
+        },
     };
+    let value = signed_digits.digits;
+    let negative = signed_digits.negative;
     if value.is_empty() {
         return None;
     }
 
-    let (mantissa, exponent) = match value.find(['e', 'E']) {
+    let decimal_mantissa = match value.find(['e', 'E']) {
         Some(index) => {
             let exponent_text = &value[index + 1..];
             if exponent_text.find(['e', 'E']).is_some() {
                 return None;
             }
-            (&value[..index], parse_decimal_exponent(exponent_text)?)
+            DecimalMantissa {
+                digits: &value[..index],
+                exponent: parse_decimal_exponent(exponent_text)?,
+            }
         }
-        None => (value, 0),
+        None => DecimalMantissa {
+            digits: value,
+            exponent: 0,
+        },
     };
+    let mantissa = decimal_mantissa.digits;
+    let exponent = decimal_mantissa.exponent;
     if mantissa.is_empty() {
         return None;
     }
 
-    let (whole, fractional) = match mantissa.split_once('.') {
-        Some((whole, fractional)) => (whole, fractional),
-        None => (mantissa, ""),
+    let whole_and_fraction = match mantissa.split_once('.') {
+        Some(parts) => WholeAndFraction {
+            whole: parts.0,
+            fractional: parts.1,
+        },
+        None => WholeAndFraction {
+            whole: mantissa,
+            fractional: "",
+        },
     };
+    let whole = whole_and_fraction.whole;
+    let fractional = whole_and_fraction.fractional;
     if whole.is_empty() && fractional.is_empty() {
         return None;
     }
@@ -66,5 +114,8 @@ pub fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> {
         1
     };
     let numerator = i128::try_from(numerator).ok()?;
-    Some((if negative { -numerator } else { numerator }, denominator))
+    Some(DecimalSampleRatio {
+        numerator: if negative { -numerator } else { numerator },
+        denominator,
+    })
 }

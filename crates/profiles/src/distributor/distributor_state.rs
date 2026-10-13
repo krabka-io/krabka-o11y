@@ -3,8 +3,15 @@ use super::{
     ServiceMetrics, TenantPolicy, TokenBucket, WalSink,
 };
 
-pub(crate) type CumulativeProfileCache =
-    HashMap<(String, Vec<(String, String)>), HashMap<Vec<u32>, i64>>;
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CumulativeProfileKey {
+    pub(crate) tenant: String,
+    pub(crate) labels: Vec<krabka_blockstore::LabelPair>,
+}
+
+#[doc(hidden)]
+pub type CumulativeProfileCache = HashMap<CumulativeProfileKey, HashMap<Vec<u32>, i64>>;
 
 pub struct DistributorState {
     pub sink: Arc<dyn WalSink>,

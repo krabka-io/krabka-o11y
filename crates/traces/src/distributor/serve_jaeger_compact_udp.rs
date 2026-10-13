@@ -1,4 +1,4 @@
-use super::{ReceiverEndpoint, SocketAddr, handle_jaeger_compact_datagram};
+use super::{ReceiverEndpoint, RunningServer, handle_jaeger_compact_datagram};
 
 /// Serve the Jaeger compact-Thrift UDP receiver until cancelled, returning the
 /// bound address and the receive loop's handle, or `None` when `security`
@@ -20,7 +20,7 @@ use super::{ReceiverEndpoint, SocketAddr, handle_jaeger_compact_datagram};
 /// Returns an error when the socket cannot be bound.
 pub async fn serve_jaeger_compact_udp(
     endpoint: ReceiverEndpoint<'_>,
-) -> std::io::Result<Option<(SocketAddr, tokio::task::JoinHandle<()>)>> {
+) -> std::io::Result<Option<RunningServer>> {
     let ReceiverEndpoint {
         addr,
         state,
@@ -59,5 +59,8 @@ pub async fn serve_jaeger_compact_udp(
             }
         }
     });
-    Ok(Some((bound, handle)))
+    Ok(Some(RunningServer {
+        bound_addr: bound,
+        task: handle,
+    }))
 }

@@ -155,8 +155,10 @@ pub trait MetricStore: Send + Sync {
             .series_shared(tenant, matchers, start_ms, end_ms)
             .await?
             .into_iter()
-            .map(|labels| (labels.fingerprint(), labels))
-            .collect())
+            .fold(BTreeMap::new(), |mut by_fingerprint, labels| {
+                by_fingerprint.insert(labels.fingerprint(), labels);
+                by_fingerprint
+            }))
     }
 
     /// Returns the exemplars attached to matched series in `[start_ms, end_ms]`.

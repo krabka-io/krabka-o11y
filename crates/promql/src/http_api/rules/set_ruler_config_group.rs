@@ -22,23 +22,11 @@ pub(crate) async fn set_ruler_config_group<S: MetricStore>(
         resource(RESOURCE_RULE_NAMESPACE, namespace.as_str()),
     ];
     let previous_rules = state.ruler_rules.read().ok().map(|rules| rules.clone());
-    let (mut response, group_name) =
-        store_ruler_config_group(&state, tenant.clone(), &namespace, &body);
-    if response.status().is_success()
-        && let Err(error) = state.persist_ruler_config(&tenant).await
-    {
-        if let Some(previous_rules) = previous_rules
-            && let Ok(mut rules) = state.ruler_rules.write()
-        {
-            *rules = previous_rules;
-        }
-        response = (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to persist ruler config: {error}\n"),
-        )
-            .into_response();
-    }
-    if let Some(group_name) = group_name {
+    let stored = store_ruler_config_group(&state, tenant.clone(), &namespace, &body);
+    let response =
+        super::persist_ruler_config_or_restore(&state, &tenant, previous_rules, stored.response)
+            .await;
+    if let Some(group_name) = stored.group_name {
         resources.push(resource(
             RESOURCE_RULE_GROUP,
             format!("{namespace}/{group_name}"),

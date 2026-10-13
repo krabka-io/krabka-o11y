@@ -1,7 +1,9 @@
 pub(crate) fn split_query_param_pairs<'a>(raw_query: &'a str, known_keys: &[&str]) -> Vec<&'a str> {
     let mut pairs = Vec::new();
     let mut pair_start = 0;
-    for (index, byte) in raw_query.bytes().enumerate() {
+    for byte_position in raw_query.bytes().enumerate() {
+        let index = byte_position.0;
+        let byte = byte_position.1;
         if byte == b'&'
             && known_keys.iter().any(|key| {
                 raw_query[index + 1..]

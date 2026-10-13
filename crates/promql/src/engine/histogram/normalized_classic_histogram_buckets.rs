@@ -5,6 +5,12 @@ use super::{ClassicBucket, almost_equal};
 /// `smallDeltaTolerance`.
 const SMALL_DELTA_TOLERANCE: f64 = 1e-12;
 
+pub(crate) struct NormalizedClassicBuckets {
+    pub(crate) buckets: Vec<ClassicBucket>,
+    pub(crate) forced: bool,
+    pub(crate) repairs: [f64; 3],
+}
+
 /// Sorts, merges, and makes monotonic the classic buckets of one series.
 ///
 /// The second return value is whether monotonicity had to be FORCED: a bucket
@@ -14,7 +20,7 @@ const SMALL_DELTA_TOLERANCE: f64 = 1e-12;
 /// corrected silently.
 pub(crate) fn normalized_classic_histogram_buckets(
     buckets: &mut [ClassicBucket],
-) -> (Vec<ClassicBucket>, bool, [f64; 3]) {
+) -> NormalizedClassicBuckets {
     buckets.sort_by(|left, right| left.upper_bound.total_cmp(&right.upper_bound));
 
     let mut out: Vec<ClassicBucket> = Vec::with_capacity(buckets.len());
@@ -31,7 +37,11 @@ pub(crate) fn normalized_classic_histogram_buckets(
     let mut forced = false;
     let mut repairs = [f64::INFINITY, f64::NEG_INFINITY, 0.0_f64];
     let Some(mut previous) = out.first().map(|bucket| bucket.count) else {
-        return (out, forced, repairs);
+        return NormalizedClassicBuckets {
+            buckets: out,
+            forced,
+            repairs,
+        };
     };
     for bucket in out.iter_mut().skip(1) {
         let count = bucket.count;
@@ -49,5 +59,9 @@ pub(crate) fn normalized_classic_histogram_buckets(
         }
         previous = count;
     }
-    (out, forced, repairs)
+    NormalizedClassicBuckets {
+        buckets: out,
+        forced,
+        repairs,
+    }
 }

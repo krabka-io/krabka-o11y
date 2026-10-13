@@ -1,5 +1,22 @@
 use super::{ArithmeticOp, CompareRow, Result, ScalarExpr, TraceqlError, Value, f64_from_i64};
 
+struct RuntimeValuePair<'a> {
+    lhs: &'a Value,
+    rhs: &'a Value,
+}
+
+struct BooleanValues {
+    contains_array: bool,
+    values: Vec<Value>,
+}
+
+#[cfg(test)]
+struct IntegerPowerCase {
+    exponent: i64,
+    base: i64,
+    expected: i64,
+}
+
 pub(crate) fn scalar_expression_value(expr: &ScalarExpr, row: &CompareRow) -> Result<Value> {
     match expr {
         ScalarExpr::Predicate(expr) => {
@@ -40,7 +57,13 @@ pub(crate) fn scalar_expression_value(expr: &ScalarExpr, row: &CompareRow) -> Re
 }
 
 fn scalar_arithmetic(lhs: Value, op: ArithmeticOp, rhs: Value) -> Result<Value> {
-    if let (Value::Int(lhs), Value::Int(rhs)) = (&lhs, &rhs) {
+    if let (RuntimeValuePair {
+        lhs: Value::Int(lhs),
+        rhs: Value::Int(rhs),
+    }) = (RuntimeValuePair {
+        lhs: &lhs,
+        rhs: &rhs,
+    }) {
         return Ok(Value::Int(match op {
             ArithmeticOp::Add => lhs.wrapping_add(*rhs),
             ArithmeticOp::Sub => lhs.wrapping_sub(*rhs),
@@ -64,9 +87,12 @@ fn scalar_arithmetic(lhs: Value, op: ArithmeticOp, rhs: Value) -> Result<Value> 
         Value::Float(value) => Some(value),
         _ => None,
     };
-    let (Some(lhs), Some(rhs)) = (number(lhs), number(rhs)) else {
+    let Some(lhs) = number(lhs) else {
         // Tempo resolves incompatible runtime operands to false. The enclosing
         // numeric comparison then rejects this value without string coercion.
+        return Ok(Value::Bool(false));
+    };
+    let Some(rhs) = number(rhs) else {
         return Ok(Value::Bool(false));
     };
     Ok(Value::Float(match op {
@@ -101,10 +127,10 @@ pub(crate) fn predicate_values(
         FieldExpr::FieldComparison { lhs, op, rhs } => {
             let left = super::field_comparison::field_values(lhs, row);
             let right = super::field_comparison::field_values(rhs, row);
-            let same_type = left.first().zip(right.first()).is_some_and(|(lhs, rhs)| {
-                std::mem::discriminant(lhs) == std::mem::discriminant(rhs)
-                    || matches!(lhs, Value::Int(_) | Value::Float(_) | Value::Duration(_))
-                        && matches!(rhs, Value::Int(_) | Value::Float(_) | Value::Duration(_))
+            let same_type = left.first().zip(right.first()).is_some_and(|pair| {
+                std::mem::discriminant(pair.0) == std::mem::discriminant(pair.1)
+                    || matches!(pair.0, Value::Int(_) | Value::Float(_) | Value::Duration(_))
+                        && matches!(pair.1, Value::Int(_) | Value::Float(_) | Value::Duration(_))
             });
             if (left.len() > 1 || left.iter().any(|value| matches!(value, Value::Array(_))))
                 && (right.len() > 1 || right.iter().any(|value| matches!(value, Value::Array(_))))
@@ -149,26 +175,37 @@ pub(crate) fn predicate_values(
 
 fn boolean_operation(left: &[Value], right: &[Value], and: bool) -> Result<bool> {
     let unwrap = |values: &[Value]| match values {
-        [Value::Array(values)] => (true, values.clone()),
-        values => (values.len() > 1, values.to_vec()),
+        [Value::Array(values)] => BooleanValues {
+            contains_array: true,
+            values: values.clone(),
+        },
+        values => BooleanValues {
+            contains_array: values.len() > 1,
+            values: values.to_vec(),
+        },
     };
-    let (left_array, left) = unwrap(left);
-    let (right_array, right) = unwrap(right);
-    if left_array && right_array {
+    let left = unwrap(left);
+    let right = unwrap(right);
+    if left.contains_array && right.contains_array {
         return Err(TraceqlError::Exec(
             "array operators must consist of a scalar and an array operand".into(),
         ));
     }
     if left
+        .values
         .iter()
-        .chain(&right)
+        .chain(&right.values)
         .any(|value| !matches!(value, Value::Bool(_)))
     {
         return Ok(false);
     }
-    Ok(left.iter().any(|lhs| {
-        right.iter().any(|rhs| {
-            let (Value::Bool(lhs), Value::Bool(rhs)) = (lhs, rhs) else {
+    Ok(left.values.iter().any(|lhs| {
+        right.values.iter().any(|rhs| {
+            let RuntimeValuePair {
+                lhs: Value::Bool(lhs),
+                rhs: Value::Bool(rhs),
+            } = (RuntimeValuePair { lhs, rhs })
+            else {
                 return false;
             };
             if and { *lhs && *rhs } else { *lhs || *rhs }
@@ -201,13 +238,41 @@ mod tests {
         );
         assert!(scalar_arithmetic(Value::Int(1), ArithmeticOp::Div, Value::Int(0)).is_err());
         assert!(scalar_arithmetic(Value::Int(1), ArithmeticOp::Mod, Value::Int(0)).is_err());
-        for (exponent, base, expected) in [
-            (1_000, 10, i64::MIN),
-            (63, 2, i64::MIN),
-            (62, 2, 4_611_686_018_427_387_904),
-            (-1, 0, i64::MIN),
-            (-1, 2, 0),
-            (0, 0, 1),
+        for IntegerPowerCase {
+            exponent,
+            base,
+            expected,
+        } in [
+            IntegerPowerCase {
+                exponent: 1_000,
+                base: 10,
+                expected: i64::MIN,
+            },
+            IntegerPowerCase {
+                exponent: 63,
+                base: 2,
+                expected: i64::MIN,
+            },
+            IntegerPowerCase {
+                exponent: 62,
+                base: 2,
+                expected: 4_611_686_018_427_387_904,
+            },
+            IntegerPowerCase {
+                exponent: -1,
+                base: 0,
+                expected: i64::MIN,
+            },
+            IntegerPowerCase {
+                exponent: -1,
+                base: 2,
+                expected: 0,
+            },
+            IntegerPowerCase {
+                exponent: 0,
+                base: 0,
+                expected: 1,
+            },
         ] {
             assert!(
                 scalar_arithmetic(Value::Int(exponent), ArithmeticOp::Pow, Value::Int(base))

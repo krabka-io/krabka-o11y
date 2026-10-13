@@ -8,12 +8,12 @@ pub(crate) fn format_field_filter_expression(expression: &FieldFilterExpression)
         }
         FieldFilterExpression::Chain { first, rest } => {
             let mut formatted = format_field_filter_expression(first);
-            for (op, expression) in rest {
-                formatted.push_str(match op {
+            for step in rest {
+                formatted.push_str(match step.operation {
                     FieldFilterLogicOp::And => " and ",
                     FieldFilterLogicOp::Or => " or ",
                 });
-                formatted.push_str(&format_field_filter_expression(expression));
+                formatted.push_str(&format_field_filter_expression(&step.filter));
             }
             formatted
         }

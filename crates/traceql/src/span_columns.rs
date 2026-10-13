@@ -15,6 +15,11 @@ mod tests {
 
     use super::*;
 
+    struct SchemaColumn {
+        name: &'static str,
+        data_type: DataType,
+    }
+
     fn sid(n: u8) -> [u8; 8] {
         [n, 0, 0, 0, 0, 0, 0, 0]
     }
@@ -45,16 +50,32 @@ mod tests {
     #[test]
     fn schema_contains_traceql_planning_columns() {
         let schema = span_schema();
-        for (col, want) in [
-            (COL_TRACE_ID, DataType::FixedSizeBinary(16)),
-            (COL_NAME, DataType::Utf8),
-            (COL_NS_LEFT, DataType::Int32),
-            (COL_CHILD_COUNT, DataType::Int32),
-            (COL_TRACE_DURATION, DataType::Int64),
+        for column in [
+            SchemaColumn {
+                name: COL_TRACE_ID,
+                data_type: DataType::FixedSizeBinary(16),
+            },
+            SchemaColumn {
+                name: COL_NAME,
+                data_type: DataType::Utf8,
+            },
+            SchemaColumn {
+                name: COL_NS_LEFT,
+                data_type: DataType::Int32,
+            },
+            SchemaColumn {
+                name: COL_CHILD_COUNT,
+                data_type: DataType::Int32,
+            },
+            SchemaColumn {
+                name: COL_TRACE_DURATION,
+                data_type: DataType::Int64,
+            },
         ] {
             assert!(
-                schema.column_with_name(col).unwrap().1.data_type() == &want,
-                "column: {col}"
+                schema.column_with_name(column.name).unwrap().1.data_type() == &column.data_type,
+                "column: {}",
+                column.name
             );
         }
     }
@@ -236,4 +257,4 @@ pub use instrumentation_attr_prefix::INSTRUMENTATION_ATTR_PREFIX;
 pub use link_attr_prefix::LINK_ATTR_PREFIX;
 pub use nested_set::NestedSet;
 pub use span_schema::span_schema;
-pub use span_schema_with_attrs::span_schema_with_attrs;
+pub use span_schema_with_attrs::{AttributeColumn, span_schema_with_attrs};

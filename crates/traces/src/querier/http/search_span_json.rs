@@ -10,16 +10,16 @@ pub(crate) fn search_span_json(span: &SpanRef) -> SpanJson {
     }
 }
 
-pub(crate) fn search_attrs_json(attrs: &[(String, AttrValue)]) -> Vec<KeyValueJson> {
+pub(crate) fn search_attrs_json(attrs: &[krabka_traceql::Attribute]) -> Vec<KeyValueJson> {
     group_attrs(attrs)
         .into_iter()
-        .map(|(key, values)| KeyValueJson {
-            key: key.to_owned(),
-            value: if let [value] = values.as_slice() {
+        .map(|group| KeyValueJson {
+            key: group.key.to_owned(),
+            value: if let [value] = group.values.as_slice() {
                 AnyValueJson::from(*value)
             } else {
                 AnyValueJson::ArrayValue(ArrayValueJson {
-                    values: values.into_iter().map(AnyValueJson::from).collect(),
+                    values: group.values.into_iter().map(AnyValueJson::from).collect(),
                 })
             },
         })

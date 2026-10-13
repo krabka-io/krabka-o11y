@@ -6,6 +6,10 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[path = "failure_budget.rs"]
+mod failure_budget;
+
+use failure_budget::consume_failure_budget;
 use object_store::{PutPayload, path::Path};
 
 #[path = "hooked_store.rs"]
@@ -51,13 +55,7 @@ impl StoreHooks for FailingPuts {
         _payload: &PutPayload,
     ) -> object_store::Result<()> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
-        if self
-            .remaining_failures
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                (left > 0).then(|| left - 1)
-            })
-            .is_ok()
-        {
+        if consume_failure_budget(&self.remaining_failures) {
             return Err((self.error)());
         }
         Ok(())

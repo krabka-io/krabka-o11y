@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct HistogramInstance {
+    instance: &'static str,
+    histogram: NativeHistogram,
+}
+
 #[tokio::test]
 pub(crate) async fn instant_count_values_counts_native_histogram_sample_values() {
     let mut repeated = native_histogram(4.0, 10.0);
@@ -13,20 +19,29 @@ pub(crate) async fn instant_count_values_counts_native_histogram_sample_values()
     distinct.sum = 12.0;
 
     let mut store = InMemoryMetricStore::new();
-    for (instance, histogram) in [
-        ("a", repeated.clone()),
-        ("b", repeated.clone()),
-        ("c", distinct),
+    for sample in [
+        HistogramInstance::builder()
+            .instance("a")
+            .histogram(repeated.clone())
+            .build(),
+        HistogramInstance::builder()
+            .instance("b")
+            .histogram(repeated.clone())
+            .build(),
+        HistogramInstance::builder()
+            .instance("c")
+            .histogram(distinct)
+            .build(),
     ] {
         store.push_histogram(
             "tenant-a",
             labels(&[
-                ("__name__", "request_duration_seconds"),
-                ("job", "api"),
-                ("instance", instance),
+                crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", sample.instance),
             ]),
             10_000,
-            histogram,
+            sample.histogram,
         );
     }
 
@@ -48,15 +63,11 @@ pub(crate) async fn instant_count_values_counts_native_histogram_sample_values()
         .map(|sample| float_value(&sample.value))
         .collect::<Vec<_>>();
     values.sort_by(f64::total_cmp);
-    check!(
-        (
-            samples.len(),
-            samples.iter().all(|sample| {
-                sample.labels.get("__name__").is_none()
-                    && sample.labels.get("job") == Some("api")
-                    && sample.labels.get("histogram").is_some()
-            }),
-            values,
-        ) == (2, true, vec![1.0, 2.0])
-    );
+    check!(samples.len() == 2);
+    check!(samples.iter().all(|sample| {
+        sample.labels.get("__name__").is_none()
+            && sample.labels.get("job") == Some("api")
+            && sample.labels.get("histogram").is_some()
+    }));
+    check!(values == vec![1.0, 2.0]);
 }

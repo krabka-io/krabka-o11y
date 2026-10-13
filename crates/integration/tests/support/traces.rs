@@ -11,7 +11,7 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use krabka_blockstore::{
     BlockLevel, BlockStore, BlockTimestampUnit, BlockWriter, CompactionPolicy,
-    DEFAULT_INDEX_SNAPSHOT_MAX, TraceIndex,
+    DEFAULT_INDEX_SNAPSHOT_MAX, OffsetRange, TraceIndex,
 };
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
@@ -26,13 +26,18 @@ use krabka_units::{days, per_sec};
 use serde_json::{Value, json};
 use tokio::sync::Mutex as AsyncMutex;
 
-use super::{Batch, Signal, Stores, WriteOutcome, config::mix, due, err, now_ns, window_ns};
+use super::{Batch, Signal, Stores, WriteOutcome, config::mix, err, now_ns, window_ns};
 
 const INDEX_KEY: &str = "index/traces.json";
 
 /// The most traces one search returns. Above the largest batch the soak
 /// writes, so the count is the number of traces in the window up to here.
 const SEARCH_LIMIT: usize = 10_000;
+
+struct CompactionIndexUpdate {
+    retired_keys: Vec<String>,
+    report: Value,
+}
 
 pub struct TracesSignal {
     stores: Stores,
@@ -41,7 +46,7 @@ pub struct TracesSignal {
     limits: Mutex<HashMap<String, Limits>>,
     /// Each write builds its own index, as one block builder per partition
     /// does, and publishes it by merging into the latest snapshot.
-    reader: AsyncMutex<Option<(Instant, Arc<TraceqlEngine<KrabkaSpanStore>>)>>,
+    reader: AsyncMutex<Option<super::CachedEngine<TraceqlEngine<KrabkaSpanStore>>>>,
     /// Serializes compaction and retention, as the compactor's one loop does.
     compactor: AsyncMutex<()>,
 }
@@ -71,34 +76,29 @@ impl TracesSignal {
     }
 
     async fn engine(&self, fresh: bool) -> Result<Arc<TraceqlEngine<KrabkaSpanStore>>, String> {
-        let mut reader = self.reader.lock().await;
-        if let Some((at, engine)) = reader.as_ref()
-            && !due(Some(*at), fresh)
-        {
-            return Ok(Arc::clone(engine));
-        }
-        let index = TraceIndex::load_latest_snapshot(&self.stores.read, INDEX_KEY)
-            .await
-            .map_err(err)?;
-        let shared: SharedTraceIndex = Arc::new(ArcSwap::from_pointee(index));
-        let base = url::Url::parse("memory:///").map_err(err)?;
-        let blocks = Arc::new(BlockStore::new(Arc::clone(&self.stores.read), base));
-        let engine = Arc::new(TraceqlEngine::new(
-            Arc::new(
-                KrabkaSpanStore::new(blocks, shared, None)
-                    .with_index_snapshot(INDEX_KEY.into(), DEFAULT_INDEX_SNAPSHOT_MAX),
-            ),
-            EngineOpts::default(),
-        ));
-        *reader = Some((Instant::now(), Arc::clone(&engine)));
-        Ok(engine)
+        super::cached_engine(&self.reader, fresh, || async {
+            let index = TraceIndex::load_latest_snapshot(&self.stores.read, INDEX_KEY)
+                .await
+                .map_err(err)?;
+            let shared: SharedTraceIndex = Arc::new(ArcSwap::from_pointee(index));
+            let base = url::Url::parse("memory:///").map_err(err)?;
+            let blocks = Arc::new(BlockStore::new(Arc::clone(&self.stores.read), base));
+            Ok(Arc::new(TraceqlEngine::new(
+                Arc::new(
+                    KrabkaSpanStore::new(blocks, shared, None)
+                        .with_index_snapshot(INDEX_KEY.into(), DEFAULT_INDEX_SNAPSHOT_MAX),
+                ),
+                EngineOpts::default(),
+            )))
+        })
+        .await
     }
 
     /// Runs `pass` over the latest index and saves the index before any
     /// object is deleted.
     async fn with_compactor_index<F>(&self, pass: F) -> Result<Value, String>
     where
-        F: AsyncFnOnce(&mut TraceIndex) -> Result<(Vec<String>, Value), String>,
+        F: AsyncFnOnce(&mut TraceIndex) -> Result<CompactionIndexUpdate, String>,
     {
         let store = &self.stores.maintenance;
         let _serial = self.compactor.lock().await;
@@ -107,13 +107,14 @@ impl TracesSignal {
         let mut index = TraceIndex::load_latest_snapshot(store, INDEX_KEY)
             .await
             .map_err(err)?;
-        let (retired, mut report) = pass(&mut index).await?;
-        if !retired.is_empty() {
+        let update = pass(&mut index).await?;
+        let mut report = update.report;
+        if !update.retired_keys.is_empty() {
             index
                 .save_latest_snapshot(store, INDEX_KEY)
                 .await
                 .map_err(err)?;
-            let deletions = delete_trace_blocks(store, &retired).await;
+            let deletions = delete_trace_blocks(store, &update.retired_keys).await;
             if !deletions.failures.is_empty() {
                 return Err(format!(
                     "{} block deletions failed",
@@ -182,7 +183,7 @@ impl Signal for TracesSignal {
             tenant,
             0,
             &records,
-            (batch.seq, batch.seq),
+            OffsetRange::new(batch.seq, batch.seq),
         )
         .await
         .map_err(err)?;
@@ -193,15 +194,13 @@ impl Signal for TracesSignal {
         Ok(WriteOutcome::Accepted)
     }
 
-    async fn query(&self, tenant: &str, window: Duration, fresh: bool) -> Result<u64, String> {
-        let engine = self.engine(fresh).await?;
-        let end = now_ns();
+    crate::query_signal_engine!(now_ns(), end - window_ns(window), {
         let response = engine
-            .search(tenant, "{ }", end - window_ns(window), end, SEARCH_LIMIT)
+            .search(tenant, "{ }", start, end, SEARCH_LIMIT)
             .await
             .map_err(err)?;
         u64::try_from(response.traces.len()).map_err(err)
-    }
+    });
 
     async fn compact(&self) -> Result<Value, String> {
         let store = Arc::clone(&self.stores.maintenance);
@@ -225,7 +224,10 @@ impl Signal for TracesSignal {
                 "outputs": outcome.outputs.len(),
                 "inputs_retired": outcome.retired_inputs.len(),
             });
-            Ok((outcome.retired_inputs, report))
+            Ok(CompactionIndexUpdate {
+                retired_keys: outcome.retired_inputs,
+                report,
+            })
         })
         .await
     }
@@ -240,10 +242,10 @@ impl Signal for TracesSignal {
         self.with_compactor_index(async |index| {
             let expired = expire_trace_blocks(index, UnixNano(now_ns()), &overrides);
             let report = json!({ "expired": expired.len() });
-            Ok((
-                expired.into_iter().map(|block| block.object_key).collect(),
+            Ok(CompactionIndexUpdate {
+                retired_keys: expired.into_iter().map(|block| block.object_key).collect(),
                 report,
-            ))
+            })
         })
         .await
     }

@@ -3,7 +3,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_rustls::TlsAcceptor;
 
-use super::{ClientIdentity, PeerAddr, ServerStream};
+use super::{ClientIdentity, PeerAddr, ServerStream, listener_mode::HandshakenConnection};
 
 /// Runs one TLS handshake, and sends the finished connection to the listener.
 ///
@@ -16,7 +16,7 @@ pub async fn tls_handshake(
     socket: SocketAddr,
     timeout: Duration,
     verifies_client_certificates: bool,
-    handshaken: mpsc::Sender<(ServerStream, PeerAddr)>,
+    handshaken: mpsc::Sender<HandshakenConnection>,
 ) {
     let tls = match tokio::time::timeout(timeout, acceptor.accept(tcp)).await {
         Ok(Ok(tls)) => tls,
@@ -64,6 +64,9 @@ pub async fn tls_handshake(
     // The send fails only when the listener is gone, and then nobody is left
     // to serve the connection.
     let _ = handshaken
-        .send((ServerStream::Tls(Box::new(tls)), peer))
+        .send(HandshakenConnection {
+            stream: ServerStream::Tls(Box::new(tls)),
+            peer,
+        })
         .await;
 }

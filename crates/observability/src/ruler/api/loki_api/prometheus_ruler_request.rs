@@ -23,6 +23,22 @@ pub(crate) struct PrometheusRulerInputs<'a> {
     pub(crate) raw_query: Option<&'a str>,
 }
 
+pub(crate) async fn prometheus_ruler_request(
+    state: &QuerierState,
+    security: &RequestSecurity,
+    headers: &HeaderMap,
+    raw_query: Option<&str>,
+) -> Result<PrometheusRulerRequest, Box<Response>> {
+    PrometheusRulerInputs {
+        state,
+        security,
+        headers,
+        raw_query,
+    }
+    .resolve()
+    .await
+}
+
 impl PrometheusRulerInputs<'_> {
     /// Authorizes the request's tenant and parses its filters. The error is
     /// the response to send instead.

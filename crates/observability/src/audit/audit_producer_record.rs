@@ -25,9 +25,9 @@ pub fn audit_producer_record(
                 crate::persisted_format::PERSISTED_FORMAT_VERSION,
             )),
         })
-        .chain(record.headers.into_iter().map(|(key, value)| Header {
-            key,
-            value: Some(Bytes::from(value)),
+        .chain(record.headers.into_iter().map(|header| Header {
+            key: header.0,
+            value: Some(Bytes::from(header.1)),
         }))
         .collect(),
         timestamp_ms: None,

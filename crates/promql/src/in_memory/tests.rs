@@ -61,7 +61,8 @@ use expected_label_pair_stats::expected_label_pair_stats;
 use expected_label_value_cardinality::expected_label_value_cardinality;
 use expected_label_value_count_stats::expected_label_value_count_stats;
 use expected_metric_name_stats::expected_metric_name_stats;
-use float_record::float_record;
+use float_record::{float_record, float_sample_row};
+use interned_series_labels::{SummaryLedger, SummaryLedgerEntry};
 use lbls::lbls;
 use store_with_float_and_hist_series::store_with_float_and_hist_series;
 

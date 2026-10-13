@@ -19,11 +19,11 @@ use arrow::{
 };
 use datafusion::{catalog::MemTable, prelude::SessionContext};
 use krabka_blockstore::{
-    BlockIndex, BlockStore, SCOL_EVENTS, SCOL_LINKS, TimeRange, TraceIndex, span_block_schema,
-    span_block_schema_with_promoted_attrs,
+    BlockIndex, BlockMeta, BlockStore, SCOL_EVENTS, SCOL_LINKS, TimeRange, TraceIndex,
+    span_block_schema, span_block_schema_with_promoted_attrs,
 };
 use krabka_traceql::{
-    ATTR_PREFIX, AttrValue, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME,
+    ATTR_PREFIX, AttrValue, Attribute, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME,
     COL_EVENT_TIME_SINCE_START, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, COL_KIND,
     COL_LINK_SPAN_ID, COL_LINK_TRACE_ID, COL_NAME, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID,
     COL_PARENT_SPAN_ID, COL_ROOT_SERVICE_NAME, COL_ROOT_SPAN_NAME, COL_SPAN_ID, COL_START,
@@ -35,6 +35,12 @@ use krabka_traceql::{
     event_matcher_matches_event, int_matches, link_matcher_matches_absence,
     link_matcher_matches_link, nested_presence_matches, nil_matches, span_schema, string_matches,
 };
+
+struct TagScopeTags {
+    scope: TagScope,
+    tags: BTreeSet<String>,
+}
+
 use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt},
@@ -102,6 +108,19 @@ pub(crate) mod test_support {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
+    struct TagValueIndexEntry {
+        tag: String,
+        values: BTreeSet<String>,
+    }
+
+    fn tag_value_index(entries: Vec<TagValueIndexEntry>) -> BTreeMap<String, BTreeSet<String>> {
+        let mut index = BTreeMap::new();
+        for entry in entries {
+            index.insert(entry.tag, entry.values);
+        }
+        index
+    }
+
     fn matcher(scope: MatchScope, key: &str, op: MatchCmp, value: MatchValue) -> SpanMatcher {
         SpanMatcher {
             scope,
@@ -125,7 +144,7 @@ mod tests {
             super::collect_intrinsic_value(&batch, 0, tag, &mut values).expect("readable");
             values.into_iter().collect::<Vec<_>>()
         };
-        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+        let pair = |type_: &str, value: &str| TypedValue::new(type_, value);
 
         // Durations carry their own type name rather than "int".
         check!(collect("span:duration") == vec![pair("duration", "500")]);
@@ -296,8 +315,8 @@ mod tests {
             // key filter selects the *other* attribute rather than nothing,
             // and returns a wrong answer instead of an empty one.
             attributes: vec![
-                ("link.kind".into(), AttrValue::Str("retry".into())),
-                ("link.reason".into(), AttrValue::Str("timeout".into())),
+                Attribute::new("link.kind", AttrValue::Str("retry".into())),
+                Attribute::new("link.reason", AttrValue::Str("timeout".into())),
             ],
         };
         let m = |scope, key, op, value| {
@@ -704,7 +723,11 @@ mod tests {
     };
 
     /// One metrics series as its labels and its points.
-    type LabeledPoints = (Vec<(String, String)>, Vec<(i64, f64)>);
+    #[derive(Debug, PartialEq)]
+    struct LabeledPoints {
+        labels: Vec<krabka_traceql::MetricLabel>,
+        points: Vec<krabka_traceql::MetricPoint>,
+    }
 
     // The labels and points of each series `query` yields for `tenant` over
     // `[0, 10_000]` ns in one step, sorted by labels.
@@ -720,8 +743,22 @@ mod tests {
         series.sort_by(|a, b| a.labels.cmp(&b.labels));
         series
             .into_iter()
-            .map(|series| (series.labels, series.points))
+            .map(|series| LabeledPoints {
+                labels: series.labels,
+                points: series.points,
+            })
             .collect()
+    }
+
+    fn labeled_points_for(
+        label_key: &str,
+        label_value: &str,
+        points: Vec<krabka_traceql::MetricPoint>,
+    ) -> LabeledPoints {
+        LabeledPoints {
+            labels: vec![krabka_traceql::MetricLabel::new(label_key, label_value)],
+            points,
+        }
     }
 
     // A block store over an empty in-memory object store.
@@ -997,8 +1034,8 @@ mod tests {
         check!(
             attrs(0)
                 == vec![
-                    ("a".to_string(), AttrValue::Str("1".to_string())),
-                    ("e".to_string(), AttrValue::Str("first".to_string())),
+                    Attribute::new("a", AttrValue::Str("1".to_string())),
+                    Attribute::new("e", AttrValue::Str("first".to_string())),
                 ]
         );
 
@@ -1145,44 +1182,62 @@ mod tests {
         let string_dict = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
         let integer_dict =
             DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Int64));
-        let typed: Vec<(&str, DataType, ArrayRef)> = vec![
-            (
-                "str",
-                DataType::Utf8,
-                Arc::new(StringArray::from(vec!["one", "two"])),
-            ),
-            ("dict", string_dict, Arc::new(dict.finish())),
-            (
-                "int",
-                DataType::Int64,
-                Arc::new(Int64Array::from(vec![1, 2])),
-            ),
-            (
-                "float",
-                DataType::Float64,
-                Arc::new(Float64Array::from(vec![1.5, 2.5])),
-            ),
-            (
-                "bool",
-                DataType::Boolean,
-                Arc::new(BooleanArray::from(vec![true, false])),
-            ),
-            (
-                "unsupported",
-                DataType::Int32,
-                Arc::new(Int32Array::from(vec![7, 8])),
-            ),
-            ("intdict", integer_dict, Arc::new(int_dict.finish())),
+        struct TypedArrayColumn {
+            name: &'static str,
+            data_type: DataType,
+            array: ArrayRef,
+        }
+
+        let typed = vec![
+            TypedArrayColumn {
+                name: "str",
+                data_type: DataType::Utf8,
+                array: Arc::new(StringArray::from(vec!["one", "two"])),
+            },
+            TypedArrayColumn {
+                name: "dict",
+                data_type: string_dict,
+                array: Arc::new(dict.finish()),
+            },
+            TypedArrayColumn {
+                name: "int",
+                data_type: DataType::Int64,
+                array: Arc::new(Int64Array::from(vec![1, 2])),
+            },
+            TypedArrayColumn {
+                name: "float",
+                data_type: DataType::Float64,
+                array: Arc::new(Float64Array::from(vec![1.5, 2.5])),
+            },
+            TypedArrayColumn {
+                name: "bool",
+                data_type: DataType::Boolean,
+                array: Arc::new(BooleanArray::from(vec![true, false])),
+            },
+            TypedArrayColumn {
+                name: "unsupported",
+                data_type: DataType::Int32,
+                array: Arc::new(Int32Array::from(vec![7, 8])),
+            },
+            TypedArrayColumn {
+                name: "intdict",
+                data_type: integer_dict,
+                array: Arc::new(int_dict.finish()),
+            },
             // Null in row 0 only, so the skip is provably per-row.
-            (
-                "nullable",
-                DataType::Utf8,
-                Arc::new(StringArray::from(vec![None, Some("x")])),
-            ),
+            TypedArrayColumn {
+                name: "nullable",
+                data_type: DataType::Utf8,
+                array: Arc::new(StringArray::from(vec![None, Some("x")])),
+            },
         ];
-        for (name, data_type, column) in typed {
-            fields.push(Field::new(format!("{ATTR_PREFIX}{name}"), data_type, true));
-            columns.push(column);
+        for column in typed {
+            fields.push(Field::new(
+                format!("{ATTR_PREFIX}{}", column.name),
+                column.data_type,
+                true,
+            ));
+            columns.push(column.array);
         }
         RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)
             .expect("the typed attribute batch is well formed")
@@ -1200,19 +1255,19 @@ mod tests {
             super::attr_values_with_resource(&batch, index, super::ResourceAttrs::Exclude)
                 .expect("the row is readable")
         };
-        let str_value = |value: &str| AttrValue::Str(value.to_string());
+        let str_value = |key, value: &str| Attribute::new(key, AttrValue::Str(value.to_string()));
 
         // Row 0. `unsupported`, `intdict` and `nullable` are all absent:
         // an unhandled column type, a non-string dictionary, and a null cell.
         check!(
             row(0)
                 == vec![
-                    ("svc".to_string(), str_value("a")),
-                    ("str".to_string(), str_value("one")),
-                    ("dict".to_string(), str_value("GET")),
-                    ("int".to_string(), AttrValue::Int(1)),
-                    ("float".to_string(), AttrValue::Float(1.5)),
-                    ("bool".to_string(), AttrValue::Bool(true)),
+                    str_value("svc", "a"),
+                    str_value("str", "one"),
+                    str_value("dict", "GET"),
+                    Attribute::new("int", AttrValue::Int(1)),
+                    Attribute::new("float", AttrValue::Float(1.5)),
+                    Attribute::new("bool", AttrValue::Bool(true)),
                 ]
         );
 
@@ -1222,13 +1277,13 @@ mod tests {
         check!(
             row(1)
                 == vec![
-                    ("svc".to_string(), str_value("b")),
-                    ("str".to_string(), str_value("two")),
-                    ("dict".to_string(), str_value("POST")),
-                    ("int".to_string(), AttrValue::Int(2)),
-                    ("float".to_string(), AttrValue::Float(2.5)),
-                    ("bool".to_string(), AttrValue::Bool(false)),
-                    ("nullable".to_string(), str_value("x")),
+                    str_value("svc", "b"),
+                    str_value("str", "two"),
+                    str_value("dict", "POST"),
+                    Attribute::new("int", AttrValue::Int(2)),
+                    Attribute::new("float", AttrValue::Float(2.5)),
+                    Attribute::new("bool", AttrValue::Bool(false)),
+                    str_value("nullable", "x"),
                 ]
         );
     }
@@ -1247,80 +1302,86 @@ mod tests {
     fn resource_matches_service_name_uses_root_service_column() {
         let batch = batch();
 
-        for (i, (matcher, want)) in [
-            (
-                resource_service_matcher(MatchCmp::Eq, MatchValue::Str("api".into())),
-                true,
-            ),
-            (
-                resource_service_matcher(MatchCmp::Eq, MatchValue::Str("web".into())),
-                false,
-            ),
-            (
-                resource_service_matcher(MatchCmp::Neq, MatchValue::Nil),
-                true,
-            ),
-            (
-                SpanMatcher {
+        struct ResourceMatcherCase {
+            matcher: SpanMatcher,
+            want: bool,
+        }
+        for case in [
+            ResourceMatcherCase {
+                matcher: resource_service_matcher(MatchCmp::Eq, MatchValue::Str("api".into())),
+                want: true,
+            },
+            ResourceMatcherCase {
+                matcher: resource_service_matcher(MatchCmp::Eq, MatchValue::Str("web".into())),
+                want: false,
+            },
+            ResourceMatcherCase {
+                matcher: resource_service_matcher(MatchCmp::Neq, MatchValue::Nil),
+                want: true,
+            },
+            ResourceMatcherCase {
+                matcher: SpanMatcher {
                     scope: MatchScope::Resource,
                     key: "missing".into(),
                     op: MatchCmp::Neq,
                     value: MatchValue::Nil,
                     negated: false,
                 },
-                false,
-            ),
-        ]
-        .into_iter()
-        .enumerate()
-        {
+                want: false,
+            },
+        ] {
             check!(
-                resource_matches(&batch, 0, &matcher).unwrap() == want,
-                "case {i}"
+                resource_matches(&batch, 0, &case.matcher).unwrap() == case.want,
+                "matcher={:?}",
+                case.matcher
             );
         }
     }
 
     #[test]
     fn root_service_matches_preserves_nil_and_string_semantics() {
-        for (i, (service, matcher, want)) in [
-            (
-                "api",
-                resource_service_matcher(MatchCmp::Eq, MatchValue::Str("api".into())),
-                true,
-            ),
-            (
-                "api",
-                resource_service_matcher(MatchCmp::Eq, MatchValue::Str("web".into())),
-                false,
-            ),
-            (
-                "api",
-                resource_service_matcher(MatchCmp::Neq, MatchValue::Nil),
-                true,
-            ),
-            (
-                "api",
-                resource_service_matcher(MatchCmp::Eq, MatchValue::Nil),
-                false,
-            ),
-            (
-                "",
-                resource_service_matcher(MatchCmp::Eq, MatchValue::Nil),
-                true,
-            ),
-            (
-                "",
-                resource_service_matcher(MatchCmp::Neq, MatchValue::Nil),
-                false,
-            ),
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        struct RootServiceCase {
+            service: &'static str,
+            matcher: SpanMatcher,
+            want: bool,
+        }
+        for case in [
+            RootServiceCase {
+                service: "api",
+                matcher: resource_service_matcher(MatchCmp::Eq, MatchValue::Str("api".into())),
+                want: true,
+            },
+            RootServiceCase {
+                service: "api",
+                matcher: resource_service_matcher(MatchCmp::Eq, MatchValue::Str("web".into())),
+                want: false,
+            },
+            RootServiceCase {
+                service: "api",
+                matcher: resource_service_matcher(MatchCmp::Neq, MatchValue::Nil),
+                want: true,
+            },
+            RootServiceCase {
+                service: "api",
+                matcher: resource_service_matcher(MatchCmp::Eq, MatchValue::Nil),
+                want: false,
+            },
+            RootServiceCase {
+                service: "",
+                matcher: resource_service_matcher(MatchCmp::Eq, MatchValue::Nil),
+                want: true,
+            },
+            RootServiceCase {
+                service: "",
+                matcher: resource_service_matcher(MatchCmp::Neq, MatchValue::Nil),
+                want: false,
+            },
+        ] {
             check!(
-                root_service_matches(service, &matcher) == want,
-                "case {i}: service {service:?}"
+                root_service_matches(case.service, &case.matcher) == case.want,
+                "service={:?} matcher={:?}",
+                case.service,
+                case.matcher
             );
         }
     }
@@ -1330,17 +1391,9 @@ mod tests {
         let got = trace_from_batches(&[7; 16], vec![batch()])
             .unwrap()
             .unwrap();
-        check!(
-            (
-                got.root_service_name.as_str(),
-                got.spans.len(),
-                got.spans[0].attributes.as_slice(),
-            ) == (
-                "api",
-                1,
-                [("svc".into(), AttrValue::Str("a".into()))].as_slice(),
-            )
-        );
+        check!(got.root_service_name == "api");
+        check!(got.spans.len() == 1);
+        check!(got.spans[0].attributes == vec![Attribute::new("svc", AttrValue::Str("a".into()))]);
     }
 
     #[test]
@@ -1352,7 +1405,8 @@ mod tests {
             got.spans[0]
                 .attributes
                 .iter()
-                .any(|(key, value)| key == "http.method" && value == &AttrValue::Str("GET".into()))
+                .any(|attribute| attribute.key == "http.method"
+                    && attribute.value == AttrValue::Str("GET".into()))
         );
     }
 
@@ -1371,7 +1425,7 @@ mod tests {
             got.spans[0]
                 .attributes
                 .iter()
-                .filter(|(key, _)| key == "http.status_code")
+                .filter(|attribute| attribute.key == "http.status_code")
                 .count()
                 == 1
         );
@@ -1453,26 +1507,77 @@ mod tests {
 
         let out = recompute_batch_nested_sets(&batch).unwrap();
         // Per-trace `left` reset (collision confirms the multi-trace scenario).
-        for (row, want) in [(0, 1), (2, 1)] {
+        struct RowExpectation {
+            row: usize,
+            expected: i32,
+        }
+        for expectation in [
+            RowExpectation {
+                row: 0,
+                expected: 1,
+            },
+            RowExpectation {
+                row: 2,
+                expected: 1,
+            },
+        ] {
             check!(
-                int32_value(&out, COL_NS_LEFT, row).unwrap() == want,
-                "row {row}"
+                int32_value(&out, COL_NS_LEFT, expectation.row).unwrap() == expectation.expected,
+                "row {}",
+                expectation.row
             );
         }
         // Each root has exactly one child; children have none — NOT inflated to 2.
-        for (row, want) in [(0, 1), (1, 0), (2, 1), (3, 0)] {
+        for expectation in [
+            RowExpectation {
+                row: 0,
+                expected: 1,
+            },
+            RowExpectation {
+                row: 1,
+                expected: 0,
+            },
+            RowExpectation {
+                row: 2,
+                expected: 1,
+            },
+            RowExpectation {
+                row: 3,
+                expected: 0,
+            },
+        ] {
             check!(
-                int32_value(&out, COL_CHILD_COUNT, row).unwrap() == want,
-                "row {row}"
+                int32_value(&out, COL_CHILD_COUNT, expectation.row).unwrap()
+                    == expectation.expected,
+                "row {}",
+                expectation.row
             );
         }
         // Roots encode nestedSetParent = -1 (Tempo no-parent sentinel) so the
         // Drilldown's `nestedSetParent < 0` primary signal selects them; each
         // child points at its root's `left` (1 after the per-trace reset).
-        for (row, want) in [(0, -1), (1, 1), (2, -1), (3, 1)] {
+        for expectation in [
+            RowExpectation {
+                row: 0,
+                expected: -1,
+            },
+            RowExpectation {
+                row: 1,
+                expected: 1,
+            },
+            RowExpectation {
+                row: 2,
+                expected: -1,
+            },
+            RowExpectation {
+                row: 3,
+                expected: 1,
+            },
+        ] {
             check!(
-                int32_value(&out, COL_PARENT_ID, row).unwrap() == want,
-                "row {row}"
+                int32_value(&out, COL_PARENT_ID, expectation.row).unwrap() == expectation.expected,
+                "row {}",
+                expectation.row
             );
         }
     }
@@ -1568,24 +1673,29 @@ mod tests {
         };
         // The span with the attribute carries its value; the other is the nil
         // group (NULL → empty label downstream).
-        for (_name, column, expected) in [
-            (
-                "span method",
-                "attr.http.method",
-                vec![None, Some("GET".to_string())],
-            ),
-            (
-                "service version",
-                "attr.service.version",
-                vec![None, Some("1.2.3".to_string())],
-            ),
-            (
-                "instrumentation library",
-                "attr.__instrumentation.library",
-                vec![None, Some("otel".to_string())],
-            ),
+        struct ColumnExpectation {
+            name: &'static str,
+            column: &'static str,
+            expected: Vec<Option<String>>,
+        }
+        for case in [
+            ColumnExpectation {
+                name: "span method",
+                column: "attr.http.method",
+                expected: vec![None, Some("GET".to_string())],
+            },
+            ColumnExpectation {
+                name: "service version",
+                column: "attr.service.version",
+                expected: vec![None, Some("1.2.3".to_string())],
+            },
+            ColumnExpectation {
+                name: "instrumentation library",
+                column: "attr.__instrumentation.library",
+                expected: vec![None, Some("otel".to_string())],
+            },
         ] {
-            assert2::assert!(sorted(column) == expected);
+            assert2::assert!(sorted(case.column) == case.expected, "{}", case.name);
         }
 
         let accepts = |key: &str, value: &str| {
@@ -1620,8 +1730,8 @@ mod tests {
         assert2::assert!(
             values
                 == BTreeSet::from([
-                    ("string".into(), "1.2.3".into()),
-                    ("string".into(), "GET".into()),
+                    TypedValue::new("string", "1.2.3"),
+                    TypedValue::new("string", "GET"),
                 ])
         );
         values.clear();
@@ -1634,7 +1744,7 @@ mod tests {
             &mut values,
         )
         .unwrap();
-        assert2::assert!(values == BTreeSet::from([("string".into(), "otel".into())]));
+        assert2::assert!(values == BTreeSet::from([TypedValue::new("string", "otel")]));
     }
 
     #[tokio::test]
@@ -1684,6 +1794,11 @@ mod tests {
         tag_values: BTreeMap<String, BTreeSet<String>>,
     }
 
+    struct IndexedBlockStore {
+        blocks: Arc<BlockStore>,
+        index: TraceIndex,
+    }
+
     impl Default for IndexedBlock<'_> {
         /// An empty span block with no tags.
         fn default() -> Self {
@@ -1700,7 +1815,7 @@ mod tests {
 
     // An engine over a store that holds only `block`, with no live tier.
     async fn cold_block_engine(block: IndexedBlock<'_>) -> TraceqlEngine<KrabkaSpanStore> {
-        let (blocks, index) = write_indexed_block(block).await;
+        let IndexedBlockStore { blocks, index } = write_indexed_block(block).await;
         TraceqlEngine::new(
             Arc::new(KrabkaSpanStore::new(blocks, shared(index), None)),
             EngineOpts::default(),
@@ -1708,7 +1823,7 @@ mod tests {
     }
 
     // Write `block`, and return the block store with an index that names it.
-    async fn write_indexed_block(block: IndexedBlock<'_>) -> (Arc<BlockStore>, TraceIndex) {
+    async fn write_indexed_block(block: IndexedBlock<'_>) -> IndexedBlockStore {
         let IndexedBlock {
             key,
             schema,
@@ -1751,21 +1866,21 @@ mod tests {
                 level: BlockLevel::INGESTED,
             },
         );
-        (blocks, index)
+        IndexedBlockStore { blocks, index }
     }
 
     #[tokio::test]
     async fn tag_discovery_unions_cold_index_values() {
         let span = span_with_nested_refs();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/tags.parquet",
             batch: span_batch(std::slice::from_ref(&span)).unwrap(),
             trace_ids: &[span.trace_id],
             tag_names: BTreeSet::from(["service.name".to_string()]),
-            tag_values: BTreeMap::from([(
-                "service.name".to_string(),
-                BTreeSet::from(["api".to_string()]),
-            )]),
+            tag_values: tag_value_index(vec![TagValueIndexEntry {
+                tag: "service.name".to_string(),
+                values: BTreeSet::from(["api".to_string()]),
+            }]),
             ..IndexedBlock::default()
         })
         .await;
@@ -1791,20 +1906,20 @@ mod tests {
     async fn cold_attribute_tag_values_preserve_static_types() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/typed-tags.parquet",
             batch,
             trace_ids: &[span.trace_id],
             tag_names: BTreeSet::from(["http.status_code".to_string(), "retryable".to_string()]),
-            tag_values: BTreeMap::from([
-                (
-                    "http.status_code".to_string(),
-                    BTreeSet::from(["504".to_string()]),
-                ),
-                (
-                    "retryable".to_string(),
-                    BTreeSet::from(["true".to_string()]),
-                ),
+            tag_values: tag_value_index(vec![
+                TagValueIndexEntry {
+                    tag: "http.status_code".to_string(),
+                    values: BTreeSet::from(["504".to_string()]),
+                },
+                TagValueIndexEntry {
+                    tag: "retryable".to_string(),
+                    values: BTreeSet::from(["true".to_string()]),
+                },
             ]),
             ..IndexedBlock::default()
         })
@@ -1840,14 +1955,20 @@ mod tests {
     async fn cold_nested_tag_values_scan_event_and_link_attributes() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/nested-tag-values.parquet",
             batch,
             trace_ids: &[span.trace_id],
             tag_names: BTreeSet::from(["exception.type".into(), "link.kind".into()]),
-            tag_values: BTreeMap::from([
-                ("exception.type".into(), BTreeSet::from(["timeout".into()])),
-                ("link.kind".into(), BTreeSet::from(["retry".into()])),
+            tag_values: tag_value_index(vec![
+                TagValueIndexEntry {
+                    tag: "exception.type".into(),
+                    values: BTreeSet::from(["timeout".into()]),
+                },
+                TagValueIndexEntry {
+                    tag: "link.kind".into(),
+                    values: BTreeSet::from(["retry".into()]),
+                },
             ]),
             ..IndexedBlock::default()
         })
@@ -1893,7 +2014,7 @@ mod tests {
     async fn cold_nested_tag_names_scan_event_and_link_attributes() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/nested-tag-names.parquet",
             batch,
             trace_ids: &[span.trace_id],
@@ -2322,10 +2443,10 @@ mod tests {
             "tenant",
             TraceBlockStats {
                 tag_names: BTreeSet::from(["event:name".to_string()]),
-                tag_values: BTreeMap::from([(
-                    "event:name".to_string(),
-                    BTreeSet::from(["exception".to_string()]),
-                )]),
+                tag_values: tag_value_index(vec![TagValueIndexEntry {
+                    tag: "event:name".to_string(),
+                    values: BTreeSet::from(["exception".to_string()]),
+                }]),
                 ..no_object_block_stats()
             },
         );
@@ -2398,7 +2519,8 @@ mod tests {
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
-        let (min, max) = (meta.min_ts, meta.max_ts);
+        let min = meta.min_ts;
+        let max = meta.max_ts;
         check!(
             min < max,
             "the block must span a range for these cases to differ"
@@ -2523,14 +2645,15 @@ mod tests {
         }
     }
 
-    fn assert_cloud_region_resource_attr(attrs: &[(String, AttrValue)]) {
-        assert2::assert!(
-            attrs.contains(&("cloud.region".into(), AttrValue::Str("us-east-1".into())))
-        );
+    fn assert_cloud_region_resource_attr(attrs: &[Attribute]) {
+        assert2::assert!(attrs.contains(&Attribute::new(
+            "cloud.region",
+            AttrValue::Str("us-east-1".into())
+        )));
         assert2::assert!(
             !attrs
                 .iter()
-                .any(|(key, _)| key == "__resource.cloud.region")
+                .any(|attribute| attribute.key == "__resource.cloud.region")
         );
     }
 
@@ -2538,7 +2661,7 @@ mod tests {
     async fn cold_trace_by_id_projects_events_and_links_from_span_blocks() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/spans.parquet",
             batch,
             trace_ids: &[span.trace_id],
@@ -2553,31 +2676,33 @@ mod tests {
             .unwrap()
             .unwrap();
 
+        assert2::assert!(trace.spans.len() == 1);
+        let returned_span = &trace.spans[0];
         check!(
-            trace
-                .spans
-                .iter()
-                .map(|span| (&span.attributes, &span.events, &span.links))
-                .collect::<Vec<_>>()
-                == vec![(
-                    &vec![
-                        ("http.status_code".into(), AttrValue::Int(504)),
-                        ("retryable".into(), AttrValue::Bool(true)),
-                    ],
-                    &vec![EventRef {
-                        time_since_start: nanos(50),
-                        name: "exception".into(),
-                        attributes: vec![(
-                            "exception.type".into(),
-                            AttrValue::Str("timeout".into())
-                        )],
-                    }],
-                    &vec![LinkRef {
-                        trace_id: [9; 16],
-                        span_id: [8; 8],
-                        attributes: vec![("link.kind".into(), AttrValue::Str("retry".into()))],
-                    }],
-                )]
+            returned_span.attributes
+                == vec![
+                    Attribute::new("http.status_code", AttrValue::Int(504)),
+                    Attribute::new("retryable", AttrValue::Bool(true)),
+                ]
+        );
+        check!(
+            returned_span.events
+                == vec![EventRef {
+                    time_since_start: nanos(50),
+                    name: "exception".into(),
+                    attributes: vec![Attribute::new(
+                        "exception.type",
+                        AttrValue::Str("timeout".into())
+                    )],
+                }]
+        );
+        check!(
+            returned_span.links
+                == vec![LinkRef {
+                    trace_id: [9; 16],
+                    span_id: [8; 8],
+                    attributes: vec![Attribute::new("link.kind", AttrValue::Str("retry".into()))],
+                }]
         );
     }
 
@@ -2622,15 +2747,28 @@ mod tests {
             .unwrap();
 
         let mut index = TraceIndex::new();
-        for (span, meta) in [(&early, early_meta), (&late, late_meta)] {
+        struct SpanBlockMeta {
+            trace_id: [u8; 16],
+            meta: BlockMeta,
+        }
+        for block in [
+            SpanBlockMeta {
+                trace_id: early.trace_id,
+                meta: early_meta,
+            },
+            SpanBlockMeta {
+                trace_id: late.trace_id,
+                meta: late_meta,
+            },
+        ] {
             let mut bloom = ShardedTraceBloom::with_tempo_defaults(1);
-            bloom.insert(&span.trace_id);
+            bloom.insert(&block.trace_id);
             index.add_trace_block(
                 "tenant",
                 TraceBlockStats {
-                    object_key: meta.object_key,
-                    min_ts: meta.min_ts,
-                    max_ts: meta.max_ts,
+                    object_key: block.meta.object_key,
+                    min_ts: block.meta.min_ts,
+                    max_ts: block.meta.max_ts,
                     bloom,
                     tag_names: BTreeSet::new(),
                     tag_values: BTreeMap::new(),
@@ -2661,7 +2799,7 @@ mod tests {
     async fn trace_by_id_deduplicates_spans_present_in_cold_and_live_tiers() {
         let span = span_with_nested_refs();
         let batch = span_batch(std::slice::from_ref(&span)).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/dedup.parquet",
             batch,
             trace_ids: &[span.trace_id],
@@ -2706,7 +2844,7 @@ mod tests {
         child.parent_span_id = Some(root.span_id);
         child.start_ns = root.start_ns + 10;
         let batch = span_batch(std::slice::from_ref(&root)).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/split-trace-root.parquet",
             batch,
             trace_ids: &[root.trace_id],
@@ -2764,7 +2902,7 @@ mod tests {
         child.parent_span_id = Some(root.span_id);
         child.start_ns = 5_000;
         let batch = span_batch(&[root.clone(), child.clone()]).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/straddle.parquet",
             batch,
             trace_ids: &[root.trace_id],
@@ -2811,7 +2949,7 @@ mod tests {
         child.start_ns = root.start_ns + 10;
 
         let cold_batch = span_batch(std::slice::from_ref(&root)).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/split-trace-search-root.parquet",
             batch: cold_batch,
             trace_ids: &[root.trace_id],
@@ -2866,7 +3004,7 @@ mod tests {
         child.start_ns = root.start_ns + 10;
 
         let cold = span_batch_with_promoted_attrs(std::slice::from_ref(&root), &promoted).unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/promoted-cold.parquet",
             schema: span_block_schema_with_promoted_attrs(&promoted),
             batch: cold,
@@ -3031,7 +3169,13 @@ mod tests {
     /// Every scanned row as `(span_id, childCount)`, sorted. A `Vec` rather
     /// than a set on purpose: a span returned twice has to show up as two
     /// entries, not collapse into one.
-    fn scanned_spans(batches: &[RecordBatch]) -> Vec<([u8; 8], i32)> {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct ScannedSpan {
+        span_id: [u8; 8],
+        child_count: i32,
+    }
+
+    fn scanned_spans(batches: &[RecordBatch]) -> Vec<ScannedSpan> {
         let mut rows = Vec::new();
         for batch in batches {
             let span_ids = fixed(batch, COL_SPAN_ID).unwrap();
@@ -3044,7 +3188,10 @@ mod tests {
             for row in 0..batch.num_rows() {
                 let mut span_id = [0_u8; 8];
                 span_id.copy_from_slice(span_ids.value(row));
-                rows.push((span_id, child_counts.value(row)));
+                rows.push(ScannedSpan {
+                    span_id,
+                    child_count: child_counts.value(row),
+                });
             }
         }
         rows.sort_unstable();
@@ -3112,7 +3259,17 @@ mod tests {
         let batches = scan_over_both_tiers(object_store, trace_index, live).await;
 
         check!(
-            scanned_spans(&batches) == vec![(flushed.span_id, 0), (late.span_id, 0)],
+            scanned_spans(&batches)
+                == vec![
+                    ScannedSpan {
+                        span_id: flushed.span_id,
+                        child_count: 0,
+                    },
+                    ScannedSpan {
+                        span_id: late.span_id,
+                        child_count: 0,
+                    },
+                ],
             "the hot tier is the only place the late span exists, so the scan \
              has to read it over the whole window and not just above the frontier"
         );
@@ -3142,12 +3299,30 @@ mod tests {
         let batches = scan_over_both_tiers(object_store, trace_index, live).await;
 
         check!(
-            scanned_spans(&batches) == vec![(root.span_id, 1), (child.span_id, 0)],
+            scanned_spans(&batches)
+                == vec![
+                    ScannedSpan {
+                        span_id: root.span_id,
+                        child_count: 1,
+                    },
+                    ScannedSpan {
+                        span_id: child.span_id,
+                        child_count: 0,
+                    },
+                ],
             "one row per span, and the root counts its one child once"
         );
     }
 
-    async fn event_intrinsic_fixture() -> (TraceqlEngine<KrabkaSpanStore>, [[u8; 16]; 4]) {
+    struct EventIntrinsicFixture {
+        engine: TraceqlEngine<KrabkaSpanStore>,
+        matching_id: [u8; 16],
+        other_id: [u8; 16],
+        split_events_id: [u8; 16],
+        no_event_id: [u8; 16],
+    }
+
+    async fn event_intrinsic_fixture() -> EventIntrinsicFixture {
         let matching = span_with_nested_refs();
         let mut other = span_with_nested_refs();
         other.trace_id = [3; 16];
@@ -3190,7 +3365,7 @@ mod tests {
             no_event.clone(),
         ])
         .unwrap();
-        let (blocks, index) = write_indexed_block(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/search-events.parquet",
             batch,
             trace_ids: &[
@@ -3204,21 +3379,24 @@ mod tests {
         .await;
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
-        (
+        EventIntrinsicFixture {
             engine,
-            [
-                matching.trace_id,
-                other.trace_id,
-                split_events.trace_id,
-                no_event.trace_id,
-            ],
-        )
+            matching_id: matching.trace_id,
+            other_id: other.trace_id,
+            split_events_id: split_events.trace_id,
+            no_event_id: no_event.trace_id,
+        }
     }
 
     #[tokio::test]
     async fn cold_traceql_search_filters_event_intrinsics() {
-        let (engine, [matching_id, other_id, split_events_id, no_event_id]) =
-            event_intrinsic_fixture().await;
+        let EventIntrinsicFixture {
+            engine,
+            matching_id,
+            other_id,
+            split_events_id,
+            no_event_id,
+        } = event_intrinsic_fixture().await;
 
         let resp = engine
             .search("tenant", "{ event:name = \"exception\" }", 0, 10_000, 10)
@@ -3314,13 +3492,21 @@ mod tests {
         assert2::assert!(
             series
                 == vec![
-                    (
-                        vec![("event:name".into(), "cache.hit".into())],
-                        vec![(0, 1.0), (10_000, 0.0)]
+                    labeled_points_for(
+                        "event:name",
+                        "cache.hit",
+                        vec![
+                            krabka_traceql::MetricPoint::new(0, 1.0),
+                            krabka_traceql::MetricPoint::new(10_000, 0.0),
+                        ],
                     ),
-                    (
-                        vec![("event:name".into(), "exception".into())],
-                        vec![(0, 2.0), (10_000, 0.0)]
+                    labeled_points_for(
+                        "event:name",
+                        "exception",
+                        vec![
+                            krabka_traceql::MetricPoint::new(0, 2.0),
+                            krabka_traceql::MetricPoint::new(10_000, 0.0),
+                        ],
                     ),
                 ]
         );
@@ -3333,17 +3519,29 @@ mod tests {
         assert2::assert!(
             series
                 == vec![
-                    (
-                        vec![("event.exception.type".into(), "nil".into())],
-                        vec![(0, 1.0), (10_000, 0.0)]
+                    labeled_points_for(
+                        "event.exception.type",
+                        "nil",
+                        vec![
+                            krabka_traceql::MetricPoint::new(0, 1.0),
+                            krabka_traceql::MetricPoint::new(10_000, 0.0),
+                        ],
                     ),
-                    (
-                        vec![("event.exception.type".into(), "other".into())],
-                        vec![(0, 1.0), (10_000, 0.0)]
+                    labeled_points_for(
+                        "event.exception.type",
+                        "other",
+                        vec![
+                            krabka_traceql::MetricPoint::new(0, 1.0),
+                            krabka_traceql::MetricPoint::new(10_000, 0.0),
+                        ],
                     ),
-                    (
-                        vec![("event.exception.type".into(), "timeout".into())],
-                        vec![(0, 2.0), (10_000, 0.0)]
+                    labeled_points_for(
+                        "event.exception.type",
+                        "timeout",
+                        vec![
+                            krabka_traceql::MetricPoint::new(0, 2.0),
+                            krabka_traceql::MetricPoint::new(10_000, 0.0),
+                        ],
                     ),
                 ]
         );
@@ -3355,9 +3553,13 @@ mod tests {
         .await;
         assert2::assert!(
             series
-                == vec![(
-                    vec![("link:spanID".into(), "0808080808080808".into())],
-                    vec![(0, 4.0), (10_000, 0.0)]
+                == vec![labeled_points_for(
+                    "link:spanID",
+                    "0808080808080808",
+                    vec![
+                        krabka_traceql::MetricPoint::new(0, 4.0),
+                        krabka_traceql::MetricPoint::new(10_000, 0.0),
+                    ],
                 )]
         );
     }
@@ -3521,10 +3723,10 @@ mod tests {
                 max_ts: meta.max_ts,
                 bloom,
                 tag_names: BTreeSet::from(["service.name".to_string()]),
-                tag_values: BTreeMap::from([(
-                    "service.name".to_string(),
-                    BTreeSet::from(["billing".to_string(), "checkout".to_string()]),
-                )]),
+                tag_values: tag_value_index(vec![TagValueIndexEntry {
+                    tag: "service.name".to_string(),
+                    values: BTreeSet::from(["billing".to_string(), "checkout".to_string()]),
+                }]),
                 row_count: 0,
                 level: BlockLevel::INGESTED,
             },
@@ -3542,9 +3744,13 @@ mod tests {
                 == ["billing", "checkout"]
                     .into_iter()
                     .map(|service| {
-                        (
-                            vec![("resource.service.name".into(), service.into())],
-                            vec![(0, 1.0), (10_000, 0.0)],
+                        labeled_points_for(
+                            "resource.service.name",
+                            service,
+                            vec![
+                                krabka_traceql::MetricPoint::new(0, 1.0),
+                                krabka_traceql::MetricPoint::new(10_000, 0.0),
+                            ],
                         )
                     })
                     .collect::<Vec<_>>()
@@ -3584,25 +3790,16 @@ mod tests {
             .search("tenant", "{ span.http.method = \"POST\" }", 0, 10_000, 10)
             .await
             .unwrap();
+        check!(resp.traces.len() == 1);
+        check!(resp.traces[0].trace_id == [1; 16]);
         check!(
-            resp.traces
-                .iter()
-                .map(|trace| {
-                    (
-                        trace.trace_id,
-                        trace.span_sets[0].spans[0].attributes.clone(),
-                    )
-                })
-                .collect::<Vec<_>>()
-                == vec![(
-                    [1; 16],
-                    vec![(
-                        "http.method".into(),
-                        AttrValue::Array(vec![
-                            AttrValue::Str("GET".into()),
-                            AttrValue::Str("POST".into()),
-                        ]),
-                    )],
+            resp.traces[0].span_sets[0].spans[0].attributes
+                == vec![Attribute::new(
+                    "http.method",
+                    AttrValue::Array(vec![
+                        AttrValue::Str("GET".into()),
+                        AttrValue::Str("POST".into()),
+                    ]),
                 )]
         );
 
@@ -3673,18 +3870,15 @@ mod tests {
                 .unwrap();
         let restored = reader.next().unwrap().unwrap();
         let expected = vec![
-            ("scalar".into(), AttrValue::Int(1)),
-            (
-                "singleton".into(),
-                AttrValue::Array(vec![AttrValue::Int(1)]),
-            ),
-            ("empty".into(), AttrValue::Array(vec![])),
-            (
-                "many".into(),
+            Attribute::new("scalar", AttrValue::Int(1)),
+            Attribute::new("singleton", AttrValue::Array(vec![AttrValue::Int(1)])),
+            Attribute::new("empty", AttrValue::Array(vec![])),
+            Attribute::new(
+                "many",
                 AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
             ),
-            (
-                "opaque".into(),
+            Attribute::new(
+                "opaque",
                 AttrValue::Unsupported(
                     r#"{"arrayValue":{"values":[{"intValue":"1"},{"stringValue":"x"}]}}"#.into(),
                 ),
@@ -3693,7 +3887,7 @@ mod tests {
         assert2::assert!(event_values(&restored, 0).unwrap()[0].attributes == expected);
         assert2::assert!(link_values(&restored, 0).unwrap()[0].attributes == expected);
         let mut wrong = expected.clone();
-        wrong[1].1 = AttrValue::Int(1);
+        wrong[1].value = AttrValue::Int(1);
         assert2::assert!(event_values(&restored, 0).unwrap()[0].attributes != wrong);
     }
 

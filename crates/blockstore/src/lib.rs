@@ -25,12 +25,14 @@ mod log_blockstore;
 #[cfg(test)]
 mod log_line_schema;
 mod lower_hex;
+mod map_array_string_entries;
 mod matcher;
 mod merge;
 mod metrics;
 mod nested_set;
 mod object_store_provider;
 mod object_store_semantics;
+mod offset_range;
 mod path_escape;
 mod persisted_format;
 mod profile_block;
@@ -44,12 +46,14 @@ mod span_id;
 mod span_schema;
 mod storage_audit;
 mod store;
+mod take_complete_batch;
 mod tenant;
 mod trace_index;
 mod writer;
 
 pub use block::{
-    BlockMeta, COL_FINGERPRINT, COL_TIMESTAMP, validate_against, validate_block_schema,
+    BlockMeta, BlockTimeBounds, COL_FINGERPRINT, COL_TIMESTAMP, validate_against,
+    validate_block_schema,
 };
 pub use block_index::{BlockIndex, BlockSchema, RequiredColumn, series_block_schema};
 pub use bloom::{ShardedTraceBloom, fnv1_32};
@@ -60,9 +64,11 @@ pub use compaction::{
 };
 pub use erasure::{
     ByteLabelMatcher, ERASURE_REQUEST_PREFIX, ErasureRequest, has_erasure_requests,
-    list_erasure_requests, put_erasure_request,
+    list_erasure_requests, map_byte_matcher_sets, put_erasure_request,
 };
-pub use error::{BlockReadFailure, BlockSkipReason, BlockStoreError, Result, SkippedBlock};
+pub use error::{
+    BlockReadFailure, BlockSkipReason, BlockStoreError, Result, SkippedBlock, UnreadableBlock,
+};
 pub use index::{
     DEFAULT_INDEX_SHARD_WIDTH, Index, IndexShardRange, MAX_INDEX_SHARDS_PER_TENANT,
     MAX_INDEX_SNAPSHOT_BYTES, index_shard_object_key, index_shard_tenant_prefix,
@@ -73,7 +79,9 @@ pub use index_snapshot::{
     IndexSnapshotRetain, TenantSnapshotRangeRead, index_snapshot_prefix_for_key,
     list_index_object_keys,
 };
-pub use labels::{Labels, SeriesFingerprint};
+pub use labels::{
+    LabelPair, LabelPairRef, Labels, LabelsIntoIter, LabelsIter, SeriesFingerprint, SeriesLabels,
+};
 pub use lifecycle::{
     BlockDeletion, BlockDeletionFailure, BlockDeletionReport, BlockTimestampUnit,
     DEFAULT_BLOCK_SWEEP_GRACE, ExpiredBlock, LifecycleError, OrphanSweepStats, RetentionWindows,
@@ -83,9 +91,9 @@ pub use lifecycle::{
 // (traces/shared) abstractions above are re-exported under `Log*` names.
 pub use log_blockstore::{
     BlockDescriptor, BlockIndex as LogBlockIndex, BlockKey, BlockStoreError as LogBlockStoreError,
-    LabelIndex, LabelPredicate, Labels as LogLabels, LogBlockTableProvider, LogRow,
+    LabelIndex, LabelPredicate, Labels as LogLabels, LogBlockTableProvider, LogIndexes, LogRow,
     MatchOp as LogMatchOp, SeriesFingerprint as LogSeriesFingerprint, StructuredMetadata,
-    TimeRange, block_path, delete_tenant_log_index_shard_from_object_store, labels,
+    TenantSeries, TimeRange, block_path, delete_tenant_log_index_shard_from_object_store, labels,
     list_tenant_log_index_shard_ranges_from_object_store,
     list_tenant_log_index_shard_ranges_overlapping_query_from_object_store, log_block_object_path,
     log_index_manifest_object_path, log_index_manifest_path, log_tenant_index_manifest_object_path,
@@ -106,12 +114,13 @@ pub use log_blockstore::{
     write_tenant_log_index_shard_to_object_store, write_tenant_log_index_shards_to_object_store,
 };
 pub use lower_hex::encode_lower_hex;
+pub use map_array_string_entries::{StringMapEntry, map_array_string_entries};
 pub use matcher::{
     LabelMatcher, MatchOp, QUERY_SHARD_LABEL, QueryShardSelector, parse_query_shard_selector,
 };
 pub use merge::{
-    BlockBatchStream, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, SortedMerge, open_block_stream,
-    versioned_compaction_key,
+    BlockBatchStream, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, OpenBlockStream, SortedMerge,
+    open_block_stream, versioned_compaction_key,
 };
 pub use metrics::{
     MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreOperationLabel,
@@ -123,12 +132,15 @@ pub use object_store_semantics::{
     ObjectStoreCapabilities, ObjectStoreSemanticsError, verify_object_store_access,
     verify_object_store_read_access, verify_object_store_semantics,
 };
+pub use offset_range::OffsetRange;
 pub use path_escape::{escape_object_path_segment, unescape_object_path_segment};
 pub use persisted_format::{
     PERSISTED_BLOCK_FORMAT_KEY, PERSISTED_BLOCK_FORMAT_VERSION, validate_persisted_block_format,
 };
 pub use profile_block::{ProfileSampleRow, encode_profile_samples};
-pub use profile_index::{LABEL_PROFILE_TYPE, MAX_PROFILE_INDEX_SNAPSHOT_BYTES, ProfileIndex};
+pub use profile_index::{
+    LABEL_PROFILE_TYPE, MAX_PROFILE_INDEX_SNAPSHOT_BYTES, ProfileBlockRegistration, ProfileIndex,
+};
 pub use profile_schema::{
     PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION,
     PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, PCOL_WAL_SAMPLE_IDS, profile_samples_decl,
@@ -175,7 +187,8 @@ pub use storage_audit::{
     StorageAuditReport, StorageAuditScope, StorageFinding, StorageFindingKind,
     StorageFindingSeverity, StorageSignal, audit_store, repair_store,
 };
-pub use store::{BlockScan, BlockStore, ScanReport, ScanTableRequest};
+pub use store::{BlockScan, BlockStore, RegisteredTable, ScanReport, ScanTableRequest};
+pub use take_complete_batch::take_complete_batch;
 pub use tenant::{
     ANONYMOUS_TENANT, MAX_TENANT_ID_LEN, TENANT_HEADER, TenantId, TenantIdError, TenantPolicy,
     TenantResolveError,

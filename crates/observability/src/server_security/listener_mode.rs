@@ -3,6 +3,11 @@ use tokio_util::sync::DropGuard;
 
 use super::{PeerAddr, ServerStream};
 
+pub(super) struct HandshakenConnection {
+    pub(super) stream: ServerStream,
+    pub(super) peer: PeerAddr,
+}
+
 /// How a [`ServerListener`](super::ServerListener) gets its next connection.
 #[derive(Debug)]
 pub enum ListenerMode {
@@ -14,7 +19,7 @@ pub enum ListenerMode {
     /// `_stop` cancels that task, which closes the socket and aborts every
     /// handshake still in progress.
     Tls {
-        handshaken: mpsc::Receiver<(ServerStream, PeerAddr)>,
+        handshaken: mpsc::Receiver<HandshakenConnection>,
         _stop: DropGuard,
     },
 }

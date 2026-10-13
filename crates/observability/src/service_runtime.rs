@@ -5,7 +5,7 @@ use crate::{
     Role, RoleReadiness, Router, ServiceAudit, ServiceConfig, ServiceConfigError,
     ServiceDependencies, ServiceMetrics, ServiceRuntimeError, SharedLogDeleteRequests,
     SharedLokiRules, StagedDrain, SupervisedTasks, SwappableQueryAuthorizer, TcpListener,
-    audit::{AuditHandle, AuditService, krabka_product},
+    audit::{AuditHandle, AuditService, AuditServiceParts, krabka_product},
     build_configured_object_store, build_configured_querier_state,
     build_querier_state_with_overrides, compactor_delete_requests_for_config,
     compactor_router_with_delete_requests, delete_request_routes, distributor_push_routes,
@@ -32,7 +32,24 @@ mod serve_service;
 mod serve_service_listener;
 mod service_audit_for_config;
 mod shutdown_signal;
+mod start_audited_runtime_security;
 mod start_runtime_security;
+
+pub(crate) struct BackgroundTask {
+    pub(crate) name: &'static str,
+    pub(crate) handle: JoinHandle<()>,
+}
+
+pub(crate) struct ServiceRouter {
+    pub(crate) router: Router,
+    pub(crate) background_tasks: Vec<BackgroundTask>,
+}
+
+impl BackgroundTask {
+    pub(crate) fn new(name: &'static str, handle: JoinHandle<()>) -> Self {
+        Self { name, handle }
+    }
+}
 
 pub(crate) use all_in_one_router::all_in_one_router;
 pub use build_service_router::build_service_router;
@@ -49,4 +66,5 @@ pub use serve_service::serve_service;
 pub use serve_service_listener::serve_service_listener;
 pub(crate) use service_audit_for_config::service_audit_for_config;
 pub use shutdown_signal::shutdown_signal;
+pub(crate) use start_audited_runtime_security::start_audited_runtime_security;
 pub(crate) use start_runtime_security::start_runtime_security;

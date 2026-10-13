@@ -5,8 +5,13 @@ use std::{
 
 use super::{HashMap, ObjectSymbolResolver};
 
+struct ArtifactCacheEntry {
+    resolver: Option<ObjectSymbolResolver>,
+    inserted: Instant,
+}
+
 pub(crate) struct ArtifactCache {
-    entries: HashMap<String, (Option<ObjectSymbolResolver>, Instant)>,
+    entries: HashMap<String, ArtifactCacheEntry>,
     order: VecDeque<String>,
     bytes: usize,
     max_bytes: usize,
@@ -27,14 +32,14 @@ impl ArtifactCache {
     // The outer option is a cache miss; the inner one is a cached failed lookup.
     #[allow(clippy::option_option)]
     pub(crate) fn get(&mut self, key: &str) -> Option<Option<ObjectSymbolResolver>> {
-        let expired = self.entries.get(key).is_some_and(|(resolver, inserted)| {
-            resolver.is_none() && inserted.elapsed() >= self.negative_ttl
+        let expired = self.entries.get(key).is_some_and(|entry| {
+            entry.resolver.is_none() && entry.inserted.elapsed() >= self.negative_ttl
         });
         if expired {
             self.remove(key);
             return None;
         }
-        let value = self.entries.get(key)?.0.clone();
+        let value = self.entries.get(key)?.resolver.clone();
         self.order.retain(|candidate| candidate != key);
         self.order.push_back(key.to_string());
         Some(value)
@@ -57,7 +62,13 @@ impl ArtifactCache {
         }
         self.bytes = self.bytes.saturating_add(size);
         self.order.push_back(key.clone());
-        self.entries.insert(key, (resolver, Instant::now()));
+        self.entries.insert(
+            key,
+            ArtifactCacheEntry {
+                resolver,
+                inserted: Instant::now(),
+            },
+        );
     }
 
     fn remove(&mut self, key: &str) {
@@ -66,9 +77,10 @@ impl ArtifactCache {
     }
 
     fn remove_entry(&mut self, key: &str) {
-        if let Some((resolver, _)) = self.entries.remove(key) {
+        if let Some(entry) = self.entries.remove(key) {
             let size = key.len()
-                + resolver
+                + entry
+                    .resolver
                     .as_ref()
                     .map_or(0, ObjectSymbolResolver::artifact_size);
             self.bytes = self.bytes.saturating_sub(size);

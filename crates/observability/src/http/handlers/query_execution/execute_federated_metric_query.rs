@@ -2,9 +2,9 @@ use num_traits::ToPrimitive as _;
 
 use super::{apply_grouped_metric_selection, apply_nested_vector_aggregation};
 use crate::{
-    HttpMetricQuery, HttpQueryError, Labels, PipelineStage, QuerierState, QueryKind,
-    RangeAggregation, TimeRange, Value, VectorAggregationOp, add_loki_query_stats,
-    default_metric_range_step, eval_times,
+    FormattedMetricSeriesEntry, HttpMetricQuery, HttpQueryError, Labels, PipelineStage,
+    QuerierState, QueryKind, RangeAggregation, TimeRange, Value, VectorAggregationOp,
+    add_loki_query_stats, default_metric_range_step, eval_times,
     http::params_format::aggregation_formatting::apply_approx_metric_selection,
     json, loki_matrix_response, loki_vector_response_from_matrix, merge_loki_query_response,
     metric_scan_range,
@@ -44,7 +44,8 @@ pub(crate) async fn execute_federated_metric_query(
         "resultType":if matches!(kind, QueryKind::Instant) { "vector" } else { "matrix" },"result":[]
     }}));
     for tenant in tenants.iter() {
-        let tenant_labels = Labels::from([("__tenant_id__".into(), tenant.as_str().into())]);
+        let mut tenant_labels = Labels::new();
+        tenant_labels.insert("__tenant_id__".into(), tenant.as_str().into());
         if !query
             .stream
             .matchers
@@ -207,7 +208,10 @@ fn apply_federated_absence(response: &mut Value, labels: Labels, evaluation: Fed
     let mut value = loki_matrix_response(if points.is_empty() {
         Vec::new()
     } else {
-        vec![(labels, points)]
+        vec![FormattedMetricSeriesEntry {
+            labels,
+            values: points,
+        }]
     });
     if matches!(kind, QueryKind::Instant) {
         value = loki_vector_response_from_matrix(value);

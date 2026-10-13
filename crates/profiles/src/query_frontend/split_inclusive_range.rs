@@ -1,4 +1,5 @@
 use super::{ProfileError, Time, TimeExt};
+use crate::query::QueryRange;
 
 ///
 /// # Errors
@@ -7,7 +8,7 @@ pub fn split_inclusive_range(
     start_ms: i64,
     end_ms: i64,
     shard_width: Time,
-) -> Result<Vec<(i64, i64)>, ProfileError> {
+) -> Result<Vec<QueryRange>, ProfileError> {
     // The bounds are epoch-millisecond instants and the shard width is an
     // extent, so the width converts once here and the walk stays exact integer
     // arithmetic on instants.
@@ -27,7 +28,7 @@ pub fn split_inclusive_range(
     let mut current = start_ms;
     while current <= end_ms {
         let shard_end = current.saturating_add(shard_width_ms - 1).min(end_ms);
-        shards.push((current, shard_end));
+        shards.push(QueryRange::new(current, shard_end));
         let Some(next) = shard_end.checked_add(1) else {
             break;
         };

@@ -46,6 +46,21 @@ mod tests {
         },
     };
 
+    struct TenantCountCase {
+        tenant: &'static str,
+        expected: u64,
+    }
+
+    struct RequestTimingCase {
+        outcome: RequestOutcome,
+        elapsed: Time,
+    }
+
+    struct RouteStatusCase {
+        status: &'static str,
+        expected: u64,
+    }
+
     fn tenant(id: &str) -> TenantId {
         TenantId::new(id).expect("a valid tenant id")
     }
@@ -129,14 +144,23 @@ mod tests {
         m.record_block_flushed();
         m.record_block_flushed();
 
-        for (tenant, want) in [("tenant-a", 5), ("tenant-b", 4)] {
+        for case in [
+            TenantCountCase {
+                tenant: "tenant-a",
+                expected: 5,
+            },
+            TenantCountCase {
+                tenant: "tenant-b",
+                expected: 4,
+            },
+        ] {
             check!(
                 m.ingest_spans
                     .get_or_create(&TenantLabel {
-                        tenant: tenant.into()
+                        tenant: case.tenant.into()
                     })
                     .get()
-                    == want
+                    == case.expected
             );
         }
         assert!(m.blocks_flushed.get() == 2);
@@ -147,26 +171,41 @@ mod tests {
     #[test]
     fn query_counters_split_by_route_and_status() {
         let m = ServiceMetrics::new();
-        for (outcome, elapsed) in [
-            (RequestOutcome::Ok, millis(10)),
-            (RequestOutcome::Error, millis(30)),
+        for case in [
+            RequestTimingCase {
+                outcome: RequestOutcome::Ok,
+                elapsed: millis(10),
+            },
+            RequestTimingCase {
+                outcome: RequestOutcome::Error,
+                elapsed: millis(30),
+            },
         ] {
             m.record_query(QueryRequest {
                 route: "search",
-                outcome,
-                elapsed,
+                outcome: case.outcome,
+                elapsed: case.elapsed,
             });
         }
-        for (status, want) in [("ok", 1), ("error", 1)] {
+        for case in [
+            RouteStatusCase {
+                status: "ok",
+                expected: 1,
+            },
+            RouteStatusCase {
+                status: "error",
+                expected: 1,
+            },
+        ] {
             check!(
                 m.query
                     .requests
                     .get_or_create(&RouteStatusLabel {
                         route: "search".into(),
-                        status: status.into()
+                        status: case.status.into()
                     })
                     .get()
-                    == want
+                    == case.expected
             );
         }
     }

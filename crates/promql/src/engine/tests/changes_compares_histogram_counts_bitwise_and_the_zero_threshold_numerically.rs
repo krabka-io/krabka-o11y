@@ -14,7 +14,11 @@ use super::*;
 /// stays, and a NaN that repeats does not change again.
 #[tokio::test]
 pub(crate) async fn changes_compares_histogram_counts_bitwise_and_the_zero_threshold_numerically() {
-    type Case = (&'static str, fn(&mut NativeHistogram), f64);
+    struct ChangeCase {
+        name: &'static str,
+        mutate: fn(&mut NativeHistogram),
+        expected: f64,
+    }
 
     let base = || {
         let mut histogram = native_histogram(0.0, 0.0);
@@ -26,47 +30,56 @@ pub(crate) async fn changes_compares_histogram_counts_bitwise_and_the_zero_thres
         histogram
     };
 
-    let cases: [Case; 6] = [
-        (
-            "an observation count that flips to -0",
-            |h| h.count = -0.0,
-            1.0,
-        ),
-        ("a sum that flips to -0", |h| h.sum = -0.0, 1.0),
-        (
-            "a zero count that flips to -0",
-            |h| h.zero_count = -0.0,
-            1.0,
-        ),
-        (
-            "a bucket count that flips to -0",
-            |h| h.positive_counts = vec![-0.0],
-            1.0,
-        ),
+    let cases = [
+        ChangeCase {
+            name: "an observation count that flips to -0",
+            mutate: |histogram| histogram.count = -0.0,
+            expected: 1.0,
+        },
+        ChangeCase {
+            name: "a sum that flips to -0",
+            mutate: |histogram| histogram.sum = -0.0,
+            expected: 1.0,
+        },
+        ChangeCase {
+            name: "a zero count that flips to -0",
+            mutate: |histogram| histogram.zero_count = -0.0,
+            expected: 1.0,
+        },
+        ChangeCase {
+            name: "a bucket count that flips to -0",
+            mutate: |histogram| histogram.positive_counts = vec![-0.0],
+            expected: 1.0,
+        },
         // A NaN is bitwise equal to itself, so the repeat is not a change.
-        (
-            "a bucket count that becomes NaN and stays NaN",
-            |h| h.positive_counts = vec![f64::NAN],
-            1.0,
-        ),
+        ChangeCase {
+            name: "a bucket count that becomes NaN and stays NaN",
+            mutate: |histogram| histogram.positive_counts = vec![f64::NAN],
+            expected: 1.0,
+        },
         // The threshold is the one float compared numerically, so this moves
         // nothing at all.
-        (
-            "a zero threshold that flips to -0",
-            |h| h.zero_threshold = -0.0,
-            0.0,
-        ),
+        ChangeCase {
+            name: "a zero threshold that flips to -0",
+            mutate: |histogram| histogram.zero_threshold = -0.0,
+            expected: 0.0,
+        },
     ];
 
-    for (name, mutate, expected) in cases {
+    for case in cases {
         let mut moved = base();
-        mutate(&mut moved);
+        (case.mutate)(&mut moved);
         let mut store = InMemoryMetricStore::new();
-        store.push_histogram("tenant-a", labels(&[("__name__", "h")]), 10_000, base());
+        store.push_histogram(
+            "tenant-a",
+            labels(&[crate::test_support::TestLabelPair::new("__name__", "h")]),
+            10_000,
+            base(),
+        );
         for timestamp in [20_000, 30_000] {
             store.push_histogram(
                 "tenant-a",
-                labels(&[("__name__", "h")]),
+                labels(&[crate::test_support::TestLabelPair::new("__name__", "h")]),
                 timestamp,
                 moved.clone(),
             );
@@ -86,8 +99,9 @@ pub(crate) async fn changes_compares_histogram_counts_bitwise_and_the_zero_thres
                 .iter()
                 .map(|sample| float_value(&sample.value))
                 .collect::<Vec<_>>()
-                == vec![expected],
-            "{name}"
+                == vec![case.expected],
+            "{}",
+            case.name
         );
     }
 }

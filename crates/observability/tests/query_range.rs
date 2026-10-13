@@ -272,7 +272,9 @@ async fn query_range_endpoint_applies_scalar_metric_query_arithmetic() {
 
 #[tokio::test]
 async fn metric_query_endpoint_populates_loki_stats_from_planned_cold_blocks() {
-    let (app, expected_block_bytes) = api_seconds_block_app();
+    let api_fixture = api_seconds_block_app();
+    let app = api_fixture.router;
+    let expected_block_bytes = api_fixture.block_bytes;
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019").await;
 
@@ -289,7 +291,10 @@ async fn metric_query_endpoint_splits_stats_for_cold_blocks_and_hot_tail_samples
     hot_tail
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "dev")]),
+            labels: labels([
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("env", "dev"),
+            ]),
             timestamp_ns: 20_000_000_000,
             line: "api hot error".to_string(),
             structured_metadata: BTreeMap::new(),
@@ -366,9 +371,25 @@ async fn query_range_endpoint_returns_streams_as_parquet_when_requested() {
         .as_any()
         .downcast_ref::<StringArray>()
         .unwrap();
-    for (index, expected_key, expected_value) in [(0, "app", "api"), (1, "env", "prod")] {
-        check!(keys.value(index) == expected_key);
-        check!(values.value(index) == expected_value);
+    struct ExpectedLabel {
+        index: usize,
+        key: &'static str,
+        value: &'static str,
+    }
+    for label in [
+        ExpectedLabel {
+            index: 0,
+            key: "app",
+            value: "api",
+        },
+        ExpectedLabel {
+            index: 1,
+            key: "env",
+            value: "prod",
+        },
+    ] {
+        check!(keys.value(label.index) == label.key);
+        check!(values.value(label.index) == label.value);
     }
     let lines = batch
         .column(2)
@@ -411,7 +432,10 @@ async fn query_range_endpoint_ignores_zero_quality_parquet_accept() {
 
 #[tokio::test]
 async fn query_range_metric_endpoint_fans_out_pipe_separated_tenant_header() {
-    let (state, prod_bytes, stage_bytes) = multi_tenant_fixture();
+    let fixture = multi_tenant_fixture();
+    let state = fixture.state;
+    let prod_bytes = fixture.prod_block_bytes;
+    let stage_bytes = fixture.stage_block_bytes;
     let app = loki_router(state);
 
     let response = Tenant("tenant-a|tenant-b").get(&app, "/loki/api/v1/query_range?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&start=0.000000029&end=0.000000029&step=1ns").await;
@@ -461,8 +485,22 @@ async fn query_range_endpoint_returns_metrics_as_parquet_when_requested() {
 
     assert!(batch.num_rows() == 3);
     let timestamps = check_parquet_schema(&batch, "value", &DataType::Float64);
-    for (index, want) in [(0, 0), (1, 10), (2, 20)] {
-        check!(timestamps.value(index) == want);
+    struct ExpectedTimestamp {
+        index: usize,
+        value: i64,
+    }
+    for expected in [
+        ExpectedTimestamp { index: 0, value: 0 },
+        ExpectedTimestamp {
+            index: 1,
+            value: 10,
+        },
+        ExpectedTimestamp {
+            index: 2,
+            value: 20,
+        },
+    ] {
+        check!(timestamps.value(expected.index) == expected.value);
     }
     let labels = batch.column(1).as_any().downcast_ref::<MapArray>().unwrap();
     assert!(labels.value_offsets() == &[0, 0, 0, 0]);
@@ -480,7 +518,13 @@ async fn query_range_endpoint_returns_metrics_as_parquet_when_requested() {
 async fn query_range_endpoint_logfmt_sanitizes_ansi_prefixed_field_names() {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     let mut block_index = BlockIndex::default();
     let block = write_log_block(
         &dir,
@@ -881,7 +925,10 @@ async fn query_range_endpoint_accepts_vector_bool_comparison_expression() {
 async fn query_range_endpoint_returns_metric_timestamps_as_unix_seconds_numbers() {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let api_block = write_log_block(
         &dir,
         &BlockKey::new(

@@ -7,8 +7,8 @@ pub(crate) fn tree_to_pprof(
     limits: LegacyDecodeLimits,
 ) -> Result<PprofProfile, ProfilesError> {
     let mut pos = 0;
-    let mut pending = vec![Vec::<(String, i32)>::new()];
-    let mut stacks = BTreeMap::<Vec<(String, i32)>, i64>::new();
+    let mut pending = vec![Vec::<super::LegacyStackFrame>::new()];
+    let mut stacks = BTreeMap::<Vec<super::LegacyStackFrame>, i64>::new();
     let mut node_count = 0_usize;
     let mut path_bytes = 0_usize;
 
@@ -51,7 +51,10 @@ pub(crate) fn tree_to_pprof(
 
         let mut path = parent_path;
         if !name.is_empty() {
-            path.push((name.to_string(), 0));
+            path.push(super::LegacyStackFrame {
+                name: name.to_string(),
+                line: 0,
+            });
         }
         if self_value > 0 && !path.is_empty() {
             let value = i64::try_from(self_value).map_err(|err| {
@@ -67,7 +70,7 @@ pub(crate) fn tree_to_pprof(
             // beyond the cap.
             let per_child_bytes = path
                 .iter()
-                .map(|(frame, _)| frame.len())
+                .map(|frame| frame.name.len())
                 .fold(0_usize, usize::saturating_add);
             let added = per_child_bytes.saturating_mul(children_len);
             path_bytes = path_bytes.saturating_add(added);

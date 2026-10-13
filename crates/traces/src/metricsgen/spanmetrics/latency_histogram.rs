@@ -1,4 +1,4 @@
-use super::NS_PER_SEC;
+use super::{HistogramBucket, HistogramSummary, NS_PER_SEC};
 
 #[derive(Clone, Debug)]
 pub(crate) struct LatencyHistogram {
@@ -29,18 +29,27 @@ impl LatencyHistogram {
         self.count += weight;
     }
 
-    pub(crate) fn cumulative_seconds(&self) -> (Vec<(f64, f64)>, f64, f64) {
+    pub(crate) fn cumulative_seconds(&self) -> HistogramSummary {
         let mut cumulative = 0.0;
         let buckets = self
             .bucket_edges_ns
             .iter()
             .enumerate()
-            .map(|(i, edge_ns)| {
+            .map(|indexed_edge| {
+                let i = indexed_edge.0;
+                let edge_ns = indexed_edge.1;
                 cumulative += self.bucket_counts[i];
-                (*edge_ns / NS_PER_SEC, cumulative)
+                HistogramBucket {
+                    upper_bound: *edge_ns / NS_PER_SEC,
+                    cumulative_count: cumulative,
+                }
             })
             .collect();
 
-        (buckets, self.sum_ns / NS_PER_SEC, self.count)
+        HistogramSummary {
+            buckets,
+            sum: self.sum_ns / NS_PER_SEC,
+            count: self.count,
+        }
     }
 }

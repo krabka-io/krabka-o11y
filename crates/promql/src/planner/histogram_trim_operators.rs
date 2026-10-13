@@ -14,7 +14,12 @@ use super::skip_literal_or_comment;
 pub(crate) const HISTOGRAM_TRIM_UPPER: u16 = u16::MAX;
 pub(crate) const HISTOGRAM_TRIM_LOWER: u16 = u16::MAX - 1;
 
-pub(crate) fn normalize_histogram_trim(query: &str) -> (String, VecDeque<u16>) {
+pub(crate) struct NormalizedHistogramTrim {
+    pub(crate) query: String,
+    pub(crate) operators: VecDeque<u16>,
+}
+
+pub(crate) fn normalize_histogram_trim(query: &str) -> NormalizedHistogramTrim {
     let mut bytes = query.as_bytes().to_vec();
     let mut operators = VecDeque::new();
     let mut bool_positions = Vec::new();
@@ -50,7 +55,10 @@ pub(crate) fn normalize_histogram_trim(query: &str) -> (String, VecDeque<u16>) {
     for position in bool_positions.into_iter().rev() {
         normalized.insert_str(position, " bool ");
     }
-    (normalized, operators)
+    NormalizedHistogramTrim {
+        query: normalized,
+        operators,
+    }
 }
 
 pub(crate) fn restore_histogram_trim(expr: &mut Expr, operators: &mut VecDeque<u16>) {
@@ -99,8 +107,9 @@ mod tests {
 
     #[test]
     fn trim_preserves_precedence_and_does_not_rewrite_labels_or_comparisons() {
-        let (query, mut operators) =
-            normalize_histogram_trim(r#"histogram_count(h{label=">/"} </ 1 + 2) > 3"#);
+        let normalized = normalize_histogram_trim(r#"histogram_count(h{label=">/"} </ 1 + 2) > 3"#);
+        let mut operators = normalized.operators;
+        let query = normalized.query;
         let mut expr = parse(&query).unwrap();
         restore_histogram_trim(&mut expr, &mut operators);
         let Expr::Binary(outer) = expr else {

@@ -10,7 +10,7 @@ use krabka_units::{Time, convert::TimeExt};
 
 use crate::{
     engine::bytes_to_hex,
-    result::{AttrValue, EventRef, LinkRef, SpanRef},
+    result::{AttrValue, EventRef, LinkRef, SpanRef, TypedValue},
     span_columns::InputSpan,
     store::{MatchCmp, MatchScope, MatchValue, SpanMatcher},
 };

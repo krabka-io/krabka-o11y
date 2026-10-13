@@ -36,9 +36,9 @@ mod telemetry;
 #[cfg(test)]
 mod tests;
 
-pub use init_telemetry::init_telemetry;
+pub use init_telemetry::{TelemetryStartup, init_telemetry};
 pub use install_json_logging::install_json_logging;
-pub use json_logging_layer::json_logging_layer;
+pub use json_logging_layer::{JsonLoggingLayer, json_logging_layer};
 pub use log_level_control::LogLevelControl;
 pub use log_level_error::LogLevelError;
 pub use telemetry::Telemetry;

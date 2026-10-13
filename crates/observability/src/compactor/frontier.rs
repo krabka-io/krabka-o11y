@@ -37,7 +37,10 @@ mod write_compaction_frontier_to_object_store;
 pub use compact_kafka_wal_records_to_object_store::compact_kafka_wal_records_to_object_store;
 pub use compact_next_kafka_wal_batch_to_object_store::compact_next_kafka_wal_batch_to_object_store;
 pub use compact_wal_records_to_object_store::compact_wal_records_to_object_store;
-pub(crate) use compact_wal_records_to_object_store_with_delete_filters_and_index_output::compact_wal_records_to_object_store_with_delete_filters_and_index_output;
+pub(crate) use compact_wal_records_to_object_store_with_delete_filters_and_index_output::{
+    CompactionWriteOptions,
+    compact_wal_records_to_object_store_with_delete_filters_and_index_output,
+};
 pub use compaction_frontier::CompactionFrontier;
 pub(crate) use compaction_frontier_manifest::CompactionFrontierManifest;
 pub(crate) use compaction_frontier_manifest_object_path::compaction_frontier_manifest_object_path;

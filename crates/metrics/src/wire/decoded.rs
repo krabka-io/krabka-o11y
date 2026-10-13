@@ -10,29 +10,26 @@ use crate::NativeHistogram;
 mod tests {
     use crate::wire::test_support::declared_length_bomb;
 
-    /// A decoded sample compares equal to a `(timestamp, value)` pair only
-    /// when it carries no start timestamp. Three conditions have to hold, so
-    /// each case below fails exactly one of them: with two failing at once,
-    /// joining them by `or` instead of `and` would still answer false and the
-    /// mutant would live.
     #[test]
-    fn a_sample_equals_a_pair_only_without_a_start_timestamp() {
+    fn a_sample_retains_timestamp_value_and_start_timestamp() {
         use super::DecodedSample;
 
         let sample = DecodedSample::new(100, 1.5);
-        check!(sample == (100, 1.5), "everything matches");
+        check!(sample.timestamp_ms == 100);
+        check!(sample.value == 1.5);
+        check!(sample.start_timestamp_ms.is_none());
 
         // Each condition failing on its own.
-        check!(!(sample == (101, 1.5)), "the timestamp differs");
-        check!(!(sample == (100, 2.5)), "the value differs");
+        check!(sample.timestamp_ms != 101, "the timestamp differs");
+        check!(sample.value != 2.5, "the value differs");
         let with_start = DecodedSample {
             timestamp_ms: 100,
             value: 1.5,
             start_timestamp_ms: Some(50),
         };
         check!(
-            !(with_start == (100, 1.5)),
-            "a start timestamp makes it a different thing from a bare pair"
+            with_start.start_timestamp_ms == Some(50),
+            "the start timestamp is retained"
         );
 
         // A start timestamp of zero is still a start timestamp, not an absence.
@@ -41,7 +38,7 @@ mod tests {
             value: 1.5,
             start_timestamp_ms: Some(0),
         };
-        check!(!(zero_start == (100, 1.5)));
+        check!(zero_start.start_timestamp_ms == Some(0));
     }
     use assert2::{assert, check};
 
@@ -135,7 +132,7 @@ mod wire_format;
 pub use decoded_exemplar::DecodedExemplar;
 pub use decoded_metadata::DecodedMetadata;
 pub use decoded_sample::DecodedSample;
-pub use decoded_series::DecodedSeries;
+pub use decoded_series::{DecodedHistogramSample, DecodedSeries};
 pub use negotiate::negotiate;
 use proto_param_value::proto_param_value;
 #[cfg_attr(test, mutants::skip)]

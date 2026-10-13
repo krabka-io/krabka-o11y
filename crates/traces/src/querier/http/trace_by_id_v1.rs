@@ -1,6 +1,6 @@
 use super::{
-    Path, QuerierRequest, Response, SpanStore, TraceByIdRequest, TraceEncoding, trace_by_id_inner,
-    trace_protobuf, wants_json,
+    Path, QuerierRequest, Response, SpanStore, TraceEncoding,
+    trace_by_id::trace_by_id_with_encoding, trace_protobuf, wants_json,
 };
 
 /// Tempo v1 trace-by-id, at `/api/traces/{id}`.
@@ -16,29 +16,10 @@ pub(crate) async fn trace_by_id_v1<S>(
 where
     S: SpanStore + 'static,
 {
-    let QuerierRequest {
-        state,
-        principal,
-        headers,
-        uri,
-    } = request;
-    let start = std::time::Instant::now();
-    let encoding = if wants_json(&headers) {
+    let encoding = if wants_json(&request.headers) {
         TraceEncoding::Json
     } else {
         TraceEncoding::Protobuf(trace_protobuf)
     };
-    let resp = trace_by_id_inner(
-        &state,
-        TraceByIdRequest {
-            principal: &principal,
-            headers,
-            trace_id,
-            uri,
-            encoding,
-        },
-    )
-    .await;
-    state.record_query("trace_by_id", resp.status(), start);
-    resp
+    trace_by_id_with_encoding(request, Path(trace_id), encoding).await
 }

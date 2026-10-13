@@ -6,19 +6,28 @@ pub(crate) async fn label_values_merges_cold_and_hot_series_metadata() {
     let mut hot = InMemoryMetricStore::new();
     cold.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         10_000,
         1.0,
     );
     hot.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "worker")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "worker"),
+        ]),
         20_000,
         2.0,
     );
     hot.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         30_000,
         3.0,
     );

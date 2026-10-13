@@ -78,7 +78,9 @@ pub async fn install_bundled_rule_groups(
     }
 
     let mut installed = Vec::with_capacity(file.groups.len());
-    for (index, group) in file.groups.iter().enumerate() {
+    for entry in file.groups.iter().enumerate() {
+        let index = entry.0;
+        let group = entry.1;
         let label = bundled_group_label(index, group);
         let body = serde_yaml::to_string(group).map_err(|source| BundledRulesError::Encode {
             group: label.clone(),

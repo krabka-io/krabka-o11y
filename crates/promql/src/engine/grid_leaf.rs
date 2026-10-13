@@ -59,6 +59,12 @@ struct GridFold<'a> {
     budget: usize,
 }
 
+struct GridFoldInputs {
+    plan_grid: StepGrid,
+    range: Time,
+    series: Vec<LabeledSeries>,
+}
+
 impl<S: MetricStore> PromqlEngine<S> {
     /// The memoized value of a bare instant-vector selector at `time_ms`.
     ///
@@ -72,20 +78,14 @@ impl<S: MetricStore> PromqlEngine<S> {
         selector: &VectorSelector,
         time_ms: i64,
     ) -> Result<Option<Vec<InstantSample>>> {
-        // Prometheus sample stats intentionally describe each evaluation step,
-        // independent of whole-grid execution optimizations.
-        if query_stats_enabled() {
-            return Ok(None);
-        }
         // An `@` modifier pins the evaluation instant, so the leaf is not a
         // function of the grid at all and the driver's per-step path — which
         // resolves the modifier itself — stays in charge.
-        if selector.at.is_some() {
-            return Ok(None);
-        }
-        let Some((cache, grid)) = active_step_grid(time_ms) else {
+        let Some(active_grid) = active_unpinned_step_grid(time_ms, selector.at.is_some()) else {
             return Ok(None);
         };
+        let cache = active_grid.cache;
+        let grid = active_grid.grid;
         let key = format!("selector\u{1}{selector}");
         let vectors = match leaf_lookup(&cache, &key, NO_PARAMETER) {
             LeafLookup::Declined => return Ok(None),
@@ -113,15 +113,11 @@ impl<S: MetricStore> PromqlEngine<S> {
         kind: RateUdfKind,
     ) -> Result<Option<Vec<InstantSample>>> {
         let MatrixSelectorAt { selector, time_ms } = at;
-        if query_stats_enabled() {
-            return Ok(None);
-        }
-        if selector.vs.at.is_some() {
-            return Ok(None);
-        }
-        let Some((cache, grid)) = active_step_grid(time_ms) else {
+        let Some(active_grid) = active_unpinned_step_grid(time_ms, selector.vs.at.is_some()) else {
             return Ok(None);
         };
+        let cache = active_grid.cache;
+        let grid = active_grid.grid;
         let key = format!("rate\u{1}{kind:?}\u{1}{selector}");
         let vectors = match leaf_lookup(&cache, &key, NO_PARAMETER) {
             LeafLookup::Declined => return Ok(None),
@@ -168,9 +164,11 @@ impl<S: MetricStore> PromqlEngine<S> {
         if selector.vs.at.is_some() {
             return Ok(None);
         }
-        let Some((cache, grid)) = active_step_grid(time_ms) else {
+        let Some(active_grid) = active_step_grid(time_ms) else {
             return Ok(None);
         };
+        let cache = active_grid.cache;
+        let grid = active_grid.grid;
         let key = format!("over_time\u{1}{family:?}\u{1}{selector}");
         let vectors = match leaf_lookup(&cache, &key, phi.to_bits()) {
             LeafLookup::Declined => return Ok(None),
@@ -247,7 +245,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         &self,
         tenant: &str,
         fold: GridFold<'_>,
-    ) -> Result<Option<(StepGrid, Time, Vec<LabeledSeries>)>> {
+    ) -> Result<Option<GridFoldInputs>> {
         let GridFold {
             selector,
             grid,
@@ -270,7 +268,11 @@ impl<S: MetricStore> PromqlEngine<S> {
         if over_budget(grid, series.len(), budget) {
             return Ok(None);
         }
-        Ok(Some((plan_grid, range, series)))
+        Ok(Some(GridFoldInputs {
+            plan_grid,
+            range,
+            series,
+        }))
     }
 
     /// Plans and executes a rate-family fold over the whole grid.
@@ -281,7 +283,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         kind: RateUdfKind,
     ) -> Result<Option<GridVectors>> {
         let grid = fold.grid;
-        let Some((plan_grid, range, series)) = self.range_fold_inputs(tenant, fold).await? else {
+        let Some(inputs) = self.range_fold_inputs(tenant, fold).await? else {
             return Ok(None);
         };
         let RateRangePlan {
@@ -289,16 +291,16 @@ impl<S: MetricStore> PromqlEngine<S> {
             plan,
             labels_by_fp,
         } = plan_rate_range_selector(
-            series,
+            inputs.series,
             RangeWindowGrid {
-                grid: plan_grid,
-                range,
+                grid: inputs.plan_grid,
+                range: inputs.range,
             },
             kind,
         )
         .await?;
         let batches = ctx.execute_logical_plan(plan).await?.collect().await?;
-        let steps = assemble_range_fold_grid(&batches, plan_grid, grid, RATE_VALUE_COLUMN)?;
+        let steps = assemble_range_fold_grid(&batches, inputs.plan_grid, grid, RATE_VALUE_COLUMN)?;
         if matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
             let result_fingerprints = steps
                 .iter()
@@ -327,7 +329,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         over_time: OverTimeFold,
     ) -> Result<Option<GridVectors>> {
         let grid = fold.grid;
-        let Some((plan_grid, range, series)) = self.range_fold_inputs(tenant, fold).await? else {
+        let Some(inputs) = self.range_fold_inputs(tenant, fold).await? else {
             return Ok(None);
         };
         let OverTimeRangePlan {
@@ -335,33 +337,32 @@ impl<S: MetricStore> PromqlEngine<S> {
             plan,
             labels_by_fp,
         } = plan_over_time_range_selector(
-            series,
+            inputs.series,
             RangeWindowGrid {
-                grid: plan_grid,
-                range,
+                grid: inputs.plan_grid,
+                range: inputs.range,
             },
             over_time,
         )
         .await?;
         let batches = ctx.execute_logical_plan(plan).await?.collect().await?;
-        let steps = assemble_range_fold_grid(&batches, plan_grid, grid, OVER_TIME_VALUE_COLUMN)?;
+        let steps =
+            assemble_range_fold_grid(&batches, inputs.plan_grid, grid, OVER_TIME_VALUE_COLUMN)?;
         // Only `last_over_time` preserves the metric name, as
         // `assemble_over_time_batches` decides for one step.
         let preserve_metric_name = matches!(over_time.family, OverTimeFamily::Last);
-        let labels_by_fp: BTreeMap<SeriesFingerprint, Labels> = labels_by_fp
-            .iter()
-            .map(|(fp, labels)| {
-                let labels = if preserve_metric_name {
-                    labels.clone()
-                } else {
-                    labels_without_metric_name(labels)
-                };
-                (*fp, labels)
-            })
-            .collect();
+        let mut normalized_labels = BTreeMap::new();
+        for entry in labels_by_fp.iter() {
+            let labels = if preserve_metric_name {
+                entry.1.clone()
+            } else {
+                labels_without_metric_name(entry.1)
+            };
+            normalized_labels.insert(*entry.0, labels);
+        }
         Ok(Some(GridVectors::new(
             grid,
-            labels_by_fp,
+            normalized_labels,
             steps,
             !preserve_metric_name,
         )))
@@ -372,15 +373,32 @@ impl<S: MetricStore> PromqlEngine<S> {
 ///
 /// An instant query has no memo at all, and a subquery's sub-step lands between
 /// the outer grid's instants. Both leave the caller on the per-step path.
-fn active_step_grid(time_ms: i64) -> Option<(StepVectorCache, StepGrid)> {
-    let (cache, grid) = RANGE_STEP_VECTORS
+struct ActiveStepGrid {
+    cache: StepVectorCache,
+    grid: StepGrid,
+}
+
+fn active_step_grid(time_ms: i64) -> Option<ActiveStepGrid> {
+    let active_grid = RANGE_STEP_VECTORS
         .try_with(|cache| {
             let grid = cache.lock().expect("range step vector cache poisoned").grid;
-            (Arc::clone(cache), grid)
+            ActiveStepGrid {
+                cache: Arc::clone(cache),
+                grid,
+            }
         })
         .ok()?;
-    grid.index_of(time_ms)?;
-    Some((cache, grid))
+    active_grid.grid.index_of(time_ms)?;
+    Some(active_grid)
+}
+
+fn active_unpinned_step_grid(time_ms: i64, pinned: bool) -> Option<ActiveStepGrid> {
+    // Prometheus sample stats describe each evaluation step regardless of the
+    // whole-grid optimization. A pinned instant is not a function of the grid.
+    if pinned || query_stats_enabled() {
+        return None;
+    }
+    active_step_grid(time_ms)
 }
 
 /// A leaf with no scalar parameter to distinguish one memo from another.

@@ -14,7 +14,7 @@ use stateright::{Model, Property};
 #[path = "support/bounded_model.rs"]
 mod bounded_model;
 
-use bounded_model::{ModelBounds, check_bounded_model};
+use bounded_model::{ModelBounds, apply_transition, check_bounded_model};
 
 const MAX_DEPTH: usize = 24;
 const MAX_STATES: usize = 100_000;
@@ -87,45 +87,46 @@ impl Model for StorageModel {
     }
 
     fn next_state(&self, last: &Self::State, action: Self::Action) -> Option<Self::State> {
-        let mut state = last.clone();
-        match action {
-            Action::Start if matches!(state.phase, Phase::Idle) => {
-                state.phase = Phase::Write(0);
+        apply_transition(last, |state| {
+            match action {
+                Action::Start if matches!(state.phase, Phase::Idle) => {
+                    state.phase = Phase::Write(0);
+                }
+                Action::Write => {
+                    let Phase::Write(partition) = state.phase else {
+                        return false;
+                    };
+                    state.saw_replay |= state.durable[partition];
+                    state.durable[partition] = true;
+                    state.phase = Phase::Publish(partition);
+                }
+                Action::Publish => {
+                    let Phase::Publish(partition) = state.phase else {
+                        return false;
+                    };
+                    state.published[partition] = true;
+                    state.phase = if partition + 1 == self.partitions {
+                        Phase::Commit
+                    } else {
+                        Phase::Write(partition + 1)
+                    };
+                }
+                Action::Commit if matches!(state.phase, Phase::Commit) => {
+                    state.committed.fill(true);
+                    state.phase = Phase::Idle;
+                }
+                Action::Fail if !matches!(state.phase, Phase::Idle) => {
+                    state.saw_failure = true;
+                    state.phase = Phase::Idle;
+                }
+                Action::Crash if !matches!(state.phase, Phase::Idle) => {
+                    state.saw_crash = true;
+                    state.phase = Phase::Idle;
+                }
+                Action::Start | Action::Commit | Action::Fail | Action::Crash => return false,
             }
-            Action::Write => {
-                let Phase::Write(partition) = state.phase else {
-                    return None;
-                };
-                state.saw_replay |= state.durable[partition];
-                state.durable[partition] = true;
-                state.phase = Phase::Publish(partition);
-            }
-            Action::Publish => {
-                let Phase::Publish(partition) = state.phase else {
-                    return None;
-                };
-                state.published[partition] = true;
-                state.phase = if partition + 1 == self.partitions {
-                    Phase::Commit
-                } else {
-                    Phase::Write(partition + 1)
-                };
-            }
-            Action::Commit if matches!(state.phase, Phase::Commit) => {
-                state.committed.fill(true);
-                state.phase = Phase::Idle;
-            }
-            Action::Fail if !matches!(state.phase, Phase::Idle) => {
-                state.saw_failure = true;
-                state.phase = Phase::Idle;
-            }
-            Action::Crash if !matches!(state.phase, Phase::Idle) => {
-                state.saw_crash = true;
-                state.phase = Phase::Idle;
-            }
-            Action::Start | Action::Commit | Action::Fail | Action::Crash => return None,
-        }
-        Some(state)
+            true
+        })
     }
 
     fn properties(&self) -> Vec<Property<Self>> {

@@ -41,8 +41,14 @@ fn mixed_rows(series: &ApiAndWorker) -> Vec<LogRow> {
 #[test]
 fn parquet_log_block_round_trips_rows_sorted_by_series_and_timestamp() {
     let dir = tempfile::tempdir().unwrap();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
-    let worker_labels = labels([("app", "worker"), ("env", "prod")]);
+    let api_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
+    let worker_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "worker"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let api = series_fingerprint(&api_labels);
     let worker = series_fingerprint(&worker_labels);
     let key = BlockKey::new("tenant-a", 3, 50, 55, TimeRange::new(10, 30).unwrap());
@@ -56,7 +62,11 @@ fn parquet_log_block_round_trips_rows_sorted_by_series_and_timestamp() {
 
     let rows = read_log_block(dir.path(), &key).unwrap();
     let mut expected = mixed_rows(&ApiAndWorker { api, worker });
-    expected.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
+    expected.sort_by(|left, right| {
+        left.series_fingerprint
+            .cmp(&right.series_fingerprint)
+            .then_with(|| left.timestamp_ns.cmp(&right.timestamp_ns))
+    });
 
     assert2::assert!(rows == expected);
 }
@@ -79,7 +89,10 @@ fn parquet_log_block_rejects_rows_outside_key_time_range() {
 #[test]
 fn parquet_log_block_writes_structured_metadata_as_arrow_map() {
     let dir = tempfile::tempdir().unwrap();
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
     let key = BlockKey::new("tenant-a", 0, 1, 1, TimeRange::new(10, 10).unwrap());
 
     write_log_block(
@@ -142,8 +155,14 @@ async fn parquet_log_block_round_trips_through_object_store() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("blocks");
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
-    let worker = series_fingerprint(&labels([("app", "worker"), ("env", "prod")]));
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
+    let worker = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "worker"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
     let key = BlockKey::new("tenant-a", 3, 50, 55, TimeRange::new(10, 30).unwrap());
 
     let descriptor = write_log_block_to_object_store(
@@ -163,7 +182,11 @@ async fn parquet_log_block_round_trips_through_object_store() {
         .await
         .unwrap();
     let mut expected = mixed_rows(&ApiAndWorker { api, worker });
-    expected.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
+    expected.sort_by(|left, right| {
+        left.series_fingerprint
+            .cmp(&right.series_fingerprint)
+            .then_with(|| left.timestamp_ns.cmp(&right.timestamp_ns))
+    });
 
     assert2::assert!(rows == expected);
 }

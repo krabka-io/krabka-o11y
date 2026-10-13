@@ -37,9 +37,9 @@ pub fn encode_exemplar_rows(rows: &[ExemplarRow]) -> Result<RecordBatch, Histogr
             Some(span_id) => span_ids.append_value(span_id),
             None => span_ids.append_null(),
         }
-        for (name, value) in &row.labels {
-            labels.keys().append_value(name);
-            labels.values().append_value(value);
+        for pair in &row.labels {
+            labels.keys().append_value(&pair.name);
+            labels.values().append_value(&pair.value);
         }
         labels.append(true)?;
     }

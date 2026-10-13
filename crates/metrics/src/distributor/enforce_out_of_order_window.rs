@@ -3,6 +3,11 @@ use super::{
     sample_timestamp_bounds,
 };
 
+struct SeriesTimestampUpdate {
+    fingerprint: u64,
+    max_timestamp: i64,
+}
+
 /// Rejects samples older than the tenant's out-of-order window, measured
 /// against the newest sample the tracker holds for the same series.
 ///
@@ -31,9 +36,11 @@ pub(crate) fn enforce_out_of_order_window(
         .millis_i64();
     let mut updates = Vec::new();
     for series in series {
-        let Some((min_timestamp, max_timestamp)) = sample_timestamp_bounds(series) else {
+        let Some(bounds) = sample_timestamp_bounds(series) else {
             continue;
         };
+        let min_timestamp = bounds.min_ms;
+        let max_timestamp = bounds.max_ms;
         let fingerprint = series.labels.fingerprint();
         if let Some(previous_latest) = tracked
             .series
@@ -48,15 +55,20 @@ pub(crate) fn enforce_out_of_order_window(
                 });
             }
         }
-        updates.push((fingerprint, max_timestamp));
+        updates.push(SeriesTimestampUpdate {
+            fingerprint,
+            max_timestamp,
+        });
     }
 
-    for (fingerprint, max_timestamp) in updates {
-        let activity = tracked.touch(fingerprint, now);
+    for update in updates {
+        let activity = tracked.touch(update.fingerprint, now);
         activity.latest_sample_ms = Some(
             activity
                 .latest_sample_ms
-                .map_or(max_timestamp, |previous| previous.max(max_timestamp)),
+                .map_or(update.max_timestamp, |previous| {
+                    previous.max(update.max_timestamp)
+                }),
         );
     }
     Ok(())

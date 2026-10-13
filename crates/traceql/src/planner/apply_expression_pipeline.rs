@@ -11,9 +11,15 @@ use crate::{
     engine::{CompareRow, compare_row, field_values, scalar_expression_value, scalar_matches},
     error::{Result, TraceqlError},
     ids::UnixNano,
-    result::AttrValue,
+    result::{AttrValue, Attribute},
     span_columns::COL_TRACE_ID,
 };
+
+struct ScalarAggregateParts {
+    name: &'static str,
+    function: ScalarAggregate,
+    expression: ScalarExpr,
+}
 
 pub(crate) fn requires_expression_execution(stage: &Pipeline) -> bool {
     matches!(
@@ -47,7 +53,7 @@ pub(crate) fn uses_expression_pipeline(pipeline: &[Pipeline]) -> bool {
 struct Spanset {
     rows: Vec<usize>,
     scalar: Option<Value>,
-    attributes: Vec<(String, AttrValue)>,
+    attributes: Vec<Attribute>,
 }
 
 /// Evaluates the supported scalar pipeline in order, with one initial spanset
@@ -105,8 +111,10 @@ pub(crate) fn apply_expression_pipeline(
                 for mut set in sets {
                     set.scalar = aggregate_value(aggregate, &set.rows, &rows)?;
                     if let Some(value) = &set.scalar {
-                        set.attributes
-                            .push((aggregate_name(aggregate), attribute_value(value)));
+                        set.attributes.push(Attribute::new(
+                            aggregate_name(aggregate),
+                            attribute_value(value),
+                        ));
                         output.push(set);
                     }
                 }
@@ -145,7 +153,9 @@ pub(crate) fn apply_expression_pipeline(
     let mut admitted = vec![false; rows.len()];
     let mut group_ids = vec![String::new(); rows.len()];
     let mut attributes = vec![String::new(); rows.len()];
-    for (group_id, set) in sets.into_iter().enumerate() {
+    for indexed_set in sets.into_iter().enumerate() {
+        let group_id = indexed_set.0;
+        let set = indexed_set.1;
         let encoded = serde_json::to_string(&set.attributes)
             .map_err(|error| TraceqlError::Exec(error.to_string()))?;
         for index in set.rows {
@@ -209,13 +219,18 @@ fn regroup(sets: Vec<Spanset>, rows: &[CompareRow], exprs: &[&ScalarExpr]) -> Re
                 .collect::<Result<Vec<_>>>()?;
             let group = groups.entry(format!("{values:?}")).or_insert_with(|| {
                 let mut attributes = set.attributes.clone();
-                for (expr, values) in exprs.iter().zip(&values) {
+                for grouped_values in exprs.iter().zip(&values) {
+                    let expr = grouped_values.0;
+                    let values = grouped_values.1;
                     let name = format!("by({})", super::expression_name::scalar_name(expr));
                     if values.is_empty() {
-                        attributes.push((name, attribute_value(&Value::Nil)));
+                        attributes.push(Attribute::new(name, attribute_value(&Value::Nil)));
                     } else {
                         for value in values {
-                            attributes.push((name.clone(), group_attribute_value(expr, value)));
+                            attributes.push(Attribute::new(
+                                name.clone(),
+                                group_attribute_value(expr, value),
+                            ));
                         }
                     }
                 }
@@ -233,25 +248,27 @@ fn regroup(sets: Vec<Spanset>, rows: &[CompareRow], exprs: &[&ScalarExpr]) -> Re
 }
 
 fn group_attribute_value(expr: &ScalarExpr, value: &Value) -> AttrValue {
-    if let (ScalarExpr::Field(field), Value::Int(value)) = (expr, value) {
-        match field.scope {
-            crate::ast::Scope::Intrinsic(crate::ast::Intrinsic::Kind) => {
-                return AttrValue::Str(
-                    crate::engine::kind_enum_name(
-                        i32::try_from(*value).expect("intrinsic enum is an i32"),
-                    )
-                    .into(),
-                );
+    if let ScalarExpr::Field(field) = expr {
+        if let Value::Int(value) = value {
+            match field.scope {
+                crate::ast::Scope::Intrinsic(crate::ast::Intrinsic::Kind) => {
+                    return AttrValue::Str(
+                        crate::engine::kind_enum_name(
+                            i32::try_from(*value).expect("intrinsic enum is an i32"),
+                        )
+                        .into(),
+                    );
+                }
+                crate::ast::Scope::Intrinsic(crate::ast::Intrinsic::Status) => {
+                    return AttrValue::Str(
+                        crate::engine::status_enum_name(
+                            i32::try_from(*value).expect("intrinsic enum is an i32"),
+                        )
+                        .into(),
+                    );
+                }
+                _ => {}
             }
-            crate::ast::Scope::Intrinsic(crate::ast::Intrinsic::Status) => {
-                return AttrValue::Str(
-                    crate::engine::status_enum_name(
-                        i32::try_from(*value).expect("intrinsic enum is an i32"),
-                    )
-                    .into(),
-                );
-            }
-            _ => {}
         }
     }
     attribute_value(value)
@@ -270,24 +287,45 @@ fn attribute_value(value: &Value) -> AttrValue {
 }
 
 fn aggregate_name(aggregate: &Aggregate) -> String {
-    let (name, expr) = match aggregate {
+    let parts = match aggregate {
         Aggregate::Count => return "count()".into(),
-        Aggregate::Expression { function, expr } => (
-            match function {
+        Aggregate::Expression { function, expr } => ScalarAggregateParts {
+            name: match function {
                 ScalarAggregate::Sum => "sum",
                 ScalarAggregate::Avg => "avg",
                 ScalarAggregate::Min => "min",
                 ScalarAggregate::Max => "max",
             },
-            expr.clone(),
-        ),
-        Aggregate::Sum(field) => ("sum", ScalarExpr::Field(field.clone())),
-        Aggregate::Avg(field) => ("avg", ScalarExpr::Field(field.clone())),
-        Aggregate::Min(field) => ("min", ScalarExpr::Field(field.clone())),
-        Aggregate::Max(field) => ("max", ScalarExpr::Field(field.clone())),
+            function: *function,
+            expression: expr.clone(),
+        },
+        Aggregate::Sum(field) => ScalarAggregateParts {
+            name: "sum",
+            function: ScalarAggregate::Sum,
+            expression: ScalarExpr::Field(field.clone()),
+        },
+        Aggregate::Avg(field) => ScalarAggregateParts {
+            name: "avg",
+            function: ScalarAggregate::Avg,
+            expression: ScalarExpr::Field(field.clone()),
+        },
+        Aggregate::Min(field) => ScalarAggregateParts {
+            name: "min",
+            function: ScalarAggregate::Min,
+            expression: ScalarExpr::Field(field.clone()),
+        },
+        Aggregate::Max(field) => ScalarAggregateParts {
+            name: "max",
+            function: ScalarAggregate::Max,
+            expression: ScalarExpr::Field(field.clone()),
+        },
         _ => unreachable!("aggregate_value rejects non-scalar aggregates"),
     };
-    format!("{name}({})", super::expression_name::scalar_name(&expr))
+    format!(
+        "{}({})",
+        parts.name,
+        super::expression_name::scalar_name(&parts.expression)
+    )
 }
 
 fn aggregate_value(
@@ -295,18 +333,38 @@ fn aggregate_value(
     indexes: &[usize],
     rows: &[CompareRow],
 ) -> Result<Option<Value>> {
-    let (function, expr) = match aggregate {
+    let parts = match aggregate {
         Aggregate::Count => {
             return Ok(Some(Value::Int(
                 i64::try_from(indexes.len())
                     .map_err(|error| TraceqlError::Exec(error.to_string()))?,
             )));
         }
-        Aggregate::Expression { function, expr } => (*function, expr.clone()),
-        Aggregate::Sum(field) => (ScalarAggregate::Sum, ScalarExpr::Field(field.clone())),
-        Aggregate::Avg(field) => (ScalarAggregate::Avg, ScalarExpr::Field(field.clone())),
-        Aggregate::Min(field) => (ScalarAggregate::Min, ScalarExpr::Field(field.clone())),
-        Aggregate::Max(field) => (ScalarAggregate::Max, ScalarExpr::Field(field.clone())),
+        Aggregate::Expression { function, expr } => ScalarAggregateParts {
+            name: "",
+            function: *function,
+            expression: expr.clone(),
+        },
+        Aggregate::Sum(field) => ScalarAggregateParts {
+            name: "sum",
+            function: ScalarAggregate::Sum,
+            expression: ScalarExpr::Field(field.clone()),
+        },
+        Aggregate::Avg(field) => ScalarAggregateParts {
+            name: "avg",
+            function: ScalarAggregate::Avg,
+            expression: ScalarExpr::Field(field.clone()),
+        },
+        Aggregate::Min(field) => ScalarAggregateParts {
+            name: "min",
+            function: ScalarAggregate::Min,
+            expression: ScalarExpr::Field(field.clone()),
+        },
+        Aggregate::Max(field) => ScalarAggregateParts {
+            name: "max",
+            function: ScalarAggregate::Max,
+            expression: ScalarExpr::Field(field.clone()),
+        },
         other => {
             return Err(TraceqlError::Unsupported(format!(
                 "scalar aggregate {other:?}"
@@ -315,9 +373,9 @@ fn aggregate_value(
     };
     let values = indexes
         .iter()
-        .map(|index| scalar_expression_value(&expr, &rows[*index]))
+        .map(|index| scalar_expression_value(&parts.expression, &rows[*index]))
         .collect::<Result<Vec<_>>>()?;
-    Ok(reduce_values(function, &values))
+    Ok(reduce_values(parts.function, &values))
 }
 
 fn reduce_values(function: ScalarAggregate, values: &[Value]) -> Option<Value> {
@@ -329,10 +387,22 @@ fn reduce_values(function: ScalarAggregate, values: &[Value]) -> Option<Value> {
     let mut result = (*first).clone();
     for value in &values[1..] {
         match function {
-            ScalarAggregate::Sum | ScalarAggregate::Avg => match (&mut result, value) {
-                (Value::Int(sum), Value::Int(value))
-                | (Value::Duration(sum), Value::Duration(value)) => *sum = sum.wrapping_add(*value),
-                (Value::Float(sum), Value::Float(value)) => *sum += *value,
+            ScalarAggregate::Sum | ScalarAggregate::Avg => match &mut result {
+                Value::Int(sum) => {
+                    if let Value::Int(value) = value {
+                        *sum = sum.wrapping_add(*value);
+                    }
+                }
+                Value::Duration(sum) => {
+                    if let Value::Duration(value) = value {
+                        *sum = sum.wrapping_add(*value);
+                    }
+                }
+                Value::Float(sum) => {
+                    if let Value::Float(value) = value {
+                        *sum += *value;
+                    }
+                }
                 // Pinned Static.sumInto ignores values of a different type.
                 _ => {}
             },
@@ -373,6 +443,12 @@ mod tests {
 
     use super::{ScalarAggregate, Value, group_attribute_value, reduce_values};
 
+    struct IntrinsicKindCase {
+        intrinsic: crate::ast::Intrinsic,
+        code: i64,
+        name: &'static str,
+    }
+
     #[test]
     fn reductions_preserve_integer_wrapping_duration_average_and_first_runtime_type() {
         assert!(
@@ -401,16 +477,29 @@ mod tests {
             result::AttrValue,
         };
 
-        for (intrinsic, code, name) in [
-            (Intrinsic::Kind, 2, "server"),
-            (Intrinsic::Status, 2, "error"),
+        for case in [
+            IntrinsicKindCase {
+                intrinsic: Intrinsic::Kind,
+                code: 2,
+                name: "server",
+            },
+            IntrinsicKindCase {
+                intrinsic: Intrinsic::Status,
+                code: 2,
+                name: "error",
+            },
         ] {
             let expr = ScalarExpr::Field(Field {
-                scope: Scope::Intrinsic(intrinsic),
+                scope: Scope::Intrinsic(case.intrinsic),
                 key: String::new(),
             });
-            assert!(group_attribute_value(&expr, &Value::Int(code)) == AttrValue::Str(name.into()));
-            assert!(group_attribute_value(&expr, &Value::Int(code)) != AttrValue::Int(code));
+            assert!(
+                group_attribute_value(&expr, &Value::Int(case.code))
+                    == AttrValue::Str(case.name.into())
+            );
+            assert!(
+                group_attribute_value(&expr, &Value::Int(case.code)) != AttrValue::Int(case.code)
+            );
         }
         let expr = ScalarExpr::Field(Field {
             scope: Scope::Span,

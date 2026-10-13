@@ -40,7 +40,7 @@ pub(crate) fn range_query_merge_sums_native_histograms_with_different_span_layou
     };
     assert2::assert!(series.len() == 1);
     assert2::assert!(&series[0].labels == &labels);
-    let SampleValue::Histogram(histogram) = &series[0].samples[0].1 else {
+    let SampleValue::Histogram(histogram) = &series[0].samples[0].value else {
         panic!("expected histogram sample");
     };
     assert2::assert!((histogram.count - 10.0).abs() < f64::EPSILON);

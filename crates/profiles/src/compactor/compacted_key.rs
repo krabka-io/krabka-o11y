@@ -12,7 +12,9 @@ use super::{
 /// same tenant segment as its inputs.
 pub(crate) fn compacted_key(job: &CompactionJob) -> String {
     let tenant = escape_object_path_segment(&job.tenant);
-    let (level, min_ts, max_ts) = (job.output_level, job.min_ts, job.max_ts);
+    let level = job.output_level;
+    let min_ts = job.min_ts;
+    let max_ts = job.max_ts;
     format!(
         "{BLOCK_OBJECT_PREFIX}/{tenant}/compacted/l{level}-{min_ts}-{max_ts}-{:016x}.parquet",
         input_key_fingerprint(&job.input_keys)

@@ -15,7 +15,10 @@ pub(crate) async fn querier_state_lists_full_shard_prefix_and_filters_before_fet
     let matching_shard_range = TimeRange::new(query_start + 10, query_start + 20).unwrap();
 
     let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series(tenant, krabka_blockstore::labels([("app", "api")]));
+    let api = labels_index.insert_series(
+        tenant,
+        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let mut block_index = BlockIndex::default();
     block_index.insert(BlockDescriptor::new(
         BlockKey::new(tenant, 0, 40, 41, old_shard_range),

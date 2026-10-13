@@ -5,7 +5,9 @@ pub(crate) fn parse_discovery_params(raw_query: Option<&str>) -> Result<Discover
     let Some(raw_query) = raw_query else {
         return Ok(params);
     };
-    for (name, value) in form_urlencoded::parse(raw_query.as_bytes()) {
+    for pair in form_urlencoded::parse(raw_query.as_bytes()) {
+        let name = pair.0;
+        let value = pair.1;
         match name.as_ref() {
             "match[]" => params.matches.push(value.into_owned()),
             "start" => params.start = Some(value.into_owned()),

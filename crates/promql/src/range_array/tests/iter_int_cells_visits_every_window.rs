@@ -3,7 +3,9 @@ use super::*;
 #[test]
 pub(crate) fn iter_int_cells_visits_every_window() {
     let timestamps = Arc::new(Int64Array::from(vec![0_i64, 15, 30, 45])) as ArrayRef;
-    let range_array = RangeArray::from_ranges(timestamps, [(0_u32, 2_u32), (2, 2)]).unwrap();
+    let range_array =
+        RangeArray::from_ranges(timestamps, [RangeWindow::new(0, 2), RangeWindow::new(2, 2)])
+            .unwrap();
 
     let collected = range_array
         .iter_timestamp_slices()

@@ -8,13 +8,24 @@ use crate::{
 
 // A selection keeps full sample labels, while its grouping chooses independent
 // ranking buckets. The existing selector also ranks matrix points per timestamp.
+struct MetricSelection {
+    limit: u64,
+    order: SampleOrder,
+}
+
 pub(crate) fn apply_grouped_metric_selection(
     value: &mut Value,
     aggregation: &VectorAggregation,
 ) -> Result<(), HttpQueryError> {
-    let (limit, order) = match aggregation.op {
-        VectorAggregationOp::TopK(limit) => (limit, SampleOrder::Descending),
-        VectorAggregationOp::BottomK(limit) => (limit, SampleOrder::Ascending),
+    let selection = match aggregation.op {
+        VectorAggregationOp::TopK(limit) => MetricSelection {
+            limit,
+            order: SampleOrder::Descending,
+        },
+        VectorAggregationOp::BottomK(limit) => MetricSelection {
+            limit,
+            order: SampleOrder::Ascending,
+        },
         _ => {
             return Err(HttpQueryError::VariantUnsupported(
                 "expected topk or bottomk".into(),
@@ -38,8 +49,8 @@ pub(crate) fn apply_grouped_metric_selection(
         let mut group = json!({"data":{"resultType":value["data"]["resultType"],"result":rows}});
         apply_metric_selection(
             &mut group,
-            usize::try_from(limit).unwrap_or(usize::MAX),
-            order,
+            usize::try_from(selection.limit).unwrap_or(usize::MAX),
+            selection.order,
         );
         selected.extend(
             group["data"]["result"]

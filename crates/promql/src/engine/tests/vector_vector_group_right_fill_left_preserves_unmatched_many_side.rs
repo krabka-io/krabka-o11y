@@ -1,32 +1,51 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct RequestSeries {
+    job: &'static str,
+    instance: &'static str,
+    value: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn vector_vector_group_right_fill_left_preserves_unmatched_many_side() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "job_quota"),
-            ("job", "api"),
-            ("region", "east"),
+            crate::test_support::TestLabelPair::new("__name__", "job_quota"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("region", "east"),
         ]),
         10_000,
         10.0,
     );
-    for (job, instance, value) in [
-        ("api", "a", 100.0),
-        ("api", "b", 50.0),
-        ("worker", "c", 7.0),
+    for series in [
+        RequestSeries::builder()
+            .job("api")
+            .instance("a")
+            .value(100.0)
+            .build(),
+        RequestSeries::builder()
+            .job("api")
+            .instance("b")
+            .value(50.0)
+            .build(),
+        RequestSeries::builder()
+            .job("worker")
+            .instance("c")
+            .value(7.0)
+            .build(),
     ] {
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "http_requests_total"),
-                ("job", job),
-                ("instance", instance),
+                crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+                crate::test_support::TestLabelPair::new("job", series.job),
+                crate::test_support::TestLabelPair::new("instance", series.instance),
             ]),
             10_000,
-            value,
+            series.value,
         );
     }
 

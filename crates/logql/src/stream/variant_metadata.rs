@@ -5,23 +5,29 @@ use super::{Labels, ParserStage};
 // Loki 3.7.7 log/labels.go Add uses the original stream base for collision
 // names. Track categories separately so common drop/keep/label_format stages
 // cannot resurrect metadata that is absent or has become a parsed label.
-pub(super) fn initial_pipeline_fields(labels: &Labels, initial: &Labels) -> (Labels, Labels) {
+pub(super) struct InitialPipelineFields {
+    pub(super) fields: Labels,
+    pub(super) metadata: Labels,
+}
+
+pub(super) fn initial_pipeline_fields(labels: &Labels, initial: &Labels) -> InitialPipelineFields {
     let mut fields = labels.clone();
     let mut metadata = Labels::new();
-    for (name, value) in initial {
+    for entry in initial {
+        let name = entry.0;
+        let value = entry.1;
         if matches!(name.as_str(), "__error__" | "__error_details__") {
-            fields.insert(name.clone(), value.clone());
+            fields.insert(name.to_owned(), value.to_owned());
             continue;
         }
-        let name = if labels.get(name).is_some_and(|value| !value.is_empty()) {
-            format!("{name}_extracted")
-        } else {
-            name.clone()
-        };
-        fields.insert(name.clone(), value.clone());
-        metadata.insert(name, value.clone());
+        let name = extracted_name(
+            name,
+            labels.get(name).is_some_and(|value| !value.is_empty()),
+        );
+        fields.insert(name.clone(), value.to_owned());
+        metadata.insert(name, value.to_owned());
     }
-    (fields, metadata)
+    InitialPipelineFields { fields, metadata }
 }
 
 // LabelsBuilder keeps the immutable stream base apart from structured metadata
@@ -45,14 +51,15 @@ impl PipelineLabels {
         self.base = fields.clone();
         self.extracted.clear();
         let mut metadata = Labels::new();
-        for (name, value) in &self.metadata {
-            let name = if self.base.get(name).is_some_and(|value| !value.is_empty()) {
-                format!("{name}_extracted")
-            } else {
-                name.clone()
-            };
-            fields.insert(name.clone(), value.clone());
-            metadata.insert(name, value.clone());
+        for entry in &self.metadata {
+            let name = entry.0;
+            let value = entry.1;
+            let name = extracted_name(
+                name,
+                self.base.get(name).is_some_and(|value| !value.is_empty()),
+            );
+            fields.insert(name.clone(), value.to_owned());
+            metadata.insert(name, value.to_owned());
         }
         self.metadata = metadata;
     }
@@ -71,11 +78,7 @@ impl PipelineLabels {
     }
 
     fn collision_name(&self, name: &str) -> String {
-        if self.has_collision(name) {
-            format!("{name}_extracted")
-        } else {
-            name.to_string()
-        }
+        extracted_name(name, self.has_collision(name))
     }
 
     pub(super) fn insert_parser_fields(
@@ -84,7 +87,9 @@ impl PipelineLabels {
         parsed: Labels,
         parser: &ParserStage,
     ) {
-        for (name, value) in parsed {
+        for entry in parsed {
+            let name = entry.0;
+            let value = entry.1;
             if matches!(name.as_str(), "__error__" | "__error_details__") {
                 fields.insert(name, value);
                 continue;
@@ -118,21 +123,58 @@ impl PipelineLabels {
     }
 }
 
+fn extracted_name(name: &str, collision: bool) -> String {
+    if collision {
+        format!("{name}_extracted")
+    } else {
+        name.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::assert;
 
     use crate::{Labels, PipelineStage, parse_query};
 
+    struct LabelEntry {
+        name: &'static str,
+        value: &'static str,
+    }
+
+    impl LabelEntry {
+        fn new(name: &'static str, value: &'static str) -> Self {
+            Self { name, value }
+        }
+    }
+
+    fn fixture_labels<const N: usize>(entries: [LabelEntry; N]) -> Labels {
+        let mut labels = Labels::new();
+        for entry in entries {
+            labels.insert(entry.name.to_owned(), entry.value.to_owned());
+        }
+        labels
+    }
+
+    struct PipelineFieldsCase {
+        pipeline: &'static str,
+        expected: Labels,
+    }
+
+    struct PipelineLineCase {
+        pipeline: &'static str,
+        line: &'static str,
+    }
+
     #[test]
     fn variant_boundary_reenters_surviving_metadata_with_source_collision_names() {
-        let labels = Labels::from([
-            ("app".into(), "api".into()),
-            ("collision".into(), "stream".into()),
+        let labels = fixture_labels([
+            LabelEntry::new("app", "api"),
+            LabelEntry::new("collision", "stream"),
         ]);
-        let metadata = Labels::from([
-            ("token".into(), "blue".into()),
-            ("collision".into(), "meta".into()),
+        let metadata = fixture_labels([
+            LabelEntry::new("token", "blue"),
+            LabelEntry::new("collision", "meta"),
         ]);
         let mut query = parse_query(r#"{app="api"} | logfmt"#).unwrap();
         query.pipeline.push(PipelineStage::VariantBoundary);
@@ -143,58 +185,58 @@ mod tests {
         // replaces that base value, as LabelsBuilder.Add/Set does upstream.
         assert!(
             result.fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("collision".into(), "stream".into()),
-                    ("collision_extracted".into(), "meta".into()),
-                    ("collision_extracted_extracted".into(), "meta".into()),
-                    ("token".into(), "blue".into()),
-                    ("token_extracted".into(), "blue".into()),
+                == fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("collision", "stream"),
+                    LabelEntry::new("collision_extracted", "meta"),
+                    LabelEntry::new("collision_extracted_extracted", "meta"),
+                    LabelEntry::new("token", "blue"),
+                    LabelEntry::new("token_extracted", "blue"),
                 ])
         );
     }
 
     #[test]
     fn common_drop_keep_and_label_format_change_the_surviving_metadata_category() {
-        let labels = Labels::from([("app".into(), "api".into())]);
-        let metadata = Labels::from([
-            ("token".into(), "blue".into()),
-            ("spare".into(), "red".into()),
+        let labels = fixture_labels([LabelEntry::new("app", "api")]);
+        let metadata = fixture_labels([
+            LabelEntry::new("token", "blue"),
+            LabelEntry::new("spare", "red"),
         ]);
-        for (pipeline, expected) in [
-            (
-                "drop token,spare",
-                Labels::from([("app".into(), "api".into())]),
-            ),
-            (
-                "keep app,token",
-                Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "blue".into()),
-                    ("token_extracted".into(), "blue".into()),
+        for case in [
+            PipelineFieldsCase {
+                pipeline: "drop token,spare",
+                expected: fixture_labels([LabelEntry::new("app", "api")]),
+            },
+            PipelineFieldsCase {
+                pipeline: "keep app,token",
+                expected: fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("token", "blue"),
+                    LabelEntry::new("token_extracted", "blue"),
                 ]),
-            ),
-            (
-                r#"label_format token="{{.token}}" | drop spare"#,
-                Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "blue".into()),
+            },
+            PipelineFieldsCase {
+                pipeline: r#"label_format token="{{.token}}" | drop spare"#,
+                expected: fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("token", "blue"),
                 ]),
-            ),
-            (
-                "label_format renamed=token | drop spare",
-                Labels::from([
-                    ("app".into(), "api".into()),
-                    ("renamed".into(), "blue".into()),
+            },
+            PipelineFieldsCase {
+                pipeline: "label_format renamed=token | drop spare",
+                expected: fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("renamed", "blue"),
                 ]),
-            ),
+            },
         ] {
-            let mut query = parse_query(&format!(r#"{{app="api"}} | {pipeline}"#)).unwrap();
+            let mut query = parse_query(&format!(r#"{{app="api"}} | {}"#, case.pipeline)).unwrap();
             query.pipeline.push(PipelineStage::VariantBoundary);
             let result = query
                 .evaluate_with_fields_at(&labels, "line", &metadata, 123)
                 .unwrap();
-            assert!(result.fields == expected, "{pipeline}");
+            assert!(result.fields == case.expected, "{}", case.pipeline);
         }
         let ordinary = parse_query(r#"{app="api"}"#).unwrap();
         let fields = ordinary
@@ -203,18 +245,18 @@ mod tests {
             .fields;
         assert!(
             fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "blue".into()),
-                    ("spare".into(), "red".into())
+                == fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("token", "blue"),
+                    LabelEntry::new("spare", "red")
                 ])
         );
     }
 
     #[test]
     fn common_filters_and_variant_filters_observe_their_own_metadata_boundary() {
-        let labels = Labels::from([("app".into(), "api".into())]);
-        let metadata = Labels::from([("token".into(), "blue".into())]);
+        let labels = fixture_labels([LabelEntry::new("app", "api")]);
+        let metadata = fixture_labels([LabelEntry::new("token", "blue")]);
         let mut common = parse_query(r#"{app="api"} | token="blue""#).unwrap();
         common.pipeline.push(PipelineStage::VariantBoundary);
         common.pipeline.extend(
@@ -248,7 +290,7 @@ mod tests {
 
     #[test]
     fn parser_categories_preserve_first_extraction_but_replace_base_and_metadata_collisions() {
-        let app = Labels::from([("app".into(), "api".into())]);
+        let app = fixture_labels([LabelEntry::new("app", "api")]);
         let repeated =
             parse_query(r#"{app="api"} | logfmt | line_format "token=second" | logfmt"#).unwrap();
         let result = repeated
@@ -256,16 +298,16 @@ mod tests {
             .unwrap();
         assert!(
             result.fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "first".into())
+                == fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("token", "first")
                 ])
         );
 
-        let base = Labels::from([
-            ("app".into(), "api".into()),
-            ("token".into(), "stream".into()),
-            ("token_extracted".into(), "oldbase".into()),
+        let base = fixture_labels([
+            LabelEntry::new("app", "api"),
+            LabelEntry::new("token", "stream"),
+            LabelEntry::new("token_extracted", "oldbase"),
         ]);
         let parser = parse_query(r#"{app="api"} | logfmt"#).unwrap();
         let result = parser
@@ -273,23 +315,23 @@ mod tests {
             .unwrap();
         assert!(
             result.fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "stream".into()),
-                    ("token_extracted".into(), "parsed".into())
+                == fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("token", "stream"),
+                    LabelEntry::new("token_extracted", "parsed")
                 ])
         );
 
-        let metadata = Labels::from([("token".into(), "blue".into())]);
+        let metadata = fixture_labels([LabelEntry::new("token", "blue")]);
         let ordinary = parser
             .evaluate_with_fields_at(&app, "token=parsed", &metadata, 123)
             .unwrap();
         assert!(
             ordinary.fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "blue".into()),
-                    ("token_extracted".into(), "parsed".into())
+                == fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("token", "blue"),
+                    LabelEntry::new("token_extracted", "parsed")
                 ])
         );
         let mut variant = parse_query(r#"{app="api"}"#).unwrap();
@@ -316,47 +358,71 @@ mod tests {
 
     #[test]
     fn every_parser_uses_the_shared_category_aware_collision_path() {
-        let base = Labels::from([
-            ("app".into(), "api".into()),
-            ("token".into(), "stream".into()),
-            ("token_extracted".into(), "oldbase".into()),
+        let base = fixture_labels([
+            LabelEntry::new("app", "api"),
+            LabelEntry::new("token", "stream"),
+            LabelEntry::new("token_extracted", "oldbase"),
         ]);
-        let expected = Labels::from([
-            ("app".into(), "api".into()),
-            ("token".into(), "stream".into()),
-            ("token_extracted".into(), "parsed".into()),
+        let expected = fixture_labels([
+            LabelEntry::new("app", "api"),
+            LabelEntry::new("token", "stream"),
+            LabelEntry::new("token_extracted", "parsed"),
         ]);
-        for (pipeline, line) in [
-            ("json", r#"{"token":"parsed"}"#),
-            (r#"json token="token""#, r#"{"token":"parsed"}"#),
-            ("logfmt", "token=parsed"),
-            ("logfmt --strict", "token=parsed"),
-            (r#"logfmt token="token""#, "token=parsed"),
-            (r#"pattern "<token>""#, "parsed"),
-            (r#"regexp "(?P<token>.*)""#, "parsed"),
-            ("unpack", r#"{"token":"parsed","_entry":"body"}"#),
+        for case in [
+            PipelineLineCase {
+                pipeline: "json",
+                line: r#"{"token":"parsed"}"#,
+            },
+            PipelineLineCase {
+                pipeline: r#"json token="token""#,
+                line: r#"{"token":"parsed"}"#,
+            },
+            PipelineLineCase {
+                pipeline: "logfmt",
+                line: "token=parsed",
+            },
+            PipelineLineCase {
+                pipeline: "logfmt --strict",
+                line: "token=parsed",
+            },
+            PipelineLineCase {
+                pipeline: r#"logfmt token="token""#,
+                line: "token=parsed",
+            },
+            PipelineLineCase {
+                pipeline: r#"pattern "<token>""#,
+                line: "parsed",
+            },
+            PipelineLineCase {
+                pipeline: r#"regexp "(?P<token>.*)""#,
+                line: "parsed",
+            },
+            PipelineLineCase {
+                pipeline: "unpack",
+                line: r#"{"token":"parsed","_entry":"body"}"#,
+            },
         ] {
-            let query = parse_query(&format!(r#"{{app="api"}} | {pipeline}"#)).unwrap();
+            let query = parse_query(&format!(r#"{{app="api"}} | {}"#, case.pipeline)).unwrap();
             let result = query
-                .evaluate_with_fields_at(&base, line, &Labels::new(), 123)
+                .evaluate_with_fields_at(&base, case.line, &Labels::new(), 123)
                 .unwrap();
-            assert!(result.fields == expected, "{pipeline}");
+            assert!(result.fields == expected, "{}", case.pipeline);
         }
     }
 
     #[test]
     fn missing_rename_is_noop_and_self_rename_removes_the_source_category() {
-        let labels = Labels::from([("app".into(), "api".into())]);
-        let metadata = Labels::from([("token".into(), "blue".into())]);
+        let labels = fixture_labels([LabelEntry::new("app", "api")]);
+        let metadata = fixture_labels([LabelEntry::new("token", "blue")]);
         let mut query = parse_query(r#"{app="api"} | label_format token=missing"#).unwrap();
         let ordinary = query
             .evaluate_with_fields_at(&labels, "line", &metadata, 123)
             .unwrap();
         assert!(
             ordinary.fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "blue".into())
+                == fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("token", "blue")
                 ])
         );
         query.pipeline.push(PipelineStage::VariantBoundary);
@@ -365,10 +431,10 @@ mod tests {
             .unwrap();
         assert!(
             variant.fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "blue".into()),
-                    ("token_extracted".into(), "blue".into())
+                == fixture_labels([
+                    LabelEntry::new("app", "api"),
+                    LabelEntry::new("token", "blue"),
+                    LabelEntry::new("token_extracted", "blue")
                 ])
         );
         let mut same = parse_query(r#"{app="api"} | label_format token=token"#).unwrap();
@@ -384,17 +450,17 @@ mod tests {
     #[test]
     fn standalone_parser_stage_keeps_base_collision_behavior_for_direct_callers() {
         let query = parse_query(r#"{app="api"} | logfmt"#).unwrap();
-        let mut fields = Labels::from([
-            ("token".into(), "stream".into()),
-            ("token_extracted".into(), "oldbase".into()),
+        let mut fields = fixture_labels([
+            LabelEntry::new("token", "stream"),
+            LabelEntry::new("token_extracted", "oldbase"),
         ]);
         let mut line = "token=parsed".to_string();
         assert!(query.pipeline[0].apply(&mut line, &mut fields));
         assert!(
             fields
-                == Labels::from([
-                    ("token".into(), "stream".into()),
-                    ("token_extracted".into(), "parsed".into())
+                == fixture_labels([
+                    LabelEntry::new("token", "stream"),
+                    LabelEntry::new("token_extracted", "parsed")
                 ])
         );
     }

@@ -1,6 +1,4 @@
-use krabka_blockstore::Labels;
-
-use super::{MetricStore, WalHead};
+use super::{MetricStore, WalHead, lbls};
 
 #[tokio::test]
 async fn wal_head_delete_tenant_removes_only_that_tenant() {
@@ -9,9 +7,7 @@ async fn wal_head_delete_tenant_removes_only_that_tenant() {
         head.update(|store| {
             store.push_float(
                 tenant,
-                [("__name__".to_owned(), "up".to_owned())]
-                    .into_iter()
-                    .collect::<Labels>(),
+                lbls(&[crate::test_support::TestLabelPair::new("__name__", "up")]),
                 1_000,
                 1.0,
             );

@@ -21,13 +21,10 @@ async fn post_group(app: &Router, namespace: &str, name: &str, rule: &str) {
 async fn rules(app: &Router, query: &str) -> serde_json::Value {
     let response = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/prometheus/api/v1/rules{query}"))
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(crate::test_support::http::empty_tenant_request(
+            &format!("/prometheus/api/v1/rules{query}"),
+            "tenant-a",
+        ))
         .await
         .unwrap();
     check!(response.status() == StatusCode::OK);

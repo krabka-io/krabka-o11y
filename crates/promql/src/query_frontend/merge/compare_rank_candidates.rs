@@ -25,14 +25,21 @@ pub(crate) fn compare_rank_candidates(
     left: &RankCandidate,
     right: &RankCandidate,
 ) -> Ordering {
-    let by_value = match (left.value.is_nan(), right.value.is_nan()) {
-        (true, true) => Ordering::Equal,
-        (true, false) => Ordering::Greater,
-        (false, true) => Ordering::Less,
-        (false, false) => match kind {
+    let left_is_nan = left.value.is_nan();
+    let right_is_nan = right.value.is_nan();
+    let by_value = if left_is_nan {
+        if right_is_nan {
+            Ordering::Equal
+        } else {
+            Ordering::Greater
+        }
+    } else if right_is_nan {
+        Ordering::Less
+    } else {
+        match kind {
             RankReduction::Top => right.value.total_cmp(&left.value),
             RankReduction::Bottom => left.value.total_cmp(&right.value),
-        },
+        }
     };
     by_value
         .then_with(|| left.labels_key.cmp(&right.labels_key))

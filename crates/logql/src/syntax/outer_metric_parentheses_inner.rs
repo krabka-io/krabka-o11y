@@ -1,19 +1,28 @@
-pub(crate) fn outer_metric_parentheses_inner(input: &str) -> Option<&str> {
-    split_metric_parentheses(input)
-        .filter(|(_, rest)| rest.is_empty())
-        .map(|(inner, _)| inner)
+pub(crate) struct SplitMetricParentheses<'a> {
+    pub(crate) inner: &'a str,
+    pub(crate) remainder: &'a str,
 }
 
-pub(crate) fn split_metric_parentheses(input: &str) -> Option<(&str, &str)> {
-    let mut chars = input.char_indices();
-    if chars.next()?.1 != '(' {
+pub(crate) fn outer_metric_parentheses_inner(input: &str) -> Option<&str> {
+    split_metric_parentheses(input)
+        .filter(|split| split.remainder.is_empty())
+        .map(|split| split.inner)
+}
+
+pub(crate) fn split_metric_parentheses(input: &str) -> Option<SplitMetricParentheses<'_>> {
+    if input.chars().next()? != '(' {
         return None;
     }
 
     let mut depth = 0usize;
     let mut quote_delimiter: Option<char> = None;
     let mut escaped = false;
-    for (index, ch) in input.char_indices() {
+    let mut index = 0;
+    while index < input.len() {
+        let ch = input[index..]
+            .chars()
+            .next()
+            .expect("index is within input");
         if let Some(delimiter) = quote_delimiter {
             if escaped {
                 escaped = false;
@@ -22,6 +31,7 @@ pub(crate) fn split_metric_parentheses(input: &str) -> Option<(&str, &str)> {
             } else if delimiter.eq(&ch) {
                 quote_delimiter = None;
             }
+            index += ch.len_utf8();
             continue;
         }
 
@@ -32,11 +42,15 @@ pub(crate) fn split_metric_parentheses(input: &str) -> Option<(&str, &str)> {
                 depth = depth.checked_sub(1)?;
                 if matches!(depth, 0) {
                     let close_end = index.saturating_add(ch.len_utf8());
-                    return Some((&input[1..index], &input[close_end..]));
+                    return Some(SplitMetricParentheses {
+                        inner: &input[1..index],
+                        remainder: &input[close_end..],
+                    });
                 }
             }
             _ => {}
         }
+        index += ch.len_utf8();
     }
 
     None

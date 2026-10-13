@@ -81,7 +81,12 @@ mod tests {
         ]))
     }
 
-    fn series_batch(ts: Vec<i64>, val: Vec<f64>) -> (RecordBatch, Arc<Schema>) {
+    struct SeriesBatch {
+        batch: RecordBatch,
+        schema: Arc<Schema>,
+    }
+
+    fn series_batch(ts: Vec<i64>, val: Vec<f64>) -> SeriesBatch {
         let schema = series_schema();
         let job = StringArray::from(vec!["a"; ts.len()]);
         let ts = Int64Array::from(ts);
@@ -91,7 +96,7 @@ mod tests {
             vec![Arc::new(job), Arc::new(ts), Arc::new(val)],
         )
         .unwrap();
-        (batch, schema)
+        SeriesBatch { batch, schema }
     }
 
     /// Decodes a `RangeArray` dict column into one `Vec` of its `T` values per
@@ -149,7 +154,9 @@ mod tests {
 
     #[test]
     fn physical_node_owns_no_expressions() {
-        let (batch, schema) = series_batch(vec![0], vec![1.0]);
+        let series = series_batch(vec![0], vec![1.0]);
+        let batch = series.batch;
+        let schema = series.schema;
         let mem = MemorySourceConfig::try_new_exec(&[vec![batch]], schema, None).unwrap();
         let exec = RangeManipulateExec::new(timestamp_value_settings(), mem);
         // The plan owns no expression, so a visitor that fails must never run.
@@ -181,7 +188,7 @@ mod tests {
     #[tokio::test]
     async fn right_boundary_sample_is_included() {
         // Sample exactly at eval timestamp t must land in the window.
-        let (batch, _) = series_batch(vec![100], vec![1.0]);
+        let batch = series_batch(vec![100], vec![1.0]).batch;
         let out = run(
             batch,
             RangeManipulateSettings {
@@ -201,7 +208,7 @@ mod tests {
     async fn left_edge_sample_is_excluded() {
         // Sample at t - range must be excluded (left-open). With t=100, range=60
         // the left edge is 40; a sample at 40 is out, a sample at 41 is in.
-        let (batch, _) = series_batch(vec![40, 41], vec![1.0, 2.0]);
+        let batch = series_batch(vec![40, 41], vec![1.0, 2.0]).batch;
         let out = run(
             batch,
             RangeManipulateSettings {
@@ -222,7 +229,7 @@ mod tests {
     #[tokio::test]
     async fn empty_window_produces_empty_cell() {
         // No samples in (40, 100]; the window must be empty, not absent.
-        let (batch, _) = series_batch(vec![10, 20], vec![1.0, 2.0]);
+        let batch = series_batch(vec![10, 20], vec![1.0, 2.0]).batch;
         let out = run(
             batch,
             RangeManipulateSettings {
@@ -241,7 +248,7 @@ mod tests {
     #[tokio::test]
     async fn multiple_eval_steps_fold_overlapping_windows() {
         // range=60, interval=30. Samples every 25ms.
-        let (batch, _) = series_batch(vec![0, 25, 50, 75, 100], vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        let batch = series_batch(vec![0, 25, 50, 75, 100], vec![0.0, 1.0, 2.0, 3.0, 4.0]).batch;
         let out = run(
             batch,
             RangeManipulateSettings {
@@ -285,7 +292,7 @@ mod tests {
     #[tokio::test]
     async fn windows_share_offsets_across_value_and_timestamp() {
         // The two RangeArray columns must be row-aligned: same cell lengths.
-        let (batch, _) = series_batch(vec![10, 20, 30], vec![1.0, 2.0, 3.0]);
+        let batch = series_batch(vec![10, 20, 30], vec![1.0, 2.0, 3.0]).batch;
         let out = run(
             batch,
             RangeManipulateSettings {
@@ -309,7 +316,7 @@ mod tests {
         // A series with no samples projects nothing: no labels to repeat and no
         // windows to emit, so the output batch has the extended schema but zero
         // rows.
-        let (batch, _) = series_batch(vec![], vec![]);
+        let batch = series_batch(vec![], vec![]).batch;
         let out = run(
             batch,
             RangeManipulateSettings {

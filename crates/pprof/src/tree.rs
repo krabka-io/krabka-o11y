@@ -67,9 +67,7 @@ mod tests {
 
     #[test]
     fn to_flamegraph_root_level_and_names() {
-        let mut tree = Tree::new();
-        tree.add_stack(&stack(&["a", "main"]), 6);
-        tree.add_stack(&stack(&["b", "main"]), 4);
+        let tree = sibling_tree();
         let fg = tree.to_flamegraph(2048);
         check!(fg.names[0] == "total");
         check!(fg.total == 10);
@@ -78,15 +76,20 @@ mod tests {
 
     #[test]
     fn to_flamegraph_xoffset_is_delta_from_previous_bar_end() {
-        let mut tree = Tree::new();
-        tree.add_stack(&stack(&["a", "main"]), 6);
-        tree.add_stack(&stack(&["b", "main"]), 4);
+        let tree = sibling_tree();
         let fg = tree.to_flamegraph(2048);
         assert!(fg.levels[1].values[0..4] == [0, 10, 0, names_index(&fg, "main")]);
         let a = &fg.levels[2].values[0..4];
         assert!(a[0] == 0 && a[1] == 6 && a[2] == 6);
         let b = &fg.levels[2].values[4..8];
         assert!(b[0] == 0 && b[1] == 4 && b[2] == 4);
+    }
+
+    fn sibling_tree() -> Tree {
+        let mut tree = Tree::new();
+        tree.add_stack(&stack(&["a", "main"]), 6);
+        tree.add_stack(&stack(&["b", "main"]), 4);
+        tree
     }
 
     #[test]
@@ -180,8 +183,14 @@ mod tests {
         assert!(
             samples
                 == vec![
-                    (vec!["main".to_string(), "a".to_string()], 7),
-                    (vec!["main".to_string(), "b".to_string()], 3),
+                    tree_type::SamplePath {
+                        frames: vec!["main".to_string(), "a".to_string()],
+                        self_value: 7,
+                    },
+                    tree_type::SamplePath {
+                        frames: vec!["main".to_string(), "b".to_string()],
+                        self_value: 3,
+                    },
                 ]
         );
     }

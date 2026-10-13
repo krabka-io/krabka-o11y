@@ -15,14 +15,17 @@ pub(crate) fn trace_spans(trace_id: &[u8; 16], spans: &[Span]) -> krabka_traceql
             .map(|span| {
                 span.resource_attrs
                     .iter()
-                    .filter_map(|attr| traceql_attr(attr).map(|value| (attr.key.clone(), value)))
+                    .filter_map(|attr| {
+                        traceql_attr(attr)
+                            .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+                    })
                     .collect()
             })
             .unwrap_or_default(),
         spans: spans
             .iter()
             .zip(nested_set::assign_nested_set(spans))
-            .map(|(span, nested)| span_ref(span, nested))
+            .map(|entry| span_ref(entry.0, entry.1))
             .collect(),
     }
 }

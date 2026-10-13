@@ -10,12 +10,11 @@ use arrow::{
     datatypes::UInt64Type,
     record_batch::RecordBatch,
 };
-use datafusion::catalog::MemTable;
 use krabka_blockstore::LabelMatcher;
 
 use crate::{
     Frame, PCOL_STACKTRACE_PARTITION, ProfileError, ProfileScan, ProfileStats, ProfileStore,
-    ResolvedLocation, SymbolSource, profile_samples_schema,
+    ResolvedLocation, SymbolSource,
 };
 
 #[cfg(test)]
@@ -31,6 +30,12 @@ mod tests {
     };
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
+
+    struct WalHandoffExpectation {
+        hot_ids: Vec<Vec<u8>>,
+        cold_ids: Vec<Vec<u8>>,
+        total: i64,
+    }
 
     fn store_with_frame(frame: &str, value: i64, timestamp_ms: i64) -> InMemoryProfileStore {
         store_with_frame_partition(frame, value, timestamp_ms, 0)
@@ -70,34 +75,59 @@ mod tests {
         });
         let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location]);
         store.push_sample_with_provenance(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (partition, stacktrace),
-            (value, value),
+            crate::ProfileIdentity::new("tenant-a", PT),
+            vec![crate::ProfileLabel::new("service_name", "api")],
+            crate::StacktraceIdentity::new(partition, stacktrace),
+            crate::SampleValues::new(value, value),
             timestamp_ms,
-            (None, None, ids),
+            crate::SampleProvenance::new(None, None, ids),
         );
         store
     }
 
     #[tokio::test]
     async fn wal_handoff_deduplicates_copies_but_keeps_identical_independent_samples() {
-        for (hot_ids, cold_ids, expected) in [
-            (vec![vec![1]], vec![vec![1]], 7),
-            (vec![vec![1]], vec![vec![2]], 14),
-            (Vec::new(), Vec::new(), 14),
-            (vec![vec![1]], vec![vec![1], vec![2]], 7),
-            (vec![vec![3]], vec![vec![1], vec![2]], 14),
+        for expectation in [
+            WalHandoffExpectation {
+                hot_ids: vec![vec![1]],
+                cold_ids: vec![vec![1]],
+                total: 7,
+            },
+            WalHandoffExpectation {
+                hot_ids: vec![vec![1]],
+                cold_ids: vec![vec![2]],
+                total: 14,
+            },
+            WalHandoffExpectation {
+                hot_ids: Vec::new(),
+                cold_ids: Vec::new(),
+                total: 14,
+            },
+            WalHandoffExpectation {
+                hot_ids: vec![vec![1]],
+                cold_ids: vec![vec![1], vec![2]],
+                total: 7,
+            },
+            WalHandoffExpectation {
+                hot_ids: vec![vec![3]],
+                cold_ids: vec![vec![1], vec![2]],
+                total: 14,
+            },
         ] {
-            let hot = store_with_provenance("same", 7, 20, 0, hot_ids.clone());
-            let cold = store_with_provenance("same", 7, 20, 0, cold_ids.clone());
+            let hot = store_with_provenance("same", 7, 20, 0, expectation.hot_ids.clone());
+            let cold = store_with_provenance("same", 7, 20, 0, expectation.cold_ids.clone());
             let union = super::UnionProfileStore::new(Arc::new(hot), Arc::new(cold));
             let engine = FlameEngine::new(Arc::new(union), EngineOpts::default());
             let graph = engine
                 .select_merge_stacktraces("tenant-a", PT, r#"{service_name="api"}"#, 0, 100, 0)
                 .await
                 .unwrap();
-            assert!(graph.total == expected, "hot={hot_ids:?} cold={cold_ids:?}");
+            assert!(
+                graph.total == expectation.total,
+                "hot={:?} cold={:?}",
+                expectation.hot_ids,
+                expectation.cold_ids
+            );
         }
     }
 
@@ -122,9 +152,9 @@ mod tests {
     async fn hot_cold_union_merges_metadata_and_stats() {
         let mut hot = store_with_frame("hot", 7, 20);
         hot.push_sample(
-            ("tenant-a", "memory:alloc_space:bytes:space:bytes"),
-            vec![("service_name".to_string(), "worker".to_string())],
-            (0, 1),
+            crate::ProfileIdentity::new("tenant-a", "memory:alloc_space:bytes:space:bytes"),
+            vec![crate::ProfileLabel::new("service_name", "worker")],
+            crate::StacktraceIdentity::new(0, 1),
             3,
             40,
         );

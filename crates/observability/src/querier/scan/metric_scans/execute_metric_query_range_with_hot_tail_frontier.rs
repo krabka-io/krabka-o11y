@@ -1,6 +1,7 @@
 use super::{
-    CompactionFrontier, FsPath, LabelIndex, MetricQuery, QueryError, QueryHotTail, StreamPlan,
-    TimeRange, Value, WalLogRecord, execute_metric_query_range_with_hot_tail_frontier_and_deletes,
+    CompactionFrontier, FsPath, LabelIndex, MetricEvaluationRange, MetricQuery,
+    MetricRangeScanRequest, QueryError, QueryHotTail, StreamPlan, TimeRange, Value, WalLogRecord,
+    execute_metric_query_range_with_hot_tail_frontier_and_deletes,
 };
 
 /// # Errors
@@ -10,21 +11,23 @@ pub async fn execute_metric_query_range_with_hot_tail_frontier(
     plan: &StreamPlan,
     query: &MetricQuery,
     label_index: &LabelIndex,
-    evaluation: (TimeRange, i64),
+    evaluation: MetricEvaluationRange,
     hot_tail: &[WalLogRecord],
     frontier: &CompactionFrontier,
 ) -> Result<Value, QueryError> {
     execute_metric_query_range_with_hot_tail_frontier_and_deletes(
         root,
-        plan,
-        query,
-        label_index,
-        evaluation,
-        QueryHotTail {
-            records: hot_tail,
-            frontier,
-            delete_filters: &[],
-        },
+        MetricRangeScanRequest::new(
+            plan,
+            query,
+            label_index,
+            evaluation,
+            QueryHotTail {
+                records: hot_tail,
+                frontier,
+                delete_filters: &[],
+            },
+        ),
     )
     .await
 }

@@ -7,7 +7,10 @@ pub(crate) async fn range_query_counts_sample_present_in_both_stores_once() {
     // compaction. Without (fp, ts) dedup the merged scan double-counts it.
     let mut cold = InMemoryMetricStore::new();
     let mut hot = InMemoryMetricStore::new();
-    let labels = labels(&[("__name__", "up"), ("job", "api")]);
+    let labels = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
     cold.push_float("tenant-a", labels.clone(), 10_000, 1.0);
     cold.push_float("tenant-a", labels.clone(), 20_000, 1.0);
     // Hot re-reports the 20s sample (still within hot retention) and adds 30s.

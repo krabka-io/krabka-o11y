@@ -11,6 +11,13 @@ use krabka_observability::server_security::{Principal, authorize_admin};
 
 use super::{AuthorizedTenant, MetricStore, PrometheusApiState};
 
+fn text_response(status: StatusCode, body: impl Into<String>) -> Response {
+    let body: String = body.into();
+    let mut response = Response::new(body.into());
+    *response.status_mut() = status;
+    response
+}
+
 /// Builds Mimir's tenant-wide ruler inspection and deletion routes.
 pub fn mimir_ruler_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>) -> Router {
     Router::new()
@@ -35,30 +42,31 @@ async fn all_rule_groups<S: MetricStore>(
         return error.into_response();
     }
     let rules = match state.ruler_rules.read() {
-        Ok(rules) => rules
-            .iter()
-            .map(|(tenant, namespaces)| {
-                let namespaces = namespaces
-                    .iter()
-                    .map(|(namespace, groups)| {
-                        (
-                            namespace.clone(),
-                            groups.values().cloned().collect::<Vec<_>>(),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>();
-                (tenant.as_str().to_string(), namespaces)
-            })
-            .collect::<BTreeMap<_, _>>(),
+        Ok(rules) => {
+            let mut output = BTreeMap::new();
+            for tenant_entry in rules.iter() {
+                let mut namespaces_output = BTreeMap::new();
+                for namespace_entry in tenant_entry.1.iter() {
+                    namespaces_output.insert(
+                        namespace_entry.0.clone(),
+                        namespace_entry.1.values().cloned().collect::<Vec<_>>(),
+                    );
+                }
+                output.insert(tenant_entry.0.as_str().to_string(), namespaces_output);
+            }
+            output
+        }
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     match serde_yaml::to_string(&rules) {
-        Ok(body) => (
-            StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "application/yaml")],
-            body,
-        )
-            .into_response(),
+        Ok(body) => {
+            let mut response = text_response(StatusCode::OK, body);
+            response.headers_mut().insert(
+                axum::http::header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("application/yaml"),
+            );
+            response
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -98,27 +106,22 @@ async fn tenant_rule_groups<S: MetricStore>(
         .and_then(|rules| {
             rules
                 .iter()
-                .find(|(id, _)| id.as_str() == tenant)
-                .map(|(_, namespaces)| namespaces.clone())
+                .find(|entry| entry.0.as_str() == tenant)
+                .map(|entry| entry.1.clone())
         })
         .unwrap_or_default();
-    let rows = groups
-        .into_iter()
-        .flat_map(|(namespace, groups)| {
-            groups
-                .into_keys()
-                .map(move |name| (namespace.clone(), name))
-        })
-        .fold(String::new(), |mut rows, (namespace, name)| {
+    let mut rows = String::new();
+    for namespace_entry in groups {
+        for name in namespace_entry.1.into_keys() {
             write!(
                 rows,
                 "<tr><td>{}</td><td>{}</td></tr>",
-                escape_html(&namespace),
+                escape_html(&namespace_entry.0),
                 escape_html(&name)
             )
             .expect("writing to a String cannot fail");
-            rows
-        });
+        }
+    }
     Html(format!(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Ruler: tenant rule groups</title></head><body><h1>Ruler: tenant {}</h1><table><tbody>{rows}</tbody></table></body></html>",
         escape_html(&tenant)
@@ -150,7 +153,7 @@ async fn delete_tenant_config<S: MetricStore>(
     }
     match state.persist_ruler_config(&tenant).await {
         Ok(()) => StatusCode::OK.into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => text_response(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 

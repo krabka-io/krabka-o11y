@@ -103,15 +103,13 @@ impl MetricsGenConfig {
     /// Returns an error when `yaml` is not a valid runtime overrides document.
     pub fn apply_runtime_overrides(&mut self, yaml: &str) -> Result<(), serde_yaml::Error> {
         let file = serde_yaml::from_str::<RuntimeOverrides>(yaml)?;
-        self.overrides = file
-            .overrides
-            .into_iter()
-            .filter_map(|(tenant, value)| {
-                value
-                    .metrics_generator
-                    .map(|config| (tenant, config.processor))
-            })
-            .collect();
+        let mut overrides = HashMap::new();
+        for entry in file.overrides {
+            if let Some(config) = entry.1.metrics_generator {
+                overrides.insert(entry.0, config.processor);
+            }
+        }
+        self.overrides = overrides;
         Ok(())
     }
 }

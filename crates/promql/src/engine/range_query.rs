@@ -17,11 +17,11 @@ use super::{
 #[cfg(feature = "experimental-functions")]
 use super::{QUERY_RANGE_CONTEXT, QueryRangeContext};
 use crate::{
-    DurationExprContext, PromqlError, PromqlLabels as Labels,
+    Annotations, DurationExprContext, PromqlError, PromqlLabels as Labels,
     error::Result,
     parse_promql_with_duration_context,
     planner::StepGrid,
-    result::{Annotations, QueryResult, RangeSeries, SampleValue},
+    result::{AnnotatedQueryResult, QueryResult, RangeSeries, RangeSeriesSample, SampleValue},
     store::MetricStore,
 };
 
@@ -41,7 +41,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     ) -> Result<QueryResult> {
         self.query_range_with_annotations(tenant, query, start_ms, end_ms, step)
             .await
-            .map(|(result, _)| result)
+            .map(|annotated| annotated.result)
     }
 
     /// Evaluates a range query over `[start_ms, end_ms]` with its annotations.
@@ -72,7 +72,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         start_ms: i64,
         end_ms: i64,
         step: Time,
-    ) -> Result<(QueryResult, Annotations)> {
+    ) -> Result<AnnotatedQueryResult> {
         ANNOTATION_SOURCE
             .scope(
                 query.to_owned(),
@@ -83,7 +83,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                     finalize_metric_names(&mut result)?;
                     validate_unique_instant_labelsets(&result)?;
                     let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
-                    Ok((result, annotations))
+                    Ok(AnnotatedQueryResult {
+                        result,
+                        annotations,
+                    })
                 }),
             )
             .await
@@ -314,7 +317,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                                     samples: Vec::new(),
                                 })
                                 .samples
-                                .push((step_time_ms, sample.value));
+                                .push(RangeSeriesSample::new(step_time_ms, sample.value));
                         }
                     }
                     QueryResult::Scalar { value, .. } => {
@@ -328,7 +331,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                                 samples: Vec::new(),
                             })
                             .samples
-                            .push((step_time_ms, SampleValue::Float(value)));
+                            .push(RangeSeriesSample::new(
+                                step_time_ms,
+                                SampleValue::Float(value),
+                            ));
                     }
                     QueryResult::Str { .. } | QueryResult::RangeMatrix(_) => {
                         // The planner only ever assembles an instant vector or a

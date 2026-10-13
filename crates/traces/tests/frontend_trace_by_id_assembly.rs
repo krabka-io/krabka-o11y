@@ -80,7 +80,12 @@ async fn trace_split_across_queriers_reassembles() {
         MembershipView::fixed(["qa:3200", "qb:3200"]),
     );
 
-    let (trace, metrics, status, warnings) = qf
+    let krabka_traces::frontend::TraceByIdResult {
+        trace,
+        metrics,
+        status,
+        warnings,
+    } = qf
         .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
         .await
         .unwrap();
@@ -112,7 +117,12 @@ async fn oversized_trace_is_partial() {
         MembershipView::fixed(["qa:3200"]),
     );
 
-    let (trace, _m, status, warnings) = qf
+    let krabka_traces::frontend::TraceByIdResult {
+        trace,
+        status,
+        warnings,
+        ..
+    } = qf
         .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
         .await
         .unwrap();
@@ -136,7 +146,7 @@ async fn missing_trace_is_none() {
         cfg,
         MembershipView::fixed(["qa:3200", "qb:3200"]),
     );
-    let (trace, _m, status, _w) = qf
+    let krabka_traces::frontend::TraceByIdResult { trace, status, .. } = qf
         .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
         .await
         .unwrap();

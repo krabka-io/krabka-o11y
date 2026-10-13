@@ -69,7 +69,9 @@ pub async fn run_lifecycle_pass(
             .or_default()
             .push(block.object_key.clone());
     }
-    for (tenant, keys) in &by_tenant {
+    for tenant_entry in &by_tenant {
+        let tenant = tenant_entry.0;
+        let keys = tenant_entry.1;
         index.remove_profile_blocks(tenant, keys);
         dropped_keys.extend(keys.iter().cloned());
     }

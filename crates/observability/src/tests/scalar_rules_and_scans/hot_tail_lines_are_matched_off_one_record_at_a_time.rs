@@ -1,5 +1,10 @@
 use super::*;
 
+struct ResponseEntry<'a> {
+    timestamp: i64,
+    line: &'a str,
+}
+
 /// `count_loki_stream_result_hot_tail_lines` reports how many lines of a
 /// response came from the hot tail rather than from blocks. It is a
 /// MULTISET match-off: each hot record can account for one response line
@@ -33,41 +38,69 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
         structured_metadata: BTreeMap::new(),
         position: None,
     };
-    let response = |entries: &[(i64, &str)]| {
+    let response = |entries: &[ResponseEntry<'_>]| {
         serde_json::json!({
             "data": {"result": [{
                 "stream": {"app": "api"},
                 "values": entries
                     .iter()
-                    .map(|(ts, line)| serde_json::json!([ts.to_string(), line]))
+                    .map(|entry| serde_json::json!([entry.timestamp.to_string(), entry.line]))
                     .collect::<Vec<_>>(),
             }]}
         })
     };
+    let response_entry = |timestamp, line| ResponseEntry { timestamp, line };
     let open = super::super::prelude::CompactionFrontier::new(0);
     let counted = |value: &serde_json::Value, hot: &[super::super::prelude::WalLogRecord]| {
         super::super::prelude::count_loki_stream_result_hot_tail_lines(value, &plan, hot, &open)
     };
 
     // One record, one matching line.
-    check!(counted(&response(&[(10, "a")]), &[record("tenant", 10, "a")]) == 1);
+    check!(
+        counted(
+            &response(&[response_entry(10, "a")]),
+            &[record("tenant", 10, "a")]
+        ) == 1
+    );
 
     // Querying a stored row with no discovery metadata cannot synthesize it.
-    let mut invented_level = response(&[(10, "a")]);
+    let mut invented_level = response(&[response_entry(10, "a")]);
     invented_level["data"]["result"][0]["stream"]["detected_level"] = "unknown".into();
     check!(counted(&invented_level, &[record("tenant", 10, "a")]) == 0);
 
     // A line the hot tail does not hold came from the blocks.
-    check!(counted(&response(&[(10, "b")]), &[record("tenant", 10, "a")]) == 0);
-    check!(counted(&response(&[(20, "a")]), &[record("tenant", 10, "a")]) == 0);
+    check!(
+        counted(
+            &response(&[response_entry(10, "b")]),
+            &[record("tenant", 10, "a")]
+        ) == 0
+    );
+    check!(
+        counted(
+            &response(&[response_entry(20, "a")]),
+            &[record("tenant", 10, "a")]
+        ) == 0
+    );
 
     // The multiset: two identical records admit two identical lines, and
     // a third is attributed to the blocks rather than counted again.
     let twice = [record("tenant", 10, "a"), record("tenant", 10, "a")];
-    check!(counted(&response(&[(10, "a")]), &twice) == 1);
-    check!(counted(&response(&[(10, "a"), (10, "a")]), &twice) == 2);
+    check!(counted(&response(&[response_entry(10, "a")]), &twice) == 1);
     check!(
-        counted(&response(&[(10, "a"), (10, "a"), (10, "a")]), &twice) == 2,
+        counted(
+            &response(&[response_entry(10, "a"), response_entry(10, "a")]),
+            &twice
+        ) == 2
+    );
+    check!(
+        counted(
+            &response(&[
+                response_entry(10, "a"),
+                response_entry(10, "a"),
+                response_entry(10, "a")
+            ]),
+            &twice
+        ) == 2,
         "two records cannot account for three lines"
     );
 
@@ -79,7 +112,11 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
         .insert("app".to_string(), "other".to_string());
     check!(
         counted(
-            &response(&[(10, "a"), (10, "b"), (20, "c")]),
+            &response(&[
+                response_entry(10, "a"),
+                response_entry(10, "b"),
+                response_entry(20, "c")
+            ]),
             &[
                 rejected.clone(),
                 record("tenant", 10, "a"),
@@ -90,7 +127,7 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
         ) == 3
     );
     for timestamp in ["010", "+10", "invalid"] {
-        let mut malformed = response(&[(10, "a")]);
+        let mut malformed = response(&[response_entry(10, "a")]);
         malformed["data"]["result"][0]["values"][0][0] = timestamp.into();
         check!(counted(&malformed, &[record("tenant", 10, "a")]) == 0);
     }
@@ -105,7 +142,7 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
     other_metadata
         .structured_metadata
         .insert("request".to_string(), "second".to_string());
-    let mut metadata_response = response(&[(10, "a"), (10, "a")]);
+    let mut metadata_response = response(&[response_entry(10, "a"), response_entry(10, "a")]);
     metadata_response["data"]["result"][0]["stream"]["request"] = "first".into();
     check!(counted(&metadata_response, &[with_metadata, other_metadata]) == 1);
 
@@ -136,20 +173,30 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
 
     // Hot records are filtered before the match-off: another tenant, a
     // timestamp outside the plan's range, and one already compacted.
-    check!(counted(&response(&[(10, "a")]), &[record("other", 10, "a")]) == 0);
+    check!(
+        counted(
+            &response(&[response_entry(10, "a")]),
+            &[record("other", 10, "a")]
+        ) == 0
+    );
     // Both ends of the range, since they are separate clauses. Past the
     // end is straightforward. BEFORE the start needs its own plan: with
     // this plan starting at zero, anything earlier is also behind the
     // compaction frontier and would be filtered by that instead, leaving
     // the start-of-range clause untested.
-    check!(counted(&response(&[(200, "a")]), &[record("tenant", 200, "a")]) == 0);
+    check!(
+        counted(
+            &response(&[response_entry(200, "a")]),
+            &[record("tenant", 200, "a")]
+        ) == 0
+    );
     let later_plan = StreamPlan {
         time_range: krabka_blockstore::TimeRange::new(50, 100).expect("a valid range"),
         ..plan.clone()
     };
     check!(
         super::super::prelude::count_loki_stream_result_hot_tail_lines(
-            &response(&[(10, "a")]),
+            &response(&[response_entry(10, "a")]),
             &later_plan,
             &[record("tenant", 10, "a")],
             &open,
@@ -159,7 +206,7 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
     let compacted = super::super::prelude::CompactionFrontier::new(50);
     check!(
         super::super::prelude::count_loki_stream_result_hot_tail_lines(
-            &response(&[(10, "a")]),
+            &response(&[response_entry(10, "a")]),
             &plan,
             &[record("tenant", 10, "a")],
             &compacted,
@@ -169,5 +216,5 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
 
     // Nothing on either side.
     check!(counted(&response(&[]), &[record("tenant", 10, "a")]) == 0);
-    check!(counted(&response(&[(10, "a")]), &[]) == 0);
+    check!(counted(&response(&[response_entry(10, "a")]), &[]) == 0);
 }

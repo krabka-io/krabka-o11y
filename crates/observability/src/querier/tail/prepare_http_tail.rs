@@ -33,13 +33,15 @@ pub(crate) async fn prepare_http_tail(
         &state.label_index,
         &state.block_index,
     )?;
-    let (source, frontier) = state.hot_tail.as_ref().map_or(
-        (
-            None,
-            CompactionFrontierSource::Snapshot(CompactionFrontier::new(i64::MAX)),
-        ),
-        |hot_tail| (Some(hot_tail.source.clone()), hot_tail.frontier.clone()),
-    );
+    let source;
+    let frontier;
+    if let Some(hot_tail) = state.hot_tail.as_ref() {
+        source = Some(hot_tail.source.clone());
+        frontier = hot_tail.frontier.clone();
+    } else {
+        source = None;
+        frontier = CompactionFrontierSource::Snapshot(CompactionFrontier::new(i64::MAX));
+    }
 
     Ok(TailStream {
         plan,

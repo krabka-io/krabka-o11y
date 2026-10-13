@@ -20,20 +20,20 @@ pub(crate) fn loki_metrics_parquet_response(
                     .and_then(Value::as_array)
                     .ok_or(HttpQueryError::LokiParquet("missing matrix values array"))?;
                 for sample in samples {
-                    let (timestamp_ns, value) = loki_parquet_metric_sample(sample, kind)?;
-                    timestamps.push(timestamp_ns);
+                    let point = loki_parquet_metric_sample(sample, kind)?;
+                    timestamps.push(point.timestamp_ns);
                     label_sets.push(labels.clone());
-                    values.push(value);
+                    values.push(point.value);
                 }
             }
             LokiMetricParquetKind::Vector => {
                 let sample = series
                     .get("value")
                     .ok_or(HttpQueryError::LokiParquet("missing vector value"))?;
-                let (timestamp_ns, value) = loki_parquet_metric_sample(sample, kind)?;
-                timestamps.push(timestamp_ns);
+                let point = loki_parquet_metric_sample(sample, kind)?;
+                timestamps.push(point.timestamp_ns);
                 label_sets.push(labels.clone());
-                values.push(value);
+                values.push(point.value);
             }
         }
     }

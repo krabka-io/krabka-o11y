@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use super::{
     ApiVersion, BlockCatalog, FrontendRequest, IntoResponse, Json, QuerierBackend, Response,
-    RouteVariant, StatusCode, backend_error_response, json, optional_time_bounds, scope_name,
-    scope_param, tenant_and_bounds, with_warnings,
+    RouteVariant, StatusCode, backend_error_response, json, scope_name, scope_param,
+    status_text_response, with_warnings,
 };
 
 /// `/api/search/tags`, or for [`ApiVersion::V2`] the scoped
@@ -14,25 +14,27 @@ where
     C: BlockCatalog + 'static,
     V: RouteVariant<ApiVersion>,
 {
-    let (tenant, start_ns, end_ns) =
-        match tenant_and_bounds(request.tenant_request(), optional_time_bounds) {
-            Ok(request) => request,
-            Err(rejection) => return *rejection,
-        };
+    let bounds = match request.tenant_and_optional_bounds() {
+        Ok(bounds) => bounds,
+        Err(rejection) => return *rejection,
+    };
     let FrontendRequest { qf, uri, .. } = request;
     // The v1 endpoint lists every scope's names as one flat set.
     let scope = match V::VARIANT {
         ApiVersion::V1 => None,
         ApiVersion::V2 => match scope_param(&uri) {
             Ok(scope) => scope,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+            Err(err) => return status_text_response(StatusCode::BAD_REQUEST, err),
         },
     };
-    let (tags, _metrics, warnings) = match qf
+    let result = match qf
         .tag_names(
-            &tenant,
+            &bounds.tenant,
             scope,
-            krabka_blockstore::TimeRange { start_ns, end_ns },
+            krabka_blockstore::TimeRange {
+                start_ns: bounds.start_ns,
+                end_ns: bounds.end_ns,
+            },
         )
         .await
     {
@@ -40,18 +42,20 @@ where
         Err(err) => return backend_error_response(&err),
     };
     if matches!(V::VARIANT, ApiVersion::V1) {
-        let tag_names = tags
+        let tag_names = result
+            .tags
             .into_iter()
             .flat_map(|scope| scope.tags)
             .collect::<BTreeSet<_>>();
         return Json(json!({ "tagNames": tag_names })).into_response();
     }
-    let scopes: Vec<_> = tags
+    let scopes: Vec<_> = result
+        .tags
         .iter()
         .map(|st| json!({ "name": scope_name(st.scope), "tags": &st.tags }))
         .collect();
     with_warnings(
         json!({ "scopes": scopes, "metrics": { "inspectedBytes": "0" } }),
-        &warnings,
+        &result.warnings,
     )
 }

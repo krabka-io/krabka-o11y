@@ -5,7 +5,11 @@ pub(crate) async fn instant_absent_returns_one_with_equality_matcher_labels_when
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
+        ]),
         10_000,
         1.0,
     );

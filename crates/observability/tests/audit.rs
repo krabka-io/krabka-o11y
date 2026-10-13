@@ -64,11 +64,12 @@ async fn audit_events_reach_one_partition_of_the_topic_in_order_on_a_valid_chain
     };
     let shutdown = CancellationToken::new();
     // No `--audit-bootstrap`: the layer uses the bootstrap the service gives.
-    let (handle, writer) =
-        AuditService::start(&args, product(), Some(&bootstrap), None, shutdown.clone())
-            .await
-            .expect("the audit layer starts")
-            .into_parts();
+    let parts = AuditService::start(&args, product(), Some(&bootstrap), None, shutdown.clone())
+        .await
+        .expect("the audit layer starts")
+        .into_parts();
+    let handle = parts.handle;
+    let writer = parts.writer;
     let events = events();
     for event in &events {
         handle.emit(event.clone());
@@ -86,9 +87,13 @@ async fn audit_events_reach_one_partition_of_the_topic_in_order_on_a_valid_chain
     let expected: Vec<ConsumedRecord> = events
         .iter()
         .zip(0_i64..)
-        .map(|(event, offset)| {
+        .map(|entry| {
+            let event = entry.0;
+            let offset = entry.1;
             let mut record = AuditRecord::from_event(event, &product());
-            let (seq, prev_head) = chain.extend(&record.value);
+            let chain_position = chain.extend(&record.value);
+            let seq = chain_position.0;
+            let prev_head = chain_position.1;
             record.push_chain_headers(seq, &prev_head);
             ConsumedRecord {
                 partition: AUDIT_PARTITION,
@@ -218,11 +223,13 @@ fn events() -> Vec<AuditEvent> {
 }
 
 fn headers(record: &AuditRecord) -> BTreeMap<String, String> {
-    let mut headers = record
-        .headers
-        .iter()
-        .map(|(key, value)| (key.clone(), String::from_utf8_lossy(value).into_owned()))
-        .collect::<BTreeMap<_, _>>();
+    let mut headers = BTreeMap::new();
+    for header in &record.headers {
+        headers.insert(
+            header.0.clone(),
+            String::from_utf8_lossy(header.1.as_slice()).into_owned(),
+        );
+    }
     headers.insert("krabka-format-version".to_string(), "1".to_string());
     headers
 }
@@ -263,18 +270,16 @@ async fn consume_audit_records(bootstrap: &str, expected: usize) -> Vec<Consumed
     while Instant::now() < deadline && records.len() < expected {
         for record in consumer.poll(secs(1)).await.expect("poll the audit topic") {
             let ocsf = record.value.expect("an audit record has a value");
+            let mut headers = BTreeMap::new();
+            for header in record.headers {
+                let text = header.value.expect("an audit header has a value");
+                headers.insert(header.key, String::from_utf8_lossy(&text).into_owned());
+            }
             records.push(ConsumedRecord {
                 partition: record.partition,
                 offset: record.offset,
                 ocsf: serde_json::from_slice(&ocsf).expect("the value is OCSF JSON"),
-                headers: record
-                    .headers
-                    .into_iter()
-                    .map(|header| {
-                        let text = header.value.expect("an audit header has a value");
-                        (header.key, String::from_utf8_lossy(&text).into_owned())
-                    })
-                    .collect(),
+                headers,
             });
         }
     }

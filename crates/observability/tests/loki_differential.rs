@@ -45,6 +45,7 @@ mod generated_differential;
 mod template_functions;
 
 use std::{
+    borrow::Cow,
     fmt::Write as _,
     io::Write as _,
     sync::Mutex,
@@ -314,15 +315,15 @@ async fn loki_corpus_matches_krabka() -> TestResult {
         let krabka_response = krabka_side.probe(&client, &case).await?;
         let loki_response = loki_side.probe(&client, &case).await?;
         let mut agrees = krabka_response == loki_response;
-        if let Some((_, expression, line)) = template_functions::CASES
+        if let Some(template_case) = template_functions::CASES
             .iter()
-            .find(|(name, _, _)| *name == case.name)
+            .find(|template_case| template_case.name == case.name)
         {
-            let expected = template_expected_response(&timeline, case.name, line);
+            let expected = template_expected_response(&timeline, case.name, template_case.expected);
             agrees &= krabka_response == expected && loki_response == expected;
             template_cases.push(json!({
-                "id": case.name, "name": case.name, "expression": expression,
-                "request": {"method": "GET", "path": case.path, "tenant": case.tenant, "query": supported_template_query(expression)},
+                "id": case.name, "name": case.name, "expression": template_case.expression,
+                "request": {"method": "GET", "path": case.path, "tenant": case.tenant, "query": supported_template_query(template_case.expression)},
                 "raw_oracle": loki_side.last_response, "raw_candidate": krabka_side.last_response,
                 "oracle": loki_response, "candidate": krabka_response,
                 "independent_expected": expected,
@@ -539,20 +540,29 @@ async fn run_generated_logql(
             async move {
                 let mut responses = Vec::with_capacity(2);
                 let mut rejected = true;
-                for (implementation, base) in [("upstream", reference), ("krabka", candidate)] {
+                for side in [
+                    DifferentialImplementation {
+                        name: "upstream",
+                        base: reference,
+                    },
+                    DifferentialImplementation {
+                        name: "krabka",
+                        base: candidate,
+                    },
+                ] {
                     let encoded = url::form_urlencoded::Serializer::new(String::new())
                         .append_pair("query", &expression)
                         .append_pair("time", end)
                         .finish();
                     let response = client
-                        .get(format!("{base}/loki/api/v1/query?{encoded}"))
+                        .get(format!("{}/loki/api/v1/query?{encoded}", side.base))
                         .header("X-Scope-OrgID", TENANT)
                         .send()
                         .await?;
                     rejected &= record_rejection_response(
                         &mut responses,
                         ImplementationAnswer {
-                            implementation,
+                            implementation: side.name,
                             response,
                         },
                         logql_query_rejection_kind,
@@ -696,10 +706,23 @@ async fn collect_loki_remote_report(
     report_dir: &std::path::Path,
 ) -> TestResult<Option<String>> {
     let output = run_loki_remote_binary(binary, source, metadata, reference, candidate, mode).await;
-    let (stdout, stderr, exited_successfully) = match output {
-        Ok(output) => (output.stdout, output.stderr, output.status.success()),
-        Err(error) => (Vec::new(), error.to_string().into_bytes(), false),
+    let output = match output {
+        Ok(output) => RemoteCommandOutput {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            exited_successfully: output.status.success(),
+        },
+        Err(error) => RemoteCommandOutput {
+            stdout: Vec::new(),
+            stderr: error.to_string().into_bytes(),
+            exited_successfully: false,
+        },
     };
+    let RemoteCommandOutput {
+        stdout,
+        stderr,
+        exited_successfully,
+    } = output;
     std::fs::write(
         report_dir.join(format!("loki-remote-{mode}.stdout.txt")),
         &stdout,
@@ -756,8 +779,14 @@ async fn run_loki_remote_binary(
 }
 
 /// A seeded stream: its labels, and the entries pushed into it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StaticLabelPair {
+    name: &'static str,
+    value: &'static str,
+}
+
 struct SeedStream {
-    labels: &'static [(&'static str, &'static str)],
+    labels: &'static [StaticLabelPair],
     entries: &'static [SeedEntry],
 }
 
@@ -765,7 +794,7 @@ struct SeedStream {
 struct SeedEntry {
     offset_secs: i64,
     line: &'static str,
-    metadata: &'static [(&'static str, &'static str)],
+    metadata: &'static [StaticLabelPair],
 }
 
 /// Streams pushed as `application/json`, the encoding Promtail and Alloy use.
@@ -775,27 +804,72 @@ struct SeedEntry {
 /// a case that fails on it is not failing on metadata.
 const JSON_STREAMS: &[SeedStream] = &[
     SeedStream {
-        labels: &[("app", "api"), ("env", "prod")],
+        labels: &[
+            StaticLabelPair {
+                name: "app",
+                value: "api",
+            },
+            StaticLabelPair {
+                name: "env",
+                value: "prod",
+            },
+        ],
         entries: &[
             SeedEntry {
                 offset_secs: 0,
                 line: r#"{"level":"info","status":200,"msg":"api ok","duration":0.25}"#,
-                metadata: &[("pod", "api-1"), ("trace_id", "abc")],
+                metadata: &[
+                    StaticLabelPair {
+                        name: "pod",
+                        value: "api-1",
+                    },
+                    StaticLabelPair {
+                        name: "trace_id",
+                        value: "abc",
+                    },
+                ],
             },
             SeedEntry {
                 offset_secs: 10,
                 line: r#"{"level":"error","status":500,"msg":"api error","duration":1.5}"#,
-                metadata: &[("pod", "api-2"), ("trace_id", "def")],
+                metadata: &[
+                    StaticLabelPair {
+                        name: "pod",
+                        value: "api-2",
+                    },
+                    StaticLabelPair {
+                        name: "trace_id",
+                        value: "def",
+                    },
+                ],
             },
             SeedEntry {
                 offset_secs: 20,
                 line: r#"{"level":"warn","status":404,"msg":"api missing","duration":0.5}"#,
-                metadata: &[("pod", "api-1"), ("trace_id", "ghi")],
+                metadata: &[
+                    StaticLabelPair {
+                        name: "pod",
+                        value: "api-1",
+                    },
+                    StaticLabelPair {
+                        name: "trace_id",
+                        value: "ghi",
+                    },
+                ],
             },
         ],
     },
     SeedStream {
-        labels: &[("app", "worker"), ("env", "prod")],
+        labels: &[
+            StaticLabelPair {
+                name: "app",
+                value: "worker",
+            },
+            StaticLabelPair {
+                name: "env",
+                value: "prod",
+            },
+        ],
         entries: &[
             SeedEntry {
                 offset_secs: 5,
@@ -863,7 +937,16 @@ const JSON_STREAMS: &[SeedStream] = &[
 
 /// The stream pushed as gzipped JSON, covering the `Content-Encoding` path.
 const GZIP_STREAMS: &[SeedStream] = &[SeedStream {
-    labels: &[("app", "gz"), ("env", "prod")],
+    labels: &[
+        StaticLabelPair {
+            name: "app",
+            value: "gz",
+        },
+        StaticLabelPair {
+            name: "env",
+            value: "prod",
+        },
+    ],
     entries: &[
         SeedEntry {
             offset_secs: 3,
@@ -888,7 +971,16 @@ const GZIP_STREAMS: &[SeedStream] = &[SeedStream {
 /// that ask about it and nowhere else.
 const PROTO_STREAMS: &[SeedStream] = &[
     SeedStream {
-        labels: &[("app", "fmt"), ("env", "stage")],
+        labels: &[
+            StaticLabelPair {
+                name: "app",
+                value: "fmt",
+            },
+            StaticLabelPair {
+                name: "env",
+                value: "stage",
+            },
+        ],
         entries: &[
             SeedEntry {
                 offset_secs: 2,
@@ -913,17 +1005,32 @@ const PROTO_STREAMS: &[SeedStream] = &[
         ],
     },
     SeedStream {
-        labels: &[("app", "meta"), ("env", "stage")],
+        labels: &[
+            StaticLabelPair {
+                name: "app",
+                value: "meta",
+            },
+            StaticLabelPair {
+                name: "env",
+                value: "stage",
+            },
+        ],
         entries: &[
             SeedEntry {
                 offset_secs: 4,
                 line: "meta first",
-                metadata: &[("shard", "a")],
+                metadata: &[StaticLabelPair {
+                    name: "shard",
+                    value: "a",
+                }],
             },
             SeedEntry {
                 offset_secs: 14,
                 line: "meta second",
-                metadata: &[("shard", "b")],
+                metadata: &[StaticLabelPair {
+                    name: "shard",
+                    value: "b",
+                }],
             },
         ],
     },
@@ -935,7 +1042,20 @@ const PROTO_STREAMS: &[SeedStream] = &[
 /// unterminated quote, a clean line, and a standalone key with no `=`.
 const PARSER_STREAMS: &[SeedStream] = &[
     SeedStream {
-        labels: &[("app", "api"), ("env", "prod"), ("format", "json")],
+        labels: &[
+            StaticLabelPair {
+                name: "app",
+                value: "api",
+            },
+            StaticLabelPair {
+                name: "env",
+                value: "prod",
+            },
+            StaticLabelPair {
+                name: "format",
+                value: "json",
+            },
+        ],
         entries: &[
             SeedEntry {
                 offset_secs: 0,
@@ -960,7 +1080,20 @@ const PARSER_STREAMS: &[SeedStream] = &[
         ],
     },
     SeedStream {
-        labels: &[("app", "api"), ("env", "prod"), ("format", "logfmt")],
+        labels: &[
+            StaticLabelPair {
+                name: "app",
+                value: "api",
+            },
+            StaticLabelPair {
+                name: "env",
+                value: "prod",
+            },
+            StaticLabelPair {
+                name: "format",
+                value: "logfmt",
+            },
+        ],
         entries: &[
             SeedEntry {
                 offset_secs: 2,
@@ -1045,22 +1178,66 @@ const PARSER_STREAMS: &[SeedStream] = &[
         ],
     },
     SeedStream {
-        labels: &[("app", "api"), ("env", "prod"), ("format", "metadata")],
+        labels: &[
+            StaticLabelPair {
+                name: "app",
+                value: "api",
+            },
+            StaticLabelPair {
+                name: "env",
+                value: "prod",
+            },
+            StaticLabelPair {
+                name: "format",
+                value: "metadata",
+            },
+        ],
         entries: &[
             SeedEntry {
                 offset_secs: 17,
                 line: "api metadata ok",
-                metadata: &[("trace_id", "abc"), ("status", "200")],
+                metadata: &[
+                    StaticLabelPair {
+                        name: "trace_id",
+                        value: "abc",
+                    },
+                    StaticLabelPair {
+                        name: "status",
+                        value: "200",
+                    },
+                ],
             },
             SeedEntry {
                 offset_secs: 18,
                 line: "api metadata miss",
-                metadata: &[("trace_id", "def"), ("status", "500")],
+                metadata: &[
+                    StaticLabelPair {
+                        name: "trace_id",
+                        value: "def",
+                    },
+                    StaticLabelPair {
+                        name: "status",
+                        value: "500",
+                    },
+                ],
             },
         ],
     },
     SeedStream {
-        labels: &[("app", "api"), ("env", "prod"), ("format", "packed")],
+        labels: &[
+            StaticLabelPair {
+                name: "app",
+                value: "api",
+            },
+            StaticLabelPair {
+                name: "env",
+                value: "prod",
+            },
+            StaticLabelPair {
+                name: "format",
+                value: "packed",
+            },
+        ],
         entries: &[SeedEntry {
             offset_secs: 19,
             line: r#"{"container":"myapp","pod":"pod-3223f","_entry":"original log message"}"#,
@@ -1128,17 +1305,137 @@ enum Shape {
 }
 
 /// One comparison: a request made identically to both sides.
+struct LogQueryCase<Query> {
+    name: &'static str,
+    query: Query,
+}
+
+struct NamedQueryExpression {
+    name: &'static str,
+    query: &'static str,
+}
+
+struct DifferentialImplementation<'a> {
+    name: &'static str,
+    base: &'a str,
+}
+
+struct RemoteCommandOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    exited_successfully: bool,
+}
+
+struct NamedEndpointCase {
+    name: &'static str,
+    path: &'static str,
+}
+
+struct EmptyTenantCase {
+    name: &'static str,
+    path: &'static str,
+    query: &'static str,
+}
+
+struct NamedRawQueryCase {
+    name: &'static str,
+    path: &'static str,
+    query: &'static str,
+}
+
+struct NamedStepCase {
+    name: &'static str,
+    endpoint: &'static str,
+    step: &'static str,
+}
+
+struct DetectedEndpointCase {
+    suffix: &'static str,
+    endpoint: &'static str,
+    query: Option<&'static str>,
+}
+
+struct NamedTargetCase {
+    name: &'static str,
+    path: &'static str,
+    target: Target,
+}
+
+struct LogLevelCase {
+    name: &'static str,
+    query: Option<&'static str>,
+    form: Option<&'static str>,
+}
+
+struct LifecycleCase {
+    name: &'static str,
+    method: Method,
+    path: &'static str,
+    query: &'static str,
+}
+
+struct ProtobufPushCase {
+    name: &'static str,
+    streams: Vec<LokiProtoStream>,
+}
+
+struct KeyReplacement {
+    key: &'static str,
+    placeholder: &'static str,
+}
+
+struct ExpectedTemplateLevel {
+    level: &'static str,
+    offsets: &'static [i64],
+}
+
+struct DetectedCaseName {
+    kind: &'static str,
+    endpoint: &'static str,
+    name: &'static str,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct QueryParameter<'a> {
+    name: &'a str,
+    value: Cow<'a, str>,
+}
+
+impl<'a> QueryParameter<'a> {
+    fn new(name: &'a str, value: impl Into<Cow<'a, str>>) -> Self {
+        Self {
+            name,
+            value: value.into(),
+        }
+    }
+}
+
 struct Case {
     name: &'static str,
     method: Method,
     path: String,
     /// The query string, already encoded, without the `?`.
     query: String,
-    headers: Vec<(&'static str, String)>,
+    headers: Vec<RequestHeader>,
     body: Vec<u8>,
     tenant: &'static str,
     target: Target,
     shape: Shape,
+}
+
+struct RequestHeader {
+    name: &'static str,
+    value: String,
+}
+
+struct LiveTailPush<'a> {
+    client: &'a reqwest::Client,
+    url: String,
+}
+
+struct ServedRouter {
+    url: String,
+    shutdown: oneshot::Sender<()>,
 }
 
 impl Case {
@@ -1165,14 +1462,12 @@ impl Case {
     }
 
     /// Appends form-encoded parameters to the query string.
-    fn params<K, V>(mut self, params: impl IntoIterator<Item = (K, V)>) -> Self
-    where
-        K: AsRef<str>,
-        V: AsRef<str>,
-    {
-        let encoded = url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(params)
-            .finish();
+    fn params<'a>(mut self, params: impl IntoIterator<Item = QueryParameter<'a>>) -> Self {
+        let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+        for parameter in params {
+            serializer.append_pair(parameter.name, parameter.value.as_ref());
+        }
+        let encoded = serializer.finish();
         if !self.query.is_empty() && !encoded.is_empty() {
             self.query.push('&');
         }
@@ -1188,7 +1483,10 @@ impl Case {
     }
 
     fn header(mut self, name: &'static str, value: impl Into<String>) -> Self {
-        self.headers.push((name, value.into()));
+        self.headers.push(RequestHeader {
+            name,
+            value: value.into(),
+        });
         self
     }
 
@@ -1231,16 +1529,12 @@ fn corpus(timeline: &Timeline) -> TestResult<Vec<Case>> {
     cases.extend(vector_function_cases(timeline));
     cases.extend(parser_error_cases(timeline));
     cases.extend(parser_cases(timeline));
-    cases.extend(
-        template_functions::CASES
-            .iter()
-            .map(|(name, expression, _)| {
-                let query = supported_template_query(expression);
-                Case::get(name, "/loki/api/v1/query_range")
-                    .params(range_params(timeline, &query, 1))
-                    .tenant(PARSER_TENANT)
-            }),
-    );
+    cases.extend(template_functions::CASES.iter().map(|template_case| {
+        let query = supported_template_query(template_case.expression);
+        Case::get(template_case.name, "/loki/api/v1/query_range")
+            .params(range_params(timeline, &query, 1))
+            .tenant(PARSER_TENANT)
+    }));
     cases.extend(parser_metric_cases(timeline));
     cases.extend(parser_instant_cases(timeline));
     cases.extend(metadata_cases(timeline));
@@ -1275,62 +1569,99 @@ fn supported_template_query(expression: &str) -> String {
 
 fn stream_cases(timeline: &Timeline) -> Vec<Case> {
     [
-        ("selector_api_stream", r#"{app="api"}"#),
-        ("selector_meta_stream", r#"{app="meta"}"#),
-        ("selector_every_stream", r#"{env=~".+"}"#),
-        ("selector_regex_match", r#"{app=~"worker|gz"}"#),
-        ("selector_not_equal", r#"{env="prod", app!="api"}"#),
-        ("selector_regex_not_match", r#"{env="prod", app!~"api|gz"}"#),
-        ("line_filter_contains", r#"{app="worker"} |= "error""#),
-        ("line_filter_not_contains", r#"{app="worker"} != "error""#),
-        ("line_filter_regex", r#"{app="worker"} |~ "job=[0-9]""#),
-        (
-            "line_filter_not_regex",
-            r#"{app="worker"} !~ "^worker started""#,
-        ),
-        ("line_filter_chained", r#"{app="gz"} |= "gz" != "second""#),
-        ("json_parser", r#"{app="api"} | json"#),
-        (
-            "json_parser_label_filter",
-            r#"{app="api"} | json | status = "500""#,
-        ),
-        (
-            "json_parser_named_expression",
-            r#"{app="api"} | json severity="level""#,
-        ),
-        ("logfmt_parser", r#"{app="fmt"} | logfmt"#),
-        (
-            "logfmt_label_filter",
-            r#"{app="fmt"} | logfmt | status = "ok""#,
-        ),
-        (
-            "logfmt_numeric_label_filter",
-            r#"{app="fmt"} | logfmt | latency > 10"#,
-        ),
-        (
-            "label_format_rename",
-            r#"{app="fmt"} | logfmt | label_format svc=service"#,
-        ),
-        (
-            "label_format_template",
-            r#"{app="fmt"} | logfmt | label_format svc=`{{.service}}-{{.status}}`"#,
-        ),
-        (
-            "label_format_overwrites_a_stream_label",
-            r#"{app="fmt"} | logfmt | label_format app="renamed""#,
-        ),
-        (
-            "line_format_template",
-            r#"{app="fmt"} | logfmt | line_format `{{.service}}/{{.status}}`"#,
-        ),
-        (
-            "structured_metadata_filter",
-            r#"{app="meta"} | shard = "b""#,
-        ),
+        LogQueryCase {
+            name: "selector_api_stream",
+            query: r#"{app="api"}"#,
+        },
+        LogQueryCase {
+            name: "selector_meta_stream",
+            query: r#"{app="meta"}"#,
+        },
+        LogQueryCase {
+            name: "selector_every_stream",
+            query: r#"{env=~".+"}"#,
+        },
+        LogQueryCase {
+            name: "selector_regex_match",
+            query: r#"{app=~"worker|gz"}"#,
+        },
+        LogQueryCase {
+            name: "selector_not_equal",
+            query: r#"{env="prod", app!="api"}"#,
+        },
+        LogQueryCase {
+            name: "selector_regex_not_match",
+            query: r#"{env="prod", app!~"api|gz"}"#,
+        },
+        LogQueryCase {
+            name: "line_filter_contains",
+            query: r#"{app="worker"} |= "error""#,
+        },
+        LogQueryCase {
+            name: "line_filter_not_contains",
+            query: r#"{app="worker"} != "error""#,
+        },
+        LogQueryCase {
+            name: "line_filter_regex",
+            query: r#"{app="worker"} |~ "job=[0-9]""#,
+        },
+        LogQueryCase {
+            name: "line_filter_not_regex",
+            query: r#"{app="worker"} !~ "^worker started""#,
+        },
+        LogQueryCase {
+            name: "line_filter_chained",
+            query: r#"{app="gz"} |= "gz" != "second""#,
+        },
+        LogQueryCase {
+            name: "json_parser",
+            query: r#"{app="api"} | json"#,
+        },
+        LogQueryCase {
+            name: "json_parser_label_filter",
+            query: r#"{app="api"} | json | status = "500""#,
+        },
+        LogQueryCase {
+            name: "json_parser_named_expression",
+            query: r#"{app="api"} | json severity="level""#,
+        },
+        LogQueryCase {
+            name: "logfmt_parser",
+            query: r#"{app="fmt"} | logfmt"#,
+        },
+        LogQueryCase {
+            name: "logfmt_label_filter",
+            query: r#"{app="fmt"} | logfmt | status = "ok""#,
+        },
+        LogQueryCase {
+            name: "logfmt_numeric_label_filter",
+            query: r#"{app="fmt"} | logfmt | latency > 10"#,
+        },
+        LogQueryCase {
+            name: "label_format_rename",
+            query: r#"{app="fmt"} | logfmt | label_format svc=service"#,
+        },
+        LogQueryCase {
+            name: "label_format_template",
+            query: r#"{app="fmt"} | logfmt | label_format svc=`{{.service}}-{{.status}}`"#,
+        },
+        LogQueryCase {
+            name: "label_format_overwrites_a_stream_label",
+            query: r#"{app="fmt"} | logfmt | label_format app="renamed""#,
+        },
+        LogQueryCase {
+            name: "line_format_template",
+            query: r#"{app="fmt"} | logfmt | line_format `{{.service}}/{{.status}}`"#,
+        },
+        LogQueryCase {
+            name: "structured_metadata_filter",
+            query: r#"{app="meta"} | shard = "b""#,
+        },
     ]
     .into_iter()
-    .map(|(name, logql)| {
-        Case::get(name, "/loki/api/v1/query_range").params(range_params(timeline, logql, 15))
+    .map(|case| {
+        Case::get(case.name, "/loki/api/v1/query_range")
+            .params(range_params(timeline, case.query, 15))
     })
     .collect()
 }
@@ -1352,44 +1683,59 @@ fn stream_cases(timeline: &Timeline) -> Vec<Case> {
 /// `<name>_extracted` and the original stays where it was.
 fn categorized_stream_cases(timeline: &Timeline) -> Vec<Case> {
     [
-        ("categorized_selector_api_stream", r#"{app="api"}"#),
-        ("categorized_selector_meta_stream", r#"{app="meta"}"#),
-        ("categorized_selector_worker_stream", r#"{app="worker"}"#),
-        ("categorized_json_parser", r#"{app="api"} | json"#),
-        ("categorized_logfmt_parser", r#"{app="fmt"} | logfmt"#),
-        (
-            "categorized_label_format_rename",
-            r#"{app="fmt"} | logfmt | label_format svc=service"#,
-        ),
-        (
-            "categorized_label_format_overwrites_a_stream_label",
-            r#"{app="fmt"} | logfmt | label_format app="renamed""#,
-        ),
-        (
-            "categorized_label_format_overwrites_a_stream_label_from_a_parsed_one",
-            r#"{app="fmt"} | logfmt | label_format app=service"#,
-        ),
-        (
-            "categorized_label_format_rewrites_a_stream_label_unchanged",
-            r#"{app="fmt"} | logfmt | label_format env="stage""#,
-        ),
-        (
-            "categorized_label_format_overwrites_structured_metadata",
-            r#"{app="meta"} | label_format shard="z""#,
-        ),
-        (
-            "categorized_parser_field_collides_with_a_stream_label",
-            r#"{app="fmt"} | logfmt app="service""#,
-        ),
-        (
-            "categorized_structured_metadata_filter",
-            r#"{app="meta"} | shard = "b""#,
-        ),
+        LogQueryCase {
+            name: "categorized_selector_api_stream",
+            query: r#"{app="api"}"#,
+        },
+        LogQueryCase {
+            name: "categorized_selector_meta_stream",
+            query: r#"{app="meta"}"#,
+        },
+        LogQueryCase {
+            name: "categorized_selector_worker_stream",
+            query: r#"{app="worker"}"#,
+        },
+        LogQueryCase {
+            name: "categorized_json_parser",
+            query: r#"{app="api"} | json"#,
+        },
+        LogQueryCase {
+            name: "categorized_logfmt_parser",
+            query: r#"{app="fmt"} | logfmt"#,
+        },
+        LogQueryCase {
+            name: "categorized_label_format_rename",
+            query: r#"{app="fmt"} | logfmt | label_format svc=service"#,
+        },
+        LogQueryCase {
+            name: "categorized_label_format_overwrites_a_stream_label",
+            query: r#"{app="fmt"} | logfmt | label_format app="renamed""#,
+        },
+        LogQueryCase {
+            name: "categorized_label_format_overwrites_a_stream_label_from_a_parsed_one",
+            query: r#"{app="fmt"} | logfmt | label_format app=service"#,
+        },
+        LogQueryCase {
+            name: "categorized_label_format_rewrites_a_stream_label_unchanged",
+            query: r#"{app="fmt"} | logfmt | label_format env="stage""#,
+        },
+        LogQueryCase {
+            name: "categorized_label_format_overwrites_structured_metadata",
+            query: r#"{app="meta"} | label_format shard="z""#,
+        },
+        LogQueryCase {
+            name: "categorized_parser_field_collides_with_a_stream_label",
+            query: r#"{app="fmt"} | logfmt app="service""#,
+        },
+        LogQueryCase {
+            name: "categorized_structured_metadata_filter",
+            query: r#"{app="meta"} | shard = "b""#,
+        },
     ]
     .into_iter()
-    .map(|(name, logql)| {
-        Case::get(name, "/loki/api/v1/query_range")
-            .params(range_params(timeline, logql, 15))
+    .map(|case| {
+        Case::get(case.name, "/loki/api/v1/query_range")
+            .params(range_params(timeline, case.query, 15))
             .categorized()
     })
     .collect()
@@ -1399,75 +1745,30 @@ fn categorized_stream_cases(timeline: &Timeline) -> Vec<Case> {
 /// aggregations, unwrap, and one deliberately step-unaligned window.
 fn metric_cases(timeline: &Timeline) -> Vec<Case> {
     let mut cases: Vec<Case> = [
-        ("count_over_time", r#"count_over_time({app="api"}[1m])"#),
-        (
-            "count_over_time_line_filter",
-            r#"count_over_time({app="worker"} |= "error" [1m])"#,
-        ),
-        ("rate", r#"rate({app=~"api|worker"}[1m])"#),
-        ("bytes_over_time", r#"bytes_over_time({app="worker"}[1m])"#),
-        ("bytes_rate", r#"bytes_rate({app="worker"}[1m])"#),
-        (
-            "sum_by_count_over_time",
-            r#"sum by (app) (count_over_time({app=~".+"}[1m]))"#,
-        ),
-        (
-            "sum_without_count_over_time",
-            r#"sum without (env, detected_level, service_name) (count_over_time({app=~"worker|gz"}[1m]))"#,
-        ),
-        ("max_by_rate", r#"max by (env) (rate({app=~".+"}[1m]))"#),
-        (
-            "avg_by_count_over_time",
-            r#"avg by (app) (count_over_time({app=~".+"}[1m]))"#,
-        ),
-        (
-            "topk_over_range_aggregation",
-            r#"topk(1, count_over_time({app=~"worker|gz"}[1m]))"#,
-        ),
-        (
-            "topk_over_vector_aggregation",
-            r#"topk(1, sum by (app) (bytes_over_time({app=~".+"}[1m])))"#,
-        ),
-        (
-            "scalar_multiply",
-            r#"sum(count_over_time({app=~".+"}[1m])) * 2"#,
-        ),
-        (
-            "binary_vector_division",
-            r#"sum by (app) (count_over_time({app=~".+"}[1m])) / sum by (app) (count_over_time({app=~".+"}[2m]))"#,
-        ),
-        (
-            "unwrap_sum_over_time",
-            r#"sum_over_time({app="fmt"} | logfmt | unwrap latency [1m])"#,
-        ),
-        (
-            "unwrap_avg_over_time_by_service",
-            r#"avg_over_time({app="fmt"} | logfmt | unwrap latency [1m]) by (service)"#,
-        ),
-        (
-            "unwrap_max_over_time",
-            r#"max_over_time({app="fmt"} | logfmt | unwrap latency [1m])"#,
-        ),
-        (
-            "unwrap_quantile_over_time",
-            r#"quantile_over_time(0.9, {app="fmt"} | logfmt | unwrap latency [1m]) by (service)"#,
-        ),
-        (
-            "unwrap_rate",
-            r#"rate({app="fmt"} | logfmt | unwrap latency [1m])"#,
-        ),
-        (
-            "unwrap_duration_conversion",
-            r#"sum_over_time({app="fmt"} | logfmt | unwrap duration(took) [1m])"#,
-        ),
-        (
-            "unwrap_label_named_after_a_conversion",
-            r#"sum_over_time({app="fmt"} | logfmt | unwrap duration [1m])"#,
-        ),
+        LogQueryCase { name: "count_over_time", query: r#"count_over_time({app="api"}[1m])"# },
+        LogQueryCase { name: "count_over_time_line_filter", query: r#"count_over_time({app="worker"} |= "error" [1m])"# },
+        LogQueryCase { name: "rate", query: r#"rate({app=~"api|worker"}[1m])"# },
+        LogQueryCase { name: "bytes_over_time", query: r#"bytes_over_time({app="worker"}[1m])"# },
+        LogQueryCase { name: "bytes_rate", query: r#"bytes_rate({app="worker"}[1m])"# },
+        LogQueryCase { name: "sum_by_count_over_time", query: r#"sum by (app) (count_over_time({app=~".+"}[1m]))"# },
+        LogQueryCase { name: "sum_without_count_over_time", query: r#"sum without (env, detected_level, service_name) (count_over_time({app=~"worker|gz"}[1m]))"# },
+        LogQueryCase { name: "max_by_rate", query: r#"max by (env) (rate({app=~".+"}[1m]))"# },
+        LogQueryCase { name: "avg_by_count_over_time", query: r#"avg by (app) (count_over_time({app=~".+"}[1m]))"# },
+        LogQueryCase { name: "topk_over_range_aggregation", query: r#"topk(1, count_over_time({app=~"worker|gz"}[1m]))"# },
+        LogQueryCase { name: "topk_over_vector_aggregation", query: r#"topk(1, sum by (app) (bytes_over_time({app=~".+"}[1m])))"# },
+        LogQueryCase { name: "scalar_multiply", query: r#"sum(count_over_time({app=~".+"}[1m])) * 2"# },
+        LogQueryCase { name: "binary_vector_division", query: r#"sum by (app) (count_over_time({app=~".+"}[1m])) / sum by (app) (count_over_time({app=~".+"}[2m]))"# },
+        LogQueryCase { name: "unwrap_sum_over_time", query: r#"sum_over_time({app="fmt"} | logfmt | unwrap latency [1m])"# },
+        LogQueryCase { name: "unwrap_avg_over_time_by_service", query: r#"avg_over_time({app="fmt"} | logfmt | unwrap latency [1m]) by (service)"# },
+        LogQueryCase { name: "unwrap_max_over_time", query: r#"max_over_time({app="fmt"} | logfmt | unwrap latency [1m])"# },
+        LogQueryCase { name: "unwrap_quantile_over_time", query: r#"quantile_over_time(0.9, {app="fmt"} | logfmt | unwrap latency [1m]) by (service)"# },
+        LogQueryCase { name: "unwrap_rate", query: r#"rate({app="fmt"} | logfmt | unwrap latency [1m])"# },
+        LogQueryCase { name: "unwrap_duration_conversion", query: r#"sum_over_time({app="fmt"} | logfmt | unwrap duration(took) [1m])"# },
+        LogQueryCase { name: "unwrap_label_named_after_a_conversion", query: r#"sum_over_time({app="fmt"} | logfmt | unwrap duration [1m])"# }
     ]
     .into_iter()
-    .map(|(name, logql)| {
-        Case::get(name, "/loki/api/v1/query_range").params(range_params(timeline, logql, 15))
+    .map(|case| {
+        Case::get(case.name, "/loki/api/v1/query_range").params(range_params(timeline, case.query, 15))
     })
     .collect();
 
@@ -1480,11 +1781,11 @@ fn metric_cases(timeline: &Timeline) -> Vec<Case> {
             "/loki/api/v1/query_range",
         )
         .params([
-            ("query", r#"count_over_time({app="api"}[1m])"#.to_string()),
-            ("start", timeline.at(-7).to_string()),
-            ("end", timeline.at(53).to_string()),
-            ("step", "15".to_string()),
-            ("direction", "forward".to_string()),
+            QueryParameter::new("query", r#"count_over_time({app="api"}[1m])"#.to_string()),
+            QueryParameter::new("start", timeline.at(-7).to_string()),
+            QueryParameter::new("end", timeline.at(53).to_string()),
+            QueryParameter::new("step", "15".to_string()),
+            QueryParameter::new("direction", "forward".to_string()),
         ]),
     );
     cases
@@ -1493,31 +1794,37 @@ fn metric_cases(timeline: &Timeline) -> Vec<Case> {
 /// `/query`, which answers at a single instant rather than over a window.
 fn instant_cases(timeline: &Timeline) -> Vec<Case> {
     [
-        ("instant_selector_api_stream", r#"{app="api"}"#),
-        ("instant_selector_worker_stream", r#"{app="worker"}"#),
-        (
-            "instant_sum_count_over_time",
-            r#"sum(count_over_time({app=~".+"}[5m]))"#,
-        ),
-        (
-            "instant_sum_by_count_over_time",
-            r#"sum by (app) (count_over_time({app=~".+"}[5m]))"#,
-        ),
-        (
-            "instant_topk_count_over_time",
-            r#"topk(2, sum by (app) (count_over_time({app=~".+"}[5m])))"#,
-        ),
-        (
-            "instant_unwrap_sum_over_time",
-            r#"sum_over_time({app="fmt"} | logfmt | unwrap latency [5m])"#,
-        ),
+        LogQueryCase {
+            name: "instant_selector_api_stream",
+            query: r#"{app="api"}"#,
+        },
+        LogQueryCase {
+            name: "instant_selector_worker_stream",
+            query: r#"{app="worker"}"#,
+        },
+        LogQueryCase {
+            name: "instant_sum_count_over_time",
+            query: r#"sum(count_over_time({app=~".+"}[5m]))"#,
+        },
+        LogQueryCase {
+            name: "instant_sum_by_count_over_time",
+            query: r#"sum by (app) (count_over_time({app=~".+"}[5m]))"#,
+        },
+        LogQueryCase {
+            name: "instant_topk_count_over_time",
+            query: r#"topk(2, sum by (app) (count_over_time({app=~".+"}[5m])))"#,
+        },
+        LogQueryCase {
+            name: "instant_unwrap_sum_over_time",
+            query: r#"sum_over_time({app="fmt"} | logfmt | unwrap latency [5m])"#,
+        },
     ]
     .into_iter()
-    .map(|(name, logql)| {
-        Case::get(name, "/loki/api/v1/query").params([
-            ("query", logql.to_string()),
-            ("time", timeline.at(60).to_string()),
-            ("direction", "forward".to_string()),
+    .map(|case| {
+        Case::get(case.name, "/loki/api/v1/query").params([
+            QueryParameter::new("query", case.query),
+            QueryParameter::new("time", timeline.at(60).to_string()),
+            QueryParameter::new("direction", "forward".to_string()),
         ])
     })
     .collect()
@@ -1532,47 +1839,58 @@ fn vector_function_cases(timeline: &Timeline) -> Vec<Case> {
     let instant = timeline.at(60).to_string();
     let label_replace = r#"label_replace(vector(1), "service", "api-$1", "missing", "(.*)")"#;
     let mut cases: Vec<Case> = [
-        ("scalar_arithmetic_range", "1+2".to_string()),
-        ("label_replace_vector_range", label_replace.to_string()),
-        (
-            "label_replace_vector_or_range",
-            format!("{label_replace} or vector(2)"),
-        ),
+        LogQueryCase {
+            name: "scalar_arithmetic_range",
+            query: "1+2".to_string(),
+        },
+        LogQueryCase {
+            name: "label_replace_vector_range",
+            query: label_replace.to_string(),
+        },
+        LogQueryCase {
+            name: "label_replace_vector_or_range",
+            query: format!("{label_replace} or vector(2)"),
+        },
     ]
     .into_iter()
-    .map(|(name, logql)| {
-        Case::get(name, "/loki/api/v1/query_range").params([
-            ("query", logql.as_str()),
-            ("start", "0.000000000"),
-            ("end", "20000000000"),
-            ("step", "10s"),
+    .map(|case| {
+        Case::get(case.name, "/loki/api/v1/query_range").params([
+            QueryParameter::new("query", case.query),
+            QueryParameter::new("start", "0.000000000"),
+            QueryParameter::new("end", "20000000000"),
+            QueryParameter::new("step", "10s"),
         ])
     })
     .collect();
     cases.extend(
         [
-            ("label_replace_vector_instant", label_replace.to_string()),
-            (
-                "label_replace_vector_arithmetic_instant",
-                format!("{label_replace} + on() vector(2)"),
-            ),
-            (
-                "label_replace_vector_or_instant",
-                format!("{label_replace} or vector(2)"),
-            ),
-            (
-                "label_replace_vector_sort_instant",
-                format!("sort({label_replace})"),
-            ),
-            (
-                "label_replace_vector_sort_desc_instant",
-                format!("sort_desc({label_replace})"),
-            ),
+            LogQueryCase {
+                name: "label_replace_vector_instant",
+                query: label_replace.to_string(),
+            },
+            LogQueryCase {
+                name: "label_replace_vector_arithmetic_instant",
+                query: format!("{label_replace} + on() vector(2)"),
+            },
+            LogQueryCase {
+                name: "label_replace_vector_or_instant",
+                query: format!("{label_replace} or vector(2)"),
+            },
+            LogQueryCase {
+                name: "label_replace_vector_sort_instant",
+                query: format!("sort({label_replace})"),
+            },
+            LogQueryCase {
+                name: "label_replace_vector_sort_desc_instant",
+                query: format!("sort_desc({label_replace})"),
+            },
         ]
         .into_iter()
-        .map(|(name, logql)| {
-            Case::get(name, "/loki/api/v1/query")
-                .params([("query", logql.as_str()), ("time", instant.as_str())])
+        .map(|case| {
+            Case::get(case.name, "/loki/api/v1/query").params([
+                QueryParameter::new("query", case.query),
+                QueryParameter::new("time", instant.as_str()),
+            ])
         }),
     );
     cases
@@ -1582,32 +1900,17 @@ fn vector_function_cases(timeline: &Timeline) -> Vec<Case> {
 /// `--keep-empty` and `--strict` flags, over [`PARSER_STREAMS`].
 fn parser_error_cases(timeline: &Timeline) -> Vec<Case> {
     [
-        ("parser_error_json", r#"{app="api",format="json"} | json"#),
-        (
-            "parser_error_json_filtered_out",
-            r#"{app="api",format="json"} | json | __error__ = """#,
-        ),
-        (
-            "parser_error_logfmt_malformed_field",
-            r#"{app="api",format="logfmt"} | logfmt"#,
-        ),
-        (
-            "parser_error_logfmt_keep_empty",
-            r#"{app="api",format="logfmt"} | logfmt --keep-empty | empty = """#,
-        ),
-        (
-            "parser_error_logfmt_strict",
-            r#"{app="api",format="logfmt"} | logfmt --strict | __error__ = "LogfmtParserErr""#,
-        ),
-        (
-            "parser_error_logfmt_strict_clean",
-            r#"{app="api",format="logfmt"} | logfmt --strict | __error__ = """#,
-        ),
+        LogQueryCase { name: "parser_error_json", query: r#"{app="api",format="json"} | json"# },
+        LogQueryCase { name: "parser_error_json_filtered_out", query: r#"{app="api",format="json"} | json | __error__ = """# },
+        LogQueryCase { name: "parser_error_logfmt_malformed_field", query: r#"{app="api",format="logfmt"} | logfmt"# },
+        LogQueryCase { name: "parser_error_logfmt_keep_empty", query: r#"{app="api",format="logfmt"} | logfmt --keep-empty | empty = """# },
+        LogQueryCase { name: "parser_error_logfmt_strict", query: r#"{app="api",format="logfmt"} | logfmt --strict | __error__ = "LogfmtParserErr""# },
+        LogQueryCase { name: "parser_error_logfmt_strict_clean", query: r#"{app="api",format="logfmt"} | logfmt --strict | __error__ = """# }
     ]
     .into_iter()
-    .map(|(name, logql)| {
-        Case::get(name, "/loki/api/v1/query_range")
-            .params(range_params(timeline, logql, 15))
+    .map(|case| {
+        Case::get(case.name, "/loki/api/v1/query_range")
+            .params(range_params(timeline, case.query, 15))
             .tenant(PARSER_TENANT)
     })
     .collect()
@@ -1616,58 +1919,58 @@ fn parser_error_cases(timeline: &Timeline) -> Vec<Case> {
 /// Parser and formatter coverage carried by the original differential suite.
 fn parser_cases(timeline: &Timeline) -> Vec<Case> {
     [
-        ("parser_nested_json", r#"{app="api",format="json"} | json | request_method = "GET" | response_status >= 500"#),
-        ("parser_selected_json", r#"{app="api",format="json"} | json method="request.method", status_code="response.status" | status_code >= 500"#),
-        ("parser_logfmt_numeric", r#"{app="api",format="logfmt"} | logfmt | status >= 500"#),
-        ("parser_logfmt_selected", r#"{app="api",format="logfmt"} | logfmt status, message="msg" | status >= 500"#),
-        ("parser_logfmt_or", r#"{app="api",format="logfmt"} | logfmt | status >= 500 or msg = "api parser ok""#),
-        ("parser_logfmt_comma_and", r#"{app="api",format="logfmt"} | logfmt | status >= 500, msg = "api parser error""#),
-        ("parser_logfmt_adjacent_and", r#"{app="api",format="logfmt"} | logfmt | status >= 500 msg = "api parser error""#),
-        ("parser_backtick_filter", r#"{app="api",format="logfmt"} | logfmt | msg = `api parser error`"#),
-        ("parser_line_format", r#"{app="api",format="logfmt"} | logfmt | line_format `{{.msg}} {{.status}}` |= "api parser error 500""#),
-        ("parser_line_format_pipeline", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ .msg | replace " " "_" | upper }} {{.status}}` |= "API_PARSER_ERROR 500""#),
-        ("parser_line_format_with", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ with .raw }}raw={{ . }}{{ else }}missing{{ end }}` |= "raw= /checkout/ ""#),
-        ("parser_line_format_trim", r#"{app="api",format="logfmt"} | logfmt | line_format `left {{- .msg -}} right` |= "leftapi parser errorright""#),
-        ("parser_line_format_comment", r#"{app="api",format="logfmt"} | logfmt | line_format `before{{/* hidden */}}after {{ .msg }}` |= "beforeafter api parser error""#),
-        ("parser_label_format", r#"{app="api",format="logfmt"} | logfmt | label_format namespace=env, summary="{{.msg}} {{.status}}" | namespace = "prod" | summary = "api parser error 500""#),
-        ("parser_label_format_pipeline", r#"{app="api",format="logfmt"} | logfmt | label_format summary=`{{ .msg | replace " " "_" | upper }}` | summary = "API_PARSER_ERROR""#),
-        ("parser_line_format_strings", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ .raw | trim | trimPrefix "/" | trimSuffix "/" | title }} {{ .raw | trimAll " /" }} {{ .path | substr 1 10 }} {{ .path | substr 5 -1 }} {{ .path | substr -1 4 }}` |= "Checkout checkout api/items items /api""#),
-        ("parser_line_format_logic", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ contains "helper" .msg }} {{ .path | hasPrefix "/api" }} {{ .path | hasSuffix "items" }} {{ .msg | eq "template helper" }}` |= "true true true true""#),
-        ("parser_template_string_truthiness", r#"{app="api",format="logfmt"} | line_format `{{ if "false" }}yes{{ else }}bad{{ end }}|{{ if "0" }}yes{{ else }}bad{{ end }}|{{ if false }}bad{{ else }}no{{ end }}`"#),
-        ("parser_template_operands", r#"{app="api",format="logfmt"} | line_format `{{ and "left" "right" }}|{{ or "" "fallback" }}|{{ "last" | and "first" }}|{{ "last" | or "first" }}`"#),
-        ("parser_template_typed_values", r#"{app="api",format="logfmt"} | line_format `{{ eq "b" "a" "b" }}|{{ lt "3" "10" }}|{{ lt 3 10 }}|{{ default "fallback" false }}|{{ default "fallback" 0 }}|{{ default "fallback" "0" }}`"#),
-        ("parser_template_collection_values", r#"{app="api",format="logfmt"} | line_format `{{ len (fromJson "[1,2]") }}|{{ or (fromJson "[]") (fromJson "[1,2]") }}|{{ with or "" "chosen" }}{{ . | upper }}{{ else }}bad{{ end }}`"#),
-        ("parser_template_numeric_conditions", r#"{app="api",format="logfmt"} | line_format `{{ if sub 2 2 }}bad{{ else }}zero{{ end }}|{{ if addf 1 -1 }}bad{{ else }}zero{{ end }}`"#),
-        ("parser_template_short_circuit", r#"{app="api",format="logfmt"} | line_format `{{ or "chosen" (div 1 0) }}|{{ and "" (div 1 0) }}` | __error__ = """#),
-        ("parser_template_error_filter", r#"{app="api",format="logfmt"} | line_format `prefix{{ count "[" __line__ }}` | __error__ = """#),
-        ("parser_template_definitions", r#"{app="api",format="logfmt"} | line_format `{{ template "suffix" "chosen" }}{{ define "suffix" }}{{ . | upper }}={{ $ }}{{ end }}`"#),
-        ("parser_template_block", r#"{app="api",format="logfmt"} | line_format `{{ block "body" "fallback" }}{{ . }}{{ end }}`"#),
-        ("parser_template_outer_assignment", r#"{app="api",format="logfmt"} | line_format `{{ $sum := 0 }}{{ range $n := fromJson "[1,2,3]" }}{{ $sum = add $sum $n }}{{ . }}{{ end }}|{{ $sum }}`"#),
-        ("parser_template_range_flow", r#"{app="api",format="logfmt"} | line_format `{{ range 4 }}{{ if eq . 1 }}{{ continue }}{{ end }}{{ if eq . 3 }}{{ break }}{{ end }}{{ . }}{{ end }}done`"#),
-        ("parser_template_range_assignment", r#"{app="api",format="logfmt"} | line_format `{{$i := 9}}{{$v := "before"}}{{range $i, $v = fromJson "[10,20]"}}{{$i}}={{$v}};{{end}}|{{$i}}:{{$v}}`"#),
-        ("parser_template_empty_range_binding", r#"{app="api",format="logfmt"} | line_format `{{range $v := fromJson "[]"}}bad{{else}}{{len $v}}{{end}}|{{range (fromJson "null")}}bad{{else}}nil{{end}}`"#),
-        ("parser_template_invalid_range_filter", r#"{app="api",format="logfmt"} | line_format `{{range "abc"}}bad{{else}}bad{{end}}` | __error__="""#),
-        ("parser_template_recursive_execution", r#"{app="api",format="logfmt"} | line_format `{{define "down"}}{{if gt . 0}}{{range 1}}{{template "down" (sub $ 1)}}{{end}}{{else}}done{{end}}{{end}}{{template "down" 2000}}`"#),
-        ("parser_template_label_composition", r#"{app="api",format="logfmt"} | label_format decision=`{{ or "" "chosen" }}` | decision="chosen" | line_format `{{ .decision | upper }}`"#),
-        ("parser_line_format_ne", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ ne .msg "api parser error" }} {{ .path | ne "/health" }}` |= "true true""#),
-        ("parser_line_format_len", r#"{app="api",format="logfmt"} | logfmt | line_format `len={{ len .msg }}` |= "len=15""#),
-        ("parser_line_format_spacing", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ alignLeft 5 .short }}|{{ alignLeft 5 .long }}|{{ alignRight 5 .short }}|{{ alignRight 5 .long }}|{{ repeat 3 .mark }}` |= "hi   |hello|   hi|world|xxx""#),
-        ("parser_line_format_regex", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ count "e" .msg }}|{{ regexReplaceAll "(template) (helper)" .msg "${2}-${1}" }}|{{ .msg | regexReplaceAllLiteral "(template) (helper)" "${2}-${1}" }}` |= "4|helper-template|${2}-${1}""#),
-        ("parser_drop_keep", r#"{app="api",format="logfmt"} | logfmt | drop env, msg="api parser error" | keep app, format, status="500" | status = "500""#),
-        ("parser_decolorize", r#"{app="api",format="logfmt"} | decolorize | logfmt | msg = "colored parser error""#),
-        ("parser_pattern_filter", r#"{app="api",format="logfmt"} |> `status=500 msg="api parser error"`"#),
-        ("parser_pattern", r#"{app="api",format="logfmt"} | pattern `status=<status> msg="<msg>"` | status >= 500"#),
-        ("parser_regexp", r#"{app="api",format="logfmt"} | regexp `status=(?P<status>\d+) msg="(?P<msg>.*)"` | status >= 500"#),
-        ("parser_unpack", r#"{app="api",format="packed"} | unpack != "container" | pod = "pod-3223f""#),
-        ("parser_typed_filter", r#"{app="api",format="logfmt"} | logfmt | duration >= 20ms | bytes_consumed > 20MB"#),
-        ("parser_ip_cidr", r#"{app="api",format="logfmt"} |= ip("10.0.0.0/8")"#),
-        ("parser_ip_single", r#"{app="api",format="logfmt"} |= ip("10.2.3.4")"#),
-        ("parser_ip_range", r#"{app="api",format="logfmt"} |= ip("10.2.3.0-10.2.3.10")"#),
-        ("parser_not_ip", r#"{app="api",format="logfmt"} != ip("192.168.0.0/16")"#),
-        ("parser_metadata", r#"{app="api",format="metadata"} | trace_id = "abc""#),
+        LogQueryCase { name: "parser_nested_json", query: r#"{app="api",format="json"} | json | request_method = "GET" | response_status >= 500"# },
+        LogQueryCase { name: "parser_selected_json", query: r#"{app="api",format="json"} | json method="request.method", status_code="response.status" | status_code >= 500"# },
+        LogQueryCase { name: "parser_logfmt_numeric", query: r#"{app="api",format="logfmt"} | logfmt | status >= 500"# },
+        LogQueryCase { name: "parser_logfmt_selected", query: r#"{app="api",format="logfmt"} | logfmt status, message="msg" | status >= 500"# },
+        LogQueryCase { name: "parser_logfmt_or", query: r#"{app="api",format="logfmt"} | logfmt | status >= 500 or msg = "api parser ok""# },
+        LogQueryCase { name: "parser_logfmt_comma_and", query: r#"{app="api",format="logfmt"} | logfmt | status >= 500, msg = "api parser error""# },
+        LogQueryCase { name: "parser_logfmt_adjacent_and", query: r#"{app="api",format="logfmt"} | logfmt | status >= 500 msg = "api parser error""# },
+        LogQueryCase { name: "parser_backtick_filter", query: r#"{app="api",format="logfmt"} | logfmt | msg = `api parser error`"# },
+        LogQueryCase { name: "parser_line_format", query: r#"{app="api",format="logfmt"} | logfmt | line_format `{{.msg}} {{.status}}` |= "api parser error 500""# },
+        LogQueryCase { name: "parser_line_format_pipeline", query: r#"{app="api",format="logfmt"} | logfmt | line_format `{{ .msg | replace " " "_" | upper }} {{.status}}` |= "API_PARSER_ERROR 500""# },
+        LogQueryCase { name: "parser_line_format_with", query: r#"{app="api",format="logfmt"} | logfmt | line_format `{{ with .raw }}raw={{ . }}{{ else }}missing{{ end }}` |= "raw= /checkout/ ""# },
+        LogQueryCase { name: "parser_line_format_trim", query: r#"{app="api",format="logfmt"} | logfmt | line_format `left {{- .msg -}} right` |= "leftapi parser errorright""# },
+        LogQueryCase { name: "parser_line_format_comment", query: r#"{app="api",format="logfmt"} | logfmt | line_format `before{{/* hidden */}}after {{ .msg }}` |= "beforeafter api parser error""# },
+        LogQueryCase { name: "parser_label_format", query: r#"{app="api",format="logfmt"} | logfmt | label_format namespace=env, summary="{{.msg}} {{.status}}" | namespace = "prod" | summary = "api parser error 500""# },
+        LogQueryCase { name: "parser_label_format_pipeline", query: r#"{app="api",format="logfmt"} | logfmt | label_format summary=`{{ .msg | replace " " "_" | upper }}` | summary = "API_PARSER_ERROR""# },
+        LogQueryCase { name: "parser_line_format_strings", query: r#"{app="api",format="logfmt"} | logfmt | line_format `{{ .raw | trim | trimPrefix "/" | trimSuffix "/" | title }} {{ .raw | trimAll " /" }} {{ .path | substr 1 10 }} {{ .path | substr 5 -1 }} {{ .path | substr -1 4 }}` |= "Checkout checkout api/items items /api""# },
+        LogQueryCase { name: "parser_line_format_logic", query: r#"{app="api",format="logfmt"} | logfmt | line_format `{{ contains "helper" .msg }} {{ .path | hasPrefix "/api" }} {{ .path | hasSuffix "items" }} {{ .msg | eq "template helper" }}` |= "true true true true""# },
+        LogQueryCase { name: "parser_template_string_truthiness", query: r#"{app="api",format="logfmt"} | line_format `{{ if "false" }}yes{{ else }}bad{{ end }}|{{ if "0" }}yes{{ else }}bad{{ end }}|{{ if false }}bad{{ else }}no{{ end }}`"# },
+        LogQueryCase { name: "parser_template_operands", query: r#"{app="api",format="logfmt"} | line_format `{{ and "left" "right" }}|{{ or "" "fallback" }}|{{ "last" | and "first" }}|{{ "last" | or "first" }}`"# },
+        LogQueryCase { name: "parser_template_typed_values", query: r#"{app="api",format="logfmt"} | line_format `{{ eq "b" "a" "b" }}|{{ lt "3" "10" }}|{{ lt 3 10 }}|{{ default "fallback" false }}|{{ default "fallback" 0 }}|{{ default "fallback" "0" }}`"# },
+        LogQueryCase { name: "parser_template_collection_values", query: r#"{app="api",format="logfmt"} | line_format `{{ len (fromJson "[1,2]") }}|{{ or (fromJson "[]") (fromJson "[1,2]") }}|{{ with or "" "chosen" }}{{ . | upper }}{{ else }}bad{{ end }}`"# },
+        LogQueryCase { name: "parser_template_numeric_conditions", query: r#"{app="api",format="logfmt"} | line_format `{{ if sub 2 2 }}bad{{ else }}zero{{ end }}|{{ if addf 1 -1 }}bad{{ else }}zero{{ end }}`"# },
+        LogQueryCase { name: "parser_template_short_circuit", query: r#"{app="api",format="logfmt"} | line_format `{{ or "chosen" (div 1 0) }}|{{ and "" (div 1 0) }}` | __error__ = """# },
+        LogQueryCase { name: "parser_template_error_filter", query: r#"{app="api",format="logfmt"} | line_format `prefix{{ count "[" __line__ }}` | __error__ = """# },
+        LogQueryCase { name: "parser_template_definitions", query: r#"{app="api",format="logfmt"} | line_format `{{ template "suffix" "chosen" }}{{ define "suffix" }}{{ . | upper }}={{ $ }}{{ end }}`"# },
+        LogQueryCase { name: "parser_template_block", query: r#"{app="api",format="logfmt"} | line_format `{{ block "body" "fallback" }}{{ . }}{{ end }}`"# },
+        LogQueryCase { name: "parser_template_outer_assignment", query: r#"{app="api",format="logfmt"} | line_format `{{ $sum := 0 }}{{ range $n := fromJson "[1,2,3]" }}{{ $sum = add $sum $n }}{{ . }}{{ end }}|{{ $sum }}`"# },
+        LogQueryCase { name: "parser_template_range_flow", query: r#"{app="api",format="logfmt"} | line_format `{{ range 4 }}{{ if eq . 1 }}{{ continue }}{{ end }}{{ if eq . 3 }}{{ break }}{{ end }}{{ . }}{{ end }}done`"# },
+        LogQueryCase { name: "parser_template_range_assignment", query: r#"{app="api",format="logfmt"} | line_format `{{$i := 9}}{{$v := "before"}}{{range $i, $v = fromJson "[10,20]"}}{{$i}}={{$v}};{{end}}|{{$i}}:{{$v}}`"# },
+        LogQueryCase { name: "parser_template_empty_range_binding", query: r#"{app="api",format="logfmt"} | line_format `{{range $v := fromJson "[]"}}bad{{else}}{{len $v}}{{end}}|{{range (fromJson "null")}}bad{{else}}nil{{end}}`"# },
+        LogQueryCase { name: "parser_template_invalid_range_filter", query: r#"{app="api",format="logfmt"} | line_format `{{range "abc"}}bad{{else}}bad{{end}}` | __error__="""# },
+        LogQueryCase { name: "parser_template_recursive_execution", query: r#"{app="api",format="logfmt"} | line_format `{{define "down"}}{{if gt . 0}}{{range 1}}{{template "down" (sub $ 1)}}{{end}}{{else}}done{{end}}{{end}}{{template "down" 2000}}`"# },
+        LogQueryCase { name: "parser_template_label_composition", query: r#"{app="api",format="logfmt"} | label_format decision=`{{ or "" "chosen" }}` | decision="chosen" | line_format `{{ .decision | upper }}`"# },
+        LogQueryCase { name: "parser_line_format_ne", query: r#"{app="api",format="logfmt"} | logfmt | line_format `{{ ne .msg "api parser error" }} {{ .path | ne "/health" }}` |= "true true""# },
+        LogQueryCase { name: "parser_line_format_len", query: r#"{app="api",format="logfmt"} | logfmt | line_format `len={{ len .msg }}` |= "len=15""# },
+        LogQueryCase { name: "parser_line_format_spacing", query: r#"{app="api",format="logfmt"} | logfmt | line_format `{{ alignLeft 5 .short }}|{{ alignLeft 5 .long }}|{{ alignRight 5 .short }}|{{ alignRight 5 .long }}|{{ repeat 3 .mark }}` |= "hi   |hello|   hi|world|xxx""# },
+        LogQueryCase { name: "parser_line_format_regex", query: r#"{app="api",format="logfmt"} | logfmt | line_format `{{ count "e" .msg }}|{{ regexReplaceAll "(template) (helper)" .msg "${2}-${1}" }}|{{ .msg | regexReplaceAllLiteral "(template) (helper)" "${2}-${1}" }}` |= "4|helper-template|${2}-${1}""# },
+        LogQueryCase { name: "parser_drop_keep", query: r#"{app="api",format="logfmt"} | logfmt | drop env, msg="api parser error" | keep app, format, status="500" | status = "500""# },
+        LogQueryCase { name: "parser_decolorize", query: r#"{app="api",format="logfmt"} | decolorize | logfmt | msg = "colored parser error""# },
+        LogQueryCase { name: "parser_pattern_filter", query: r#"{app="api",format="logfmt"} |> `status=500 msg="api parser error"`"# },
+        LogQueryCase { name: "parser_pattern", query: r#"{app="api",format="logfmt"} | pattern `status=<status> msg="<msg>"` | status >= 500"# },
+        LogQueryCase { name: "parser_regexp", query: r#"{app="api",format="logfmt"} | regexp `status=(?P<status>\d+) msg="(?P<msg>.*)"` | status >= 500"# },
+        LogQueryCase { name: "parser_unpack", query: r#"{app="api",format="packed"} | unpack != "container" | pod = "pod-3223f""# },
+        LogQueryCase { name: "parser_typed_filter", query: r#"{app="api",format="logfmt"} | logfmt | duration >= 20ms | bytes_consumed > 20MB"# },
+        LogQueryCase { name: "parser_ip_cidr", query: r#"{app="api",format="logfmt"} |= ip("10.0.0.0/8")"# },
+        LogQueryCase { name: "parser_ip_single", query: r#"{app="api",format="logfmt"} |= ip("10.2.3.4")"# },
+        LogQueryCase { name: "parser_ip_range", query: r#"{app="api",format="logfmt"} |= ip("10.2.3.0-10.2.3.10")"# },
+        LogQueryCase { name: "parser_not_ip", query: r#"{app="api",format="logfmt"} != ip("192.168.0.0/16")"# },
+        LogQueryCase { name: "parser_metadata", query: r#"{app="api",format="metadata"} | trace_id = "abc""# }
     ]
     .into_iter()
-    .map(|(name, logql)| Case::get(name, "/loki/api/v1/query_range").params(range_params(timeline, logql, 1)).tenant(PARSER_TENANT))
+    .map(|case| Case::get(case.name, "/loki/api/v1/query_range").params(range_params(timeline, case.query, 1)).tenant(PARSER_TENANT))
     .collect()
 }
 
@@ -1688,7 +1991,7 @@ fn parser_metric_cases(timeline: &Timeline) -> Vec<Case> {
         "parser_metric_duration",
         "parser_metric_duration_seconds",
     ];
-    [
+    let queries = [
         r#"count_over_time({app="api",format="json"} | json | response_status >= 500 [5s])"#,
         r#"sum_over_time({app="api",format="logfmt"} | logfmt | unwrap cost | __error__ = "" [3s])"#,
         r#"avg_over_time({app="api",format="logfmt"} | logfmt | unwrap cost | __error__ = "" [3s])"#,
@@ -1703,51 +2006,75 @@ fn parser_metric_cases(timeline: &Timeline) -> Vec<Case> {
         r#"sum_over_time({app="api",format="logfmt"} | logfmt | unwrap bytes(size) | __error__ = "" [3s])"#,
         r#"sum_over_time({app="api",format="logfmt"} | logfmt | unwrap duration(latency) | __error__ = "" [3s])"#,
         r#"sum_over_time({app="api",format="logfmt"} | logfmt | unwrap duration_seconds(latency) | __error__ = "" [3s])"#,
-    ]
-    .into_iter()
-    .zip(names)
-    .map(|(logql, name)| Case::get(name, "/loki/api/v1/query_range").params(range_params(timeline, logql, 1)).tenant(PARSER_TENANT))
-    .collect()
+    ];
+    (0..names.len())
+        .map(|index| {
+            Case::get(names[index], "/loki/api/v1/query_range")
+                .params(range_params(timeline, queries[index], 1))
+                .tenant(PARSER_TENANT)
+        })
+        .collect()
 }
 
 fn parser_instant_cases(timeline: &Timeline) -> Vec<Case> {
     let metric =
         r#"count_over_time({app="api",format="json"} | json | response_status >= 500 [5s])"#;
-    let queries = [
-        metric.to_string(),
-        format!("({metric} * 2)"),
-        format!("({metric}) * 2"),
-        format!("{metric} + on() vector(1)"),
-        format!("vector(1) + on() group_right(app, env) {metric}"),
-        format!("{metric} > bool on() vector(0)"),
-        format!("{metric} and on() vector(1)"),
-        format!("vector(1) or on() {metric}"),
-        format!("vector(1) and on() {metric}"),
-        format!("vector(1) unless on(app) {metric}"),
-        format!("vector(2) > bool on() group_right(app, env) {metric}"),
-    ];
-    let names = [
-        "parser_instant_count",
-        "parser_instant_parenthesized",
-        "parser_instant_operand",
-        "parser_instant_add",
-        "parser_instant_group_right",
-        "parser_instant_comparison",
-        "parser_instant_and",
-        "parser_instant_or",
-        "parser_instant_vector_and",
-        "parser_instant_unless",
-        "parser_instant_group_right_comparison",
-    ];
-    queries
-        .into_iter()
-        .zip(names)
-        .map(|(logql, name)| {
-            Case::get(name, "/loki/api/v1/query")
-                .params([("query", logql), ("time", timeline.at(10).to_string())])
-                .tenant(PARSER_TENANT)
-        })
-        .collect()
+    [
+        LogQueryCase {
+            name: "parser_instant_count",
+            query: metric.to_string(),
+        },
+        LogQueryCase {
+            name: "parser_instant_parenthesized",
+            query: format!("({metric} * 2)"),
+        },
+        LogQueryCase {
+            name: "parser_instant_operand",
+            query: format!("({metric}) * 2"),
+        },
+        LogQueryCase {
+            name: "parser_instant_add",
+            query: format!("{metric} + on() vector(1)"),
+        },
+        LogQueryCase {
+            name: "parser_instant_group_right",
+            query: format!("vector(1) + on() group_right(app, env) {metric}"),
+        },
+        LogQueryCase {
+            name: "parser_instant_comparison",
+            query: format!("{metric} > bool on() vector(0)"),
+        },
+        LogQueryCase {
+            name: "parser_instant_and",
+            query: format!("{metric} and on() vector(1)"),
+        },
+        LogQueryCase {
+            name: "parser_instant_or",
+            query: format!("vector(1) or on() {metric}"),
+        },
+        LogQueryCase {
+            name: "parser_instant_vector_and",
+            query: format!("vector(1) and on() {metric}"),
+        },
+        LogQueryCase {
+            name: "parser_instant_unless",
+            query: format!("vector(1) unless on(app) {metric}"),
+        },
+        LogQueryCase {
+            name: "parser_instant_group_right_comparison",
+            query: format!("vector(2) > bool on() group_right(app, env) {metric}"),
+        },
+    ]
+    .into_iter()
+    .map(|case| {
+        Case::get(case.name, "/loki/api/v1/query")
+            .params([
+                QueryParameter::new("query", case.query),
+                QueryParameter::new("time", timeline.at(10).to_string()),
+            ])
+            .tenant(PARSER_TENANT)
+    })
+    .collect()
 }
 
 /// The label and series endpoints Grafana's log browser drives.
@@ -1756,15 +2083,28 @@ fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
         Case::get("labels_endpoint", "/loki/api/v1/labels").params(window(timeline)),
         Case::get("series_endpoint", "/loki/api/v1/series")
             .params(window(timeline))
-            .params([("match[]", r#"{app=~".+"}"#)]),
+            .params([QueryParameter::new("match[]", r#"{app=~".+"}"#)]),
     ];
-    for (name, label) in [
-        ("label_values_app", "app"),
-        ("label_values_env", "env"),
-        ("label_values_service_name", "service_name"),
+    for case in [
+        NamedEndpointCase {
+            name: "label_values_app",
+            path: "app",
+        },
+        NamedEndpointCase {
+            name: "label_values_env",
+            path: "env",
+        },
+        NamedEndpointCase {
+            name: "label_values_service_name",
+            path: "service_name",
+        },
     ] {
         cases.push(
-            Case::get(name, format!("/loki/api/v1/label/{label}/values")).params(window(timeline)),
+            Case::get(
+                case.name,
+                format!("/loki/api/v1/label/{}/values", case.path),
+            )
+            .params(window(timeline)),
         );
     }
     cases
@@ -1772,18 +2112,18 @@ fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
 
 /// The deprecated `/api/prom` aliases, the `POST` forms, and `detected_labels`.
 fn metadata_alias_cases(timeline: &Timeline) -> Vec<Case> {
-    let api_matcher = [("match[]", r#"{app="api"}"#)];
-    let worker_matcher = [("match[]", r#"{app="worker"}"#)];
+    let api_matcher = [QueryParameter::new("match[]", r#"{app="api"}"#)];
+    let worker_matcher = [QueryParameter::new("match[]", r#"{app="worker"}"#)];
     vec![
         Case::get("label_names_singular_path", "/loki/api/v1/label").params(window(timeline)),
         Case::get("api_prom_label_names", "/api/prom/label").params(window(timeline)),
         Case::get("api_prom_label_values", "/api/prom/label/app/values").params(window(timeline)),
         Case::get("series_single_matcher", "/loki/api/v1/series")
             .params(window(timeline))
-            .params(api_matcher),
+            .params(api_matcher.clone()),
         Case::get("api_prom_series", "/api/prom/series")
             .params(window(timeline))
-            .params(api_matcher),
+            .params(api_matcher.clone()),
         Case::post("series_post_query_matcher", "/loki/api/v1/series")
             .params(window(timeline))
             .params(worker_matcher),
@@ -1792,11 +2132,14 @@ fn metadata_alias_cases(timeline: &Timeline) -> Vec<Case> {
             .form("match%5B%5D=%7Bapp%3D%22worker%22%7D"),
         Case::get("detected_labels_for_query", "/loki/api/v1/detected_labels")
             .params(window(timeline))
-            .params([("query", r#"{app="api"}"#), ("limit", "10")])
+            .params([
+                QueryParameter::new("query", r#"{app="api"}"#),
+                QueryParameter::new("limit", "10"),
+            ])
             .shape(Shape::DetectedLabels),
         Case::get("detected_labels_all", "/loki/api/v1/detected_labels")
             .params(window(timeline))
-            .params([("limit", "10")])
+            .params([QueryParameter::new("limit", "10")])
             .shape(Shape::DetectedLabels),
         Case::get(
             "detected_labels_ignore_bad_step_and_limit",
@@ -1804,9 +2147,9 @@ fn metadata_alias_cases(timeline: &Timeline) -> Vec<Case> {
         )
         .params(window(timeline))
         .params([
-            ("query", r#"{app="api"}"#),
-            ("step", "not-a-number"),
-            ("limit", "not-a-limit"),
+            QueryParameter::new("query", r#"{app="api"}"#),
+            QueryParameter::new("step", "not-a-number"),
+            QueryParameter::new("limit", "not-a-limit"),
         ])
         .shape(Shape::DetectedLabels),
     ]
@@ -1815,33 +2158,53 @@ fn metadata_alias_cases(timeline: &Timeline) -> Vec<Case> {
 /// The metadata and analytics endpoints over a tenant that holds nothing.
 fn empty_tenant_cases() -> Vec<Case> {
     [
-        ("empty_labels", "/loki/api/v1/labels", ""),
-        ("empty_label_names_singular_path", "/loki/api/v1/label", ""),
-        ("empty_label_values", "/loki/api/v1/label/app/values", ""),
-        ("empty_api_prom_label_names", "/api/prom/label", ""),
-        (
-            "empty_api_prom_label_values",
-            "/api/prom/label/app/values",
-            "",
-        ),
-        (
-            "empty_detected_labels",
-            "/loki/api/v1/detected_labels",
-            "limit=10",
-        ),
-        (
-            "empty_detected_fields",
-            "/loki/api/v1/detected_fields",
-            "query=%7Bapp%3D%22api%22%7D&limit=10",
-        ),
-        (
-            "empty_detected_field_values",
-            "/loki/api/v1/detected_field/status/values",
-            "query=%7Bapp%3D%22api%22%7D&limit=10",
-        ),
+        EmptyTenantCase {
+            name: "empty_labels",
+            path: "/loki/api/v1/labels",
+            query: "",
+        },
+        EmptyTenantCase {
+            name: "empty_label_names_singular_path",
+            path: "/loki/api/v1/label",
+            query: "",
+        },
+        EmptyTenantCase {
+            name: "empty_label_values",
+            path: "/loki/api/v1/label/app/values",
+            query: "",
+        },
+        EmptyTenantCase {
+            name: "empty_api_prom_label_names",
+            path: "/api/prom/label",
+            query: "",
+        },
+        EmptyTenantCase {
+            name: "empty_api_prom_label_values",
+            path: "/api/prom/label/app/values",
+            query: "",
+        },
+        EmptyTenantCase {
+            name: "empty_detected_labels",
+            path: "/loki/api/v1/detected_labels",
+            query: "limit=10",
+        },
+        EmptyTenantCase {
+            name: "empty_detected_fields",
+            path: "/loki/api/v1/detected_fields",
+            query: "query=%7Bapp%3D%22api%22%7D&limit=10",
+        },
+        EmptyTenantCase {
+            name: "empty_detected_field_values",
+            path: "/loki/api/v1/detected_field/status/values",
+            query: "query=%7Bapp%3D%22api%22%7D&limit=10",
+        },
     ]
     .into_iter()
-    .map(|(name, path, query)| Case::get(name, path).raw_query(query).tenant(VACANT_TENANT))
+    .map(|case| {
+        Case::get(case.name, case.path)
+            .raw_query(case.query)
+            .tenant(VACANT_TENANT)
+    })
     .collect()
 }
 
@@ -1853,32 +2216,48 @@ fn analytics_cases(timeline: &Timeline) -> Vec<Case> {
     vec![
         Case::get("detected_fields", "/loki/api/v1/detected_fields")
             .params(window(timeline))
-            .params([("query", api), ("limit", "10")])
+            .params([
+                QueryParameter::new("query", api),
+                QueryParameter::new("limit", "10"),
+            ])
             .shape(Shape::DetectedFields),
         Case::get(
             "detected_field_values",
             "/loki/api/v1/detected_field/status/values",
         )
         .params(window(timeline))
-        .params([("query", api), ("limit", "10")])
+        .params([
+            QueryParameter::new("query", api),
+            QueryParameter::new("limit", "10"),
+        ])
         .shape(Shape::DetectedFields),
         // Repeated request-shaped worker lines force both pattern engines to
         // return content rather than letting an empty envelope pass vacuously.
         Case::get("patterns", "/loki/api/v1/patterns")
             .params(window(timeline))
-            .params([("query", r#"{app="worker"}"#), ("step", "1s")])
+            .params([
+                QueryParameter::new("query", r#"{app="worker"}"#),
+                QueryParameter::new("step", "1s"),
+            ])
             .shape(Shape::Patterns),
         Case::get("index_volume", "/loki/api/v1/index/volume")
             .params(window(timeline))
-            .params([("query", prod), ("targetLabels", "app,env")])
+            .params([
+                QueryParameter::new("query", prod),
+                QueryParameter::new("targetLabels", "app,env"),
+            ])
             .shape(Shape::IndexVolume),
         Case::get("index_volume_range", "/loki/api/v1/index/volume_range")
             .params(window(timeline))
-            .params([("query", prod), ("targetLabels", "app,env"), ("step", "1s")])
+            .params([
+                QueryParameter::new("query", prod),
+                QueryParameter::new("targetLabels", "app,env"),
+                QueryParameter::new("step", "1s"),
+            ])
             .shape(Shape::IndexVolume),
         Case::get("index_stats", "/loki/api/v1/index/stats")
             .params(window(timeline))
-            .params([("query", prod)])
+            .params([QueryParameter::new("query", prod)])
             .shape(Shape::IndexStats),
     ]
 }
@@ -1886,26 +2265,14 @@ fn analytics_cases(timeline: &Timeline) -> Vec<Case> {
 /// `/format_query`, which is pure: no data, no clock, just the pretty-printer.
 fn format_query_cases() -> Vec<Case> {
     [
-        ("format_query_selector", r#"{app="api",env="prod"}"#),
-        (
-            "format_query_pipeline",
-            r#"{app="api"}|="error"|json|status="500"|line_format "{{.msg}}""#,
-        ),
-        (
-            "format_query_metric",
-            r#"sum by(app)(rate({app=~"api|worker"}|="error"[5m]))"#,
-        ),
-        (
-            "format_query_unwrap",
-            r#"quantile_over_time(0.99,{app="fmt"}|logfmt|unwrap duration[5m])by(service)"#,
-        ),
-        (
-            "format_query_binary",
-            r#"sum(count_over_time({app="api"}[1m]))/sum(count_over_time({app="worker"}[1m]))"#,
-        ),
+        NamedQueryExpression { name: "format_query_selector", query: r#"{app="api",env="prod"}"# },
+        NamedQueryExpression { name: "format_query_pipeline", query: r#"{app="api"}|="error"|json|status="500"|line_format "{{.msg}}""# },
+        NamedQueryExpression { name: "format_query_metric", query: r#"sum by(app)(rate({app=~"api|worker"}|="error"[5m]))"# },
+        NamedQueryExpression { name: "format_query_unwrap", query: r#"quantile_over_time(0.99,{app="fmt"}|logfmt|unwrap duration[5m])by(service)"# },
+        NamedQueryExpression { name: "format_query_binary", query: r#"sum(count_over_time({app="api"}[1m]))/sum(count_over_time({app="worker"}[1m]))"# },
     ]
     .into_iter()
-    .map(|(name, logql)| Case::get(name, "/loki/api/v1/format_query").params([("query", logql)]))
+    .map(|case| Case::get(case.name, "/loki/api/v1/format_query").params([QueryParameter::new("query", case.query)]))
     .collect()
 }
 
@@ -1914,200 +2281,225 @@ fn format_query_cases() -> Vec<Case> {
 fn format_query_expression_cases() -> Vec<Case> {
     let mut cases: Vec<Case> = FORMAT_QUERY_EXPRESSIONS
         .iter()
-        .map(|(name, logql)| {
-            Case::get(name, "/loki/api/v1/format_query").params([("query", *logql)])
+        .map(|example| {
+            Case::get(example.name, "/loki/api/v1/format_query")
+                .params([QueryParameter::new("query", example.query)])
         })
         .collect();
     // The query string and the form body both name `query`. The two sides must
     // pick the same one.
     cases.push(
         Case::post("format_query_post_precedence", "/loki/api/v1/format_query")
-            .params([("query", r#"{app="api"}"#)])
+            .params([QueryParameter::new("query", r#"{app="api"}"#)])
             .form("query=%7Bapp%3D%22worker%22%7D"),
     );
     cases
 }
 
-const FORMAT_QUERY_EXPRESSIONS: &[(&str, &str)] = &[
-    (
-        "format_query_logfmt_regex_filters",
-        r#"{app="api"} | logfmt | method=~"GET|POST" | path!~"/health.*""#,
-    ),
-    ("format_query_parenthesized_scalar", "(1+2)*3"),
-    ("format_query_vector_or", "vector(1) or vector(2)"),
-    ("format_query_vector_add", "vector(1)+vector(2)"),
-    (
-        "format_query_metric_add_vector",
-        r#"count_over_time({app="api"}[30s])+vector(1)"#,
-    ),
-    (
-        "format_query_metric_add_exponent",
-        r#"count_over_time({app="api"}[30s])+1.25e-1"#,
-    ),
-    (
-        "format_query_offset",
-        r#"count_over_time({app="api"}[10s] offset 1500ms)"#,
-    ),
-    (
-        "format_query_scalar_bool_metric",
-        r#"1>bool count_over_time({app="api"}[30s])"#,
-    ),
-    (
-        "format_query_unwrap_add_vector",
-        r#"quantile_over_time(0.75,{app="api"} | logfmt | unwrap cost [30s])+vector(1)"#,
-    ),
-    (
-        "format_query_metric_or_on",
-        r#"count_over_time({app="api"}[30s]) or on(app) vector(1)"#,
-    ),
-    (
-        "format_query_vector_add_metric",
-        r#"vector(1)+count_over_time({app="api"}[30s])"#,
-    ),
-    (
-        "format_query_metric_add_on",
-        r#"count_over_time({app="api"}[30s])+on(app)vector(1)"#,
-    ),
-    (
-        "format_query_vector_group_left_metric",
-        r#"vector(1)+on(app)group_left count_over_time({app="api"}[30s])"#,
-    ),
-    (
-        "format_query_on_two_labels",
-        "vector(1)+on(app,env)vector(2)",
-    ),
-    (
-        "format_query_group_left_labels",
-        "vector(1)+on(app)group_left(env)vector(2)",
-    ),
-    (
-        "format_query_group_left_bare",
-        "vector(1)+on(app)group_left vector(2)",
-    ),
-    (
-        "format_query_metric_bool_vector",
-        r#"count_over_time({app="api"}[30s])>bool vector(1)"#,
-    ),
-    (
-        "format_query_vector_comparison_group_left",
-        r#"vector(1)>on(app)group_left count_over_time({app="api"}[30s])"#,
-    ),
-    (
-        "format_query_vector_bool_vector",
-        "vector(1)>bool vector(2)",
-    ),
-    ("format_query_vector_exponent", "vector(2.5e-1)"),
-    (
-        "format_query_trailing_grouping",
-        r#"sum(rate({app="api"}|="error"[5m])) by (env,status)"#,
-    ),
-    (
-        "format_query_metric_division",
-        r#"count_over_time({app="api"}[30s]) / count_over_time({app="api"} |= "error" [30s])"#,
-    ),
-    (
-        "format_query_metric_bool_metric",
-        r#"count_over_time({app="api"}[30s]) > bool count_over_time({app="worker"}[30s])"#,
-    ),
-    (
-        "format_query_metric_or_metric",
-        r#"count_over_time({app="api"}[30s]) or count_over_time({app="worker"}[30s])"#,
-    ),
-    (
-        "format_query_ignoring",
-        r#"count_over_time({app="api"}[30s]) / ignoring(app) count_over_time({app="worker"}[30s])"#,
-    ),
-    (
-        "format_query_aggregation_group_left",
-        r#"sum by(app, env)(count_over_time({env="prod"}[30s])) / on(env) group_left sum by(env)(count_over_time({env="prod"}[30s]))"#,
-    ),
-    (
-        "format_query_sort_metric_add",
-        r#"sort(count_over_time({app="api"}[30s]) + vector(1))"#,
-    ),
-    (
-        "format_query_sort_label_replace",
-        r#"sort(label_replace(vector(1), "service", "api-$1", "missing", "(.*)"))"#,
-    ),
-    (
-        "format_query_sort_desc_label_replace_metric",
-        r#"sort_desc(label_replace(count_over_time({app="api"}[30s]) + vector(1), "service", "$1-api", "app", "(.*)"))"#,
-    ),
-    (
-        "format_query_quantile_leading_dot",
-        r#"quantile_over_time(.75,{app="api"}|logfmt|unwrap cost[30s]) by(app)"#,
-    ),
-    (
-        "format_query_label_replace_filtered_metric",
-        r#"label_replace(count_over_time({app="api"}|="error"[30s]), "service", "$1-api", "app", "(.*)")"#,
-    ),
-    (
-        "format_query_label_replace_vector",
-        r#"label_replace(vector(1), "service", "api-$1", "missing", "(.*)")"#,
-    ),
-    (
-        "format_query_label_replace_vector_sum",
-        r#"label_replace(vector(1)+vector(2), "service", "api-$1", "missing", "(.*)")"#,
-    ),
-    (
-        "format_query_label_replace_vector_add",
-        r#"label_replace(vector(1), "service", "api-$1", "missing", "(.*)") + vector(2)"#,
-    ),
-    (
-        "format_query_label_replace_vector_or",
-        r#"label_replace(vector(1), "service", "api-$1", "missing", "(.*)") or vector(2)"#,
-    ),
-    (
-        "format_query_label_replace_metric_sum",
-        r#"label_replace(count_over_time({app="api"}[30s]) + vector(1), "service", "$1-api", "app", "(.*)")"#,
-    ),
-    (
-        "format_query_label_replace_metric_add",
-        r#"label_replace(count_over_time({app="api"}[30s]), "service", "$1-api", "app", "(.*)") + vector(2)"#,
-    ),
-    (
-        "format_query_label_replace_metric_sum_add",
-        r#"label_replace(count_over_time({app="api"}[30s]) + vector(1), "service", "$1-api", "app", "(.*)") + vector(2)"#,
-    ),
-    (
-        "format_query_label_replace_metric_exponent_add",
-        r#"label_replace(count_over_time({app="api"}[30s]) + 1.25e-1, "service", "$1-api", "app", "(.*)") + vector(2)"#,
-    ),
-    (
-        "format_query_label_replace_metric_or",
-        r#"label_replace(count_over_time({app="api"}[30s]), "service", "$1-api", "app", "(.*)") or vector(2)"#,
-    ),
-    (
-        "format_query_label_replace_metric_sum_or",
-        r#"label_replace(count_over_time({app="api"}[30s]) + vector(1), "service", "$1-api", "app", "(.*)") or vector(2)"#,
-    ),
-    (
-        "format_query_label_replace_metric_bool",
-        r#"label_replace(count_over_time({app="api"}[30s]), "service", "$1-api", "app", "(.*)") > bool vector(2)"#,
-    ),
-    (
-        "format_query_label_replace_metric_exponent",
-        r#"label_replace(count_over_time({app="api"}[30s]) + 1.25e-1, "service", "$1-api", "app", "(.*)")"#,
-    ),
+const FORMAT_QUERY_EXPRESSIONS: &[NamedQueryExpression] = &[
+    NamedQueryExpression {
+        name: "format_query_logfmt_regex_filters",
+        query: r#"{app="api"} | logfmt | method=~"GET|POST" | path!~"/health.*""#,
+    },
+    NamedQueryExpression {
+        name: "format_query_parenthesized_scalar",
+        query: "(1+2)*3",
+    },
+    NamedQueryExpression {
+        name: "format_query_vector_or",
+        query: "vector(1) or vector(2)",
+    },
+    NamedQueryExpression {
+        name: "format_query_vector_add",
+        query: "vector(1)+vector(2)",
+    },
+    NamedQueryExpression {
+        name: "format_query_metric_add_vector",
+        query: r#"count_over_time({app="api"}[30s])+vector(1)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_metric_add_exponent",
+        query: r#"count_over_time({app="api"}[30s])+1.25e-1"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_offset",
+        query: r#"count_over_time({app="api"}[10s] offset 1500ms)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_scalar_bool_metric",
+        query: r#"1>bool count_over_time({app="api"}[30s])"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_unwrap_add_vector",
+        query: r#"quantile_over_time(0.75,{app="api"} | logfmt | unwrap cost [30s])+vector(1)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_metric_or_on",
+        query: r#"count_over_time({app="api"}[30s]) or on(app) vector(1)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_vector_add_metric",
+        query: r#"vector(1)+count_over_time({app="api"}[30s])"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_metric_add_on",
+        query: r#"count_over_time({app="api"}[30s])+on(app)vector(1)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_vector_group_left_metric",
+        query: r#"vector(1)+on(app)group_left count_over_time({app="api"}[30s])"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_on_two_labels",
+        query: "vector(1)+on(app,env)vector(2)",
+    },
+    NamedQueryExpression {
+        name: "format_query_group_left_labels",
+        query: "vector(1)+on(app)group_left(env)vector(2)",
+    },
+    NamedQueryExpression {
+        name: "format_query_group_left_bare",
+        query: "vector(1)+on(app)group_left vector(2)",
+    },
+    NamedQueryExpression {
+        name: "format_query_metric_bool_vector",
+        query: r#"count_over_time({app="api"}[30s])>bool vector(1)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_vector_comparison_group_left",
+        query: r#"vector(1)>on(app)group_left count_over_time({app="api"}[30s])"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_vector_bool_vector",
+        query: "vector(1)>bool vector(2)",
+    },
+    NamedQueryExpression {
+        name: "format_query_vector_exponent",
+        query: "vector(2.5e-1)",
+    },
+    NamedQueryExpression {
+        name: "format_query_trailing_grouping",
+        query: r#"sum(rate({app="api"}|="error"[5m])) by (env,status)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_metric_division",
+        query: r#"count_over_time({app="api"}[30s]) / count_over_time({app="api"} |= "error" [30s])"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_metric_bool_metric",
+        query: r#"count_over_time({app="api"}[30s]) > bool count_over_time({app="worker"}[30s])"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_metric_or_metric",
+        query: r#"count_over_time({app="api"}[30s]) or count_over_time({app="worker"}[30s])"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_ignoring",
+        query: r#"count_over_time({app="api"}[30s]) / ignoring(app) count_over_time({app="worker"}[30s])"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_aggregation_group_left",
+        query: r#"sum by(app, env)(count_over_time({env="prod"}[30s])) / on(env) group_left sum by(env)(count_over_time({env="prod"}[30s]))"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_sort_metric_add",
+        query: r#"sort(count_over_time({app="api"}[30s]) + vector(1))"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_sort_label_replace",
+        query: r#"sort(label_replace(vector(1), "service", "api-$1", "missing", "(.*)"))"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_sort_desc_label_replace_metric",
+        query: r#"sort_desc(label_replace(count_over_time({app="api"}[30s]) + vector(1), "service", "$1-api", "app", "(.*)"))"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_quantile_leading_dot",
+        query: r#"quantile_over_time(.75,{app="api"}|logfmt|unwrap cost[30s]) by(app)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_filtered_metric",
+        query: r#"label_replace(count_over_time({app="api"}|="error"[30s]), "service", "$1-api", "app", "(.*)")"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_vector",
+        query: r#"label_replace(vector(1), "service", "api-$1", "missing", "(.*)")"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_vector_sum",
+        query: r#"label_replace(vector(1)+vector(2), "service", "api-$1", "missing", "(.*)")"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_vector_add",
+        query: r#"label_replace(vector(1), "service", "api-$1", "missing", "(.*)") + vector(2)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_vector_or",
+        query: r#"label_replace(vector(1), "service", "api-$1", "missing", "(.*)") or vector(2)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_metric_sum",
+        query: r#"label_replace(count_over_time({app="api"}[30s]) + vector(1), "service", "$1-api", "app", "(.*)")"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_metric_add",
+        query: r#"label_replace(count_over_time({app="api"}[30s]), "service", "$1-api", "app", "(.*)") + vector(2)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_metric_sum_add",
+        query: r#"label_replace(count_over_time({app="api"}[30s]) + vector(1), "service", "$1-api", "app", "(.*)") + vector(2)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_metric_exponent_add",
+        query: r#"label_replace(count_over_time({app="api"}[30s]) + 1.25e-1, "service", "$1-api", "app", "(.*)") + vector(2)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_metric_or",
+        query: r#"label_replace(count_over_time({app="api"}[30s]), "service", "$1-api", "app", "(.*)") or vector(2)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_metric_sum_or",
+        query: r#"label_replace(count_over_time({app="api"}[30s]) + vector(1), "service", "$1-api", "app", "(.*)") or vector(2)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_metric_bool",
+        query: r#"label_replace(count_over_time({app="api"}[30s]), "service", "$1-api", "app", "(.*)") > bool vector(2)"#,
+    },
+    NamedQueryExpression {
+        name: "format_query_label_replace_metric_exponent",
+        query: r#"label_replace(count_over_time({app="api"}[30s]) + 1.25e-1, "service", "$1-api", "app", "(.*)")"#,
+    },
 ];
 
 /// `/format_query` refusals.
 fn format_query_error_cases() -> Vec<Case> {
     let mut cases: Vec<Case> = [
-        ("format_query_error_unterminated_selector", "{foo="),
-        ("format_query_error_negative_exponent", "vector(-2.5e-1)"),
-        ("format_query_error_unspaced_or", "vector(1)orvector(2)"),
-        (
-            "format_query_error_label_join_metric",
-            r#"label_join(count_over_time({app="api"}[30s]), "joined", "/", "app")"#,
-        ),
-        (
-            "format_query_error_label_join_vector",
-            r#"label_join(vector(1), "joined", "/", "app")"#,
-        ),
+        NamedQueryExpression {
+            name: "format_query_error_unterminated_selector",
+            query: "{foo=",
+        },
+        NamedQueryExpression {
+            name: "format_query_error_negative_exponent",
+            query: "vector(-2.5e-1)",
+        },
+        NamedQueryExpression {
+            name: "format_query_error_unspaced_or",
+            query: "vector(1)orvector(2)",
+        },
+        NamedQueryExpression {
+            name: "format_query_error_label_join_metric",
+            query: r#"label_join(count_over_time({app="api"}[30s]), "joined", "/", "app")"#,
+        },
+        NamedQueryExpression {
+            name: "format_query_error_label_join_vector",
+            query: r#"label_join(vector(1), "joined", "/", "app")"#,
+        },
     ]
     .into_iter()
-    .map(|(name, logql)| Case::get(name, "/loki/api/v1/format_query").params([("query", logql)]))
+    .map(|case| {
+        Case::get(case.name, "/loki/api/v1/format_query")
+            .params([QueryParameter::new("query", case.query)])
+    })
     .collect();
     cases.push(Case::get(
         "format_query_error_missing_query",
@@ -2119,25 +2511,40 @@ fn format_query_error_cases() -> Vec<Case> {
 /// `/query` refusals for expressions the parser rejects.
 fn query_error_cases() -> Vec<Case> {
     [
-        ("query_error_unterminated_selector", "{app="),
-        ("query_error_negative_exponent", "vector(-2.5e-1)"),
-        ("query_error_unspaced_or", "vector(1)orvector(2)"),
-        ("query_error_abs", "abs(vector(-1.2))"),
-        (
-            "query_error_count_values_leading_grouping",
-            r#"count_values by (env) ("hits", count_over_time({app="api"}[1s]))"#,
-        ),
-        (
-            "query_error_count_values_trailing_grouping",
-            r#"count_values("hits", count_over_time({app="api"}[1s])) by (env)"#,
-        ),
-        (
-            "query_error_approx_topk",
-            r#"approx_topk(1, count_over_time({app="api"}[1s]))"#,
-        ),
+        NamedQueryExpression {
+            name: "query_error_unterminated_selector",
+            query: "{app=",
+        },
+        NamedQueryExpression {
+            name: "query_error_negative_exponent",
+            query: "vector(-2.5e-1)",
+        },
+        NamedQueryExpression {
+            name: "query_error_unspaced_or",
+            query: "vector(1)orvector(2)",
+        },
+        NamedQueryExpression {
+            name: "query_error_abs",
+            query: "abs(vector(-1.2))",
+        },
+        NamedQueryExpression {
+            name: "query_error_count_values_leading_grouping",
+            query: r#"count_values by (env) ("hits", count_over_time({app="api"}[1s]))"#,
+        },
+        NamedQueryExpression {
+            name: "query_error_count_values_trailing_grouping",
+            query: r#"count_values("hits", count_over_time({app="api"}[1s])) by (env)"#,
+        },
+        NamedQueryExpression {
+            name: "query_error_approx_topk",
+            query: r#"approx_topk(1, count_over_time({app="api"}[1s]))"#,
+        },
     ]
     .into_iter()
-    .map(|(name, logql)| Case::get(name, "/loki/api/v1/query").params([("query", logql)]))
+    .map(|case| {
+        Case::get(case.name, "/loki/api/v1/query")
+            .params([QueryParameter::new("query", case.query)])
+    })
     .collect()
 }
 
@@ -2147,8 +2554,8 @@ fn query_parameter_cases(timeline: &Timeline) -> Vec<Case> {
     let api = r#"{app="api"}"#;
     let window_30s = r#"count_over_time({app="api"}[30s])"#;
     let near_now = [
-        ("start", timeline.at(299).to_string()),
-        ("end", timeline.at(300).to_string()),
+        QueryParameter::new("start", timeline.at(299).to_string()),
+        QueryParameter::new("end", timeline.at(300).to_string()),
     ];
     let mut cases = vec![
         Case::get("query_duplicate_query_param", "/loki/api/v1/query")
@@ -2168,116 +2575,129 @@ fn query_parameter_cases(timeline: &Timeline) -> Vec<Case> {
         Case::get("query_forwarded_time_overflow", "/loki/api/v1/query")
             .raw_query("query=vector%281%29&time=9.223372037"),
         Case::get("query_vector_at_corpus_time", "/loki/api/v1/query").params([
-            ("query", "vector(1)".to_string()),
-            ("time", timeline.at(60).to_string()),
+            QueryParameter::new("query", "vector(1)".to_string()),
+            QueryParameter::new("time", timeline.at(60).to_string()),
         ]),
         Case::get("query_range_bounds_in_seconds", "/loki/api/v1/query_range").params([
-            ("query", api.to_string()),
-            ("start", (timeline.at(0) / 1_000_000_000).to_string()),
-            ("end", (timeline.at(60) / 1_000_000_000).to_string()),
-            ("direction", "forward".to_string()),
+            QueryParameter::new("query", api.to_string()),
+            QueryParameter::new("start", (timeline.at(0) / 1_000_000_000).to_string()),
+            QueryParameter::new("end", (timeline.at(60) / 1_000_000_000).to_string()),
+            QueryParameter::new("direction", "forward".to_string()),
         ]),
         Case::get("query_range_invalid_direction", "/loki/api/v1/query_range").params([
-            ("query", api),
-            ("start", "0.000000000"),
-            ("end", "1.000000000"),
-            ("direction", "sideways"),
+            QueryParameter::new("query", api),
+            QueryParameter::new("start", "0.000000000"),
+            QueryParameter::new("end", "1.000000000"),
+            QueryParameter::new("direction", "sideways"),
         ]),
         Case::get("query_range_zero_step", "/loki/api/v1/query_range").params([
-            ("query", window_30s),
-            ("start", "0.000000000"),
-            ("end", "1.000000000"),
-            ("step", "0"),
+            QueryParameter::new("query", window_30s),
+            QueryParameter::new("start", "0.000000000"),
+            QueryParameter::new("end", "1.000000000"),
+            QueryParameter::new("step", "0"),
         ]),
         Case::get("query_range_unparseable_step", "/loki/api/v1/query_range").params([
-            ("query", window_30s),
-            ("start", "0.000000000"),
-            ("end", "1.000000000"),
-            ("step", "not-a-number"),
+            QueryParameter::new("query", window_30s),
+            QueryParameter::new("start", "0.000000000"),
+            QueryParameter::new("end", "1.000000000"),
+            QueryParameter::new("step", "not-a-number"),
         ]),
         Case::get(
             "query_range_excessive_resolution",
             "/loki/api/v1/query_range",
         )
         .params([
-            ("query", "vector(1)"),
-            ("start", "0.000000000"),
-            ("end", "11001000000000"),
-            ("step", "1s"),
+            QueryParameter::new("query", "vector(1)"),
+            QueryParameter::new("start", "0.000000000"),
+            QueryParameter::new("end", "11001000000000"),
+            QueryParameter::new("step", "1s"),
         ]),
         Case::get("query_range_oversized_range", "/loki/api/v1/query_range").params([
-            ("query", "vector(1)"),
-            ("start", "0.000000000"),
-            ("end", OVERSIZED_END_NS),
-            ("step", "1h"),
+            QueryParameter::new("query", "vector(1)"),
+            QueryParameter::new("start", "0.000000000"),
+            QueryParameter::new("end", OVERSIZED_END_NS),
+            QueryParameter::new("step", "1h"),
         ]),
         Case::get("query_range_unparseable_start", "/loki/api/v1/query_range").params([
-            ("query", api),
-            ("start", "not-a-number"),
-            ("end", "1.000000000"),
+            QueryParameter::new("query", api),
+            QueryParameter::new("start", "not-a-number"),
+            QueryParameter::new("end", "1.000000000"),
         ]),
         Case::get("query_range_negative_since", "/loki/api/v1/query_range").params([
-            ("query", api),
-            ("end", "1.000000000"),
-            ("since", "-1"),
+            QueryParameter::new("query", api),
+            QueryParameter::new("end", "1.000000000"),
+            QueryParameter::new("since", "-1"),
         ]),
         Case::get("query_range_zero_interval", "/loki/api/v1/query_range")
-            .params([("query", api)])
+            .params([QueryParameter::new("query", api)])
             .params(near_now.clone())
-            .params([("interval", "0")]),
+            .params([QueryParameter::new("interval", "0")]),
         Case::get("query_range_negative_interval", "/loki/api/v1/query_range")
-            .params([("query", api)])
+            .params([QueryParameter::new("query", api)])
             .params(near_now)
-            .params([("interval", "-1")]),
-        Case::get("query_unparseable_limit", "/loki/api/v1/query")
-            .params([("query", api), ("limit", "not-a-number")]),
-        Case::get("query_negative_limit", "/loki/api/v1/query")
-            .params([("query", api), ("limit", "-1")]),
+            .params([QueryParameter::new("interval", "-1")]),
+        Case::get("query_unparseable_limit", "/loki/api/v1/query").params([
+            QueryParameter::new("query", api),
+            QueryParameter::new("limit", "not-a-number"),
+        ]),
+        Case::get("query_negative_limit", "/loki/api/v1/query").params([
+            QueryParameter::new("query", api),
+            QueryParameter::new("limit", "-1"),
+        ]),
     ];
     // The form body carries an unterminated selector, the query string a valid
     // one. Loki reads the body first.
-    for (name, path, raw_query) in [
-        (
-            "query_post_body_precedence",
-            "/loki/api/v1/query",
-            "query=%7Bapp%3D%22api%22%7D&time=1.000000000",
-        ),
-        (
-            "query_range_post_body_precedence",
-            "/loki/api/v1/query_range",
-            "query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=1.000000000",
-        ),
-        (
-            "api_prom_query_post_body_precedence",
-            "/api/prom/query",
-            "query=%7Bapp%3D%22api%22%7D&time=1.000000000",
-        ),
+    for case in [
+        NamedRawQueryCase {
+            name: "query_post_body_precedence",
+            path: "/loki/api/v1/query",
+            query: "query=%7Bapp%3D%22api%22%7D&time=1.000000000",
+        },
+        NamedRawQueryCase {
+            name: "query_range_post_body_precedence",
+            path: "/loki/api/v1/query_range",
+            query: "query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=1.000000000",
+        },
+        NamedRawQueryCase {
+            name: "api_prom_query_post_body_precedence",
+            path: "/api/prom/query",
+            query: "query=%7Bapp%3D%22api%22%7D&time=1.000000000",
+        },
     ] {
         cases.push(
-            Case::post(name, path)
-                .raw_query(raw_query)
+            Case::post(case.name, case.path)
+                .raw_query(case.query)
                 .form("query=%7Bapp%3D"),
         );
     }
     let missing_query_window = [
-        ("start", timeline.at(240).to_string()),
-        ("end", timeline.at(241).to_string()),
+        QueryParameter::new("start", timeline.at(240).to_string()),
+        QueryParameter::new("end", timeline.at(241).to_string()),
     ];
     cases.push(Case::get("missing_query_instant", "/loki/api/v1/query"));
-    for (name, path) in [
-        ("missing_query_range", "/loki/api/v1/query_range"),
-        ("missing_query_index_stats", "/loki/api/v1/index/stats"),
-        ("missing_query_index_volume", "/loki/api/v1/index/volume"),
-        (
-            "missing_query_detected_fields",
-            "/loki/api/v1/detected_fields",
-        ),
-        (
-            "missing_query_detected_field_values",
-            "/loki/api/v1/detected_field/status/values",
-        ),
+    for case in [
+        NamedEndpointCase {
+            name: "missing_query_range",
+            path: "/loki/api/v1/query_range",
+        },
+        NamedEndpointCase {
+            name: "missing_query_index_stats",
+            path: "/loki/api/v1/index/stats",
+        },
+        NamedEndpointCase {
+            name: "missing_query_index_volume",
+            path: "/loki/api/v1/index/volume",
+        },
+        NamedEndpointCase {
+            name: "missing_query_detected_fields",
+            path: "/loki/api/v1/detected_fields",
+        },
+        NamedEndpointCase {
+            name: "missing_query_detected_field_values",
+            path: "/loki/api/v1/detected_field/status/values",
+        },
     ] {
-        cases.push(Case::get(name, path).params(missing_query_window.clone()));
+        cases.push(Case::get(case.name, case.path).params(missing_query_window.clone()));
     }
     cases.push(
         Case::get(
@@ -2285,7 +2705,7 @@ fn query_parameter_cases(timeline: &Timeline) -> Vec<Case> {
             "/loki/api/v1/index/volume_range",
         )
         .params(missing_query_window)
-        .params([("step", "1000000000")]),
+        .params([QueryParameter::new("step", "1000000000")]),
     );
     cases
 }
@@ -2294,68 +2714,104 @@ fn query_parameter_cases(timeline: &Timeline) -> Vec<Case> {
 /// precedence those endpoints share.
 fn metadata_error_cases() -> Vec<Case> {
     let mut cases: Vec<Case> = [
-        ("labels_invalid_query", "labels", "query=%7Bapp%3D"),
-        (
-            "label_values_invalid_query",
-            "label/app/values",
-            "query=%7Bapp%3D",
-        ),
-        ("series_invalid_matcher", "series", "match[]=%7Bapp%3D"),
-        ("series_unparseable_start", "series", "start=not-a-number"),
-        (
-            "labels_duplicate_start_param",
-            "labels",
-            "start=0.000000000&start=not-a-number",
-        ),
-        (
-            "labels_oversized_range",
-            "labels",
-            "start=0.000000000&end=2595601000000000",
-        ),
-        (
-            "label_values_oversized_range",
-            "label/app/values",
-            "start=0.000000000&end=2595601000000000",
-        ),
-        (
-            "series_oversized_range",
-            "series",
-            "match[]=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000",
-        ),
+        NamedRawQueryCase {
+            name: "labels_invalid_query",
+            path: "labels",
+            query: "query=%7Bapp%3D",
+        },
+        NamedRawQueryCase {
+            name: "label_values_invalid_query",
+            path: "label/app/values",
+            query: "query=%7Bapp%3D",
+        },
+        NamedRawQueryCase {
+            name: "series_invalid_matcher",
+            path: "series",
+            query: "match[]=%7Bapp%3D",
+        },
+        NamedRawQueryCase {
+            name: "series_unparseable_start",
+            path: "series",
+            query: "start=not-a-number",
+        },
+        NamedRawQueryCase {
+            name: "labels_duplicate_start_param",
+            path: "labels",
+            query: "start=0.000000000&start=not-a-number",
+        },
+        NamedRawQueryCase {
+            name: "labels_oversized_range",
+            path: "labels",
+            query: "start=0.000000000&end=2595601000000000",
+        },
+        NamedRawQueryCase {
+            name: "label_values_oversized_range",
+            path: "label/app/values",
+            query: "start=0.000000000&end=2595601000000000",
+        },
+        NamedRawQueryCase {
+            name: "series_oversized_range",
+            path: "series",
+            query: "match[]=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000",
+        },
     ]
     .into_iter()
-    .map(|(name, path, query)| Case::get(name, format!("/loki/api/v1/{path}")).raw_query(query))
+    .map(|case| Case::get(case.name, format!("/loki/api/v1/{}", case.path)).raw_query(case.query))
     .collect();
-    for (name, path) in [
-        ("series_missing_matcher", "/loki/api/v1/series"),
-        ("api_prom_series_missing_matcher", "/api/prom/series"),
+    for case in [
+        NamedEndpointCase {
+            name: "series_missing_matcher",
+            path: "/loki/api/v1/series",
+        },
+        NamedEndpointCase {
+            name: "api_prom_series_missing_matcher",
+            path: "/api/prom/series",
+        },
     ] {
-        cases.push(Case::get(name, path));
+        cases.push(Case::get(case.name, case.path));
     }
-    for (name, path) in [
-        ("series_post_empty", "/loki/api/v1/series"),
-        ("api_prom_series_post_empty", "/api/prom/series"),
+    for case in [
+        NamedEndpointCase {
+            name: "series_post_empty",
+            path: "/loki/api/v1/series",
+        },
+        NamedEndpointCase {
+            name: "api_prom_series_post_empty",
+            path: "/api/prom/series",
+        },
     ] {
-        cases.push(Case::post(name, path));
+        cases.push(Case::post(case.name, case.path));
     }
     // The query string carries a start that does not parse, the form body a
     // valid one and a range too long to answer. The refusal says which won.
-    for (name, path) in [
-        ("labels_post_body_precedence", "/loki/api/v1/labels"),
-        (
-            "label_values_post_body_precedence",
-            "/loki/api/v1/label/app/values",
-        ),
-        ("series_post_body_precedence", "/loki/api/v1/series"),
-        ("api_prom_label_post_body_precedence", "/api/prom/label"),
-        (
-            "api_prom_label_values_post_body_precedence",
-            "/api/prom/label/app/values",
-        ),
-        ("api_prom_series_post_body_precedence", "/api/prom/series"),
+    for case in [
+        NamedEndpointCase {
+            name: "labels_post_body_precedence",
+            path: "/loki/api/v1/labels",
+        },
+        NamedEndpointCase {
+            name: "label_values_post_body_precedence",
+            path: "/loki/api/v1/label/app/values",
+        },
+        NamedEndpointCase {
+            name: "series_post_body_precedence",
+            path: "/loki/api/v1/series",
+        },
+        NamedEndpointCase {
+            name: "api_prom_label_post_body_precedence",
+            path: "/api/prom/label",
+        },
+        NamedEndpointCase {
+            name: "api_prom_label_values_post_body_precedence",
+            path: "/api/prom/label/app/values",
+        },
+        NamedEndpointCase {
+            name: "api_prom_series_post_body_precedence",
+            path: "/api/prom/series",
+        },
     ] {
         cases.push(
-            Case::post(name, path)
+            Case::post(case.name, case.path)
                 .raw_query("start=not-a-number")
                 .form("start=0.000000000&end=2595601000000000&match%5B%5D=%7Bapp%3D%22api%22%7D"),
         );
@@ -2367,72 +2823,107 @@ fn metadata_error_cases() -> Vec<Case> {
 fn index_error_cases(timeline: &Timeline) -> Vec<Case> {
     let api = r#"{app="api"}"#;
     let mut cases = Vec::new();
-    for (name, step) in [
-        ("index_volume_range_zero_step", "0"),
-        ("index_volume_range_unparseable_step", "not-a-number"),
-    ] {
-        cases.push(Case::get(name, "/loki/api/v1/index/volume_range").params([
-            ("query", api),
-            ("start", "0.000000000"),
-            ("end", "1.000000000"),
-            ("step", step),
-        ]));
-    }
-    for (name, endpoint) in [
-        ("index_volume_unknown_aggregate_by", "index/volume"),
-        (
-            "index_volume_range_unknown_aggregate_by",
-            "index/volume_range",
-        ),
-    ] {
-        cases.push(Case::get(name, format!("/loki/api/v1/{endpoint}")).params([
-            ("query", api),
-            ("start", "0.000000000"),
-            ("end", "1.000000000"),
-            ("aggregateBy", "bogus"),
-        ]));
-    }
-    for (name, endpoint, params) in [
-        (
-            "index_volume_missing_start",
-            "index/volume",
-            vec![("end", "1.000000000")],
-        ),
-        (
-            "index_volume_missing_end",
-            "index/volume",
-            vec![("start", "0.000000000")],
-        ),
-        (
-            "index_volume_range_missing_start",
-            "index/volume_range",
-            vec![("end", "1.000000000"), ("step", "1000000000")],
-        ),
-        (
-            "index_volume_range_missing_end",
-            "index/volume_range",
-            vec![("start", "0.000000000"), ("step", "1000000000")],
-        ),
+    for case in [
+        NamedStepCase {
+            name: "index_volume_range_zero_step",
+            endpoint: "index/volume_range",
+            step: "0",
+        },
+        NamedStepCase {
+            name: "index_volume_range_unparseable_step",
+            endpoint: "index/volume_range",
+            step: "not-a-number",
+        },
     ] {
         cases.push(
-            Case::get(name, format!("/loki/api/v1/{endpoint}"))
-                .params([("query", api)])
-                .params(params)
+            Case::get(case.name, format!("/loki/api/v1/{}", case.endpoint)).params([
+                QueryParameter::new("query", api),
+                QueryParameter::new("start", "0.000000000"),
+                QueryParameter::new("end", "1.000000000"),
+                QueryParameter::new("step", case.step),
+            ]),
+        );
+    }
+    for case in [
+        NamedEndpointCase {
+            name: "index_volume_unknown_aggregate_by",
+            path: "index/volume",
+        },
+        NamedEndpointCase {
+            name: "index_volume_range_unknown_aggregate_by",
+            path: "index/volume_range",
+        },
+    ] {
+        cases.push(
+            Case::get(case.name, format!("/loki/api/v1/{}", case.path)).params([
+                QueryParameter::new("query", api),
+                QueryParameter::new("start", "0.000000000"),
+                QueryParameter::new("end", "1.000000000"),
+                QueryParameter::new("aggregateBy", "bogus"),
+            ]),
+        );
+    }
+    struct MissingIndexParameterCase {
+        name: &'static str,
+        endpoint: &'static str,
+        params: Vec<QueryParameter<'static>>,
+    }
+    for case in [
+        MissingIndexParameterCase {
+            name: "index_volume_missing_start",
+            endpoint: "index/volume",
+            params: vec![QueryParameter::new("end", "1.000000000")],
+        },
+        MissingIndexParameterCase {
+            name: "index_volume_missing_end",
+            endpoint: "index/volume",
+            params: vec![QueryParameter::new("start", "0.000000000")],
+        },
+        MissingIndexParameterCase {
+            name: "index_volume_range_missing_start",
+            endpoint: "index/volume_range",
+            params: vec![
+                QueryParameter::new("end", "1.000000000"),
+                QueryParameter::new("step", "1000000000"),
+            ],
+        },
+        MissingIndexParameterCase {
+            name: "index_volume_range_missing_end",
+            endpoint: "index/volume_range",
+            params: vec![
+                QueryParameter::new("start", "0.000000000"),
+                QueryParameter::new("step", "1000000000"),
+            ],
+        },
+    ] {
+        cases.push(
+            Case::get(case.name, format!("/loki/api/v1/{}", case.endpoint))
+                .params([QueryParameter::new("query", api)])
+                .params(case.params)
                 .shape(Shape::IndexVolume),
         );
     }
     let recent = [
-        ("start", timeline.at(240).to_string()),
-        ("end", timeline.at(241).to_string()),
+        QueryParameter::new("start", timeline.at(240).to_string()),
+        QueryParameter::new("end", timeline.at(241).to_string()),
     ];
-    for (name, endpoint) in [
-        ("index_stats_invalid_query", "index/stats"),
-        ("index_volume_invalid_query", "index/volume"),
-        ("index_volume_range_invalid_query", "index/volume_range"),
+    for case in [
+        NamedEndpointCase {
+            name: "index_stats_invalid_query",
+            path: "index/stats",
+        },
+        NamedEndpointCase {
+            name: "index_volume_invalid_query",
+            path: "index/volume",
+        },
+        NamedEndpointCase {
+            name: "index_volume_range_invalid_query",
+            path: "index/volume_range",
+        },
     ] {
         cases.push(
-            Case::get(name, format!("/loki/api/v1/{endpoint}"))
-                .params([("query", "{app=")])
+            Case::get(case.name, format!("/loki/api/v1/{}", case.path))
+                .params([QueryParameter::new("query", "{app=")])
                 .params(recent.clone()),
         );
     }
@@ -2442,18 +2933,18 @@ fn index_error_cases(timeline: &Timeline) -> Vec<Case> {
             "/loki/api/v1/index/volume",
         )
         .params([
-            ("query", api),
-            ("query", "{app="),
-            ("start", "0.000000000"),
-            ("end", "0.000000001"),
+            QueryParameter::new("query", api),
+            QueryParameter::new("query", "{app="),
+            QueryParameter::new("start", "0.000000000"),
+            QueryParameter::new("end", "0.000000001"),
         ])
         .shape(Shape::IndexVolume),
     );
     cases.push(
         Case::get("index_stats_oversized_range", "/loki/api/v1/index/stats").params([
-            ("query", api),
-            ("start", "0.000000000"),
-            ("end", OVERSIZED_END_NS),
+            QueryParameter::new("query", api),
+            QueryParameter::new("start", "0.000000000"),
+            QueryParameter::new("end", OVERSIZED_END_NS),
         ]),
     );
     cases.push(
@@ -2472,67 +2963,100 @@ fn index_error_cases(timeline: &Timeline) -> Vec<Case> {
 fn detected_error_cases() -> Vec<Case> {
     let api = r#"{app="api"}"#;
     let mut cases = Vec::new();
-    for (name, endpoint, step) in [
-        ("detected_fields_zero_step", "detected_fields", "0"),
-        (
-            "detected_fields_unparseable_step",
-            "detected_fields",
-            "not-a-number",
-        ),
-        (
-            "detected_field_values_zero_step",
-            "detected_field/status/values",
-            "0",
-        ),
-        (
-            "detected_field_values_unparseable_step",
-            "detected_field/status/values",
-            "not-a-number",
-        ),
+    for case in [
+        NamedStepCase {
+            name: "detected_fields_zero_step",
+            endpoint: "detected_fields",
+            step: "0",
+        },
+        NamedStepCase {
+            name: "detected_fields_unparseable_step",
+            endpoint: "detected_fields",
+            step: "not-a-number",
+        },
+        NamedStepCase {
+            name: "detected_field_values_zero_step",
+            endpoint: "detected_field/status/values",
+            step: "0",
+        },
+        NamedStepCase {
+            name: "detected_field_values_unparseable_step",
+            endpoint: "detected_field/status/values",
+            step: "not-a-number",
+        },
     ] {
-        cases.push(Case::get(name, format!("/loki/api/v1/{endpoint}")).params([
-            ("query", api),
-            ("start", "0.000000000"),
-            ("end", "1.000000000"),
-            ("step", step),
-        ]));
-    }
-    for (name, endpoint) in [
-        ("detected_fields_invalid_query", "detected_fields"),
-        (
-            "detected_field_values_invalid_query",
-            "detected_field/status/values",
-        ),
-    ] {
-        cases.push(Case::get(name, format!("/loki/api/v1/{endpoint}")).params([
-            ("query", "{app="),
-            ("start", "0.000000000"),
-            ("end", "1.000000000"),
-        ]));
-    }
-    for (suffix, endpoint, query) in [
-        ("labels", "detected_labels", None),
-        ("fields", "detected_fields", Some(api)),
-        ("field_values", "detected_field/status/values", Some(api)),
-    ] {
-        let query: Vec<(&str, &str)> = query.map(|query| ("query", query)).into_iter().collect();
-        let path = format!("/loki/api/v1/{endpoint}");
         cases.push(
-            Case::get(detected_name("oversized_range", suffix), path.clone())
-                .params([("start", "0.000000000"), ("end", OVERSIZED_END_NS)])
+            Case::get(case.name, format!("/loki/api/v1/{}", case.endpoint)).params([
+                QueryParameter::new("query", api),
+                QueryParameter::new("start", "0.000000000"),
+                QueryParameter::new("end", "1.000000000"),
+                QueryParameter::new("step", case.step),
+            ]),
+        );
+    }
+    for case in [
+        NamedEndpointCase {
+            name: "detected_fields_invalid_query",
+            path: "detected_fields",
+        },
+        NamedEndpointCase {
+            name: "detected_field_values_invalid_query",
+            path: "detected_field/status/values",
+        },
+    ] {
+        cases.push(
+            Case::get(case.name, format!("/loki/api/v1/{}", case.path)).params([
+                QueryParameter::new("query", "{app="),
+                QueryParameter::new("start", "0.000000000"),
+                QueryParameter::new("end", "1.000000000"),
+            ]),
+        );
+    }
+    for case in [
+        DetectedEndpointCase {
+            suffix: "labels",
+            endpoint: "detected_labels",
+            query: None,
+        },
+        DetectedEndpointCase {
+            suffix: "fields",
+            endpoint: "detected_fields",
+            query: Some(api),
+        },
+        DetectedEndpointCase {
+            suffix: "field_values",
+            endpoint: "detected_field/status/values",
+            query: Some(api),
+        },
+    ] {
+        let query: Vec<QueryParameter<'_>> = case
+            .query
+            .map(|query| QueryParameter::new("query", query))
+            .into_iter()
+            .collect();
+        let path = format!("/loki/api/v1/{}", case.endpoint);
+        cases.push(
+            Case::get(detected_name("oversized_range", case.suffix), path.clone())
+                .params([
+                    QueryParameter::new("start", "0.000000000"),
+                    QueryParameter::new("end", OVERSIZED_END_NS),
+                ])
                 .params(query.clone()),
         );
         cases.push(
-            Case::get(detected_name("duplicate_start_param", suffix), path.clone())
-                .params([
-                    ("start", "0.000000000"),
-                    ("start", "not-a-number"),
-                    ("end", OVERSIZED_END_NS),
-                ])
-                .params(query),
+            Case::get(
+                detected_name("duplicate_start_param", case.suffix),
+                path.clone(),
+            )
+            .params([
+                QueryParameter::new("start", "0.000000000"),
+                QueryParameter::new("start", "not-a-number"),
+                QueryParameter::new("end", OVERSIZED_END_NS),
+            ])
+            .params(query),
         );
         cases.push(
-            Case::post(detected_name("post_body_precedence", suffix), path)
+            Case::post(detected_name("post_body_precedence", case.suffix), path)
                 .raw_query("start=not-a-number")
                 .form("start=0.000000000&end=2595601000000000&query=%7Bapp%3D%22api%22%7D"),
         );
@@ -2547,56 +3071,56 @@ fn detected_error_cases() -> Vec<Case> {
 fn detected_name(kind: &str, endpoint: &str) -> &'static str {
     DETECTED_CASE_NAMES
         .iter()
-        .find(|(case_kind, case_endpoint, _)| *case_kind == kind && *case_endpoint == endpoint)
-        .map_or("detected_unnamed", |(_, _, name)| name)
+        .find(|case| case.kind == kind && case.endpoint == endpoint)
+        .map_or("detected_unnamed", |case| case.name)
 }
 
-const DETECTED_CASE_NAMES: &[(&str, &str, &str)] = &[
-    (
-        "oversized_range",
-        "labels",
-        "detected_labels_oversized_range",
-    ),
-    (
-        "oversized_range",
-        "fields",
-        "detected_fields_oversized_range",
-    ),
-    (
-        "oversized_range",
-        "field_values",
-        "detected_field_values_oversized_range",
-    ),
-    (
-        "duplicate_start_param",
-        "labels",
-        "detected_labels_duplicate_start_param",
-    ),
-    (
-        "duplicate_start_param",
-        "fields",
-        "detected_fields_duplicate_start_param",
-    ),
-    (
-        "duplicate_start_param",
-        "field_values",
-        "detected_field_values_duplicate_start_param",
-    ),
-    (
-        "post_body_precedence",
-        "labels",
-        "detected_labels_post_body_precedence",
-    ),
-    (
-        "post_body_precedence",
-        "fields",
-        "detected_fields_post_body_precedence",
-    ),
-    (
-        "post_body_precedence",
-        "field_values",
-        "detected_field_values_post_body_precedence",
-    ),
+const DETECTED_CASE_NAMES: &[DetectedCaseName] = &[
+    DetectedCaseName {
+        kind: "oversized_range",
+        endpoint: "labels",
+        name: "detected_labels_oversized_range",
+    },
+    DetectedCaseName {
+        kind: "oversized_range",
+        endpoint: "fields",
+        name: "detected_fields_oversized_range",
+    },
+    DetectedCaseName {
+        kind: "oversized_range",
+        endpoint: "field_values",
+        name: "detected_field_values_oversized_range",
+    },
+    DetectedCaseName {
+        kind: "duplicate_start_param",
+        endpoint: "labels",
+        name: "detected_labels_duplicate_start_param",
+    },
+    DetectedCaseName {
+        kind: "duplicate_start_param",
+        endpoint: "fields",
+        name: "detected_fields_duplicate_start_param",
+    },
+    DetectedCaseName {
+        kind: "duplicate_start_param",
+        endpoint: "field_values",
+        name: "detected_field_values_duplicate_start_param",
+    },
+    DetectedCaseName {
+        kind: "post_body_precedence",
+        endpoint: "labels",
+        name: "detected_labels_post_body_precedence",
+    },
+    DetectedCaseName {
+        kind: "post_body_precedence",
+        endpoint: "fields",
+        name: "detected_fields_post_body_precedence",
+    },
+    DetectedCaseName {
+        kind: "post_body_precedence",
+        endpoint: "field_values",
+        name: "detected_field_values_post_body_precedence",
+    },
 ];
 
 /// The websocket tail: refused upgrades, the first frame of a tail that
@@ -2614,7 +3138,7 @@ fn tail_cases(timeline: &Timeline) -> Vec<Case> {
     .to_string();
     let live = |name, tenant, query| {
         let mut case = Case::get(name, "/loki/api/v1/tail")
-            .params([("query", query)])
+            .params([QueryParameter::new("query", query)])
             .tenant(tenant)
             .shape(Shape::LiveTailFrame);
         case.body = live_entry.clone().into_bytes();
@@ -2634,20 +3158,40 @@ fn tail_cases(timeline: &Timeline) -> Vec<Case> {
         )
         .categorized(),
         Case::get("tail_invalid_query", "/loki/api/v1/tail")
-            .params([("query", "{app=")])
+            .params([QueryParameter::new("query", "{app=")])
             .shape(Shape::Handshake),
         Case::get("tail_missing_query", "/loki/api/v1/tail").shape(Shape::Handshake),
         Case::get("tail_excessive_delay_for", "/loki/api/v1/tail")
             .raw_query("query=%7Bapp%3D%22api%22%7D&delay_for=6")
             .shape(Shape::Handshake),
         Case::get("tail_first_frame", "/loki/api/v1/tail")
-            .params([("query", r#"{app="api"}"#), ("start", start.as_str())])
+            .params([
+                QueryParameter::new("query", r#"{app="api"}"#),
+                QueryParameter::new("start", start.as_str()),
+            ])
             .shape(Shape::TailFrame),
         Case::get("tail_first_frame_categorized", "/loki/api/v1/tail")
-            .params([("query", r#"{app="api"}"#), ("start", start.as_str())])
+            .params([
+                QueryParameter::new("query", r#"{app="api"}"#),
+                QueryParameter::new("start", start.as_str()),
+            ])
             .categorized()
             .shape(Shape::TailFrame),
     ]
+}
+
+struct PushBody {
+    name: &'static str,
+    body: String,
+}
+
+macro_rules! push_body {
+    ($name:expr, $body:expr $(,)?) => {
+        PushBody {
+            name: $name,
+            body: $body,
+        }
+    };
 }
 
 /// `/loki/api/v1/push` with JSON bodies that Loki refuses, or accepts in a way
@@ -2660,129 +3204,129 @@ fn json_push_cases(timeline: &Timeline) -> Vec<Case> {
         json!({"streams": [{"stream": labels, "values": values}]}).to_string()
     };
     let app = || json!({"app": "api"});
-    let bodies: Vec<(&'static str, String)> = vec![
-        (
+    let bodies: Vec<PushBody> = vec![
+        push_body!(
             "push_invalid_label_name",
             one_stream(
                 json!({"bad-label": "api"}),
                 json!([["1000000000", "invalid push label"]]),
             ),
         ),
-        (
+        push_body!(
             "push_stale_timestamp",
             one_stream(app(), json!([["1000000000", "stale push timestamp"]])),
         ),
-        (
+        push_body!(
             "push_unparseable_timestamp",
             one_stream(
                 app(),
                 json!([["not-a-timestamp", "invalid push timestamp"]]),
             ),
         ),
-        (
+        push_body!(
             "push_numeric_timestamp",
             one_stream(app(), json!([[1_000_000_000, "non-string push timestamp"]])),
         ),
-        (
+        push_body!(
             "push_object_timestamp",
             one_stream(
                 app(),
                 json!([[{"ts": "1000000000"}, "object push timestamp"]]),
             ),
         ),
-        (
+        push_body!(
             "push_array_timestamp",
             one_stream(app(), json!([[["1000000000"], "array push timestamp"]])),
         ),
-        (
+        push_body!(
             "push_numeric_line",
             one_stream(app(), json!([["1000000000", 500]])),
         ),
-        ("push_incomplete_value", one_stream(app(), json!([[now]]))),
-        ("push_empty_value", one_stream(app(), json!([[]]))),
-        (
+        push_body!("push_incomplete_value", one_stream(app(), json!([[now]]))),
+        push_body!("push_empty_value", one_stream(app(), json!([[]]))),
+        push_body!(
             "push_null_metadata",
             one_stream(app(), json!([[now, "invalid metadata shape", null]])),
         ),
-        (
+        push_body!(
             "push_extra_value_field",
             one_stream(
                 app(),
                 json!([[now, "extra push value field", {"trace_id": "abc"}, "extra"]]),
             ),
         ),
-        (
+        push_body!(
             "push_non_array_value",
             one_stream(
                 app(),
                 json!([entry(&now, "valid line"), "not-a-push-value"]),
             ),
         ),
-        (
+        push_body!(
             "push_non_object_stream",
             json!({"streams": ["not-a-stream"]}).to_string(),
         ),
-        (
+        push_body!(
             "push_non_array_streams",
             json!({"streams": "not-streams"}).to_string(),
         ),
-        ("push_array_payload", r#"[{"streams": []}]"#.to_string()),
-        ("push_null_payload", "null".to_string()),
-        ("push_missing_streams", "{}".to_string()),
-        ("push_empty_streams", json!({"streams": []}).to_string()),
-        (
+        push_body!("push_array_payload", r#"[{"streams": []}]"#.to_string()),
+        push_body!("push_null_payload", "null".to_string()),
+        push_body!("push_missing_streams", "{}".to_string()),
+        push_body!("push_empty_streams", json!({"streams": []}).to_string()),
+        push_body!(
             "push_missing_values",
             json!({"streams": [{"stream": {"app": "api"}}]}).to_string(),
         ),
-        (
+        push_body!(
             "push_non_array_values",
             one_stream(app(), json!("not-values")),
         ),
-        ("push_null_values", one_stream(app(), Value::Null)),
-        (
+        push_body!("push_null_values", one_stream(app(), Value::Null)),
+        push_body!(
             "push_non_object_labels",
             one_stream(
                 json!("not-labels"),
                 json!([entry(&now, "labels field is not an object")]),
             ),
         ),
-        (
+        push_body!(
             "push_missing_labels",
             json!({"streams": [{"values": [[now, "missing labels field"]]}]}).to_string(),
         ),
-        (
+        push_body!(
             "push_null_labels",
             one_stream(Value::Null, json!([entry(&now, "null labels field")])),
         ),
-        (
+        push_body!(
             "push_future_timestamp",
             one_stream(app(), json!([entry(&future, "future push timestamp")])),
         ),
-        (
+        push_body!(
             "push_empty_labels",
             one_stream(json!({}), json!([entry(&now, "empty push label")])),
         ),
-        (
+        push_body!(
             "push_numeric_structured_metadata",
             one_stream(
                 app(),
                 json!([["1000000000", "invalid metadata value", {"status": 500}]]),
             ),
         ),
-        (
+        push_body!(
             "push_invalid_structured_metadata_name",
             one_stream(
                 app(),
                 json!([[now, "invalid metadata name", {"9bad": "metadata"}]]),
             ),
         ),
-        (
+        push_body!(
             "push_duplicate_structured_metadata_name",
             format!(
                 r#"{{"streams":[{{"stream":{{"app":"api"}},"values":[["{now}","duplicate structured metadata",{{"trace_id":"abc","trace_id":"def"}}]]}}]}}"#
             ),
         ),
-        (
+        push_body!(
             "push_duplicate_label_name",
             format!(
                 r#"{{"streams":[{{"stream":{{"app":"api","app":"worker"}},"values":[["{now}","duplicate push label"]]}}]}}"#
@@ -2791,7 +3335,7 @@ fn json_push_cases(timeline: &Timeline) -> Vec<Case> {
     ];
     let mut cases: Vec<Case> = bodies
         .into_iter()
-        .map(|(name, body)| push_case(name).body("application/json", body))
+        .map(|body| push_case(body.name).body("application/json", body.body))
         .collect();
     cases.push(
         Case::post("otlp_future_timestamp", "/otlp/v1/logs")
@@ -2869,92 +3413,99 @@ fn protobuf_push_cases(timeline: &Timeline) -> TestResult<Vec<Case>> {
     };
     let parsed_at = timeline.at(240);
     let requests = vec![
-        ("push_protobuf_empty", Vec::new()),
-        (
-            "push_protobuf_invalid_label_name",
-            vec![stream(
+        ProtobufPushCase {
+            name: "push_protobuf_empty",
+            streams: Vec::new(),
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_invalid_label_name",
+            streams: vec![stream(
                 r#"{bad-label="api"}"#,
                 entry(now, "invalid protobuf label"),
             )],
-        ),
-        (
-            "push_protobuf_duplicate_label_name",
-            vec![stream(
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_duplicate_label_name",
+            streams: vec![stream(
                 r#"{app="api", app="worker"}"#,
                 entry(now, "duplicate protobuf label"),
             )],
-        ),
-        (
-            "push_protobuf_empty_label_set",
-            vec![stream("{}", entry(now, "empty protobuf stream labels"))],
-        ),
-        (
-            "push_protobuf_empty_label_string",
-            vec![stream(
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_empty_label_set",
+            streams: vec![stream("{}", entry(now, "empty protobuf stream labels"))],
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_empty_label_string",
+            streams: vec![stream(
                 "",
                 entry(now, "empty string protobuf stream labels"),
             )],
-        ),
-        (
-            "push_protobuf_missing_timestamp",
-            vec![stream(
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_missing_timestamp",
+            streams: vec![stream(
                 r#"{app="api"}"#,
                 entry(None, "missing protobuf timestamp"),
             )],
-        ),
-        (
-            "push_protobuf_negative_timestamp",
-            vec![stream(
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_negative_timestamp",
+            streams: vec![stream(
                 r#"{app="api"}"#,
                 entry(Some(-1), "negative protobuf timestamp"),
             )],
-        ),
-        (
-            "push_protobuf_duplicate_structured_metadata_name",
-            vec![stream(
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_duplicate_structured_metadata_name",
+            streams: vec![stream(
                 r#"{app="api"}"#,
                 LokiProtoEntry {
                     structured_metadata: vec![pair("trace_id", "abc"), pair("trace_id", "def")],
                     ..entry(now, "duplicate protobuf metadata")
                 },
             )],
-        ),
-        (
-            "push_protobuf_invalid_structured_metadata_name",
-            vec![stream(
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_invalid_structured_metadata_name",
+            streams: vec![stream(
                 r#"{app="api"}"#,
                 LokiProtoEntry {
                     structured_metadata: vec![pair("9bad", "metadata")],
                     ..entry(now, "invalid protobuf metadata name")
                 },
             )],
-        ),
-        (
-            "push_protobuf_empty_structured_metadata_name",
-            vec![stream(
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_empty_structured_metadata_name",
+            streams: vec![stream(
                 r#"{app="api"}"#,
                 LokiProtoEntry {
                     structured_metadata: vec![pair("", "metadata")],
                     ..entry(now, "empty protobuf metadata name")
                 },
             )],
-        ),
-        (
-            "push_protobuf_parsed_label",
-            vec![stream(
+        },
+        ProtobufPushCase {
+            name: "push_protobuf_parsed_label",
+            streams: vec![stream(
                 r#"{app="parsed"}"#,
                 LokiProtoEntry {
                     parsed: vec![pair("parsed_status", "200")],
                     ..entry(Some(parsed_at / 1_000_000_000), "protobuf parsed label")
                 },
             )],
-        ),
+        },
     ];
     let mut cases = Vec::new();
-    for (name, streams) in requests {
-        let body = snap::raw::Encoder::new()
-            .compress_vec(&LokiProtoPushRequest { streams }.encode_to_vec())?;
-        cases.push(push_case(name).body("application/x-protobuf", body));
+    for request in requests {
+        let body = snap::raw::Encoder::new().compress_vec(
+            &LokiProtoPushRequest {
+                streams: request.streams,
+            }
+            .encode_to_vec(),
+        )?;
+        cases.push(push_case(request.name).body("application/x-protobuf", body));
     }
     cases.push(
         Case::post("push_protobuf_unframed_bytes", "/loki/api/v1/push")
@@ -2971,12 +3522,12 @@ fn protobuf_push_cases(timeline: &Timeline) -> TestResult<Vec<Case>> {
     cases.push(
         Case::get("query_protobuf_parsed_label", "/loki/api/v1/query_range")
             .params([
-                (
+                QueryParameter::new(
                     "query",
                     r#"{app="parsed"} | parsed_status = "200""#.to_string(),
                 ),
-                ("start", parsed_at.to_string()),
-                ("end", (parsed_at + 1_000_000_000).to_string()),
+                QueryParameter::new("start", parsed_at.to_string()),
+                QueryParameter::new("end", (parsed_at + 1_000_000_000).to_string()),
             ])
             .tenant(PUSH_TENANT),
     );
@@ -3001,34 +3552,82 @@ fn status_cases() -> Vec<Case> {
             .shape(Shape::Config),
         Case::get("status_metrics", "/metrics").shape(Shape::MetricFamilies),
     ];
-    for (name, path) in [
-        ("ruler_rules", "/loki/api/v1/rules"),
-        ("ruler_rules_namespace", "/loki/api/v1/rules/default"),
-        ("ruler_rules_group", "/loki/api/v1/rules/default/api-errors"),
-        ("ruler_prometheus_rules", "/prometheus/api/v1/rules"),
-        ("ruler_prometheus_alerts", "/prometheus/api/v1/alerts"),
-        ("ruler_api_prom_rules", "/api/prom/rules"),
-        ("ruler_api_prom_alerts", "/api/prom/alerts"),
-        ("ruler_api_prom_rules_namespace", "/api/prom/rules/default"),
-        (
-            "ruler_api_prom_rules_group",
-            "/api/prom/rules/default/api-errors",
-        ),
+    for case in [
+        NamedEndpointCase {
+            name: "ruler_rules",
+            path: "/loki/api/v1/rules",
+        },
+        NamedEndpointCase {
+            name: "ruler_rules_namespace",
+            path: "/loki/api/v1/rules/default",
+        },
+        NamedEndpointCase {
+            name: "ruler_rules_group",
+            path: "/loki/api/v1/rules/default/api-errors",
+        },
+        NamedEndpointCase {
+            name: "ruler_prometheus_rules",
+            path: "/prometheus/api/v1/rules",
+        },
+        NamedEndpointCase {
+            name: "ruler_prometheus_alerts",
+            path: "/prometheus/api/v1/alerts",
+        },
+        NamedEndpointCase {
+            name: "ruler_api_prom_rules",
+            path: "/api/prom/rules",
+        },
+        NamedEndpointCase {
+            name: "ruler_api_prom_alerts",
+            path: "/api/prom/alerts",
+        },
+        NamedEndpointCase {
+            name: "ruler_api_prom_rules_namespace",
+            path: "/api/prom/rules/default",
+        },
+        NamedEndpointCase {
+            name: "ruler_api_prom_rules_group",
+            path: "/api/prom/rules/default/api-errors",
+        },
     ] {
         cases.push(
-            Case::get(name, path)
+            Case::get(case.name, case.path)
                 .tenant(VACANT_TENANT)
                 .shape(Shape::Typed),
         );
     }
-    for (name, path, target) in [
-        ("ring_querier", "/ring", Target::Querier),
-        ("ring_distributor", "/distributor/ring", Target::Distributor),
-        ("ring_compactor", "/compactor/ring", Target::BlockBuilder),
-        ("ring_scheduler", "/scheduler/ring", Target::Querier),
-        ("ring_ruler", "/ruler/ring", Target::Querier),
+    for case in [
+        NamedTargetCase {
+            name: "ring_querier",
+            path: "/ring",
+            target: Target::Querier,
+        },
+        NamedTargetCase {
+            name: "ring_distributor",
+            path: "/distributor/ring",
+            target: Target::Distributor,
+        },
+        NamedTargetCase {
+            name: "ring_compactor",
+            path: "/compactor/ring",
+            target: Target::BlockBuilder,
+        },
+        NamedTargetCase {
+            name: "ring_scheduler",
+            path: "/scheduler/ring",
+            target: Target::Querier,
+        },
+        NamedTargetCase {
+            name: "ring_ruler",
+            path: "/ruler/ring",
+            target: Target::Querier,
+        },
     ] {
-        cases.push(Case::get(name, path).target(target).shape(Shape::RingPage));
+        cases.push(
+            Case::get(case.name, case.path)
+                .target(case.target)
+                .shape(Shape::RingPage),
+        );
     }
     cases
 }
@@ -3036,30 +3635,46 @@ fn status_cases() -> Vec<Case> {
 /// `POST /log_level`, which changes Loki's log level.
 fn log_level_cases() -> Vec<Case> {
     [
-        ("log_level_post_query", Some("log_level=debug"), None),
-        ("log_level_post_form", None, Some("log_level=warn")),
-        (
-            "log_level_post_query_and_form",
-            Some("log_level=debug"),
-            Some("log_level=warn"),
-        ),
-        (
-            "log_level_post_unknown_level",
-            Some("log_level=trace"),
-            None,
-        ),
-        ("log_level_post_empty_level", Some("log_level="), None),
-        ("log_level_post_empty_form", None, Some("")),
+        LogLevelCase {
+            name: "log_level_post_query",
+            query: Some("log_level=debug"),
+            form: None,
+        },
+        LogLevelCase {
+            name: "log_level_post_form",
+            query: None,
+            form: Some("log_level=warn"),
+        },
+        LogLevelCase {
+            name: "log_level_post_query_and_form",
+            query: Some("log_level=debug"),
+            form: Some("log_level=warn"),
+        },
+        LogLevelCase {
+            name: "log_level_post_unknown_level",
+            query: Some("log_level=trace"),
+            form: None,
+        },
+        LogLevelCase {
+            name: "log_level_post_empty_level",
+            query: Some("log_level="),
+            form: None,
+        },
+        LogLevelCase {
+            name: "log_level_post_empty_form",
+            query: None,
+            form: Some(""),
+        },
     ]
     .into_iter()
-    .map(|(name, query, form)| {
-        let mut case = Case::post(name, "/log_level")
-            .raw_query(query.unwrap_or_default())
+    .map(|input| {
+        let mut request = Case::post(input.name, "/log_level")
+            .raw_query(input.query.unwrap_or_default())
             .shape(Shape::StatusText);
-        if let Some(form) = form {
-            case = case.form(form);
+        if let Some(form) = input.form {
+            request = request.form(form);
         }
-        case
+        request
     })
     .collect()
 }
@@ -3075,9 +3690,9 @@ fn delete_lifecycle_cases() -> Vec<Case> {
     };
     vec![
         delete("delete_create", Method::POST).params([
-            ("query", r#"{app="api"} |= "secret""#),
-            ("start", "1591616227"),
-            ("end", "1591619692"),
+            QueryParameter::new("query", r#"{app="api"} |= "secret""#),
+            QueryParameter::new("start", "1591616227"),
+            QueryParameter::new("end", "1591619692"),
         ]),
         delete("delete_list_after_create", Method::GET),
         delete("delete_cancel", Method::DELETE).raw_query(&format!("request_id={REQUEST_ID}")),
@@ -3089,69 +3704,78 @@ fn delete_lifecycle_cases() -> Vec<Case> {
 /// Loki's ingester down.
 fn ingester_control_cases() -> Vec<Case> {
     [
-        ("ingester_flush", Method::POST, "/flush", ""),
-        (
-            "ingester_prepare_shutdown_unset",
-            Method::GET,
-            "/ingester/prepare_shutdown",
-            "",
-        ),
-        (
-            "ingester_prepare_shutdown_set",
-            Method::POST,
-            "/ingester/prepare_shutdown",
-            "",
-        ),
-        (
-            "ingester_prepare_shutdown_after_set",
-            Method::GET,
-            "/ingester/prepare_shutdown",
-            "",
-        ),
-        (
-            "ingester_prepare_shutdown_clear",
-            Method::DELETE,
-            "/ingester/prepare_shutdown",
-            "",
-        ),
-        (
-            "ingester_prepare_shutdown_after_clear",
-            Method::GET,
-            "/ingester/prepare_shutdown",
-            "",
-        ),
-        (
-            "ingester_shutdown",
-            Method::GET,
-            "/ingester/shutdown",
-            "flush=false&delete_ring_tokens=false&terminate=false",
-        ),
+        LifecycleCase {
+            name: "ingester_flush",
+            method: Method::POST,
+            path: "/flush",
+            query: "",
+        },
+        LifecycleCase {
+            name: "ingester_prepare_shutdown_unset",
+            method: Method::GET,
+            path: "/ingester/prepare_shutdown",
+            query: "",
+        },
+        LifecycleCase {
+            name: "ingester_prepare_shutdown_set",
+            method: Method::POST,
+            path: "/ingester/prepare_shutdown",
+            query: "",
+        },
+        LifecycleCase {
+            name: "ingester_prepare_shutdown_after_set",
+            method: Method::GET,
+            path: "/ingester/prepare_shutdown",
+            query: "",
+        },
+        LifecycleCase {
+            name: "ingester_prepare_shutdown_clear",
+            method: Method::DELETE,
+            path: "/ingester/prepare_shutdown",
+            query: "",
+        },
+        LifecycleCase {
+            name: "ingester_prepare_shutdown_after_clear",
+            method: Method::GET,
+            path: "/ingester/prepare_shutdown",
+            query: "",
+        },
+        LifecycleCase {
+            name: "ingester_shutdown",
+            method: Method::GET,
+            path: "/ingester/shutdown",
+            query: "flush=false&delete_ring_tokens=false&terminate=false",
+        },
     ]
     .into_iter()
-    .map(|(name, method, path, query)| {
-        Case::new(name, method, path)
-            .raw_query(query)
+    .map(|case| {
+        Case::new(case.name, case.method, case.path)
+            .raw_query(case.query)
             .target(Target::Distributor)
             .shape(Shape::Typed)
     })
     .collect()
 }
 
-fn range_params(timeline: &Timeline, logql: &str, step_secs: i64) -> Vec<(&'static str, String)> {
+fn range_params<'a>(
+    timeline: &Timeline,
+    logql: &'a str,
+    step_secs: i64,
+) -> Vec<QueryParameter<'a>> {
     vec![
-        ("query", logql.to_string()),
-        ("start", timeline.at(0).to_string()),
-        ("end", timeline.at(60).to_string()),
-        ("step", step_secs.to_string()),
-        ("direction", "forward".to_string()),
+        QueryParameter::new("query", logql),
+        QueryParameter::new("start", timeline.at(0).to_string()),
+        QueryParameter::new("end", timeline.at(60).to_string()),
+        QueryParameter::new("step", step_secs.to_string()),
+        QueryParameter::new("direction", "forward"),
     ]
 }
 
 /// A window around the whole seeded corpus.
-fn window(timeline: &Timeline) -> [(&'static str, String); 2] {
+fn window(timeline: &Timeline) -> [QueryParameter<'static>; 2] {
     [
-        ("start", timeline.at(-60).to_string()),
-        ("end", timeline.at(120).to_string()),
+        QueryParameter::new("start", timeline.at(-60).to_string()),
+        QueryParameter::new("end", timeline.at(120).to_string()),
     ]
 }
 
@@ -3200,7 +3824,7 @@ fn json_streams(timeline: &Timeline, streams: &[SeedStream]) -> Value {
                 "stream": stream
                     .labels
                     .iter()
-                    .map(|(name, value)| ((*name).to_string(), json!(value)))
+                    .map(|pair| (pair.name.to_string(), json!(pair.value)))
                     .collect::<serde_json::Map<_, _>>(),
                 "values": stream
                     .entries
@@ -3216,7 +3840,7 @@ fn json_streams(timeline: &Timeline, streams: &[SeedStream]) -> Value {
                                 entry
                                     .metadata
                                     .iter()
-                                    .map(|(name, value)| ((*name).to_string(), json!(value)))
+                                    .map(|pair| (pair.name.to_string(), json!(pair.value)))
                                     .collect::<serde_json::Map<_, _>>(),
                             ])
                         }
@@ -3249,9 +3873,9 @@ fn proto_push_body(timeline: &Timeline) -> TestResult<Vec<u8>> {
                             structured_metadata: entry
                                 .metadata
                                 .iter()
-                                .map(|(name, value)| LokiProtoLabelPair {
-                                    name: (*name).to_string(),
-                                    value: (*value).to_string(),
+                                .map(|pair| LokiProtoLabelPair {
+                                    name: pair.name.to_string(),
+                                    value: pair.value.to_string(),
                                 })
                                 .collect(),
                             parsed: Vec::new(),
@@ -3266,10 +3890,10 @@ fn proto_push_body(timeline: &Timeline) -> TestResult<Vec<u8>> {
 }
 
 /// `{name="value", ...}`, the way logproto carries a stream's labels.
-fn proto_label_set(labels: &[(&str, &str)]) -> String {
+fn proto_label_set(labels: &[StaticLabelPair]) -> String {
     let pairs = labels
         .iter()
-        .map(|(name, value)| format!("{name}=\"{value}\""))
+        .map(|pair| format!("{}=\"{}\"", pair.name, pair.value))
         .collect::<Vec<_>>()
         .join(", ");
     format!("{{{pairs}}}")
@@ -3379,15 +4003,17 @@ impl Side {
             case.shape,
             Shape::Handshake | Shape::TailFrame | Shape::LiveTailFrame
         ) {
-            let push = (case.shape == Shape::LiveTailFrame)
-                .then(|| (client, format!("{}/loki/api/v1/push", self.distributor)));
+            let push = (case.shape == Shape::LiveTailFrame).then(|| LiveTailPush {
+                client,
+                url: format!("{}/loki/api/v1/push", self.distributor),
+            });
             return probe_websocket(&url, case, push).await;
         }
         let mut request = client
             .request(case.method.clone(), url)
             .header("X-Scope-OrgID", case.tenant);
-        for (name, value) in &case.headers {
-            request = request.header(*name, value);
+        for header in &case.headers {
+            request = request.header(header.name, &header.value);
         }
         if !case.body.is_empty() {
             request = request.body(case.body.clone());
@@ -3425,32 +4051,36 @@ fn media_type(value: Option<&reqwest::header::HeaderValue>) -> String {
 async fn probe_websocket(
     url: &str,
     case: &Case,
-    push: Option<(&reqwest::Client, String)>,
+    push: Option<LiveTailPush<'_>>,
 ) -> TestResult<Value> {
     let mut request = url.replacen("http://", "ws://", 1).into_client_request()?;
     request
         .headers_mut()
         .insert("X-Scope-OrgID", case.tenant.parse()?);
-    for (name, value) in &case.headers {
-        request.headers_mut().insert(*name, value.parse()?);
+    for header in &case.headers {
+        request
+            .headers_mut()
+            .insert(header.name, header.value.parse()?);
     }
     match connect_async(request).await {
-        Ok((mut socket, response)) => {
+        Ok(connection) => {
+            let mut socket = connection.0;
+            let response = connection.1;
             let status = response.status().as_u16();
             if case.shape == Shape::Handshake {
                 return Ok(json!({"status": status, "contentType": "", "body": ""}));
             }
-            if let Some((client, push_url)) = push {
+            if let Some(push) = push {
                 tokio::time::sleep(LIVE_TAIL_SETTLE).await;
                 accept_push(
-                    client
-                        .post(&push_url)
+                    push.client
+                        .post(&push.url)
                         .header("Content-Type", "application/json")
                         .header("X-Scope-OrgID", case.tenant)
                         .body(case.body.clone())
                         .send()
                         .await?,
-                    &push_url,
+                    &push.url,
                 )
                 .await?;
             }
@@ -3708,14 +4338,15 @@ fn round_sample(sample: &mut Value) {
 /// The same JSON with every object's keys in sorted order.
 fn sort_object_keys(value: &Value) -> Value {
     match value {
-        Value::Object(object) => Value::Object(
-            object
-                .iter()
-                .map(|(key, value)| (key.clone(), sort_object_keys(value)))
-                .collect::<std::collections::BTreeMap<_, _>>()
-                .into_iter()
-                .collect(),
-        ),
+        Value::Object(object) => {
+            let mut sorted = std::collections::BTreeMap::new();
+            for key in object.keys() {
+                if let Some(value) = object.get(key) {
+                    sorted.insert(key.clone(), sort_object_keys(value));
+                }
+            }
+            Value::Object(sorted.into_iter().collect())
+        }
         Value::Array(values) => Value::Array(values.iter().map(sort_object_keys).collect()),
         other => other.clone(),
     }
@@ -3759,19 +4390,18 @@ fn stable_buildinfo(body: &Value) -> Value {
     let Some(fields) = body.as_object() else {
         return body.clone();
     };
-    Value::Object(
-        fields
-            .iter()
-            .map(|(key, value)| {
-                let value = if value.is_string() {
-                    json!("<string>")
-                } else {
-                    value.clone()
-                };
-                (key.clone(), value)
-            })
-            .collect(),
-    )
+    let mut stable_fields = std::collections::BTreeMap::new();
+    for key in fields.keys() {
+        if let Some(value) = fields.get(key) {
+            let value = if value.is_string() {
+                json!("<string>")
+            } else {
+                value.clone()
+            };
+            stable_fields.insert(key.clone(), value);
+        }
+    }
+    Value::Object(stable_fields.into_iter().collect())
 }
 
 /// A plain-text ops page. `/services` lists one service per line in no fixed
@@ -3835,7 +4465,7 @@ fn metric_family_name(line: &str) -> Option<&str> {
         return None;
     }
     line.split_once('{')
-        .map_or(line, |(name, _)| name)
+        .map_or(line, |parts| parts.0)
         .split_whitespace()
         .next()
 }
@@ -3851,12 +4481,18 @@ fn stable_delete(body: &Value) -> Value {
         .map(|request| {
             let mut request = sort_object_keys(request);
             if let Some(fields) = request.as_object_mut() {
-                for (key, placeholder) in [
-                    ("request_id", "<request-id>"),
-                    ("created_at", "<created-at>"),
+                for replacement in [
+                    KeyReplacement {
+                        key: "request_id",
+                        placeholder: "<request-id>",
+                    },
+                    KeyReplacement {
+                        key: "created_at",
+                        placeholder: "<created-at>",
+                    },
                 ] {
-                    if let Some(value) = fields.get_mut(key) {
-                        *value = json!(placeholder);
+                    if let Some(value) = fields.get_mut(replacement.key) {
+                        *value = json!(replacement.placeholder);
                     }
                 }
             }
@@ -3906,10 +4542,13 @@ fn html_headings(body: &str) -> Vec<String> {
         let mut rest = body;
         let open = format!("<{tag}>");
         let close = format!("</{tag}>");
-        while let Some((_, after_open)) = rest.split_once(&open) {
-            let Some((heading, after_close)) = after_open.split_once(&close) else {
+        while let Some(open_parts) = rest.split_once(&open) {
+            let after_open = open_parts.1;
+            let Some(close_parts) = after_open.split_once(&close) else {
                 break;
             };
+            let heading = close_parts.0;
+            let after_close = close_parts.1;
             headings.push(heading.trim().to_owned());
             rest = after_close;
         }
@@ -4024,8 +4663,8 @@ fn known_divergence(case: &'static str) -> Option<&'static Divergence> {
 
 fn report(case: &Case, krabka: &Value, loki: &Value) -> String {
     let mut headers = String::new();
-    for (name, value) in &case.headers {
-        let _ = write!(headers, "\n  {name}: {value}");
+    for header in &case.headers {
+        let _ = write!(headers, "\n  {}: {}", header.name, header.value);
     }
     let body = if case.body.is_empty() {
         String::new()
@@ -4121,9 +4760,9 @@ async fn start_loki_with_config(
 /// move the level with. That is a property of this test process, not of the
 /// endpoint Loki's clients reach.
 fn install_log_level_control() {
-    let (layer, control) = json_logging_layer("info", std::io::sink);
-    Registry::default().with(layer).init();
-    LogLevelControl::install_process(control);
+    let logging = json_logging_layer("info", std::io::sink);
+    Registry::default().with(logging.layer).init();
+    LogLevelControl::install_process(logging.control);
 }
 
 async fn mapped_base_url(
@@ -4178,14 +4817,14 @@ async fn start_krabka_with_overrides(overrides: OverridesProvider) -> TestResult
         None,
     )
     .await?;
-    let (push_url, push_shutdown) = serve(distributor).await?;
-    let (query_url, query_shutdown) = serve(loki_router(state)).await?;
-    let (block_builder_url, block_builder_shutdown) = serve(block_builder).await?;
+    let push = serve(distributor).await?;
+    let query = serve(loki_router(state)).await?;
+    let block_builder = serve(block_builder).await?;
     Ok(KrabkaStack {
-        push_url,
-        query_url,
-        block_builder_url,
-        shutdown: vec![push_shutdown, query_shutdown, block_builder_shutdown],
+        push_url: push.url,
+        query_url: query.url,
+        block_builder_url: block_builder.url,
+        shutdown: vec![push.shutdown, query.shutdown, block_builder.shutdown],
     })
 }
 
@@ -4205,10 +4844,12 @@ fn block_builder_config(data_root: std::path::PathBuf) -> ServiceConfig {
     }
 }
 
-async fn serve(router: axum::Router) -> TestResult<(String, oneshot::Sender<()>)> {
+async fn serve(router: axum::Router) -> TestResult<ServedRouter> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
-    let (tx, rx) = oneshot::channel();
+    let channel = oneshot::channel();
+    let rx = channel.1;
+    let tx = channel.0;
     tokio::spawn(async move {
         let _ = axum::serve(listener, router)
             .with_graceful_shutdown(async move {
@@ -4216,7 +4857,10 @@ async fn serve(router: axum::Router) -> TestResult<(String, oneshot::Sender<()>)
             })
             .await;
     });
-    Ok((format!("http://{addr}"), tx))
+    Ok(ServedRouter {
+        url: format!("http://{addr}"),
+        shutdown: tx,
+    })
 }
 
 async fn wait_for_ready(client: &reqwest::Client, base: &str) -> TestResult {
@@ -4251,7 +4895,11 @@ async fn wait_for_seeded(
     let url = format!(
         "{base}/loki/api/v1/label/{label}/values?{}",
         url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(window(timeline))
+            .extend_pairs(
+                window(timeline)
+                    .iter()
+                    .map(|parameter| (parameter.name, parameter.value.as_ref()))
+            )
             .finish()
     );
     let deadline = Instant::now() + READY_TIMEOUT;
@@ -4275,7 +4923,12 @@ async fn wait_for_seeded(
 fn template_expected_response(timeline: &Timeline, name: &str, line: &str) -> Value {
     let stream = PARSER_STREAMS
         .iter()
-        .find(|stream| stream.labels.contains(&("format", "logfmt")))
+        .find(|stream| {
+            stream.labels.contains(&StaticLabelPair {
+                name: "format",
+                value: "logfmt",
+            })
+        })
         .expect("independent logfmt fixture exists");
     // The pinned distributor's word detector sees "error" only in the seed
     // lines at offsets 8 and 12. Detection happens before line_format, so its
@@ -4307,13 +4960,13 @@ fn template_expected_stream_retains_every_fixture_identity() {
     };
     let expected = template_expected_response(&timeline, "lower", "known");
     let expected_groups = [
-        ("error", vec![8, 12]),
-        ("unknown", vec![2, 3, 4, 7, 9, 10, 11, 13, 14, 15, 16, 20, 21, 22]),
-    ].into_iter().map(|(level, offsets)| {
-        let values: Vec<_> = offsets.into_iter()
-            .map(|offset| json!([timeline.at(offset).to_string(), "known"]))
+        ExpectedTemplateLevel { level: "error", offsets: &[8, 12] },
+        ExpectedTemplateLevel { level: "unknown", offsets: &[2, 3, 4, 7, 9, 10, 11, 13, 14, 15, 16, 20, 21, 22] },
+    ].into_iter().map(|fixture| {
+        let values: Vec<_> = fixture.offsets.iter()
+            .map(|offset| json!([timeline.at(*offset).to_string(), "known"]))
             .collect();
-        json!({"stream": {"app": "api", "env": "prod", "format": "logfmt", "service_name": "api", "detected_level": level}, "values": values})
+        json!({"stream": {"app": "api", "env": "prod", "format": "logfmt", "service_name": "api", "detected_level": fixture.level}, "values": values})
     }).collect::<Vec<_>>();
     assert!(
         expected

@@ -6,10 +6,12 @@ use super::*;
 pub fn decode_consumer_records(records: Vec<ConsumerRecord>) -> Result<Vec<SpanRecord>, SinkError> {
     for record in &records {
         krabka_observability::persisted_format::validate_persisted_format(
-            record
-                .headers
-                .iter()
-                .map(|header| (header.key.as_str(), header.value.as_deref())),
+            record.headers.iter().map(|header| {
+                krabka_observability::persisted_format::PersistedHeader {
+                    key: header.key.as_str(),
+                    value: header.value.as_deref(),
+                }
+            }),
         )
         .map_err(|error| SinkError::Decode(error.to_string()))?;
     }

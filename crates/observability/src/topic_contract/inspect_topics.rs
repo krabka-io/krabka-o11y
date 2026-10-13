@@ -5,6 +5,11 @@ use super::{
     TopicDrift, TopicExpectation, TopicKind,
 };
 
+pub(crate) struct TopicInspection {
+    pub(crate) observed: Vec<ObservedTopic>,
+    pub(crate) drift: Vec<TopicDrift>,
+}
+
 /// Kafka's `UNKNOWN_TOPIC_OR_PARTITION`. A broker answers `Metadata` for a
 /// topic it does not hold with this code rather than by leaving the topic out
 /// of the response, so it reads as "absent" and not as "unreadable".
@@ -22,11 +27,13 @@ pub(crate) fn inspect_topics(
     expectation: &TopicExpectation<'_>,
     metadata: &TopicMetadata,
     configs: &DescribeConfigsResults,
-) -> (Vec<ObservedTopic>, Vec<TopicDrift>) {
+) -> TopicInspection {
     let mut observed = Vec::with_capacity(contracts.len());
     let mut drift = Vec::new();
 
-    for (index, contract) in contracts.iter().enumerate() {
+    for entry in contracts.iter().enumerate() {
+        let index = entry.0;
+        let contract = entry.1;
         let spec = match expectation {
             TopicExpectation::Deployment(specs) => specs.get(index),
             TopicExpectation::Structure => None,
@@ -132,5 +139,5 @@ pub(crate) fn inspect_topics(
         });
     }
 
-    (observed, drift)
+    TopicInspection { observed, drift }
 }

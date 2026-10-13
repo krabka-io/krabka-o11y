@@ -180,7 +180,11 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
         let Some(samples) = self
-            .histogram_fold_inner_vector(tenant, &aggregate.expr, time_ms)
+            .histogram_fold_inner_vector(super::InnerVectorQuery::new(
+                tenant,
+                &aggregate.expr,
+                time_ms,
+            ))
             .await?
         else {
             return Ok(None);
@@ -215,9 +219,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         while let Expr::Paren(paren) = inner {
             inner = paren.expr.as_ref();
         }
-        let Some((selector, OverTimeFamily::Last, _)) = match_over_time_range_call(inner) else {
+        let Some(call) = match_over_time_range_call(inner) else {
             return Ok(None);
         };
+        if !matches!(call.family, OverTimeFamily::Last) {
+            return Ok(None);
+        }
+        let selector = call.selector;
         let matcher_sets = label_matcher_sets(&selector.vs);
         // The union path merges overlapping matcher branches before the fold.
         let [matchers] = matcher_sets.as_slice() else {
@@ -247,20 +255,23 @@ impl<S: MetricStore> PromqlEngine<S> {
             .labels_by_fingerprint_sets(tenant, &matcher_sets, after_ms, end_ms)
             .await?;
         let from_ms = after_ms.saturating_add(1);
-        let (total, rows) = self
+        let result = self
             .last_float_rows(tenant, matchers, from_ms, end_ms)
             .await?;
+        let total = result.total;
         // Keep the shared aggregate kernel's NaN sign and payload selection.
-        let has_non_finite = rows.iter().any(|last| !last.value.is_finite());
+        let has_non_finite = result.rows.iter().any(|last| !last.value.is_finite());
         let mut invalid_columns = false;
         // The label index uses canonical fingerprints. These matched runs have
         // the same order as the existing over-time result's fingerprint map.
-        let mut values = rows
+        let mut values = result
+            .rows
             .into_iter()
             .filter_map(|last| {
                 let labels = labels_by_fp.get(&last.fp)?;
                 // Keep the existing Arrow column-name validation on these inputs.
-                invalid_columns |= labels.iter().any(|(name, _)| {
+                invalid_columns |= labels.iter().any(|pair| {
+                    let name = pair.name;
                     let column = name.strip_suffix(RANGE_SUFFIX).unwrap_or(name);
                     column == TIME_COLUMN
                         || column == VALUE_COLUMN
@@ -445,20 +456,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                 // SAME canonical message the interpreter's `eval_limitk_parameter`
                 // raises (do not swallow into `Ok(None)`).
                 let k = self.eval_k_parameter(tenant, aggregate, time_ms).await?;
-                if k == 0 {
-                    return Ok(Some(PlannedInstant::Precomputed(Vec::new())));
-                }
-                let Some(samples) = self
-                    .param_aggregate_inner_vector(tenant, &aggregate.expr, time_ms)
-                    .await?
-                else {
-                    return Ok(None);
-                };
-                Ok(Some(PlannedInstant::Precomputed(apply_limitk_aggregate(
-                    samples,
-                    k,
-                    aggregate.modifier.as_ref(),
-                ))))
+                self.plan_parameterized_aggregate(tenant, aggregate, time_ms, k == 0, |samples| {
+                    apply_limitk_aggregate(samples, k, aggregate.modifier.as_ref())
+                })
+                .await
             }
             // `limit_ratio(ratio, v)` (experimental): resolve and cap `ratio`
             // exactly as the interpreter does — this is where the
@@ -475,18 +476,14 @@ impl<S: MetricStore> PromqlEngine<S> {
                 let ratio = self
                     .eval_limit_ratio_parameter(tenant, aggregate, time_ms)
                     .await?;
-                if ratio == 0.0 {
-                    return Ok(Some(PlannedInstant::Precomputed(Vec::new())));
-                }
-                let Some(samples) = self
-                    .param_aggregate_inner_vector(tenant, &aggregate.expr, time_ms)
-                    .await?
-                else {
-                    return Ok(None);
-                };
-                Ok(Some(PlannedInstant::Precomputed(
-                    apply_limit_ratio_aggregate(samples, ratio),
-                )))
+                self.plan_parameterized_aggregate(
+                    tenant,
+                    aggregate,
+                    time_ms,
+                    ratio == 0.0,
+                    |samples| apply_limit_ratio_aggregate(samples, ratio),
+                )
+                .await
             }
             // In a NON-experimental build, `limitk`/`limit_ratio` must raise the
             // SAME `requires the experimental-functions feature` error the
@@ -528,8 +525,29 @@ impl<S: MetricStore> PromqlEngine<S> {
         value_arg: &Expr,
         time_ms: i64,
     ) -> Result<Option<Vec<InstantSample>>> {
-        self.histogram_fold_inner_vector(tenant, value_arg, time_ms)
+        self.histogram_fold_inner_vector(super::InnerVectorQuery::new(tenant, value_arg, time_ms))
             .await
+    }
+
+    #[cfg(feature = "experimental-functions")]
+    async fn plan_parameterized_aggregate(
+        &self,
+        tenant: &str,
+        aggregate: &AggregateExpr,
+        time_ms: i64,
+        is_empty: bool,
+        apply: impl FnOnce(Vec<InstantSample>) -> Vec<InstantSample>,
+    ) -> Result<Option<PlannedInstant>> {
+        if is_empty {
+            return Ok(Some(PlannedInstant::Precomputed(Vec::new())));
+        }
+        let Some(samples) = self
+            .param_aggregate_inner_vector(tenant, &aggregate.expr, time_ms)
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(PlannedInstant::Precomputed(apply(samples))))
     }
 }
 

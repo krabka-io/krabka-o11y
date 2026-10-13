@@ -1,5 +1,17 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct RangeFoldSample {
+    timestamp_ms: i64,
+    value: f64,
+}
+
+#[derive(bon::Builder)]
+struct RangeFoldSeries {
+    job: &'static str,
+    samples: Vec<RangeFoldSample>,
+}
+
 /// Differential parity for the residual range-vector folds.
 ///
 /// The planner routes these folds through the shared interpreter dispatch
@@ -12,37 +24,96 @@ use super::*;
 pub(crate) async fn extended_range_fold_planner_matches_interpreter() {
     let mut store = InMemoryMetricStore::new();
     // A monotonic-ish counter with a reset, sampled every 30s through t=300000.
-    for (job, samples) in [
-        (
-            "a",
-            vec![
-                (0_i64, 0.0_f64),
-                (30_000, 5.0),
-                (60_000, 10.0),
-                (90_000, 4.0), // reset
-                (120_000, 9.0),
-                (150_000, 15.0),
-                (180_000, 21.0),
-                (210_000, 25.0),
-                (240_000, 30.0),
-                (270_000, 33.0),
-                (300_000, 40.0),
-            ],
-        ),
-        (
-            "b",
-            vec![
-                (0, 100.0),
-                (60_000, 90.0),
-                (120_000, 80.0),
-                (180_000, 70.0),
-                (240_000, 60.0),
-                (300_000, 50.0),
-            ],
-        ),
+    for series in [
+        RangeFoldSeries::builder()
+            .job("a")
+            .samples(vec![
+                RangeFoldSample::builder()
+                    .timestamp_ms(0)
+                    .value(0.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(30_000)
+                    .value(5.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(60_000)
+                    .value(10.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(90_000)
+                    .value(4.0)
+                    .build(), // reset
+                RangeFoldSample::builder()
+                    .timestamp_ms(120_000)
+                    .value(9.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(150_000)
+                    .value(15.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(180_000)
+                    .value(21.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(210_000)
+                    .value(25.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(240_000)
+                    .value(30.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(270_000)
+                    .value(33.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(300_000)
+                    .value(40.0)
+                    .build(),
+            ])
+            .build(),
+        RangeFoldSeries::builder()
+            .job("b")
+            .samples(vec![
+                RangeFoldSample::builder()
+                    .timestamp_ms(0)
+                    .value(100.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(60_000)
+                    .value(90.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(120_000)
+                    .value(80.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(180_000)
+                    .value(70.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(240_000)
+                    .value(60.0)
+                    .build(),
+                RangeFoldSample::builder()
+                    .timestamp_ms(300_000)
+                    .value(50.0)
+                    .build(),
+            ])
+            .build(),
     ] {
-        for (ts, value) in samples {
-            store.push_float("t", labels(&[("__name__", "ctr"), ("job", job)]), ts, value);
+        for sample in series.samples {
+            store.push_float(
+                "t",
+                labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "ctr"),
+                    crate::test_support::TestLabelPair::new("job", series.job),
+                ]),
+                sample.timestamp_ms,
+                sample.value,
+            );
         }
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
@@ -69,8 +140,9 @@ pub(crate) async fn extended_range_fold_planner_matches_interpreter() {
     ];
 
     for query in queries {
-        let (via_operators, via_interpreter) =
-            planned_and_interpreted(&engine, query, time_ms).await;
+        let parity = planned_and_interpreted(&engine, query, time_ms).await;
+        let via_operators = parity.via_operators;
+        let via_interpreter = parity.via_interpreter;
 
         let normalize = |result: QueryResult| fingerprint_sorted(result, query);
         let via_operators = normalize(via_operators);

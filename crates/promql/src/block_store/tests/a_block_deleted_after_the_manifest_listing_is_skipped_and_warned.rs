@@ -4,6 +4,12 @@ use krabka_metrics::{
 };
 
 use super::*;
+use crate::AnnotatedQueryResult;
+
+struct DeletedBlockQueryCase {
+    query: &'static str,
+    warm: bool,
+}
 
 /// Writes one float block per offset in `offsets`, each with one sample of
 /// `soak_metric{block="<offset>"}`.
@@ -11,13 +17,15 @@ async fn write_blocks(object_store: &Arc<dyn ObjectStore>, offsets: &[i64]) {
     let writer = krabka_blockstore::BlockWriter::new(Arc::clone(object_store));
     let sink = ObjectStoreCompactionIndexSink::new(Arc::clone(object_store));
     for &offset in offsets {
-        let series = labels(&[("__name__", "soak_metric"), ("block", &offset.to_string())]);
+        let series = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "soak_metric"),
+            crate::test_support::TestLabelPair::new("block", &offset.to_string()),
+        ]);
+        let mut series_labels = std::collections::BTreeMap::new();
+        series_labels.insert(series.fingerprint(), series.clone().into());
         let rows = TenantCompactionRows {
             tenant: "tenant-a".to_string(),
-            series_labels: std::collections::BTreeMap::from([(
-                series.fingerprint(),
-                series.clone().into(),
-            )]),
+            series_labels,
             float_rows: vec![FloatRow {
                 fingerprint: series.fingerprint(),
                 timestamp_ms: 90_000,
@@ -39,14 +47,32 @@ async fn write_blocks(object_store: &Arc<dyn ObjectStore>, offsets: &[i64]) {
 pub(crate) async fn a_block_deleted_after_the_manifest_listing_is_skipped_and_warned() {
     // `warm` runs one query before the delete, so the deleted block's footer
     // is in the footer cache when the second query reads it.
-    for (query, warm) in [
-        "count(count_over_time(soak_metric[60s]))",
-        "sum(last_over_time(soak_metric[60s]))",
-        "avg(last_over_time(soak_metric[60s]))",
-    ]
-    .into_iter()
-    .flat_map(|query| [false, true].map(|warm| (query, warm)))
-    {
+    for case in [
+        DeletedBlockQueryCase {
+            query: "count(count_over_time(soak_metric[60s]))",
+            warm: false,
+        },
+        DeletedBlockQueryCase {
+            query: "count(count_over_time(soak_metric[60s]))",
+            warm: true,
+        },
+        DeletedBlockQueryCase {
+            query: "sum(last_over_time(soak_metric[60s]))",
+            warm: false,
+        },
+        DeletedBlockQueryCase {
+            query: "sum(last_over_time(soak_metric[60s]))",
+            warm: true,
+        },
+        DeletedBlockQueryCase {
+            query: "avg(last_over_time(soak_metric[60s]))",
+            warm: false,
+        },
+        DeletedBlockQueryCase {
+            query: "avg(last_over_time(soak_metric[60s]))",
+            warm: true,
+        },
+    ] {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         write_blocks(&object_store, &[1, 2]).await;
         let manifests = list_compaction_manifests(&object_store).await.unwrap();
@@ -63,9 +89,9 @@ pub(crate) async fn a_block_deleted_after_the_manifest_listing_is_skipped_and_wa
             &manifests,
         );
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-        if warm {
+        if case.warm {
             engine
-                .query_instant(&tenant_id("tenant-a"), query, 100_000)
+                .query_instant(&tenant_id("tenant-a"), case.query, 100_000)
                 .await
                 .unwrap();
         }
@@ -74,21 +100,21 @@ pub(crate) async fn a_block_deleted_after_the_manifest_listing_is_skipped_and_wa
             .delete(&ObjectPath::from(deleted.as_str()))
             .await
             .unwrap();
-        let (result, annotations) = engine
-            .query_instant_with_annotations(&tenant_id("tenant-a"), query, 100_000)
+        let annotated = engine
+            .query_instant_with_annotations(&tenant_id("tenant-a"), case.query, 100_000)
             .await
             .unwrap();
 
         check!(
-            (result, annotations)
-                == (
-                    QueryResult::InstantVector(vec![InstantSample {
+            annotated
+                == AnnotatedQueryResult {
+                    result: QueryResult::InstantVector(vec![InstantSample {
                         labels: Labels::new().into(),
                         ts_ms: 100_000,
                         value: SampleValue::Float(1.0),
                         drop_name: false,
                     }]),
-                    Annotations {
+                    annotations: Annotations {
                         // The engine appends the source position of the
                         // selector that the warning came from.
                         warnings: vec![format!(
@@ -97,9 +123,11 @@ pub(crate) async fn a_block_deleted_after_the_manifest_listing_is_skipped_and_wa
                         )],
                         infos: Vec::new(),
                         ..crate::Annotations::default()
-                    }
-                ),
-            "query={query}, warm={warm}"
+                    },
+                },
+            "query={}, warm={}",
+            case.query,
+            case.warm
         );
     }
 }

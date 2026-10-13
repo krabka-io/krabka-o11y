@@ -7,8 +7,8 @@ pub fn tree_to_pprof_with_max_nodes(
     max_nodes: i64,
 ) -> PprofProfile {
     let mut builder = PprofBuilder::new(profile_type);
-    for (path, value) in tree.sample_paths(max_nodes) {
-        builder.add_sample(&path, value);
+    for sample in tree.sample_paths(max_nodes) {
+        builder.add_sample(&sample.frames, sample.self_value);
     }
     builder.finish()
 }

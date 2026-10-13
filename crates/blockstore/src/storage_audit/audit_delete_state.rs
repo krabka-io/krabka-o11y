@@ -24,7 +24,9 @@ pub async fn audit_delete_state(
     inventory: &StorageInventory,
 ) -> Result<Vec<StorageFinding>, StorageAuditError> {
     let mut findings = Vec::new();
-    for (key, listed) in inventory.of_signal(StorageSignal::Metrics) {
+    for entry in inventory.of_signal(StorageSignal::Metrics) {
+        let key = entry.key;
+        let listed = entry.listed;
         let tenant = listed.object.tenant.clone().unwrap_or_default();
         let problem = match &listed.object.role {
             ObjectRole::TenantDeletion => {

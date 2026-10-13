@@ -5,3 +5,9 @@ pub(crate) mod request_formatting;
 pub(crate) mod stream_formatting;
 
 pub(crate) use quoted_text_scanner::QuotedTextScanner;
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct ParsedValueAt<T> {
+    pub(crate) value: T,
+    pub(crate) position: usize,
+}

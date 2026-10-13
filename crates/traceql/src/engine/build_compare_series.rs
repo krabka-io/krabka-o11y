@@ -3,6 +3,11 @@ use super::{
     TraceMetricSeries, compare_total_series, compare_value_series,
 };
 
+struct RankedCompareValue<'a> {
+    value: &'a String,
+    selection_total: u64,
+}
+
 /// Builds the compare time series from the accumulated per-bucket counts.
 ///
 /// For each attribute, this function picks ONE shared value set: the `top_n`
@@ -27,43 +32,60 @@ pub(crate) fn build_compare_series(
     // Regroup the flat (group, attr_key, value) entries into attr → value →
     // group → buckets so a single shared value set per attribute can be picked.
     let mut by_attr: CompareByAttr = BTreeMap::new();
-    for ((group, attr_key, value), buckets) in counts {
+    for count_entry in counts {
+        let key = count_entry.0;
+        let buckets = count_entry.1;
         by_attr
-            .entry(attr_key)
+            .entry(key.attr_key)
             .or_default()
-            .entry(value)
+            .entry(key.value)
             .or_default()
-            .insert(group, buckets);
+            .insert(key.group, buckets);
     }
 
     let mut series = Vec::new();
-    for (attr_key, values) in by_attr {
+    for attr_entry in by_attr {
+        let attr_key = attr_entry.0;
+        let values = attr_entry.1;
         // Rank values by the SELECTION-group count (descending), tie-broken by
         // value ascending. This yields a single, deterministic top_n value set
         // shared by both groups.
-        let mut ranked: Vec<(&String, u64)> = values
+        let mut ranked: Vec<RankedCompareValue<'_>> = values
             .iter()
-            .map(|(value, per_group)| {
+            .map(|value_entry| {
+                let value = value_entry.0;
+                let per_group = value_entry.1;
                 let selection_total: u64 = per_group
                     .get(&CompareGroup::Selection)
                     .map_or(0, |buckets| buckets.iter().sum());
-                (value, selection_total)
+                RankedCompareValue {
+                    value,
+                    selection_total,
+                }
             })
             .collect();
-        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        ranked.sort_by(|a, b| {
+            b.selection_total
+                .cmp(&a.selection_total)
+                .then_with(|| a.value.cmp(b.value))
+        });
         ranked.truncate(top_n);
 
         // Emit a baseline and a selection series for each chosen value; a value
         // missing from a group is zero-filled so both groups share the value set.
-        for (value, _) in ranked {
-            let per_group = &values[value];
+        for ranked_value in ranked {
+            let per_group = &values[ranked_value.value];
             for group in [CompareGroup::Baseline, CompareGroup::Selection] {
                 let buckets = per_group
                     .get(&group)
                     .cloned()
                     .unwrap_or_else(|| vec![0; bucket_count]);
                 series.push(compare_value_series(
-                    group, &attr_key, value, &buckets, range,
+                    group,
+                    &attr_key,
+                    ranked_value.value,
+                    &buckets,
+                    range,
                 ));
             }
         }

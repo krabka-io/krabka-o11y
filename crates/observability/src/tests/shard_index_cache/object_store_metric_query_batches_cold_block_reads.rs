@@ -32,15 +32,17 @@ pub(crate) async fn object_store_metric_query_batches_cold_block_reads() {
             prefix: &prefix,
             block_fetch_concurrency: NonZeroUsize::new(4).unwrap(),
         },
-        &plan,
-        &query,
-        &label_index,
-        (TimeRange::new(39, 39).unwrap(), 1),
-        QueryHotTail::<crate::WalLogRecord> {
-            records: &[],
-            frontier: &CompactionFrontier::new(i64::MAX),
-            delete_filters: &[],
-        },
+        crate::querier::scan::MetricRangeScanRequest::new(
+            &plan,
+            &query,
+            &label_index,
+            crate::querier::scan::MetricEvaluationRange::new(TimeRange::new(39, 39).unwrap(), 1),
+            QueryHotTail::<crate::WalLogRecord> {
+                records: &[],
+                frontier: &CompactionFrontier::new(i64::MAX),
+                delete_filters: &[],
+            },
+        ),
     )
     .await
     .unwrap();

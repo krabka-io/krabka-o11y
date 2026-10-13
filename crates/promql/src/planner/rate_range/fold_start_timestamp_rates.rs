@@ -16,11 +16,12 @@ pub(super) fn fold_start_timestamp_rates(
 ) {
     let RangeWindowGrid { grid, range } = windows;
     for series in series {
-        let starts = series
-            .samples
-            .iter()
-            .filter_map(|sample| sample.start_timestamp_ms.map(|start| (sample.ts_ms, start)))
-            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut starts = std::collections::BTreeMap::new();
+        for sample in &series.samples {
+            if let Some(start) = sample.start_timestamp_ms {
+                starts.insert(sample.ts_ms, start);
+            }
+        }
         let mut folded = Vec::new();
         let mut end = grid.start;
         loop {

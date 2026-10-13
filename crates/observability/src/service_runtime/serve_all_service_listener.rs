@@ -5,7 +5,7 @@ use super::{
     ServiceDependencies, ServiceRuntimeError, StagedDrain, SupervisedTasks, TcpListener,
     all_in_one_router, distributor_state_for_config, limits_provider_for_config,
     run_compactor_until_idle, run_compactor_until_shutdown, serve_router, service_audit_for_config,
-    start_runtime_security, with_service_audit,
+    start_audited_runtime_security, with_service_audit,
 };
 use crate::{DRAINING_GATE, RoleKind};
 
@@ -45,11 +45,10 @@ pub async fn serve_all_service_listener(
     object_store: Option<&dyn ObjectStore>,
     shutdown: CancellationToken,
 ) -> Result<(), ServiceRuntimeError> {
-    let security = Box::pin(start_runtime_security(&config, &dependencies)).await?;
-    // Cancelled on every way out of this function, so an early error does not
-    // leave the audit writer waiting for a stop that never comes.
-    let _audit_stop = security.audit_stop.clone().drop_guard();
-    let dependencies = dependencies.with_audit(security.audit.clone());
+    let audited = Box::pin(start_audited_runtime_security(&config, dependencies)).await?;
+    let security = audited.security;
+    let _audit_stop = audited.stop_guard;
+    let dependencies = audited.dependencies;
     let readiness = dependencies.readiness.clone().unwrap_or_default();
     let metrics = dependencies.metrics.clone().unwrap_or_default();
     if let Some(consumer) = &dependencies.wal_consumer {
@@ -80,7 +79,7 @@ pub async fn serve_all_service_listener(
         Arc::clone(&overrides),
     )?;
     let querier_token = CancellationToken::new();
-    let (app, background_tasks) = Box::pin(all_in_one_router(
+    let service_router = Box::pin(all_in_one_router(
         &config,
         dependencies.clone(),
         object_store,
@@ -90,10 +89,13 @@ pub async fn serve_all_service_listener(
         distributor_state,
     ))
     .await?;
-    let app = with_service_audit(app, service_audit_for_config(&config, &dependencies));
+    let app = with_service_audit(
+        service_router.router,
+        service_audit_for_config(&config, &dependencies),
+    );
     let mut querier_tasks = SupervisedTasks::new(querier_token);
-    for (name, handle) in background_tasks {
-        querier_tasks.adopt(name, handle);
+    for task in service_router.background_tasks {
+        querier_tasks.adopt(task.name, task.handle);
     }
     // Supervised with the querier's tasks, so a writer that stops early stops
     // the process. It is cancelled on its own token, after the data port.

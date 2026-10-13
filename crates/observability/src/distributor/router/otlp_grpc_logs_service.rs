@@ -32,7 +32,10 @@ impl LogsService for OtlpGrpcLogsService {
         &self,
         request: tonic::Request<ProtoExportLogsServiceRequest>,
     ) -> Result<tonic::Response<ProtoExportLogsServiceResponse>, tonic::Status> {
-        let (metadata, extensions, payload) = request.into_parts();
+        let parts = request.into_parts();
+        let metadata = parts.0;
+        let extensions = parts.1;
+        let payload = parts.2;
         // The router serves this service, so the authentication layer has put
         // the principal into the same extensions as for an HTTP request.
         let security = RequestSecurity::from_extensions(&extensions)

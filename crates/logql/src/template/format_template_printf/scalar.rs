@@ -206,8 +206,12 @@ pub(super) fn render(value: &TemplateRuntimeValue, verb: char, spec: Spec) -> St
             let sharp = verb == 'v' && spec.sharp_v;
             let elements = values
                 .iter()
-                .map(|(key, value)| {
-                    format!("{}:{}", string(key, verb, spec), string(value, verb, spec))
+                .map(|entry| {
+                    format!(
+                        "{}:{}",
+                        string(&entry.0, verb, spec),
+                        string(&entry.1, verb, spec)
+                    )
                 })
                 .collect::<Vec<_>>();
             if sharp {
@@ -226,7 +230,10 @@ fn time(value: &super::super::TemplateTime, verb: char, spec: Spec) -> String {
     if matches!(verb, 'v' | 's' | 'q' | 'x' | 'X') {
         return string(&value.as_string(), verb, spec);
     }
-    let (wall, ext, location) = value.reflection_fields();
+    let fields = value.reflection_fields();
+    let wall = fields.wall;
+    let ext = fields.ext;
+    let location = fields.location;
     if verb == 'p' {
         return format!(
             "%!p(time.Time={{{wall} {ext} {}}})",
@@ -358,7 +365,8 @@ fn string(value: &str, verb: char, spec: Spec) -> String {
             let bytes = &value.as_bytes()[..spec.precision.unwrap_or(value.len()).min(value.len())];
             let prefix = if verb == 'x' { "0x" } else { "0X" };
             let mut output = String::new();
-            for (i, byte) in bytes.iter().enumerate() {
+            for i in 0..bytes.len() {
+                let byte = &bytes[i];
                 if i > 0 && spec.flags[Spec::SPACE] {
                     output.push(' ');
                 }
@@ -516,23 +524,27 @@ fn named_integer(value: i64, text: &str, verb: char, spec: Spec) -> String {
 }
 
 fn span_view(value: &super::super::TemplateHistogramSpan) -> super::super::TemplateHistogramView {
-    use super::super::{TemplateHistogramView as R, TemplateRuntimeValue as V};
+    use super::super::{
+        TemplateHistogramField as F, TemplateHistogramView as R, TemplateRuntimeValue as V,
+    };
     R::structure(
         "histogram.Span",
         vec![
-            ("Offset", R::scalar(V::Integer32(value.offset))),
-            ("Length", R::scalar(V::Unsigned32(value.length))),
+            F::new("Offset", R::scalar(V::Integer32(value.offset))),
+            F::new("Length", R::scalar(V::Unsigned32(value.length))),
         ],
     )
 }
 fn error_view(
     value: &std::sync::Arc<super::super::TemplateHistogramError>,
 ) -> super::super::TemplateHistogramView {
-    use super::super::{TemplateHistogramView as R, TemplateRuntimeValue as V};
+    use super::super::{
+        TemplateHistogramField as F, TemplateHistogramView as R, TemplateRuntimeValue as V,
+    };
     let fields = if value.kind == "*errors.errorString" {
-        vec![("s", R::scalar(V::String(value.message.clone())))]
+        vec![F::new("s", R::scalar(V::String(value.message.clone())))]
     } else if value.kind == "histogram.Error" {
-        vec![(
+        vec![F::new(
             "error",
             value
                 .unwrap
@@ -541,8 +553,8 @@ fn error_view(
         )]
     } else {
         vec![
-            ("msg", R::scalar(V::String(value.message.clone()))),
-            (
+            F::new("msg", R::scalar(V::String(value.message.clone()))),
+            F::new(
                 "err",
                 value
                     .unwrap
@@ -591,10 +603,10 @@ fn reflection(
             }
             let parts = fields
                 .iter()
-                .map(|(field, value)| {
-                    let value = reflection(value, verb, spec, depth + 1);
+                .map(|field| {
+                    let value = reflection(&field.value, verb, spec, depth + 1);
                     if sharp || (verb == 'v' && spec.plus_v) {
-                        format!("{field}:{value}")
+                        format!("{}:{value}", field.name)
                     } else {
                         value
                     }
@@ -690,67 +702,78 @@ fn pointer(address: usize, spec: Spec) -> String {
 #[cfg(test)]
 mod pointer_tests {
     use super::*;
+
+    struct PointerFormatCase {
+        spec: Spec,
+        expected: &'static str,
+    }
+
     #[test]
     fn pointer_flags_match_go_fixed_address_goldens() {
         // Go1.26.5 fmt.Sprintf against unsafe.Pointer(uintptr(0x1234));
         // formatting never dereferences this independently chosen address.
-        for (spec, expected) in [
-            (Spec::default(), "0x1234"),
-            (
-                Spec { ..Spec::default() }.with_flag(Spec::SHARP, true),
-                "1234",
-            ),
-            (
-                Spec { ..Spec::default() }.with_flag(Spec::PLUS, true),
-                "+0x1234",
-            ),
-            (
-                Spec { ..Spec::default() }.with_flag(Spec::SPACE, true),
-                " 0x1234",
-            ),
-            (
-                Spec {
+        let cases = [
+            PointerFormatCase {
+                spec: Spec::default(),
+                expected: "0x1234",
+            },
+            PointerFormatCase {
+                spec: Spec::default().with_flag(Spec::SHARP, true),
+                expected: "1234",
+            },
+            PointerFormatCase {
+                spec: Spec::default().with_flag(Spec::PLUS, true),
+                expected: "+0x1234",
+            },
+            PointerFormatCase {
+                spec: Spec::default().with_flag(Spec::SPACE, true),
+                expected: " 0x1234",
+            },
+            PointerFormatCase {
+                spec: Spec {
                     width: Some(20),
                     ..Spec::default()
                 }
                 .with_flag(Spec::ZERO, true),
-                "0x00000000000000001234",
-            ),
-            (
-                Spec {
+                expected: "0x00000000000000001234",
+            },
+            PointerFormatCase {
+                spec: Spec {
                     width: Some(20),
                     ..Spec::default()
                 }
                 .with_flag(Spec::SHARP, true)
                 .with_flag(Spec::ZERO, true),
-                "00000000000000001234",
-            ),
-            (
-                Spec {
+                expected: "00000000000000001234",
+            },
+            PointerFormatCase {
+                spec: Spec {
                     precision: Some(20),
                     ..Spec::default()
                 },
-                "0x00000000000000001234",
-            ),
-            (
-                Spec {
+                expected: "0x00000000000000001234",
+            },
+            PointerFormatCase {
+                spec: Spec {
                     width: Some(20),
                     precision: Some(6),
                     ..Spec::default()
                 }
                 .with_flag(Spec::ZERO, true),
-                "            0x001234",
-            ),
-            (
-                Spec {
+                expected: "            0x001234",
+            },
+            PointerFormatCase {
+                spec: Spec {
                     width: Some(12),
                     ..Spec::default()
                 }
                 .with_flag(Spec::MINUS, true),
-                "0x1234      ",
-            ),
-        ] {
-            assert2::assert!(pointer(0x1234, spec) == expected);
+                expected: "0x1234      ",
+            },
+        ];
+        for case_index in 0..cases.len() {
+            let case = &cases[case_index];
+            assert2::assert!(pointer(0x1234, case.spec) == case.expected);
         }
     }
 }

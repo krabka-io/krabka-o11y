@@ -43,7 +43,7 @@ impl OtlpAttribute for ProtoKeyValue {
 pub(crate) fn otlp_resource_labels<A: OtlpAttribute>(
     attributes: &[A],
     limits: &Limits,
-) -> Result<(Labels, Labels), DistributorError> {
+) -> Result<super::OtlpLabelGroups, DistributorError> {
     let action = |name: &str| {
         limits
             .otlp_config
@@ -81,7 +81,10 @@ pub(crate) fn otlp_resource_labels<A: OtlpAttribute>(
             OtlpAttributeAction::Drop => {}
         }
     }
-    Ok((resource_labels, resource_metadata))
+    Ok(super::OtlpLabelGroups {
+        labels: resource_labels,
+        structured_metadata: resource_metadata,
+    })
 }
 
 /// One OTLP instrumentation scope. A record with no scope has an empty one.
@@ -166,6 +169,20 @@ pub(crate) fn otlp_stream_labels(
     }
     validate_loki_label_limits(&labels, limits)?;
     Ok(labels)
+}
+
+pub(crate) fn otlp_scope_context<A: OtlpAttribute>(
+    resource_labels: &Labels,
+    resource_metadata: &Labels,
+    scope: &OtlpScope<'_, A>,
+    limits: &Limits,
+) -> Result<super::OtlpLabelGroups, DistributorError> {
+    let inherited_metadata = otlp_scope_metadata(resource_metadata, scope, limits)?;
+    let labels = otlp_stream_labels(resource_labels, limits)?;
+    Ok(super::OtlpLabelGroups {
+        labels,
+        structured_metadata: inherited_metadata,
+    })
 }
 
 /// One OTLP log line, at `timestamp_ns`, validated against the tenant's limits

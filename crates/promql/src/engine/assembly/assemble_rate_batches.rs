@@ -38,7 +38,9 @@ pub(crate) fn assemble_rate_batches(
 
     let samples = by_fp
         .into_iter()
-        .filter_map(|(fp, value)| {
+        .filter_map(|entry| {
+            let fp = entry.0;
+            let value = entry.1;
             labels_by_fp.get(&fp).map(|labels| InstantSample {
                 // Rate-family results drop the metric name, matching
                 // `eval_range_function_call`'s `labels_without_metric_name`.

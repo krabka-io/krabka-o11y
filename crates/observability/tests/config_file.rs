@@ -43,6 +43,22 @@ struct TestCli {
     max_body: Option<String>,
 }
 
+struct EnvironmentOverride<'a> {
+    name: &'a str,
+    value: Option<&'a str>,
+}
+
+fn with_environment<'a, T>(
+    overrides: impl IntoIterator<Item = EnvironmentOverride<'a>>,
+    run: impl FnOnce() -> T,
+) -> T {
+    let variables = overrides
+        .into_iter()
+        .map(|override_value| (override_value.name, override_value.value))
+        .collect::<Vec<_>>();
+    temp_env::with_vars(variables, run)
+}
+
 /// Every case here reads the same environment through `clap`, and some of them
 /// set it. A `getenv` running while another thread is inside `setenv` is a race
 /// in libc whatever the Rust-side locking says, so the whole file takes one
@@ -112,13 +128,28 @@ fn precedence_runs_command_line_over_environment_over_file_over_default() {
         "target: from-file\nlisten: 10.0.0.1:1111\n",
     );
 
-    temp_env::with_vars(
+    with_environment(
         [
-            ("KRABKA_TEST_CONFIG_TARGET", Some("from-environment")),
-            ("KRABKA_TEST_CONFIG_LISTEN", None::<&str>),
-            ("KRABKA_TEST_CONFIG_VERBOSE", None),
-            ("KRABKA_CONFIG_FILE", None),
-            ("KRABKA_CONFIG_EXPAND_ENV", None),
+            EnvironmentOverride {
+                name: "KRABKA_TEST_CONFIG_TARGET",
+                value: Some("from-environment"),
+            },
+            EnvironmentOverride {
+                name: "KRABKA_TEST_CONFIG_LISTEN",
+                value: None,
+            },
+            EnvironmentOverride {
+                name: "KRABKA_TEST_CONFIG_VERBOSE",
+                value: None,
+            },
+            EnvironmentOverride {
+                name: "KRABKA_CONFIG_FILE",
+                value: None,
+            },
+            EnvironmentOverride {
+                name: "KRABKA_CONFIG_EXPAND_ENV",
+                value: None,
+            },
         ],
         || {
             let argv: Vec<OsString> = vec![
@@ -162,10 +193,16 @@ fn the_config_file_path_itself_comes_from_a_flag_or_the_environment() {
     let directory = tempfile::tempdir().expect("temp dir");
     let path = write_config(directory.path(), "target: from-file\n");
 
-    temp_env::with_vars(
+    with_environment(
         [
-            ("KRABKA_CONFIG_FILE", Some(path.as_str())),
-            ("KRABKA_TEST_CONFIG_TARGET", None),
+            EnvironmentOverride {
+                name: "KRABKA_CONFIG_FILE",
+                value: Some(path.as_str()),
+            },
+            EnvironmentOverride {
+                name: "KRABKA_TEST_CONFIG_TARGET",
+                value: None,
+            },
         ],
         || {
             let argv = argv_with_config_file::<TestCli>(vec!["config-file-test".into()])
@@ -212,14 +249,32 @@ fn expand_env_substitutes_only_when_asked() {
         "target: ${KRABKA_TEST_CONFIG_SECRET}\nlisten: ${KRABKA_TEST_CONFIG_ADDR:0.0.0.0:7777}\n",
     );
 
-    temp_env::with_vars(
+    with_environment(
         [
-            ("KRABKA_TEST_CONFIG_SECRET", Some("expanded")),
-            ("KRABKA_TEST_CONFIG_ADDR", None),
-            ("KRABKA_TEST_CONFIG_TARGET", None),
-            ("KRABKA_TEST_CONFIG_LISTEN", None),
-            ("KRABKA_CONFIG_FILE", None),
-            ("KRABKA_CONFIG_EXPAND_ENV", None),
+            EnvironmentOverride {
+                name: "KRABKA_TEST_CONFIG_SECRET",
+                value: Some("expanded"),
+            },
+            EnvironmentOverride {
+                name: "KRABKA_TEST_CONFIG_ADDR",
+                value: None,
+            },
+            EnvironmentOverride {
+                name: "KRABKA_TEST_CONFIG_TARGET",
+                value: None,
+            },
+            EnvironmentOverride {
+                name: "KRABKA_TEST_CONFIG_LISTEN",
+                value: None,
+            },
+            EnvironmentOverride {
+                name: "KRABKA_CONFIG_FILE",
+                value: None,
+            },
+            EnvironmentOverride {
+                name: "KRABKA_CONFIG_EXPAND_ENV",
+                value: None,
+            },
         ],
         || {
             let expanded: Vec<OsString> = vec![
@@ -252,16 +307,22 @@ fn an_undefined_expansion_with_no_default_stops_start_up() {
     let directory = tempfile::tempdir().expect("temp dir");
     let path = write_config(directory.path(), "target: ${KRABKA_TEST_CONFIG_ABSENT}\n");
 
-    temp_env::with_vars([("KRABKA_TEST_CONFIG_ABSENT", None::<&str>)], || {
-        let argv: Vec<OsString> = vec![
-            "config-file-test".into(),
-            "--config.expand-env".into(),
-            "--config.file".into(),
-            path.clone().into(),
-        ];
-        assert!(let Err(error) = argv_with_config_file::<TestCli>(argv));
-        check!(error.to_string().contains("KRABKA_TEST_CONFIG_ABSENT"));
-    });
+    with_environment(
+        [EnvironmentOverride {
+            name: "KRABKA_TEST_CONFIG_ABSENT",
+            value: None,
+        }],
+        || {
+            let argv: Vec<OsString> = vec![
+                "config-file-test".into(),
+                "--config.expand-env".into(),
+                "--config.file".into(),
+                path.clone().into(),
+            ];
+            assert!(let Err(error) = argv_with_config_file::<TestCli>(argv));
+            check!(error.to_string().contains("KRABKA_TEST_CONFIG_ABSENT"));
+        },
+    );
 }
 
 // The binary's `Cli` in miniature: the config-file flags and the whole

@@ -18,6 +18,7 @@ use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+pub use crate::labels::LabelPair;
 use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
@@ -42,23 +43,101 @@ mod tests {
         matcher::{LabelMatcher, MatchOp},
     };
 
-    fn labels(pairs: &[(&str, &str)]) -> Labels {
-        let mut labels = Labels::new();
-        for (name, value) in pairs {
-            labels.insert(*name, *value);
-        }
-        labels
+    struct SavedIndex {
+        store: Arc<dyn ObjectStore>,
+        key: String,
+    }
+
+    struct ResolveCase {
+        name: &'static str,
+        tenant: &'static str,
+        matchers: Vec<LabelMatcher>,
+        expected: BTreeSet<SeriesFingerprint>,
+    }
+
+    struct MatcherResultCase {
+        name: &'static str,
+        matcher: LabelMatcher,
+        expected: BTreeSet<SeriesFingerprint>,
+    }
+
+    struct CandidateTimeCase {
+        name: &'static str,
+        min_ts: i64,
+        max_ts: i64,
+        expected: Vec<String>,
+    }
+
+    struct MatcherValidityCase {
+        name: &'static str,
+        matchers: Vec<LabelMatcher>,
+        expected_ok: bool,
+    }
+
+    struct MatcherListResultCase {
+        name: &'static str,
+        matchers: Vec<LabelMatcher>,
+        expected: BTreeSet<SeriesFingerprint>,
+    }
+
+    struct ShardSelectorCase {
+        op: MatchOp,
+        keep_remainder: u64,
+    }
+
+    struct LabelValuesQueryCase {
+        name: &'static str,
+        tenant: &'static str,
+        matchers: Vec<LabelMatcher>,
+        expected: Vec<String>,
+    }
+
+    struct BlockBoundsCase {
+        name: &'static str,
+        tenant: &'static str,
+        min_ts: i64,
+        max_ts: i64,
+        expected: Option<crate::block::BlockTimeBounds>,
+    }
+
+    struct BoundsOverlapCase {
+        name: &'static str,
+        min_ts: i64,
+        max_ts: i64,
+        expected: Option<crate::block::BlockTimeBounds>,
+    }
+
+    fn labels(pairs: &[LabelPair]) -> Labels {
+        Labels::from_pairs(pairs.iter().cloned())
     }
 
     fn seed() -> Index {
         let mut idx = Index::new();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]);
-        let api_dev = labels(&[("app", "api"), ("env", "dev")]);
-        let web_prod = labels(&[("app", "web"), ("env", "prod")]);
+        let api_prod = labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]);
+        let api_dev = labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "dev")]);
+        let web_prod = labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")]);
         idx.add_series("t", api_prod.fingerprint(), &api_prod);
         idx.add_series("t", api_dev.fingerprint(), &api_dev);
         idx.add_series("t", web_prod.fingerprint(), &web_prod);
         idx
+    }
+
+    fn add_test_block(
+        index: &mut Index,
+        object_key: &str,
+        min_ts: i64,
+        max_ts: i64,
+        fingerprints: Vec<SeriesFingerprint>,
+    ) {
+        index.add_block(&BlockMeta {
+            tenant: "t".into(),
+            object_key: object_key.into(),
+            min_ts,
+            max_ts,
+            row_count: 1,
+            fingerprints,
+            level: BlockLevel::INGESTED,
+        });
     }
 
     /// The fingerprints of the three series that [`seed`] indexes.
@@ -71,9 +150,12 @@ mod tests {
     impl SeededFingerprints {
         fn new() -> Self {
             Self {
-                api_prod: labels(&[("app", "api"), ("env", "prod")]).fingerprint(),
-                api_dev: labels(&[("app", "api"), ("env", "dev")]).fingerprint(),
-                web_prod: labels(&[("app", "web"), ("env", "prod")]).fingerprint(),
+                api_prod: labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")])
+                    .fingerprint(),
+                api_dev: labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "dev")])
+                    .fingerprint(),
+                web_prod: labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")])
+                    .fingerprint(),
             }
         }
     }
@@ -87,7 +169,7 @@ mod tests {
     #[test]
     fn series_storage_preserves_json_and_shard_bytes() {
         let mut index = Index::new();
-        index.add_series("t", 7, &labels(&[("a", "b")]));
+        index.add_series("t", 7, &labels(&[LabelPair::new("a", "b")]));
         // Independent v2 ledger: tenant, sorted dictionary, stored fingerprint,
         // one label pair, no blocks and no block postings.
         assert2::assert!(
@@ -97,13 +179,17 @@ mod tests {
         let json = serde_json::to_value(&index).unwrap();
         assert2::assert!(json["tenants"]["t"]["series"] == serde_json::json!({"7": {"a": "b"}}));
         let restored: Index = serde_json::from_value(json).unwrap();
-        assert2::assert!(restored.series("t", &[]).unwrap() == vec![labels(&[("a", "b")])]);
+        assert2::assert!(
+            restored.series("t", &[]).unwrap() == vec![labels(&[LabelPair::new("a", "b")])]
+        );
         let decoded = decode_index_shard(
             "golden",
             b"KBIX\x02\x01t\x02\x01a\x01b\x01\x07\0\0\0\0\0\0\0\x01\0\x01\0\0",
         )
         .unwrap();
-        assert2::assert!(decoded.series("t", &[]).unwrap() == vec![labels(&[("a", "b")])]);
+        assert2::assert!(
+            decoded.series("t", &[]).unwrap() == vec![labels(&[LabelPair::new("a", "b")])]
+        );
         assert2::assert!(
             decoded
                 .resolve("t", &[LabelMatcher::new("a", MatchOp::Eq, "b")])
@@ -115,16 +201,22 @@ mod tests {
     #[test]
     fn series_keep_tenant_order_first_labels_and_independent_snapshots() {
         let mut index = Index::new();
-        let api = labels(&[("app", "api"), ("region", "東京")]);
-        let worker = labels(&[("app", "worker"), ("region", "west")]);
+        let api = labels(&[
+            LabelPair::new("app", "api"),
+            LabelPair::new("region", "東京"),
+        ]);
+        let worker = labels(&[
+            LabelPair::new("app", "worker"),
+            LabelPair::new("region", "west"),
+        ]);
         index.add_series("t", 9, &worker);
         index.add_series("t", 7, &api);
         index.add_series("other", 7, &api);
         let snapshot = index.clone();
         let held = snapshot.series("t", &[]).unwrap();
         assert2::assert!(held == vec![api.clone(), worker.clone()]);
-        index.add_series("t", 7, &labels(&[("app", "replacement")]));
-        index.add_series("t", 11, &labels(&[("app", "new")]));
+        index.add_series("t", 7, &labels(&[LabelPair::new("app", "replacement")]));
+        index.add_series("t", 11, &labels(&[LabelPair::new("app", "new")]));
         let matcher = [LabelMatcher::new("app", MatchOp::Eq, "api")];
         let current = index.series("t", &matcher).unwrap();
         let other = index.series("other", &matcher).unwrap();
@@ -149,104 +241,106 @@ mod tests {
             api_dev,
             web_prod,
         } = SeededFingerprints::new();
-        for (_name, tenant, matchers, expected) in [
-            (
-                "equal intersection",
-                "t",
-                vec![
+        for case in [
+            ResolveCase {
+                name: "equal intersection",
+                tenant: "t",
+                matchers: vec![
                     LabelMatcher::new("app", MatchOp::Eq, "api"),
                     LabelMatcher::new("env", MatchOp::Eq, "prod"),
                 ],
-                BTreeSet::from([api_prod]),
-            ),
-            (
-                "not equal exclusion",
-                "t",
-                vec![
+                expected: BTreeSet::from([api_prod]),
+            },
+            ResolveCase {
+                name: "not equal exclusion",
+                tenant: "t",
+                matchers: vec![
                     LabelMatcher::new("app", MatchOp::Eq, "api"),
                     LabelMatcher::new("env", MatchOp::Neq, "prod"),
                 ],
-                BTreeSet::from([api_dev]),
-            ),
-            (
-                "regex union",
-                "t",
-                vec![LabelMatcher::new("env", MatchOp::Re, "pro.*")],
-                BTreeSet::from([api_prod, web_prod]),
-            ),
-            (
-                "unknown tenant",
-                "nope",
-                vec![LabelMatcher::new("app", MatchOp::Eq, "api")],
-                BTreeSet::new(),
-            ),
+                expected: BTreeSet::from([api_dev]),
+            },
+            ResolveCase {
+                name: "regex union",
+                tenant: "t",
+                matchers: vec![LabelMatcher::new("env", MatchOp::Re, "pro.*")],
+                expected: BTreeSet::from([api_prod, web_prod]),
+            },
+            ResolveCase {
+                name: "unknown tenant",
+                tenant: "nope",
+                matchers: vec![LabelMatcher::new("app", MatchOp::Eq, "api")],
+                expected: BTreeSet::new(),
+            },
         ] {
-            assert2::assert!(idx.resolve(tenant, &matchers).unwrap() == expected);
+            assert2::assert!(
+                idx.resolve(case.tenant, &case.matchers).unwrap() == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
     #[test]
     fn eq_does_not_collide_across_nul_boundary() {
-        // `("x", "a\0b")` and `("x\0a", "b")` share the same naive
+        // `LabelPair::new("x", "a\0b")` and `LabelPair::new("x\0a", "b")` share the same naive
         // `name\0value` byte string, so an in-band NUL delimiter would index
         // both under one bucket and contaminate Eq results across series.
         let mut idx = Index::new();
-        let s1 = labels(&[("x", "a\u{0}b")]);
-        let s2 = labels(&[("x\u{0}a", "b")]);
+        let s1 = labels(&[LabelPair::new("x", "a\u{0}b")]);
+        let s2 = labels(&[LabelPair::new("x\u{0}a", "b")]);
         idx.add_series("t", s1.fingerprint(), &s1);
         idx.add_series("t", s2.fingerprint(), &s2);
 
-        for (_name, matcher, expected) in [
-            (
-                "NUL in label value",
-                LabelMatcher::new("x", MatchOp::Eq, "a\u{0}b"),
-                BTreeSet::from([s1.fingerprint()]),
-            ),
-            (
-                "NUL in label name",
-                LabelMatcher::new("x\u{0}a", MatchOp::Eq, "b"),
-                BTreeSet::from([s2.fingerprint()]),
-            ),
+        for case in [
+            MatcherResultCase {
+                name: "NUL in label value",
+                matcher: LabelMatcher::new("x", MatchOp::Eq, "a\u{0}b"),
+                expected: BTreeSet::from([s1.fingerprint()]),
+            },
+            MatcherResultCase {
+                name: "NUL in label name",
+                matcher: LabelMatcher::new("x\u{0}a", MatchOp::Eq, "b"),
+                expected: BTreeSet::from([s2.fingerprint()]),
+            },
         ] {
-            assert2::assert!(idx.resolve("t", &[matcher]).unwrap() == expected);
+            assert2::assert!(
+                idx.resolve("t", &[case.matcher]).unwrap() == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
     #[test]
     fn candidate_blocks_prune_by_fp_and_time() {
         let mut idx = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
-        let web_prod = labels(&[("app", "web"), ("env", "prod")]).fingerprint();
-        idx.add_block(&BlockMeta {
-            tenant: "t".into(),
-            object_key: "b1.parquet".into(),
-            min_ts: 0,
-            max_ts: 100,
-            row_count: 1,
-            fingerprints: vec![api_prod],
-            level: BlockLevel::INGESTED,
-        });
-        idx.add_block(&BlockMeta {
-            tenant: "t".into(),
-            object_key: "b2.parquet".into(),
-            min_ts: 200,
-            max_ts: 300,
-            row_count: 1,
-            fingerprints: vec![web_prod],
-            level: BlockLevel::INGESTED,
-        });
+        let api_prod =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
+        let web_prod =
+            labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")]).fingerprint();
+        add_test_block(&mut idx, "b1.parquet", 0, 100, vec![api_prod]);
+        add_test_block(&mut idx, "b2.parquet", 200, 300, vec![web_prod]);
 
-        for (_name, min_ts, max_ts, expected) in [
-            (
-                "matching fingerprint and time",
-                0,
-                150,
-                vec!["b1.parquet".to_string()],
-            ),
-            ("outside time range", 500, 600, Vec::new()),
+        for case in [
+            CandidateTimeCase {
+                name: "matching fingerprint and time",
+                min_ts: 0,
+                max_ts: 150,
+                expected: vec!["b1.parquet".to_string()],
+            },
+            CandidateTimeCase {
+                name: "outside time range",
+                min_ts: 500,
+                max_ts: 600,
+                expected: Vec::new(),
+            },
         ] {
             assert2::assert!(
-                idx.candidate_blocks("t", &BTreeSet::from([api_prod]), min_ts, max_ts) == expected
+                idx.candidate_blocks("t", &BTreeSet::from([api_prod]), case.min_ts, case.max_ts)
+                    == case.expected,
+                "{}",
+                case.name
             );
         }
     }
@@ -286,61 +380,65 @@ mod tests {
         // restricts nothing and would force a full tenant scan; Prometheus
         // rejects it. Each is tested as the sole matcher in the selector.
         let cases = [
-            (
-                "not-equal matcher accepts empty",
-                vec![LabelMatcher::new("foo", MatchOp::Neq, "bar")],
-                false,
-            ),
-            (
-                "equal-empty matcher",
-                vec![LabelMatcher::new("foo", MatchOp::Eq, "")],
-                false,
-            ),
-            (
-                "match-all regex",
-                vec![LabelMatcher::new("foo", MatchOp::Re, ".*")],
-                false,
-            ),
-            (
-                "negative regex accepts empty",
-                vec![LabelMatcher::new("foo", MatchOp::Nre, "bar")],
-                false,
-            ),
-            (
-                "synthetic shard only",
-                vec![LabelMatcher::new("__query_shard__", MatchOp::Eq, "1_of_2")],
-                false,
-            ),
-            (
-                "restricting regex",
-                vec![LabelMatcher::new("foo", MatchOp::Re, ".*bar.*")],
-                true,
-            ),
-            (
-                "non-empty regex",
-                vec![LabelMatcher::new("foo", MatchOp::Re, ".+")],
-                true,
-            ),
-            (
-                "empty matcher paired with restricting matcher",
-                vec![
+            MatcherValidityCase {
+                name: "not-equal matcher accepts empty",
+                matchers: vec![LabelMatcher::new("foo", MatchOp::Neq, "bar")],
+                expected_ok: false,
+            },
+            MatcherValidityCase {
+                name: "equal-empty matcher",
+                matchers: vec![LabelMatcher::new("foo", MatchOp::Eq, "")],
+                expected_ok: false,
+            },
+            MatcherValidityCase {
+                name: "match-all regex",
+                matchers: vec![LabelMatcher::new("foo", MatchOp::Re, ".*")],
+                expected_ok: false,
+            },
+            MatcherValidityCase {
+                name: "negative regex accepts empty",
+                matchers: vec![LabelMatcher::new("foo", MatchOp::Nre, "bar")],
+                expected_ok: false,
+            },
+            MatcherValidityCase {
+                name: "synthetic shard only",
+                matchers: vec![LabelMatcher::new("__query_shard__", MatchOp::Eq, "1_of_2")],
+                expected_ok: false,
+            },
+            MatcherValidityCase {
+                name: "restricting regex",
+                matchers: vec![LabelMatcher::new("foo", MatchOp::Re, ".*bar.*")],
+                expected_ok: true,
+            },
+            MatcherValidityCase {
+                name: "non-empty regex",
+                matchers: vec![LabelMatcher::new("foo", MatchOp::Re, ".+")],
+                expected_ok: true,
+            },
+            MatcherValidityCase {
+                name: "empty matcher paired with restricting matcher",
+                matchers: vec![
                     LabelMatcher::new("app", MatchOp::Eq, "api"),
                     LabelMatcher::new("env", MatchOp::Neq, "dev"),
                 ],
-                true,
-            ),
+                expected_ok: true,
+            },
         ];
-        for (_name, matchers, expected_ok) in cases {
-            assert2::assert!(idx.resolve("t", &matchers).is_ok() == expected_ok);
+        for case in cases {
+            assert2::assert!(
+                idx.resolve("t", &case.matchers).is_ok() == case.expected_ok,
+                "{}",
+                case.name
+            );
         }
     }
 
     #[test]
     fn tenant_isolation_for_same_labels() {
         let mut idx = Index::new();
-        let tenant_a = labels(&[("app", "api"), ("env", "prod")]);
-        let tenant_b = labels(&[("app", "api"), ("env", "prod")]);
-        let other = labels(&[("app", "web"), ("env", "prod")]);
+        let tenant_a = labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]);
+        let tenant_b = labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]);
+        let other = labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")]);
         idx.add_series("a", tenant_a.fingerprint(), &tenant_a);
         idx.add_series("b", tenant_b.fingerprint(), &tenant_b);
         idx.add_series("b", other.fingerprint(), &other);
@@ -355,8 +453,8 @@ mod tests {
     #[test]
     fn add_series_is_idempotent_for_existing_fingerprint() {
         let mut idx = Index::new();
-        let original = labels(&[("app", "api")]);
-        let replacement = labels(&[("app", "web"), ("env", "prod")]);
+        let original = labels(&[LabelPair::new("app", "api")]);
+        let replacement = labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")]);
         let fp = original.fingerprint();
         idx.add_series("t", fp, &original);
         idx.add_series("t", fp, &replacement);
@@ -388,38 +486,42 @@ mod tests {
         // does not change the empty-string posting result under test.
         let anchor = LabelMatcher::new("app", MatchOp::Re, ".+");
 
-        for (_name, matcher, expected) in [
-            (
-                "equal empty",
-                LabelMatcher::new("missing", MatchOp::Eq, ""),
-                all.clone(),
-            ),
-            (
-                "regex empty",
-                LabelMatcher::new("missing", MatchOp::Re, ".*"),
-                all,
-            ),
-            (
-                "not equal empty",
-                LabelMatcher::new("missing", MatchOp::Neq, ""),
-                BTreeSet::new(),
-            ),
-            (
-                "not regex empty",
-                LabelMatcher::new("missing", MatchOp::Nre, ".*"),
-                BTreeSet::new(),
-            ),
+        for case in [
+            MatcherResultCase {
+                name: "equal empty",
+                matcher: LabelMatcher::new("missing", MatchOp::Eq, ""),
+                expected: all.clone(),
+            },
+            MatcherResultCase {
+                name: "regex empty",
+                matcher: LabelMatcher::new("missing", MatchOp::Re, ".*"),
+                expected: all.clone(),
+            },
+            MatcherResultCase {
+                name: "not equal empty",
+                matcher: LabelMatcher::new("missing", MatchOp::Neq, ""),
+                expected: BTreeSet::new(),
+            },
+            MatcherResultCase {
+                name: "not regex empty",
+                matcher: LabelMatcher::new("missing", MatchOp::Nre, ".*"),
+                expected: BTreeSet::new(),
+            },
         ] {
-            assert2::assert!(idx.resolve("t", &[anchor.clone(), matcher]).unwrap() == expected);
+            assert2::assert!(
+                idx.resolve("t", &[anchor.clone(), case.matcher]).unwrap() == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
     #[test]
     fn present_empty_labels_match_empty_string_semantics() {
         let mut idx = Index::new();
-        let empty_zone = labels(&[("app", "api"), ("zone", "")]);
-        let absent_zone = labels(&[("app", "web")]);
-        let non_empty_zone = labels(&[("app", "db"), ("zone", "us")]);
+        let empty_zone = labels(&[LabelPair::new("app", "api"), LabelPair::new("zone", "")]);
+        let absent_zone = labels(&[LabelPair::new("app", "web")]);
+        let non_empty_zone = labels(&[LabelPair::new("app", "db"), LabelPair::new("zone", "us")]);
         idx.add_series("t", empty_zone.fingerprint(), &empty_zone);
         idx.add_series("t", absent_zone.fingerprint(), &absent_zone);
         idx.add_series("t", non_empty_zone.fingerprint(), &non_empty_zone);
@@ -430,19 +532,23 @@ mod tests {
         // (`app=~".+"` selects all three series) to form a valid selector.
         let anchor = LabelMatcher::new("app", MatchOp::Re, ".+");
 
-        for (_name, matchers, expected) in [
-            (
-                "equal empty",
-                vec![anchor, LabelMatcher::new("zone", MatchOp::Eq, "")],
-                empty_equivalent,
-            ),
-            (
-                "not equal empty",
-                vec![LabelMatcher::new("zone", MatchOp::Neq, "")],
-                BTreeSet::from([non_empty_zone.fingerprint()]),
-            ),
+        for case in [
+            MatcherListResultCase {
+                name: "equal empty",
+                matchers: vec![anchor.clone(), LabelMatcher::new("zone", MatchOp::Eq, "")],
+                expected: empty_equivalent,
+            },
+            MatcherListResultCase {
+                name: "not equal empty",
+                matchers: vec![LabelMatcher::new("zone", MatchOp::Neq, "")],
+                expected: BTreeSet::from([non_empty_zone.fingerprint()]),
+            },
         ] {
-            assert2::assert!(idx.resolve("t", &matchers).unwrap() == expected);
+            assert2::assert!(
+                idx.resolve("t", &case.matchers).unwrap() == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
@@ -450,25 +556,39 @@ mod tests {
     fn resolve_query_shard_selects_by_series_fingerprint_modulo() {
         let mut idx = Index::new();
         let series = (0..12)
-            .map(|id| labels(&[("app", "api"), ("series", &id.to_string())]))
+            .map(|id| {
+                labels(&[
+                    LabelPair::new("app", "api"),
+                    LabelPair::new("series", &id.to_string()),
+                ])
+            })
             .collect::<Vec<_>>();
         for labels in &series {
             idx.add_series("t", labels.fingerprint(), labels);
         }
 
         // `=` keeps the shard's own series; `!=` returns the complement.
-        for (op, keep_remainder) in [(MatchOp::Eq, 0), (MatchOp::Neq, 1)] {
+        for case in [
+            ShardSelectorCase {
+                op: MatchOp::Eq,
+                keep_remainder: 0,
+            },
+            ShardSelectorCase {
+                op: MatchOp::Neq,
+                keep_remainder: 1,
+            },
+        ] {
             let expected = series
                 .iter()
                 .map(Labels::fingerprint)
-                .filter(|fp| fp % 2 == keep_remainder)
+                .filter(|fp| fp % 2 == case.keep_remainder)
                 .collect::<BTreeSet<_>>();
             let got = idx
                 .resolve(
                     "t",
                     &[
                         LabelMatcher::new("app", MatchOp::Eq, "api"),
-                        LabelMatcher::new("__query_shard__", op, "1_of_2"),
+                        LabelMatcher::new("__query_shard__", case.op, "1_of_2"),
                     ],
                 )
                 .unwrap();
@@ -487,22 +607,33 @@ mod tests {
             api_dev,
             web_prod,
         } = SeededFingerprints::new();
-        for (_name, tenant, matchers, expected) in [
-            (
-                "specific matcher",
-                "t",
-                vec![LabelMatcher::new("app", MatchOp::Eq, "api")],
-                BTreeSet::from([api_prod, api_dev]),
-            ),
-            (
-                "all tenant series",
-                "t",
-                Vec::new(),
-                BTreeSet::from([api_prod, api_dev, web_prod]),
-            ),
-            ("unknown tenant", "nope", Vec::new(), BTreeSet::new()),
+        for case in [
+            ResolveCase {
+                name: "specific matcher",
+                tenant: "t",
+                matchers: vec![LabelMatcher::new("app", MatchOp::Eq, "api")],
+                expected: BTreeSet::from([api_prod, api_dev]),
+            },
+            ResolveCase {
+                name: "all tenant series",
+                tenant: "t",
+                matchers: Vec::new(),
+                expected: BTreeSet::from([api_prod, api_dev, web_prod]),
+            },
+            ResolveCase {
+                name: "unknown tenant",
+                tenant: "nope",
+                matchers: Vec::new(),
+                expected: BTreeSet::new(),
+            },
         ] {
-            assert2::assert!(idx.matching_fingerprints(tenant, &matchers).unwrap() == expected);
+            assert2::assert!(
+                idx.matching_fingerprints(case.tenant, &case.matchers)
+                    .unwrap()
+                    == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
@@ -519,7 +650,8 @@ mod tests {
     #[test]
     fn label_names_for_fingerprints_returns_distinct_names() {
         let idx = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
+        let api_prod =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
         let names = idx.label_names_for_fingerprints("t", &BTreeSet::from([api_prod]));
         assert2::assert!(names == vec!["app".to_string(), "env".to_string()]);
         assert2::assert!(
@@ -531,30 +663,43 @@ mod tests {
     #[test]
     fn label_values_for_returns_distinct_sorted_values() {
         let idx = seed();
-        for (_name, tenant, matchers, expected) in [
-            (
-                "all api environments",
-                "t",
-                vec![LabelMatcher::new("app", MatchOp::Eq, "api")],
-                vec!["dev".to_string(), "prod".to_string()],
-            ),
-            (
-                "only web environment",
-                "t",
-                vec![LabelMatcher::new("app", MatchOp::Eq, "web")],
-                vec!["prod".to_string()],
-            ),
-            ("unknown tenant", "nope", Vec::new(), Vec::new()),
+        for case in [
+            LabelValuesQueryCase {
+                name: "all api environments",
+                tenant: "t",
+                matchers: vec![LabelMatcher::new("app", MatchOp::Eq, "api")],
+                expected: vec!["dev".to_string(), "prod".to_string()],
+            },
+            LabelValuesQueryCase {
+                name: "only web environment",
+                tenant: "t",
+                matchers: vec![LabelMatcher::new("app", MatchOp::Eq, "web")],
+                expected: vec!["prod".to_string()],
+            },
+            LabelValuesQueryCase {
+                name: "unknown tenant",
+                tenant: "nope",
+                matchers: Vec::new(),
+                expected: Vec::new(),
+            },
         ] {
-            assert2::assert!(idx.label_values_for(tenant, "env", &matchers).unwrap() == expected);
+            assert2::assert!(
+                idx.label_values_for(case.tenant, "env", &case.matchers)
+                    .unwrap()
+                    == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
     #[test]
     fn label_values_for_fingerprints_returns_distinct_values() {
         let idx = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
-        let api_dev = labels(&[("app", "api"), ("env", "dev")]).fingerprint();
+        let api_prod =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
+        let api_dev =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "dev")]).fingerprint();
         let values =
             idx.label_values_for_fingerprints("t", "env", &BTreeSet::from([api_prod, api_dev]));
         assert2::assert!(values == vec!["dev".to_string(), "prod".to_string()]);
@@ -576,14 +721,8 @@ mod tests {
             .unwrap();
         assert2::assert!(
             got == vec![
-                vec![
-                    ("app".to_string(), "api".to_string()),
-                    ("env".to_string(), "dev".to_string())
-                ],
-                vec![
-                    ("app".to_string(), "api".to_string()),
-                    ("env".to_string(), "prod".to_string())
-                ],
+                vec![LabelPair::new("app", "api"), LabelPair::new("env", "dev")],
+                vec![LabelPair::new("app", "api"), LabelPair::new("env", "prod")],
             ]
         );
         assert2::assert!(
@@ -601,15 +740,15 @@ mod tests {
             .unwrap();
         assert2::assert!(
             got == vec![
-                labels(&[("app", "api"), ("env", "prod")]),
-                labels(&[("app", "api"), ("env", "dev")]),
+                labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]),
+                labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "dev")]),
             ]
         );
 
         let mut expected_all = vec![
-            labels(&[("app", "api"), ("env", "prod")]),
-            labels(&[("app", "api"), ("env", "dev")]),
-            labels(&[("app", "web"), ("env", "prod")]),
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]),
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "dev")]),
+            labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")]),
         ];
         expected_all.sort_by_key(Labels::fingerprint);
         assert2::assert!(idx.series("t", &[]).unwrap() == expected_all);
@@ -619,7 +758,8 @@ mod tests {
     #[test]
     fn series_for_fingerprints_projects_label_values() {
         let idx = seed();
-        let web_prod = labels(&[("app", "web"), ("env", "prod")]).fingerprint();
+        let web_prod =
+            labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")]).fingerprint();
         let got = idx.series_for_fingerprints(
             "t",
             &BTreeSet::from([web_prod]),
@@ -627,8 +767,8 @@ mod tests {
         );
         assert2::assert!(
             got == vec![vec![
-                ("app".to_string(), "web".to_string()),
-                ("env".to_string(), "prod".to_string()),
+                LabelPair::new("app", "web"),
+                LabelPair::new("env", "prod"),
             ]]
         );
         assert2::assert!(
@@ -644,7 +784,8 @@ mod tests {
         // sorted order (`env` before `app`) and assert the response is still
         // `[app, env]` — the wire order the Grafana drilldown compares against.
         let idx = seed();
-        let web_prod = labels(&[("app", "web"), ("env", "prod")]).fingerprint();
+        let web_prod =
+            labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")]).fingerprint();
         let got = idx.series_for_fingerprints(
             "t",
             &BTreeSet::from([web_prod]),
@@ -652,8 +793,8 @@ mod tests {
         );
         assert2::assert!(
             got == vec![vec![
-                ("app".to_string(), "web".to_string()),
-                ("env".to_string(), "prod".to_string()),
+                LabelPair::new("app", "web"),
+                LabelPair::new("env", "prod"),
             ]]
         );
     }
@@ -665,20 +806,16 @@ mod tests {
         // returned a single empty label set (`[{}]`), breaking Grafana's
         // Pyroscope label autocomplete.
         let idx = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
-        let api_dev = labels(&[("app", "api"), ("env", "dev")]).fingerprint();
+        let api_prod =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
+        let api_dev =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "dev")]).fingerprint();
         let mut got = idx.series_for_fingerprints("t", &BTreeSet::from([api_prod, api_dev]), &[]);
         got.sort();
         assert2::assert!(
             got == vec![
-                vec![
-                    ("app".to_string(), "api".to_string()),
-                    ("env".to_string(), "dev".to_string()),
-                ],
-                vec![
-                    ("app".to_string(), "api".to_string()),
-                    ("env".to_string(), "prod".to_string()),
-                ],
+                vec![LabelPair::new("app", "api"), LabelPair::new("env", "dev"),],
+                vec![LabelPair::new("app", "api"), LabelPair::new("env", "prod"),],
             ]
         );
     }
@@ -686,16 +823,9 @@ mod tests {
     #[test]
     fn candidate_blocks_for_series_returns_pruned_keys() {
         let mut idx = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
-        idx.add_block(&BlockMeta {
-            tenant: "t".into(),
-            object_key: "b1.parquet".into(),
-            min_ts: 0,
-            max_ts: 100,
-            row_count: 1,
-            fingerprints: vec![api_prod],
-            level: BlockLevel::INGESTED,
-        });
+        let api_prod =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
+        add_test_block(&mut idx, "b1.parquet", 0, 100, vec![api_prod]);
         let got = idx.candidate_blocks_for_series("t", &BTreeSet::from([api_prod]), 0, 150);
         assert2::assert!(got == vec!["b1.parquet".to_string()]);
     }
@@ -722,17 +852,51 @@ mod tests {
             level: BlockLevel::INGESTED,
         });
 
-        for (_name, tenant, min_ts, max_ts, want) in [
+        for case in [
             // Window covering both → combined min/max across them.
-            ("both blocks", "t", 0, 1_000, Some((10, 350))),
+            BlockBoundsCase {
+                name: "both blocks",
+                tenant: "t",
+                min_ts: 0,
+                max_ts: 1_000,
+                expected: Some(crate::block::BlockTimeBounds {
+                    min_ts: 10,
+                    max_ts: 350,
+                }),
+            },
             // Window covering only b1 → exactly b1's bounds (kills Some((x,y)) stubs).
-            ("first block", "t", 0, 150, Some((10, 100))),
+            BlockBoundsCase {
+                name: "first block",
+                tenant: "t",
+                min_ts: 0,
+                max_ts: 150,
+                expected: Some(crate::block::BlockTimeBounds {
+                    min_ts: 10,
+                    max_ts: 100,
+                }),
+            },
             // Window that overlaps nothing → None.
-            ("no overlap", "t", 500, 600, None),
+            BlockBoundsCase {
+                name: "no overlap",
+                tenant: "t",
+                min_ts: 500,
+                max_ts: 600,
+                expected: None,
+            },
             // Unknown tenant → None.
-            ("unknown tenant", "nope", 0, 1_000, None),
+            BlockBoundsCase {
+                name: "unknown tenant",
+                tenant: "nope",
+                min_ts: 0,
+                max_ts: 1_000,
+                expected: None,
+            },
         ] {
-            assert2::assert!(idx.block_time_bounds(tenant, min_ts, max_ts) == want);
+            assert2::assert!(
+                idx.block_time_bounds(case.tenant, case.min_ts, case.max_ts) == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
@@ -749,19 +913,49 @@ mod tests {
             level: BlockLevel::INGESTED,
         });
 
-        for (_name, min_ts, max_ts, want) in [
+        for case in [
             // Touch the block's max at the window's min: b.min_ts(100) <= max_ts(200)
             // && b.max_ts(200) >= min_ts(200). `<=`→`>` or `>=`→`<` would drop it.
-            ("touches maximum", 200, 300, Some((100, 200))),
+            BoundsOverlapCase {
+                name: "touches maximum",
+                min_ts: 200,
+                max_ts: 300,
+                expected: Some(crate::block::BlockTimeBounds {
+                    min_ts: 100,
+                    max_ts: 200,
+                }),
+            },
             // Touch the block's min at the window's max.
-            ("touches minimum", 0, 100, Some((100, 200))),
+            BoundsOverlapCase {
+                name: "touches minimum",
+                min_ts: 0,
+                max_ts: 100,
+                expected: Some(crate::block::BlockTimeBounds {
+                    min_ts: 100,
+                    max_ts: 200,
+                }),
+            },
             // A window entirely above the block: with `&&`→`||` this would wrongly
             // include the block (one side still true), so demand None here.
-            ("entirely above", 300, 400, None),
+            BoundsOverlapCase {
+                name: "entirely above",
+                min_ts: 300,
+                max_ts: 400,
+                expected: None,
+            },
             // A window entirely below the block: the other side is the true one.
-            ("entirely below", 0, 50, None),
+            BoundsOverlapCase {
+                name: "entirely below",
+                min_ts: 0,
+                max_ts: 50,
+                expected: None,
+            },
         ] {
-            assert2::assert!(idx.block_time_bounds("t", min_ts, max_ts) == want);
+            assert2::assert!(
+                idx.block_time_bounds("t", case.min_ts, case.max_ts) == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
@@ -847,7 +1041,8 @@ mod tests {
             )
             .unwrap();
         // Only the `env=dev` series survives the negated `pro.*` match.
-        let api_dev = labels(&[("app", "api"), ("env", "dev")]).fingerprint();
+        let api_dev =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "dev")]).fingerprint();
         assert2::assert!(got == BTreeSet::from([api_dev]));
     }
 
@@ -889,7 +1084,8 @@ mod tests {
     #[test]
     fn add_block_is_idempotent_by_object_key() {
         let mut idx = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
+        let api_prod =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
         let meta = BlockMeta {
             tenant: "t".into(),
             object_key: "b1.parquet".into(),
@@ -920,7 +1116,10 @@ mod tests {
             min_ts: 0,
             max_ts: 50,
             row_count: 9,
-            fingerprints: vec![labels(&[("app", "api"), ("env", "prod")]).fingerprint()],
+            fingerprints: vec![
+                labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")])
+                    .fingerprint(),
+            ],
             level: BlockLevel(3),
         };
         let mut index = seed();
@@ -939,7 +1138,9 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_round_trips() {
-        let (store, key) = saved_index().await;
+        let saved = saved_index().await;
+        let store = &saved.store;
+        let key = &saved.key;
         let before = Index::load(&store, &key).await.unwrap();
 
         let loaded = Index::load(&store, &key).await.unwrap();
@@ -949,8 +1150,9 @@ mod tests {
 
         assert2::assert!(
             got == BTreeSet::from([
-                labels(&[("app", "api"), ("env", "prod")]).fingerprint(),
-                labels(&[("app", "api"), ("env", "dev")]).fingerprint(),
+                labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")])
+                    .fingerprint(),
+                labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "dev")]).fingerprint(),
             ])
         );
 
@@ -968,7 +1170,8 @@ mod tests {
                         max_ts: 50,
                         row_count: 1,
                         fingerprints: vec![
-                            labels(&[("app", "api"), ("env", "prod")]).fingerprint()
+                            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")])
+                                .fingerprint()
                         ],
                         level: BlockLevel::INGESTED,
                     },
@@ -979,7 +1182,8 @@ mod tests {
                         max_ts: 1_050,
                         row_count: 1,
                         fingerprints: vec![
-                            labels(&[("app", "web"), ("env", "prod")]).fingerprint()
+                            labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")])
+                                .fingerprint()
                         ],
                         level: BlockLevel::INGESTED,
                     },
@@ -999,7 +1203,9 @@ mod tests {
 
     #[tokio::test]
     async fn load_rejects_a_shard_over_the_cap() {
-        let (store, key) = saved_index().await;
+        let saved = saved_index().await;
+        let store = &saved.store;
+        let key = &saved.key;
 
         // The cap is per shard now that an index is many objects, so the
         // rejection has to name the shard and its own size, not the index.
@@ -1047,7 +1253,9 @@ mod tests {
     async fn a_range_load_does_not_read_the_shards_outside_the_range() {
         use object_store::{PutPayload, path::Path};
 
-        let (store, key) = saved_index().await;
+        let saved = saved_index().await;
+        let store = &saved.store;
+        let key = &saved.key;
 
         // Corrupting the far shard is how "did not read it" is observed
         // without a mock store: a loader that touched the object would fail to
@@ -1078,8 +1286,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_range_load_carries_the_series_of_the_shards_it_read() {
-        let (store, key) = saved_index().await;
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
+        let saved = saved_index().await;
+        let store = &saved.store;
+        let key = &saved.key;
+        let api_prod =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
 
         let loaded = Index::load_for_range(&store, &key, "t", 0, 60)
             .await
@@ -1093,7 +1304,8 @@ mod tests {
                 .unwrap()
                 == BTreeSet::from([
                     api_prod,
-                    labels(&[("app", "api"), ("env", "dev")]).fingerprint(),
+                    labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "dev")])
+                        .fingerprint(),
                 ])
         );
         assert2::assert!(
@@ -1129,7 +1341,9 @@ mod tests {
     async fn a_re_save_deletes_the_shards_the_new_layout_does_not_name() {
         use object_store::path::Path;
 
-        let (store, key) = saved_index().await;
+        let saved = saved_index().await;
+        let store = &saved.store;
+        let key = &saved.key;
         let before = shard_object_keys(&store).await;
         assert2::assert!(before.len() == 2);
 
@@ -1170,9 +1384,9 @@ mod tests {
         let mut fingerprints = Vec::new();
         for series in 0..10_000_u64 {
             let labels = Labels::from_pairs([
-                ("__name__", "http_requests_total".to_string()),
-                ("job", format!("job-{}", series % 16)),
-                ("pod", format!("pod-{series}")),
+                LabelPair::new("__name__", "http_requests_total"),
+                LabelPair::new("job", format!("job-{}", series % 16)),
+                LabelPair::new("pod", format!("pod-{series}")),
             ]);
             fingerprints.push(labels.fingerprint());
             index.add_series("t", labels.fingerprint(), &labels);
@@ -1226,8 +1440,9 @@ mod tests {
         // A bound spelled as a bare `i64` would put every negative timestamp
         // after every positive one and every short number before a longer one.
         let bounds = [i64::MIN, -86_400_000, -1, 0, 1, 86_400_000, i64::MAX];
-        for pair in bounds.windows(2) {
-            let (low, high) = (pair[0], pair[1]);
+        for index in 0..bounds.len() - 1 {
+            let low = bounds[index];
+            let high = bounds[index + 1];
             assert2::assert!(shard_bound_key(low) < shard_bound_key(high));
             assert2::assert!(parse_shard_bound_key(&shard_bound_key(low)) == Some(low));
         }
@@ -1254,7 +1469,7 @@ mod tests {
         let mut index = Index::new();
         let mut fingerprints = Vec::new();
         for series in 0..64_u64 {
-            let labels = Labels::from_pairs([("pod", format!("pod-{series}"))]);
+            let labels = Labels::from_pairs([LabelPair::new("pod", format!("pod-{series}"))]);
             fingerprints.push(labels.fingerprint());
             index.add_series("t", labels.fingerprint(), &labels);
         }
@@ -1317,8 +1532,10 @@ mod tests {
         // longer claims. A digest that matched too eagerly would leave the old
         // ones behind and offer the block for a series it no longer holds.
         let mut index = seed();
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
-        let web_prod = labels(&[("app", "web"), ("env", "prod")]).fingerprint();
+        let api_prod =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
+        let web_prod =
+            labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")]).fingerprint();
 
         index.add_block(&BlockMeta {
             tenant: "t".into(),
@@ -1356,7 +1573,9 @@ mod tests {
     async fn a_corrupt_shard_is_reported_against_its_own_object() {
         use object_store::{PutPayload, path::Path};
 
-        let (store, key) = saved_index().await;
+        let saved = saved_index().await;
+        let store = &saved.store;
+        let key = &saved.key;
         let shard = one_shard_object(&store).await;
 
         // A shard truncated mid-body: the magic and version are right, so this
@@ -1377,11 +1596,13 @@ mod tests {
     }
 
     /// An index of two blocks a shard width apart, saved at a width of 100.
-    async fn saved_index() -> (Arc<dyn ObjectStore>, String) {
+    async fn saved_index() -> SavedIndex {
         use object_store::memory::InMemory;
 
-        let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();
-        let web_prod = labels(&[("app", "web"), ("env", "prod")]).fingerprint();
+        let api_prod =
+            labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
+        let web_prod =
+            labels(&[LabelPair::new("app", "web"), LabelPair::new("env", "prod")]).fingerprint();
         let mut index = seed();
         index.add_block(&BlockMeta {
             tenant: "t".into(),
@@ -1408,7 +1629,7 @@ mod tests {
             .save_with_shard_width(&store, &key, 100)
             .await
             .unwrap();
-        (store, key)
+        SavedIndex { store, key }
     }
 
     async fn shard_object_keys(store: &Arc<dyn ObjectStore>) -> Vec<Path> {
@@ -1443,10 +1664,11 @@ mod tests {
         let shards_prefix = index_shards_prefix_for_key(KEY);
         let range = IndexShardRange::new(10, 20);
 
-        for (name, tenant) in AWKWARD_TENANTS {
-            let prefix = index_shard_tenant_prefix(KEY, tenant);
-            let shard = index_shard_object_key(KEY, tenant, range);
-            let unbound = index_unbound_series_object_key(KEY, tenant);
+        for case in AWKWARD_TENANTS {
+            let name = case.name;
+            let prefix = index_shard_tenant_prefix(KEY, case.tenant);
+            let shard = index_shard_object_key(KEY, case.tenant, range);
+            let unbound = index_unbound_series_object_key(KEY, case.tenant);
 
             for key in [&prefix, &shard, &unbound] {
                 let rest = key
@@ -1475,12 +1697,18 @@ mod tests {
 
             assert2::check!(
                 parse_index_shard_location(&shards_prefix, &shard)
-                    == Some((tenant.to_string(), IndexShardObject::Shard(range))),
+                    == Some(parse_index_shard_location::ParsedIndexShardLocation {
+                        tenant: case.tenant.to_string(),
+                        object: IndexShardObject::Shard(range),
+                    }),
                 "{name}"
             );
             assert2::check!(
                 parse_index_shard_location(&shards_prefix, &unbound)
-                    == Some((tenant.to_string(), IndexShardObject::UnboundSeries)),
+                    == Some(parse_index_shard_location::ParsedIndexShardLocation {
+                        tenant: case.tenant.to_string(),
+                        object: IndexShardObject::UnboundSeries,
+                    }),
                 "{name}"
             );
         }
@@ -1533,6 +1761,7 @@ mod plan_tenant_index_shards;
 mod push_dictionary_id;
 mod push_ivarint;
 mod push_len;
+mod push_shard_block_prefix;
 mod push_string;
 mod push_uvarint;
 mod read_index_shard;
@@ -1545,7 +1774,9 @@ use anchored_regex::anchored_regex;
 use block_entry::BlockEntry;
 use block_list::BlockList;
 use block_list_repr::BlockListRepr;
-pub(crate) use byte_reader::{ByteReader, ShardBlockBounds};
+pub(crate) use byte_reader::{
+    ByteReader, DecodedShardHeader, ShardBlockBounds, decode_shard_header, read_shard_block_prefix,
+};
 pub(crate) use decode_index_shard::{decode_index_shard, dictionary_entry};
 pub use default_index_shard_width::DEFAULT_INDEX_SHARD_WIDTH;
 pub(crate) use encode_index_shard::encode_index_shard;
@@ -1570,6 +1801,7 @@ use plan_tenant_index_shards::plan_tenant_index_shards;
 pub(crate) use push_dictionary_id::push_dictionary_id;
 pub(crate) use push_ivarint::push_ivarint;
 pub(crate) use push_len::push_len;
+pub(crate) use push_shard_block_prefix::push_shard_block_prefix;
 pub(crate) use push_string::push_string;
 pub(crate) use push_uvarint::push_uvarint;
 use read_index_shard::read_index_shard;

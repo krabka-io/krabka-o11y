@@ -4,13 +4,20 @@ use super::{
     prometheus_alert_key_matches_rule, prometheus_alert_template_map,
 };
 
+pub(crate) struct RetainedPrometheusAlerts {
+    pub(crate) alerts: Vec<Value>,
+    pub(crate) keys: BTreeSet<PrometheusAlertKey>,
+}
+
 pub(crate) fn retained_prometheus_alerts(
     states: &BTreeMap<PrometheusAlertKey, PrometheusAlertRuntimeState>,
     params: &PrometheusRetainedAlertParams<'_>,
-) -> (Vec<Value>, BTreeSet<PrometheusAlertKey>) {
+) -> RetainedPrometheusAlerts {
     let mut retained_alerts = Vec::new();
     let mut retained_keys = BTreeSet::new();
-    for (key, alert) in states {
+    for entry in states {
+        let key = entry.0;
+        let alert = entry.1;
         if !prometheus_alert_key_matches_rule(key, params) {
             continue;
         }
@@ -33,5 +40,8 @@ pub(crate) fn retained_prometheus_alerts(
             }));
         }
     }
-    (retained_alerts, retained_keys)
+    RetainedPrometheusAlerts {
+        alerts: retained_alerts,
+        keys: retained_keys,
+    }
 }

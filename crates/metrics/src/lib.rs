@@ -8,7 +8,7 @@
 mod arrow_codec;
 mod metric_labels;
 mod metric_string;
-pub use metric_labels::{IntoMetricLabelsArc, MetricLabels};
+pub use metric_labels::{IntoMetricLabelsArc, MetricLabelPair, MetricLabelRef, MetricLabels};
 pub use metric_string::MetricString;
 
 pub mod compactor;
@@ -56,8 +56,8 @@ pub use compactor::{
     write_compacted_tenant_partition_blocks,
 };
 pub use histogram::{
-    BucketSpan, HistogramCodecError, NativeHistogram, ResetHint, compact_spanned_histogram_counts,
-    decode_native_histograms, encode_native_histograms,
+    BucketSpan, HistogramCodecError, NativeHistogram, ResetHint, SpannedHistogramCounts,
+    compact_spanned_histogram_counts, decode_native_histograms, encode_native_histograms,
 };
 pub use limits::{
     DEFAULT_MAX_RATE_BUCKETS, IngestEnforcer, LimitError, Limits, OverridesError,
@@ -81,7 +81,7 @@ pub use schema::{
     clock_reading_decl, clock_reading_schema, exemplar_schema, float_sample_schema,
     metadata_schema, native_histogram_schema,
 };
-pub use symbols::{SymbolError, SymbolTable};
+pub use symbols::{ResolvedLabel, SymbolError, SymbolTable};
 pub use tsdb_import::{
     DecodedTsdbBlock, TsdbBlockFiles, TsdbBlockMeta, TsdbImportBinding, TsdbImportError,
     TsdbImportLimits, TsdbImportObject, TsdbImportOutcome, TsdbImportRecord, TsdbImportStats,

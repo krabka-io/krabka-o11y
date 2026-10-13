@@ -21,7 +21,10 @@ async fn write_float_only_blocks(
         let mut series_labels = std::collections::BTreeMap::new();
         let mut float_rows = Vec::new();
         for series in 0..SERIES_PER_BLOCK {
-            let labels = labels(&[("__name__", "soak_metric"), ("series", &series.to_string())]);
+            let labels = labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "soak_metric"),
+                crate::test_support::TestLabelPair::new("series", &series.to_string()),
+            ]);
             let fingerprint = labels.fingerprint();
             series_labels.insert(fingerprint, labels.into());
             float_rows.push(FloatRow {
@@ -48,10 +51,12 @@ async fn write_float_only_blocks(
 }
 
 /// The requests a cold query and then a warm query made over `blocks` blocks.
-async fn query_requests(blocks: i64) -> (RequestCounts, RequestCounts) {
+async fn query_requests(blocks: i64) -> QueryRequests {
     let backing: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let manifests = write_float_only_blocks(&backing, blocks).await;
-    let (counting, counts) = CountingObjectStore::wrap(backing);
+    let counting_store = CountingObjectStore::wrap(backing);
+    let counting = counting_store.store;
+    let counts = counting_store.counts;
     let base = url::Url::parse("memory:///").unwrap();
     let store = MetricBlockStore::from_compaction_manifests(
         BlockStore::new(Arc::clone(&counting), base.clone()),
@@ -76,7 +81,15 @@ async fn query_requests(blocks: i64) -> (RequestCounts, RequestCounts) {
         assert2::assert!(result == expected);
         per_query.push(counts.lock().unwrap().since(before));
     }
-    (per_query[0], per_query[1])
+    QueryRequests {
+        cold: per_query[0],
+        warm: per_query[1],
+    }
+}
+
+struct QueryRequests {
+    cold: RequestCounts,
+    warm: RequestCounts,
 }
 
 #[tokio::test]
@@ -87,14 +100,8 @@ pub(crate) async fn an_instant_query_reads_each_float_block_a_fixed_number_of_ti
     // second. The warm query has the footer cached and reads only the column
     // chunks. Nothing lists, and nothing reads a whole object.
     for blocks in [1_usize, 10] {
-        let (cold, warm) = query_requests(i64::try_from(blocks).unwrap()).await;
-        check!(
-            (blocks, cold, warm)
-                == (
-                    blocks,
-                    RequestCounts::per_block(blocks, 1, 2),
-                    RequestCounts::per_block(blocks, 1, 1),
-                )
-        );
+        let requests = query_requests(i64::try_from(blocks).unwrap()).await;
+        check!(requests.cold == RequestCounts::per_block(blocks, 1, 2));
+        check!(requests.warm == RequestCounts::per_block(blocks, 1, 1));
     }
 }

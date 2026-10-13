@@ -1,6 +1,6 @@
 use super::{MetricQuery, MetricSampleState, MetricValue, RangeAggregation, rate_metric_value};
 
-pub(crate) fn range_sample_value(value: MetricSampleState, query: &MetricQuery) -> MetricValue {
+pub(crate) fn range_sample_value(value: &MetricSampleState, query: &MetricQuery) -> MetricValue {
     match query.aggregation {
         RangeAggregation::CountOverTime
         | RangeAggregation::BytesOverTime
@@ -21,9 +21,9 @@ pub(crate) fn range_sample_value(value: MetricSampleState, query: &MetricQuery) 
         RangeAggregation::MaxOverTime => value.summary.max.unwrap_or_else(MetricValue::zero),
         RangeAggregation::FirstOverTime => value
             .first
-            .map_or_else(MetricValue::zero, |(_, value)| value),
+            .map_or_else(MetricValue::zero, |sample| sample.value),
         RangeAggregation::LastOverTime => value
             .last
-            .map_or_else(MetricValue::zero, |(_, value)| value),
+            .map_or_else(MetricValue::zero, |sample| sample.value),
     }
 }

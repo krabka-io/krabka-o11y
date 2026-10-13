@@ -39,7 +39,7 @@ pub(crate) fn a_clone_shares_sealed_chunks_rather_than_copying_them() {
     let shared = original
         .sealed_chunks()
         .zip(clone.sealed_chunks())
-        .all(|(left, right)| Arc::ptr_eq(left, right));
+        .all(|pair| Arc::ptr_eq(pair.0, pair.1));
 
     check!(original.sealed_chunks().count() == 2);
     check!(shared, "a clone must share every sealed chunk by pointer");

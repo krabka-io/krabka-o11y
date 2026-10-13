@@ -1,6 +1,6 @@
 use super::{
-    Array, BTreeMap, Float64Array, InstantSample, Int64Array, Labels, PromqlError, QueryResult,
-    RecordBatch, Result, SampleValue, SeriesFingerprint, labels_from_batch, leaf,
+    Array, BTreeMap, Float64Array, FloatSample, InstantSample, Int64Array, Labels, PromqlError,
+    QueryResult, RecordBatch, Result, SampleValue, SeriesFingerprint, labels_from_batch, leaf,
 };
 
 /// Assembles instant-vector-selector output batches into a result.
@@ -14,7 +14,7 @@ pub(crate) fn assemble_selector_batches(
     labels_by_fp: &BTreeMap<SeriesFingerprint, Labels>,
 ) -> Result<QueryResult> {
     // InstantManipulate emits at most one row per series (the single grid step).
-    let mut by_fp: BTreeMap<SeriesFingerprint, (i64, f64)> = BTreeMap::new();
+    let mut by_fp: BTreeMap<SeriesFingerprint, FloatSample> = BTreeMap::new();
     for batch in batches {
         let sample_timestamps = batch
             .column_by_name(leaf::SAMPLE_TIME_COLUMN)
@@ -35,21 +35,29 @@ pub(crate) fn assemble_selector_batches(
             by_fp
                 .entry(fp)
                 .and_modify(|latest| {
-                    if ts_ms > latest.0 {
-                        *latest = (ts_ms, value);
+                    if ts_ms > latest.timestamp_ms {
+                        *latest = FloatSample {
+                            timestamp_ms: ts_ms,
+                            value,
+                        };
                     }
                 })
-                .or_insert((ts_ms, value));
+                .or_insert(FloatSample {
+                    timestamp_ms: ts_ms,
+                    value,
+                });
         }
     }
 
     let samples = by_fp
         .into_iter()
-        .filter_map(|(fp, (ts_ms, value))| {
+        .filter_map(|entry| {
+            let fp = entry.0;
+            let sample = entry.1;
             labels_by_fp.get(&fp).cloned().map(|labels| InstantSample {
                 labels,
-                ts_ms,
-                value: SampleValue::Float(value),
+                ts_ms: sample.timestamp_ms,
+                value: SampleValue::Float(sample.value),
                 drop_name: false,
             })
         })

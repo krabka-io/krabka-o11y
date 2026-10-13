@@ -40,6 +40,19 @@ mod tests {
         }
     }
 
+    fn search_job_request(query: &str, querier: &str) -> SearchJobRequest {
+        SearchJobRequest {
+            tenant: TenantId::new("t1").unwrap(),
+            query: query.to_string(),
+            start_ns: 0,
+            end_ns: 100,
+            limit: 20,
+            spss: 3,
+            shard: JobShard::Live,
+            querier: querier.to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn mock_returns_canned_and_records_calls() {
         let mock = MockQuerier::new();
@@ -52,16 +65,7 @@ mod tests {
                 ..Metrics::default()
             },
         });
-        let req = SearchJobRequest {
-            tenant: TenantId::new("t1").unwrap(),
-            query: "{ .service.name = \"checkout\" }".to_string(),
-            start_ns: 0,
-            end_ns: 100,
-            limit: 20,
-            spss: 3,
-            shard: JobShard::Live,
-            querier: "q1:3200".to_string(),
-        };
+        let req = search_job_request("{ .service.name = \"checkout\" }", "q1:3200");
         let out = mock.search_job(&req).await.unwrap();
         assert2::assert!(
             out == SearchPartial {
@@ -85,16 +89,7 @@ mod tests {
     #[tokio::test]
     async fn empty_stub_yields_default_partial() {
         let mock = MockQuerier::new();
-        let req = SearchJobRequest {
-            tenant: TenantId::new("t1").unwrap(),
-            query: "{ }".to_string(),
-            start_ns: 0,
-            end_ns: 100,
-            limit: 20,
-            spss: 3,
-            shard: JobShard::Live,
-            querier: "q1:3200".to_string(),
-        };
+        let req = search_job_request("{ }", "q1:3200");
         let out = mock.search_job(&req).await.unwrap();
         assert2::assert!(out.traces == vec![]);
         assert2::assert!(out.metrics == Metrics::default());
@@ -107,16 +102,7 @@ mod tests {
     async fn a_killed_querier_refuses_only_its_own_jobs() {
         let mock = MockQuerier::new();
         mock.fail_querier("dead:3200");
-        let job = |addr: &str| SearchJobRequest {
-            tenant: TenantId::new("t1").unwrap(),
-            query: "{ }".to_string(),
-            start_ns: 0,
-            end_ns: 100,
-            limit: 20,
-            spss: 3,
-            shard: JobShard::Live,
-            querier: addr.to_string(),
-        };
+        let job = |addr: &str| search_job_request("{ }", addr);
         assert2::assert!(mock.search_job(&job("live:3200")).await.is_ok());
         let err = mock.search_job(&job("dead:3200")).await.unwrap_err();
         assert2::assert!(matches!(err, BackendError::Transport(_)));

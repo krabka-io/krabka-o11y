@@ -19,14 +19,14 @@ use arrow::{
 use assert2::check;
 use bytes::Bytes;
 use krabka_blockstore::{
-    BlockLevel, BlockWriter, ObjectStoreRetryPolicy, PromotedSpanAttr, SCOL_START_NANO,
-    SCOL_TRACE_ID, ShardedTraceBloom, TraceBlockStats, TraceIndex, read_block,
+    BlockLevel, BlockWriter, ObjectStoreRetryPolicy, OffsetRange, PromotedSpanAttr,
+    SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, TraceBlockStats, TraceIndex, read_block,
 };
 use krabka_client_consumer::ConsumerRecord;
 use krabka_traces::{
     SpanRecord, TracesError,
     blockbuilder::{
-        BlockBuilderConfig, WalConsumerCommit, WalConsumerPoll, build_blocks,
+        BlockBuilderConfig, TraceIdentity, WalConsumerCommit, WalConsumerPoll, build_blocks,
         build_blocks_with_prefix, build_blocks_with_promoted_attrs, decode_consumer_records,
         flush_partition_windows, group_by_trace, object_key, run,
     },
@@ -118,16 +118,38 @@ fn object_key_is_deterministic_and_offset_scoped() {
 /// key that wrote the raw name passes the plain row and fails the other three.
 #[test]
 fn object_key_escapes_the_tenant_into_one_segment_that_reads_back() {
+    #[derive(bon::Builder)]
+    struct TenantEscapingCase {
+        name: &'static str,
+        tenant: &'static str,
+        segment: &'static str,
+    }
     let cases = [
-        ("plain", "tenant-a", "tenant-a"),
-        ("star", "a*b", "a!2Ab"),
-        ("escape marker", "a!b", "a!21b"),
-        ("parentheses", "a(b)", "a!28b!29"),
+        TenantEscapingCase::builder()
+            .name("plain")
+            .tenant("tenant-a")
+            .segment("tenant-a")
+            .build(),
+        TenantEscapingCase::builder()
+            .name("star")
+            .tenant("a*b")
+            .segment("a!2Ab")
+            .build(),
+        TenantEscapingCase::builder()
+            .name("escape marker")
+            .tenant("a!b")
+            .segment("a!21b")
+            .build(),
+        TenantEscapingCase::builder()
+            .name("parentheses")
+            .tenant("a(b)")
+            .segment("a!28b!29")
+            .build(),
     ];
 
-    for (name, tenant, segment) in cases {
+    for case in cases {
         let key = object_key(
-            tenant,
+            case.tenant,
             3,
             MinOffset(10),
             MaxOffset(20),
@@ -135,11 +157,19 @@ fn object_key_escapes_the_tenant_into_one_segment_that_reads_back() {
         );
         check!(
             key == format!(
-                "traces/{segment}/00003/00000000000000000010-00000000000000000020-1000.parquet"
+                "traces/{}/00003/00000000000000000010-00000000000000000020-1000.parquet",
+                case.segment
             ),
-            "{name}"
+            "{}",
+            case.name
         );
-        check_tenant_key_round_trips(&key, TenantKeyCase { name, tenant });
+        check_tenant_key_round_trips(
+            &key,
+            TenantKeyCase {
+                name: case.name,
+                tenant: case.tenant,
+            },
+        );
     }
 }
 
@@ -158,12 +188,22 @@ fn group_by_trace_orders_spans_per_tenant_trace() {
     ];
 
     let grouped = group_by_trace(&records);
-    let group = &grouped[&("tenant-a".to_string(), [1; 16])];
+    let group = &grouped[&TraceIdentity {
+        tenant: "tenant-a".to_string(),
+        trace_id: [1; 16],
+    }];
 
     assert2::assert!(
         group.iter().map(|span| span.span_id).collect::<Vec<_>>() == vec![[1; 8], [2; 8]]
     );
-    assert2::assert!(grouped[&("tenant-b".to_string(), [1; 16])][0].span_id == [9; 8]);
+    assert2::assert!(
+        grouped[&TraceIdentity {
+            tenant: "tenant-b".to_string(),
+            trace_id: [1; 16]
+        }][0]
+            .span_id
+            == [9; 8]
+    );
 }
 
 #[test]
@@ -208,20 +248,28 @@ fn decode_consumer_records_groups_by_partition_and_tracks_offsets() {
                 )
             })
             .collect::<Vec<_>>()
-            == vec![(1, (11, 12), 2, "tenant-a"), (2, (7, 7), 1, "tenant-b")]
+            == vec![
+                (1, OffsetRange::new(11, 12), 2, "tenant-a"),
+                (2, OffsetRange::new(7, 7), 1, "tenant-b"),
+            ]
     );
 }
 
 /// An empty in-memory object store, and a block writer over it.
-fn in_memory_block_writer() -> (Arc<dyn ObjectStore>, BlockWriter) {
+struct InMemoryBlockWriter {
+    store: Arc<dyn ObjectStore>,
+    writer: BlockWriter,
+}
+
+fn in_memory_block_writer() -> InMemoryBlockWriter {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
-    (store, writer)
+    InMemoryBlockWriter { store, writer }
 }
 
 #[tokio::test]
 async fn build_blocks_writes_span_block_and_updates_trace_index() {
-    let (store, writer) = in_memory_block_writer();
+    let InMemoryBlockWriter { store, writer } = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let records = vec![
         CHILD_SPAN.record("tenant-a"),
@@ -235,9 +283,16 @@ async fn build_blocks_writes_span_block_and_updates_trace_index() {
         .record("tenant-b"),
     ];
 
-    let metas = build_blocks(&writer, &mut index, "tenant-a", 7, &records, (10, 20))
-        .await
-        .unwrap();
+    let metas = build_blocks(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &records,
+        OffsetRange::new(10, 20),
+    )
+    .await
+    .unwrap();
 
     check!(
         metas
@@ -277,16 +332,30 @@ async fn build_blocks_writes_span_block_and_updates_trace_index() {
 
 #[tokio::test]
 async fn replaying_same_offset_window_is_idempotent_in_trace_index() {
-    let (store, writer) = in_memory_block_writer();
+    let InMemoryBlockWriter { store, writer } = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let records = vec![CHILD_SPAN.record("tenant-a"), ROOT_SPAN.record("tenant-a")];
 
-    let first = build_blocks(&writer, &mut index, "tenant-a", 7, &records, (10, 20))
-        .await
-        .unwrap();
-    let replay = build_blocks(&writer, &mut index, "tenant-a", 7, &records, (10, 20))
-        .await
-        .unwrap();
+    let first = build_blocks(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &records,
+        OffsetRange::new(10, 20),
+    )
+    .await
+    .unwrap();
+    let replay = build_blocks(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &records,
+        OffsetRange::new(10, 20),
+    )
+    .await
+    .unwrap();
 
     check!(first[0].object_key == replay[0].object_key);
     check!(
@@ -309,7 +378,7 @@ async fn replaying_same_offset_window_is_idempotent_in_trace_index() {
 
 #[tokio::test]
 async fn replaying_saved_partition_window_after_restart_is_idempotent() {
-    let (store, writer) = in_memory_block_writer();
+    let InMemoryBlockWriter { store, writer } = in_memory_block_writer();
     let config = krabka_traces::blockbuilder::BlockBuilderConfig {
         object_key_prefix: String::new(),
         index_key: "index/traces.json".into(),
@@ -363,7 +432,7 @@ async fn configured_index_snapshot_retention_is_applied() {
 
     use futures::StreamExt as _;
 
-    let (store, writer) = in_memory_block_writer();
+    let InMemoryBlockWriter { store, writer } = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let mut config = block_builder_config();
     config.index_snapshot_retain = krabka_blockstore::IndexSnapshotRetain::new(2).unwrap();
@@ -391,7 +460,7 @@ async fn multiple_polls_below_threshold_flush_one_block_per_partition() {
     use krabka_traces::blockbuilder::FlushAccumulator;
     use tokio::time::Instant;
 
-    let (store, writer) = in_memory_block_writer();
+    let InMemoryBlockWriter { store, writer } = in_memory_block_writer();
     let config = minute_flush_block_builder_config();
 
     // Three polls, each well under the flush threshold, all for the same trace
@@ -536,7 +605,7 @@ async fn shutdown_drain_flushes_remaining_buffer_without_losing_spans() {
     use krabka_traces::blockbuilder::FlushAccumulator;
     use tokio::time::Instant;
 
-    let (store, writer) = in_memory_block_writer();
+    let InMemoryBlockWriter { store, writer } = in_memory_block_writer();
     let config = minute_flush_block_builder_config();
 
     // Two polls buffered, never reaching the flush threshold (mirrors a pending
@@ -639,12 +708,12 @@ async fn merged_buffer_offset_range_is_stable_for_idempotent_keying() {
 
     let windows = accumulator.take();
     let window = &windows[&7];
-    assert2::assert!((window.offset_range, window.records.len()) == ((10, 12), 3));
+    assert2::assert!((window.offset_range, window.records.len()) == (OffsetRange::new(10, 12), 3));
 }
 
 #[tokio::test]
 async fn build_blocks_with_prefix_scopes_block_keys() {
-    let (store, writer) = in_memory_block_writer();
+    let InMemoryBlockWriter { store, writer } = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let records = vec![ROOT_SPAN.record("tenant-a")];
 
@@ -655,7 +724,7 @@ async fn build_blocks_with_prefix_scopes_block_keys() {
         "tenant-a",
         7,
         &records,
-        (10, 20),
+        OffsetRange::new(10, 20),
     )
     .await
     .unwrap();
@@ -678,7 +747,7 @@ async fn build_blocks_with_prefix_scopes_block_keys() {
 
 #[tokio::test]
 async fn build_blocks_promotes_configured_attribute_columns() {
-    let (store, writer) = in_memory_block_writer();
+    let InMemoryBlockWriter { store, writer } = in_memory_block_writer();
     let mut index = TraceIndex::new();
     let records = vec![ROOT_SPAN.record("tenant-a")];
 
@@ -688,7 +757,7 @@ async fn build_blocks_promotes_configured_attribute_columns() {
         "tenant-a",
         7,
         &records,
-        (10, 20),
+        OffsetRange::new(10, 20),
         &[PromotedSpanAttr::string("http.method")],
     )
     .await
@@ -719,7 +788,7 @@ async fn build_blocks_promotes_configured_attribute_columns() {
 /// key type.
 #[tokio::test]
 async fn a_written_block_is_ordered_by_trace_id_then_start() {
-    let (store, writer) = in_memory_block_writer();
+    let InMemoryBlockWriter { store, writer } = in_memory_block_writer();
     let mut index = TraceIndex::new();
     // Interleaved: neither the trace ids nor the starts arrive in order.
     let records = vec![
@@ -753,9 +822,16 @@ async fn a_written_block_is_ordered_by_trace_id_then_start() {
         .record("tenant-a"),
     ];
 
-    let metas = build_blocks(&writer, &mut index, "tenant-a", 7, &records, (10, 20))
-        .await
-        .unwrap();
+    let metas = build_blocks(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &records,
+        OffsetRange::new(10, 20),
+    )
+    .await
+    .unwrap();
 
     let batches = read_block(store, &metas[0].object_key).await.unwrap();
     let mut trace_ids = Vec::new();
@@ -936,10 +1012,15 @@ fn block_builder_config() -> BlockBuilderConfig {
 }
 
 // An event log, and a store that records each put into it.
-fn recording_store() -> (EventLog, Arc<dyn ObjectStore>) {
+struct RecordingStoreFixture {
+    events: EventLog,
+    store: Arc<dyn ObjectStore>,
+}
+
+fn recording_store() -> RecordingStoreFixture {
     let events: EventLog = Arc::new(StdMutex::new(Vec::new()));
     let store = Arc::new(RecordingObjectStore::recording(Arc::clone(&events)));
-    (events, store)
+    RecordingStoreFixture { events, store }
 }
 
 /// What `run_two_span_poll` runs the block builder with.
@@ -951,10 +1032,15 @@ struct TwoSpanPoll<'a> {
     events: &'a EventLog,
 }
 
+struct BlockBuilderOutcome {
+    result: Result<(), TracesError>,
+    commit_calls: Arc<AtomicUsize>,
+}
+
 // Run the block builder over one poll of two `tenant-a` spans of one trace,
 // below the flush threshold, so the only flush is the shutdown drain. Returns
 // the run's result and the count of its offset commits.
-async fn run_two_span_poll(poll: TwoSpanPoll<'_>) -> (Result<(), TracesError>, Arc<AtomicUsize>) {
+async fn run_two_span_poll(poll: TwoSpanPoll<'_>) -> BlockBuilderOutcome {
     let TwoSpanPoll {
         writer,
         index,
@@ -988,7 +1074,7 @@ struct ScriptedRun<'a> {
 // Run the block builder over the scripted polls until the consumer runs out
 // and shuts it down. Returns the run's result and the count of its offset
 // commits.
-async fn run_scripted(script: ScriptedRun<'_>) -> (Result<(), TracesError>, Arc<AtomicUsize>) {
+async fn run_scripted(script: ScriptedRun<'_>) -> BlockBuilderOutcome {
     let ScriptedRun {
         writer,
         index,
@@ -1014,7 +1100,10 @@ async fn run_scripted(script: ScriptedRun<'_>) -> (Result<(), TracesError>, Arc<
         shutdown,
     )
     .await;
-    (result, commit_calls)
+    BlockBuilderOutcome {
+        result,
+        commit_calls,
+    }
 }
 
 // Run the block builder, with an empty index, over one poll of the `tenant-a`
@@ -1023,7 +1112,7 @@ async fn run_one_root_span_poll(
     writer: BlockWriter,
     object_store: Arc<dyn ObjectStore>,
     events: &EventLog,
-) -> (Result<(), TracesError>, Arc<AtomicUsize>) {
+) -> BlockBuilderOutcome {
     run_scripted(ScriptedRun {
         writer,
         index: Arc::new(Mutex::new(TraceIndex::new())),
@@ -1036,13 +1125,19 @@ async fn run_one_root_span_poll(
 
 #[tokio::test]
 async fn run_commits_offsets_only_after_a_durable_block_write() {
-    let (events, object_store) = recording_store();
+    let RecordingStoreFixture {
+        events,
+        store: object_store,
+    } = recording_store();
     let writer = BlockWriter::new(object_store.clone());
     let index = Arc::new(Mutex::new(TraceIndex::new()));
 
     // One poll of two spans for the same trace, well below the flush threshold,
     // so the only flush+commit happens on the shutdown drain.
-    let (result, commit_calls) = run_two_span_poll(TwoSpanPoll {
+    let BlockBuilderOutcome {
+        result,
+        commit_calls,
+    } = run_two_span_poll(TwoSpanPoll {
         writer,
         index: Arc::clone(&index),
         object_store: object_store.clone(),
@@ -1095,7 +1190,10 @@ async fn run_does_not_commit_when_the_flush_write_fails() {
     let object_store: Arc<dyn ObjectStore> = store.clone();
     let writer = BlockWriter::new(object_store.clone());
 
-    let (result, commit_calls) = run_one_root_span_poll(writer, object_store, &events).await;
+    let BlockBuilderOutcome {
+        result,
+        commit_calls,
+    } = run_one_root_span_poll(writer, object_store, &events).await;
 
     // The drain flush failed, so `run` propagates the error...
     assert2::assert!(result.is_err());
@@ -1134,7 +1232,10 @@ async fn run_commits_exactly_once_after_the_object_store_recovers() {
         BlockWriter::with_retry_policy(object_store.clone(), ObjectStoreRetryPolicy::immediate(4));
     let index = Arc::new(Mutex::new(TraceIndex::new()));
 
-    let (result, commit_calls) = run_two_span_poll(TwoSpanPoll {
+    let BlockBuilderOutcome {
+        result,
+        commit_calls,
+    } = run_two_span_poll(TwoSpanPoll {
         writer,
         index: Arc::clone(&index),
         object_store: object_store.clone(),
@@ -1189,7 +1290,10 @@ async fn run_reports_a_permanent_object_store_failure_without_spending_the_budge
     let writer =
         BlockWriter::with_retry_policy(object_store.clone(), ObjectStoreRetryPolicy::immediate(4));
 
-    let (result, commit_calls) = run_one_root_span_poll(writer, object_store, &events).await;
+    let BlockBuilderOutcome {
+        result,
+        commit_calls,
+    } = run_one_root_span_poll(writer, object_store, &events).await;
 
     assert2::assert!(result.is_err());
     check!(store.put_attempts() == 1);
@@ -1198,7 +1302,10 @@ async fn run_reports_a_permanent_object_store_failure_without_spending_the_budge
 
 #[tokio::test]
 async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
-    let (events, object_store) = recording_store();
+    let RecordingStoreFixture {
+        events,
+        store: object_store,
+    } = recording_store();
     let writer = BlockWriter::new(object_store.clone());
     let index = Arc::new(Mutex::new(TraceIndex::new()));
     let shutdown = CancellationToken::new();
@@ -1723,8 +1830,13 @@ async fn retention_still_prunes_when_four_builders_write_at_once() {
 /// about the scheduler, and no sleep is involved.
 struct SnapshotHandoffStore {
     snapshot_prefix: String,
-    held: StdMutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
+    held: StdMutex<Option<SnapshotHandoffChannels>>,
     snapshot_puts: AtomicUsize,
+}
+
+struct SnapshotHandoffChannels {
+    reached: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
 }
 
 /// The two ends of one held snapshot write.
@@ -1750,9 +1862,16 @@ impl SnapshotHandoffStore {
     /// arming is separate from construction: a test seeds first and arms once
     /// the writer it wants to catch is the next one through.
     fn arm(&self) -> SnapshotHandoff {
-        let (reached_tx, reached) = oneshot::channel();
-        let (release, release_rx) = oneshot::channel();
-        *self.held.lock().expect("handoff lock") = Some((reached_tx, release_rx));
+        let reached_channel = oneshot::channel();
+        let reached_tx = reached_channel.0;
+        let reached = reached_channel.1;
+        let release_channel = oneshot::channel();
+        let release = release_channel.0;
+        let release_rx = release_channel.1;
+        *self.held.lock().expect("handoff lock") = Some(SnapshotHandoffChannels {
+            reached: reached_tx,
+            release: release_rx,
+        });
         SnapshotHandoff { reached, release }
     }
 
@@ -1772,9 +1891,9 @@ impl StoreHooks for SnapshotHandoffStore {
             // Taken, not held: the lock must not span the wait, or the writer
             // that is meant to overtake this one could not reach the store.
             let held = self.held.lock().expect("handoff lock").take();
-            if let Some((reached, release)) = held {
-                let _ = reached.send(());
-                let _ = release.await;
+            if let Some(channels) = held {
+                let _ = channels.reached.send(());
+                let _ = channels.release.await;
             }
         }
         Ok(())
@@ -1958,7 +2077,8 @@ async fn a_reused_input_key_rejects_the_stale_compactor_output() {
             .unwrap();
         handoff.release.send(()).unwrap();
     };
-    let (compactor_result, ()) = tokio::join!(compactor, reuser_write);
+    let joined = tokio::join!(compactor, reuser_write);
+    let compactor_result = joined.0;
 
     assert2::assert!(matches!(
         compactor_result,

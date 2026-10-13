@@ -3,7 +3,18 @@ use super::{
     TemplateRuntimeValue,
 };
 
-pub(super) type Entries = Box<dyn Iterator<Item = (TemplateRuntimeValue, TemplateRuntimeValue)>>;
+pub(super) struct TemplateRangeEntry {
+    pub key: TemplateRuntimeValue,
+    pub value: TemplateRuntimeValue,
+}
+
+impl TemplateRangeEntry {
+    fn new(key: TemplateRuntimeValue, value: TemplateRuntimeValue) -> Self {
+        Self { key, value }
+    }
+}
+
+pub(super) type Entries = Box<dyn Iterator<Item = TemplateRangeEntry>>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TemplateRange {
@@ -28,7 +39,7 @@ impl TemplateRange {
                 let mut index = 0;
                 Box::new(std::iter::from_fn(move || {
                     let value = values.get(index)?;
-                    let entry = (
+                    let entry = TemplateRangeEntry::new(
                         TemplateRuntimeValue::Integer(
                             i64::try_from(index).expect("template collection index fits"),
                         ),
@@ -39,18 +50,18 @@ impl TemplateRange {
                 }))
             }
             TemplateRuntimeValue::ByteSlice(values) => {
-                Box::new(values.into_iter().enumerate().map(|(index, value)| {
-                    (
+                Box::new(values.into_iter().enumerate().map(|entry| {
+                    TemplateRangeEntry::new(
                         TemplateRuntimeValue::Integer(
-                            i64::try_from(index).expect("template collection index fits"),
+                            i64::try_from(entry.0).expect("template collection index fits"),
                         ),
-                        TemplateRuntimeValue::Byte(value),
+                        TemplateRuntimeValue::Byte(entry.1),
                     )
                 }))
             }
             TemplateRuntimeValue::QueryResult(values) => {
                 Box::new((0..values.len()).map(move |index| {
-                    (
+                    TemplateRangeEntry::new(
                         TemplateRuntimeValue::Integer(
                             i64::try_from(index).expect("template collection index fits"),
                         ),
@@ -59,53 +70,47 @@ impl TemplateRange {
                 }))
             }
             TemplateRuntimeValue::Array(values) => {
-                Box::new(values.into_iter().enumerate().map(|(index, value)| {
-                    (
+                Box::new(values.into_iter().enumerate().map(|entry| {
+                    TemplateRangeEntry::new(
                         TemplateRuntimeValue::Integer(
-                            i64::try_from(index).expect("template collection index fits"),
+                            i64::try_from(entry.0).expect("template collection index fits"),
                         ),
-                        value,
+                        entry.1,
                     )
                 }))
             }
-            TemplateRuntimeValue::Object(values) => Box::new(
-                values
-                    .into_iter()
-                    .map(|(key, value)| (TemplateRuntimeValue::String(key), value)),
-            ),
-            TemplateRuntimeValue::ByteLabels(values) => {
-                Box::new(values.into_iter().map(|(key, value)| {
-                    (
-                        TemplateRuntimeValue::String(key),
-                        TemplateRuntimeValue::Bytes(value),
-                    )
-                }))
-            }
-            TemplateRuntimeValue::Labels(values) => {
-                Box::new(values.into_iter().map(|(key, value)| {
-                    (
-                        TemplateRuntimeValue::String(key),
-                        TemplateRuntimeValue::String(value),
-                    )
-                }))
-            }
+            TemplateRuntimeValue::Object(values) => Box::new(values.into_iter().map(|entry| {
+                TemplateRangeEntry::new(TemplateRuntimeValue::String(entry.0), entry.1)
+            })),
+            TemplateRuntimeValue::ByteLabels(values) => Box::new(values.into_iter().map(|entry| {
+                TemplateRangeEntry::new(
+                    TemplateRuntimeValue::String(entry.0),
+                    TemplateRuntimeValue::Bytes(entry.1),
+                )
+            })),
+            TemplateRuntimeValue::Labels(values) => Box::new(values.into_iter().map(|entry| {
+                TemplateRangeEntry::new(
+                    TemplateRuntimeValue::String(entry.0),
+                    TemplateRuntimeValue::String(entry.1),
+                )
+            })),
             TemplateRuntimeValue::Json(serde_json::Value::Array(values)) => {
-                Box::new(values.into_iter().enumerate().map(|(index, value)| {
-                    (
+                Box::new(values.into_iter().enumerate().map(|entry| {
+                    TemplateRangeEntry::new(
                         TemplateRuntimeValue::Integer(
-                            i64::try_from(index).expect("template collection index fits"),
+                            i64::try_from(entry.0).expect("template collection index fits"),
                         ),
-                        TemplateRuntimeValue::Json(value),
+                        TemplateRuntimeValue::Json(entry.1),
                     )
                 }))
             }
             TemplateRuntimeValue::Json(serde_json::Value::Object(values)) => {
                 let mut values = values.into_iter().collect::<Vec<_>>();
-                values.sort_by(|(left, _), (right, _)| left.cmp(right));
-                Box::new(values.into_iter().map(|(key, value)| {
-                    (
-                        TemplateRuntimeValue::String(key),
-                        TemplateRuntimeValue::Json(value),
+                values.sort_by(|left, right| left.0.cmp(&right.0));
+                Box::new(values.into_iter().map(|entry| {
+                    TemplateRangeEntry::new(
+                        TemplateRuntimeValue::String(entry.0),
+                        TemplateRuntimeValue::Json(entry.1),
                     )
                 }))
             }
@@ -126,37 +131,37 @@ impl TemplateRange {
                 }
                 match value {
                     TemplateRuntimeValue::Integer(count) => Box::new((0..count).map(|index| {
-                        (
+                        TemplateRangeEntry::new(
                             TemplateRuntimeValue::Json(serde_json::Value::Null),
                             TemplateRuntimeValue::Integer(index),
                         )
                     })),
                     TemplateRuntimeValue::Integer64(count) => Box::new((0..count).map(|index| {
-                        (
+                        TemplateRangeEntry::new(
                             TemplateRuntimeValue::Json(serde_json::Value::Null),
                             TemplateRuntimeValue::Integer64(index),
                         )
                     })),
                     TemplateRuntimeValue::Byte(count) => Box::new((0..count).map(|index| {
-                        (
+                        TemplateRangeEntry::new(
                             TemplateRuntimeValue::Json(serde_json::Value::Null),
                             TemplateRuntimeValue::Byte(index),
                         )
                     })),
                     TemplateRuntimeValue::Duration(count) => Box::new((0..count).map(|index| {
-                        (
+                        TemplateRangeEntry::new(
                             TemplateRuntimeValue::Json(serde_json::Value::Null),
                             TemplateRuntimeValue::Duration(index),
                         )
                     })),
                     TemplateRuntimeValue::Month(count) => Box::new((0..count).map(|index| {
-                        (
+                        TemplateRangeEntry::new(
                             TemplateRuntimeValue::Json(serde_json::Value::Null),
                             TemplateRuntimeValue::Month(index),
                         )
                     })),
                     TemplateRuntimeValue::Weekday(count) => Box::new((0..count).map(|index| {
-                        (
+                        TemplateRangeEntry::new(
                             TemplateRuntimeValue::Json(serde_json::Value::Null),
                             TemplateRuntimeValue::Weekday(index),
                         )

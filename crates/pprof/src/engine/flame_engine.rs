@@ -25,11 +25,29 @@ pub struct ProfileSelection<'q> {
     pub label_selector: &'q str,
 }
 
+impl<'q> ProfileSelection<'q> {
+    #[must_use]
+    pub const fn new(tenant: &'q str, profile_type: &'q str, label_selector: &'q str) -> Self {
+        Self {
+            tenant,
+            profile_type,
+            label_selector,
+        }
+    }
+}
+
 /// An inclusive time range in Unix milliseconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MillisRange {
     pub start_ms: i64,
     pub end_ms: i64,
+}
+
+impl MillisRange {
+    #[must_use]
+    pub const fn new(start_ms: i64, end_ms: i64) -> Self {
+        Self { start_ms, end_ms }
+    }
 }
 
 /// How many buckets a heatmap bins its points into on each axis.
@@ -53,8 +71,20 @@ pub struct HeatmapQuery<'q> {
 /// One `group_by` group of a query: its label values, and the matchers that
 /// select only its profiles.
 struct GroupSelection {
-    labels: Vec<(String, String)>,
+    labels: Vec<crate::ProfileLabel>,
     matchers: Vec<LabelMatcher>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SeriesSampling {
+    step: Time,
+    aggregation: SeriesAgg,
+}
+
+#[derive(Clone, Debug)]
+struct MergedSpanProfile {
+    tree: Tree,
+    max_nodes: i64,
 }
 
 /// A span-profile merge over several time-range shards.
@@ -64,9 +94,30 @@ pub struct SpanProfileShards<'q> {
     /// Keeps only samples of these span ids; must not be empty.
     pub span_selector: &'q [u64],
     /// Inclusive `(start_ms, end_ms)` shards, in Unix milliseconds.
-    pub ranges: &'q [(i64, i64)],
+    pub ranges: &'q [MillisRange],
     /// Non-positive values resolve to the engine default.
     pub max_nodes: i64,
+}
+
+/// One side of a profile diff query, including selection, range, and filters.
+#[derive(Clone, Copy, Debug)]
+pub struct DiffQuery<'q> {
+    pub selection: ProfileSelection<'q>,
+    pub range: MillisRange,
+    pub call_sites: &'q [String],
+    pub sample_selector: SampleSelector<'q>,
+}
+
+impl<'q> DiffQuery<'q> {
+    #[must_use]
+    pub const fn new(selection: ProfileSelection<'q>, range: MillisRange) -> Self {
+        Self {
+            selection,
+            range,
+            call_sites: &[],
+            sample_selector: SampleSelector::None,
+        }
+    }
 }
 
 /// A merge of the samples that `sample_selector` and `call_sites` keep, from
@@ -78,6 +129,25 @@ struct ProfileMerge<'q> {
     sample_selector: SampleSelector<'q>,
     /// Keeps only stacks that match these call sites; empty keeps every stack.
     call_sites: &'q [String],
+}
+
+impl<'q> ProfileMerge<'q> {
+    fn new(
+        selection: ProfileSelection<'q>,
+        range_ms: MillisRange,
+        sample_selector: SampleSelector<'q>,
+        call_sites: &'q [String],
+    ) -> Self {
+        Self {
+            selection,
+            range: MillisRange {
+                start_ms: range_ms.start_ms,
+                end_ms: range_ms.end_ms,
+            },
+            sample_selector,
+            call_sites,
+        }
+    }
 }
 
 /// Profiles flamegraph engine.
@@ -167,7 +237,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 tenant,
                 profile_type,
                 label_selector,
-                (start_ms, end_ms),
+                MillisRange { start_ms, end_ms },
                 None,
                 &[],
             )
@@ -182,7 +252,7 @@ impl<S: ProfileStore> FlameEngine<S> {
         tenant: &str,
         profile_type: &str,
         label_selector: &str,
-        range_ms: (i64, i64),
+        range_ms: MillisRange,
         max_nodes: i64,
         group_by: &[String],
     ) -> Result<FlameGraph, ProfileError> {
@@ -192,8 +262,8 @@ impl<S: ProfileStore> FlameEngine<S> {
                     tenant,
                     profile_type,
                     label_selector,
-                    range_ms.0,
-                    range_ms.1,
+                    range_ms.start_ms,
+                    range_ms.end_ms,
                     max_nodes,
                 )
                 .await;
@@ -201,19 +271,29 @@ impl<S: ProfileStore> FlameEngine<S> {
         let base_matchers = crate::matcher::parse_label_selector(label_selector)?;
         let groups = self
             .store
-            .series(tenant, &base_matchers, group_by, range_ms.0, range_ms.1)
+            .series(
+                tenant,
+                &base_matchers,
+                group_by,
+                range_ms.start_ms,
+                range_ms.end_ms,
+            )
             .await?;
         let mut tree = Tree::new();
         for labels in groups {
             let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+            matchers.extend(labels.iter().map(|label| {
+                LabelMatcher::new(label.name.clone(), MatchOp::Eq, label.value.clone())
+            }));
             let scan = self
                 .store
-                .select(tenant, profile_type, &matchers, range_ms.0, range_ms.1)
+                .select(
+                    tenant,
+                    profile_type,
+                    &matchers,
+                    range_ms.start_ms,
+                    range_ms.end_ms,
+                )
                 .await?;
             let prefix = vec![Frame {
                 function: group_frame_name(&labels),
@@ -241,12 +321,12 @@ impl<S: ProfileStore> FlameEngine<S> {
         tenant: &str,
         profile_type: &str,
         label_selector: &str,
-        range_ms: (i64, i64),
+        range_ms: MillisRange,
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<FlameGraph, ProfileError> {
         self.select_merge_stacktraces_with_selectors(
-            (tenant, profile_type, label_selector),
+            ProfileSelection::new(tenant, profile_type, label_selector),
             range_ms,
             max_nodes,
             call_sites,
@@ -259,27 +339,28 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_stacktraces_with_selectors(
         &self,
-        query: (&str, &str, &str),
-        range_ms: (i64, i64),
+        query: ProfileSelection<'_>,
+        range_ms: MillisRange,
         max_nodes: i64,
         call_sites: &[String],
         sample_selector: SampleSelector<'_>,
     ) -> Result<FlameGraph, ProfileError> {
-        let (tenant, profile_type, label_selector) = query;
+        let ProfileSelection {
+            tenant,
+            profile_type,
+            label_selector,
+        } = query;
         let tree = self
-            .merge_to_tree_with_sample_selector(ProfileMerge {
-                selection: ProfileSelection {
+            .merge_to_tree_with_sample_selector(ProfileMerge::new(
+                ProfileSelection {
                     tenant,
                     profile_type,
                     label_selector,
                 },
-                range: MillisRange {
-                    start_ms: range_ms.0,
-                    end_ms: range_ms.1,
-                },
+                range_ms,
                 sample_selector,
                 call_sites,
-            })
+            ))
             .await?;
         Ok(tree.to_flamegraph(self.max_nodes_or_default(max_nodes)))
     }
@@ -291,12 +372,12 @@ impl<S: ProfileStore> FlameEngine<S> {
         tenant: &str,
         profile_type: &str,
         label_selector: &str,
-        range_ms: (i64, i64),
+        range_ms: MillisRange,
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<Vec<u8>, ProfileError> {
         self.select_merge_stacktraces_tree_with_selectors(
-            (tenant, profile_type, label_selector),
+            ProfileSelection::new(tenant, profile_type, label_selector),
             range_ms,
             max_nodes,
             call_sites,
@@ -309,27 +390,28 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_stacktraces_tree_with_selectors(
         &self,
-        query: (&str, &str, &str),
-        range_ms: (i64, i64),
+        query: ProfileSelection<'_>,
+        range_ms: MillisRange,
         max_nodes: i64,
         call_sites: &[String],
         sample_selector: SampleSelector<'_>,
     ) -> Result<Vec<u8>, ProfileError> {
-        let (tenant, profile_type, label_selector) = query;
+        let ProfileSelection {
+            tenant,
+            profile_type,
+            label_selector,
+        } = query;
         let tree = self
-            .merge_to_tree_with_sample_selector(ProfileMerge {
-                selection: ProfileSelection {
+            .merge_to_tree_with_sample_selector(ProfileMerge::new(
+                ProfileSelection {
                     tenant,
                     profile_type,
                     label_selector,
                 },
-                range: MillisRange {
-                    start_ms: range_ms.0,
-                    end_ms: range_ms.1,
-                },
+                range_ms,
                 sample_selector,
                 call_sites,
-            })
+            ))
             .await?;
         Ok(tree.to_pyroscope_tree_bytes(self.max_nodes_or_default(max_nodes)))
     }
@@ -341,19 +423,12 @@ impl<S: ProfileStore> FlameEngine<S> {
         tenant: &str,
         profile_type: &str,
         label_selector: &str,
-        ranges: &[(i64, i64)],
+        ranges: &[MillisRange],
         max_nodes: i64,
     ) -> Result<FlameGraph, ProfileError> {
-        if ranges.is_empty() {
-            return Err(ProfileError::Plan(
-                "sharded stacktrace query requires at least one time range".to_string(),
-            ));
-        }
         let merged = self
-            .execute_tree_shards(
-                tenant,
-                profile_type,
-                label_selector,
+            .execute_tree_shards_for_query(
+                ProfileSelection::new(tenant, profile_type, label_selector),
                 ranges,
                 SampleSelector::None,
                 &[],
@@ -369,12 +444,12 @@ impl<S: ProfileStore> FlameEngine<S> {
         tenant: &str,
         profile_type: &str,
         label_selector: &str,
-        ranges: &[(i64, i64)],
+        ranges: &[MillisRange],
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<FlameGraph, ProfileError> {
         self.select_merge_stacktraces_with_selectors_sharded(
-            (tenant, profile_type, label_selector),
+            ProfileSelection::new(tenant, profile_type, label_selector),
             ranges,
             max_nodes,
             call_sites,
@@ -387,27 +462,14 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_stacktraces_with_selectors_sharded(
         &self,
-        query: (&str, &str, &str),
-        ranges: &[(i64, i64)],
+        query: ProfileSelection<'_>,
+        ranges: &[MillisRange],
         max_nodes: i64,
         call_sites: &[String],
         sample_selector: SampleSelector<'_>,
     ) -> Result<FlameGraph, ProfileError> {
-        if ranges.is_empty() {
-            return Err(ProfileError::Plan(
-                "sharded stacktrace query requires at least one time range".to_string(),
-            ));
-        }
-        let (tenant, profile_type, label_selector) = query;
         let merged = self
-            .execute_tree_shards(
-                tenant,
-                profile_type,
-                label_selector,
-                ranges,
-                sample_selector,
-                call_sites,
-            )
+            .execute_tree_shards_for_query(query, ranges, sample_selector, call_sites)
             .await?;
         Ok(merged.to_flamegraph(self.max_nodes_or_default(max_nodes)))
     }
@@ -419,12 +481,12 @@ impl<S: ProfileStore> FlameEngine<S> {
         tenant: &str,
         profile_type: &str,
         label_selector: &str,
-        ranges: &[(i64, i64)],
+        ranges: &[MillisRange],
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<Vec<u8>, ProfileError> {
         self.select_merge_stacktraces_tree_with_selectors_sharded(
-            (tenant, profile_type, label_selector),
+            ProfileSelection::new(tenant, profile_type, label_selector),
             ranges,
             max_nodes,
             call_sites,
@@ -437,29 +499,44 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_stacktraces_tree_with_selectors_sharded(
         &self,
-        query: (&str, &str, &str),
-        ranges: &[(i64, i64)],
+        query: ProfileSelection<'_>,
+        ranges: &[MillisRange],
         max_nodes: i64,
         call_sites: &[String],
         sample_selector: SampleSelector<'_>,
     ) -> Result<Vec<u8>, ProfileError> {
+        let merged = self
+            .execute_tree_shards_for_query(query, ranges, sample_selector, call_sites)
+            .await?;
+        Ok(merged.to_pyroscope_tree_bytes(self.max_nodes_or_default(max_nodes)))
+    }
+
+    async fn execute_tree_shards_for_query(
+        &self,
+        query: ProfileSelection<'_>,
+        ranges: &[MillisRange],
+        sample_selector: SampleSelector<'_>,
+        call_sites: &[String],
+    ) -> Result<Tree, ProfileError> {
         if ranges.is_empty() {
             return Err(ProfileError::Plan(
                 "sharded stacktrace query requires at least one time range".to_string(),
             ));
         }
-        let (tenant, profile_type, label_selector) = query;
-        let merged = self
-            .execute_tree_shards(
-                tenant,
-                profile_type,
-                label_selector,
-                ranges,
-                sample_selector,
-                call_sites,
-            )
-            .await?;
-        Ok(merged.to_pyroscope_tree_bytes(self.max_nodes_or_default(max_nodes)))
+        let ProfileSelection {
+            tenant,
+            profile_type,
+            label_selector,
+        } = query;
+        self.execute_tree_shards(
+            tenant,
+            profile_type,
+            label_selector,
+            ranges,
+            sample_selector,
+            call_sites,
+        )
+        .await
     }
 
     async fn execute_tree_shards(
@@ -467,7 +544,7 @@ impl<S: ProfileStore> FlameEngine<S> {
         tenant: &str,
         profile_type: &str,
         label_selector: &str,
-        ranges: &[(i64, i64)],
+        ranges: &[MillisRange],
         sample_selector: SampleSelector<'_>,
         call_sites: &[String],
     ) -> Result<Tree, ProfileError> {
@@ -494,7 +571,7 @@ impl<S: ProfileStore> FlameEngine<S> {
         tenant: &str,
         profile_type: &str,
         label_selector: &str,
-        range_ms: (i64, i64),
+        range_ms: MillisRange,
         span_ids: Option<&[u64]>,
         call_sites: &[String],
     ) -> Result<Tree, ProfileError> {
@@ -505,8 +582,8 @@ impl<S: ProfileStore> FlameEngine<S> {
                 label_selector,
             },
             range: MillisRange {
-                start_ms: range_ms.0,
-                end_ms: range_ms.1,
+                start_ms: range_ms.start_ms,
+                end_ms: range_ms.end_ms,
             },
             sample_selector: span_ids.map_or(SampleSelector::None, SampleSelector::Span),
             call_sites,
@@ -595,11 +672,11 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_series(
         &self,
-        query: (&str, &str, &str),
+        query: ProfileSelection<'_>,
         group_by: &[String],
         step: Time,
         agg: SeriesAgg,
-        range: (i64, i64),
+        range: MillisRange,
     ) -> Result<Vec<Series>, ProfileError> {
         self.select_series_with_stack_trace_selector(query, group_by, step, agg, range, &[])
             .await
@@ -609,15 +686,25 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_series_with_stack_trace_selector(
         &self,
-        query: (&str, &str, &str),
+        query: ProfileSelection<'_>,
         group_by: &[String],
         step: Time,
         agg: SeriesAgg,
-        range: (i64, i64),
+        range: MillisRange,
         call_sites: &[String],
     ) -> Result<Vec<Series>, ProfileError> {
-        self.select_series_with_anchor(query, group_by, (step, agg), range, call_sites, range)
-            .await
+        self.select_series_with_anchor(
+            query,
+            group_by,
+            SeriesSampling {
+                step,
+                aggregation: agg,
+            },
+            range,
+            call_sites,
+            range,
+        )
+        .await
     }
 
     /// The `group_by` groups that `selection` matches over `range`, each with
@@ -647,8 +734,8 @@ impl<S: ProfileStore> FlameEngine<S> {
             .into_iter()
             .map(|labels| {
                 let mut matchers = base_matchers.clone();
-                matchers.extend(labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
+                matchers.extend(labels.iter().map(|label| {
+                    LabelMatcher::new(label.name.clone(), MatchOp::Eq, label.value.clone())
                 }));
                 GroupSelection { labels, matchers }
             })
@@ -657,22 +744,29 @@ impl<S: ProfileStore> FlameEngine<S> {
 
     async fn select_series_with_anchor(
         &self,
-        query: (&str, &str, &str),
+        query: ProfileSelection<'_>,
         group_by: &[String],
-        sampling: (Time, SeriesAgg),
-        range: (i64, i64),
+        sampling: SeriesSampling,
+        range: MillisRange,
         call_sites: &[String],
-        anchor: (i64, i64),
+        anchor: MillisRange,
     ) -> Result<Vec<Series>, ProfileError> {
-        let (tenant, profile_type, label_selector) = query;
-        let (start_ms, end_ms) = range;
-        let (step, agg) = sampling;
+        let ProfileSelection {
+            tenant,
+            profile_type,
+            label_selector,
+        } = query;
+        let MillisRange { start_ms, end_ms } = range;
+        let SeriesSampling {
+            step,
+            aggregation: agg,
+        } = sampling;
         let step = validated_step(step)?;
         validate_range(start_ms, end_ms)?;
-        validate_range(anchor.0, anchor.1)?;
+        validate_range(anchor.start_ms, anchor.end_ms)?;
         // The first output point covers the one-step lookback through start.
         // Extend only the first shard so each profile is scanned once.
-        let scan_start = if start_ms == anchor.0 {
+        let scan_start = if start_ms == anchor.start_ms {
             start_ms.saturating_sub(step.millis_i64())
         } else {
             start_ms
@@ -707,21 +801,25 @@ impl<S: ProfileStore> FlameEngine<S> {
                 series_buckets_from_stacktrace_selector(&scan, millis(1), call_sites).await?
             };
             let mut buckets: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
-            for (timestamp, values) in raw_points {
-                if let Some(endpoint) = series_bucket_ms(timestamp, step, anchor) {
-                    buckets.entry(endpoint).or_default().extend(values);
+            for point in raw_points {
+                if let Some(endpoint) = series_bucket_ms(point.timestamp_ms, step, anchor) {
+                    buckets.entry(endpoint).or_default().extend(point.values);
                 }
             }
             if buckets.is_empty() {
                 continue;
             }
-            out.push(Series {
-                labels,
-                points: buckets
-                    .into_iter()
-                    .map(|(bucket, values)| (bucket, fold_bucket(agg, &values)))
-                    .collect(),
-            });
+            let bucket_endpoints = buckets.keys().copied().collect::<Vec<_>>();
+            let mut points = Vec::with_capacity(bucket_endpoints.len());
+            for bucket in bucket_endpoints {
+                if let Some(values) = buckets.remove(&bucket) {
+                    points.push(crate::SamplePoint {
+                        timestamp_ms: bucket,
+                        value: fold_bucket(agg, &values),
+                    });
+                }
+            }
+            out.push(Series { labels, points });
         }
         Ok(out)
     }
@@ -730,11 +828,11 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_series_sharded(
         &self,
-        query: (&str, &str, &str),
+        query: ProfileSelection<'_>,
         group_by: &[String],
         step: Time,
         agg: SeriesAgg,
-        ranges: &[(i64, i64)],
+        ranges: &[MillisRange],
     ) -> Result<Vec<Series>, ProfileError> {
         self.select_series_with_stack_trace_selector_sharded(
             query,
@@ -751,11 +849,11 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_series_with_stack_trace_selector_sharded(
         &self,
-        query: (&str, &str, &str),
+        query: ProfileSelection<'_>,
         group_by: &[String],
         step: Time,
         agg: SeriesAgg,
-        ranges: &[(i64, i64)],
+        ranges: &[MillisRange],
         call_sites: &[String],
     ) -> Result<Vec<Series>, ProfileError> {
         if ranges.is_empty() {
@@ -763,7 +861,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 "sharded series query requires at least one time range".to_string(),
             ));
         }
-        let (start_ms, end_ms) = covering_range(ranges)?;
+        let MillisRange { start_ms, end_ms } = covering_range(ranges)?;
         if agg == SeriesAgg::Average {
             return self
                 .select_series_with_stack_trace_selector(
@@ -771,7 +869,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                     group_by,
                     step,
                     agg,
-                    (start_ms, end_ms),
+                    MillisRange { start_ms, end_ms },
                     call_sites,
                 )
                 .await;
@@ -784,11 +882,11 @@ impl<S: ProfileStore> FlameEngine<S> {
                 group_by,
                 step,
                 agg,
-                anchor: (start_ms, end_ms),
+                anchor: MillisRange { start_ms, end_ms },
                 call_sites,
             },
             ranges,
-            admission_limits: (self.admission_limits)(query.0),
+            admission_limits: (self.admission_limits)(query.tenant),
         };
         self.series_frontend
             .execute(&adapter, &())
@@ -800,74 +898,46 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn diff(
         &self,
-        tenant: &str,
-        left: (&str, &str, i64, i64),
-        right: (&str, &str, i64, i64),
+        left: DiffQuery<'_>,
+        right: DiffQuery<'_>,
         max_nodes: i64,
     ) -> Result<FlameGraphDiff, ProfileError> {
-        self.diff_with_stack_trace_selector(tenant, left, right, max_nodes, &[], &[])
-            .await
+        self.diff_with_selectors(left, right, max_nodes).await
     }
 
     /// # Errors
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn diff_with_stack_trace_selector(
         &self,
-        tenant: &str,
-        left: (&str, &str, i64, i64),
-        right: (&str, &str, i64, i64),
+        left: DiffQuery<'_>,
+        right: DiffQuery<'_>,
         max_nodes: i64,
-        left_call_sites: &[String],
-        right_call_sites: &[String],
     ) -> Result<FlameGraphDiff, ProfileError> {
-        self.diff_with_selectors(
-            tenant,
-            (left, left_call_sites, SampleSelector::None),
-            (right, right_call_sites, SampleSelector::None),
-            max_nodes,
-        )
-        .await
+        self.diff_with_selectors(left, right, max_nodes).await
     }
 
     /// # Errors
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn diff_with_selectors(
         &self,
-        tenant: &str,
-        left: ((&str, &str, i64, i64), &[String], SampleSelector<'_>),
-        right: ((&str, &str, i64, i64), &[String], SampleSelector<'_>),
+        left: DiffQuery<'_>,
+        right: DiffQuery<'_>,
         max_nodes: i64,
     ) -> Result<FlameGraphDiff, ProfileError> {
-        let (left, left_call_sites, left_selector) = left;
-        let (right, right_call_sites, right_selector) = right;
         let left_tree = self
             .merge_to_tree_with_sample_selector(ProfileMerge {
-                selection: ProfileSelection {
-                    tenant,
-                    profile_type: left.0,
-                    label_selector: left.1,
-                },
-                range: MillisRange {
-                    start_ms: left.2,
-                    end_ms: left.3,
-                },
-                sample_selector: left_selector,
-                call_sites: left_call_sites,
+                selection: left.selection,
+                range: left.range,
+                sample_selector: left.sample_selector,
+                call_sites: left.call_sites,
             })
             .await?;
         let right_tree = self
             .merge_to_tree_with_sample_selector(ProfileMerge {
-                selection: ProfileSelection {
-                    tenant,
-                    profile_type: right.0,
-                    label_selector: right.1,
-                },
-                range: MillisRange {
-                    start_ms: right.2,
-                    end_ms: right.3,
-                },
-                sample_selector: right_selector,
-                call_sites: right_call_sites,
+                selection: right.selection,
+                range: right.range,
+                sample_selector: right.sample_selector,
+                call_sites: right.call_sites,
             })
             .await?;
         let max_nodes = self.max_nodes_or_default(max_nodes);
@@ -930,8 +1000,8 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_profile_with_max_nodes_and_stack_trace_selector(
         &self,
-        query: (&str, &str, &str),
-        range: (i64, i64),
+        query: ProfileSelection<'_>,
+        range: MillisRange,
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<Vec<u8>, ProfileError> {
@@ -949,14 +1019,18 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_profile_with_selectors(
         &self,
-        query: (&str, &str, &str),
-        range: (i64, i64),
+        query: ProfileSelection<'_>,
+        range: MillisRange,
         max_nodes: i64,
         call_sites: &[String],
         sample_selector: SampleSelector<'_>,
     ) -> Result<Vec<u8>, ProfileError> {
-        let (tenant, profile_type, label_selector) = query;
-        let (start_ms, end_ms) = range;
+        let ProfileSelection {
+            tenant,
+            profile_type,
+            label_selector,
+        } = query;
+        let MillisRange { start_ms, end_ms } = range;
         let profile_type = ProfileType::parse(profile_type)?;
         let max_nodes = self.max_nodes_or_default(max_nodes);
         let profile = self
@@ -982,19 +1056,23 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_span_profile(
         &self,
-        query: (&str, &str, &str),
+        query: ProfileSelection<'_>,
         span_selector: &[u64],
-        range: (i64, i64),
+        range: MillisRange,
         max_nodes: i64,
     ) -> Result<FlameGraph, ProfileError> {
-        let (tenant, profile_type, label_selector) = query;
-        let (start_ms, end_ms) = range;
+        let ProfileSelection {
+            tenant,
+            profile_type,
+            label_selector,
+        } = query;
+        let MillisRange { start_ms, end_ms } = range;
         let tree = self
             .merge_to_tree(
                 tenant,
                 profile_type,
                 label_selector,
-                (start_ms, end_ms),
+                MillisRange { start_ms, end_ms },
                 Some(span_selector),
                 &[],
             )
@@ -1006,19 +1084,23 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_merge_span_profile_tree(
         &self,
-        query: (&str, &str, &str),
+        query: ProfileSelection<'_>,
         span_selector: &[u64],
-        range: (i64, i64),
+        range: MillisRange,
         max_nodes: i64,
     ) -> Result<Vec<u8>, ProfileError> {
-        let (tenant, profile_type, label_selector) = query;
-        let (start_ms, end_ms) = range;
+        let ProfileSelection {
+            tenant,
+            profile_type,
+            label_selector,
+        } = query;
+        let MillisRange { start_ms, end_ms } = range;
         let tree = self
             .merge_to_tree(
                 tenant,
                 profile_type,
                 label_selector,
-                (start_ms, end_ms),
+                MillisRange { start_ms, end_ms },
                 Some(span_selector),
                 &[],
             )
@@ -1031,7 +1113,7 @@ impl<S: ProfileStore> FlameEngine<S> {
     async fn merge_span_profile_shards(
         &self,
         shards: SpanProfileShards<'_>,
-    ) -> Result<(Tree, i64), ProfileError> {
+    ) -> Result<MergedSpanProfile, ProfileError> {
         let SpanProfileShards {
             selection,
             span_selector,
@@ -1059,7 +1141,10 @@ impl<S: ProfileStore> FlameEngine<S> {
             )
             .await?;
         let max_nodes = self.max_nodes_or_default(max_nodes);
-        Ok((merged, max_nodes))
+        Ok(MergedSpanProfile {
+            tree: merged,
+            max_nodes,
+        })
     }
 
     /// # Errors
@@ -1068,8 +1153,8 @@ impl<S: ProfileStore> FlameEngine<S> {
         &self,
         shards: SpanProfileShards<'_>,
     ) -> Result<FlameGraph, ProfileError> {
-        let (merged, max_nodes) = self.merge_span_profile_shards(shards).await?;
-        Ok(merged.to_flamegraph(max_nodes))
+        let merged = self.merge_span_profile_shards(shards).await?;
+        Ok(merged.tree.to_flamegraph(merged.max_nodes))
     }
 
     /// # Errors
@@ -1078,8 +1163,8 @@ impl<S: ProfileStore> FlameEngine<S> {
         &self,
         shards: SpanProfileShards<'_>,
     ) -> Result<Vec<u8>, ProfileError> {
-        let (merged, max_nodes) = self.merge_span_profile_shards(shards).await?;
-        Ok(merged.to_pyroscope_tree_bytes(max_nodes))
+        let merged = self.merge_span_profile_shards(shards).await?;
+        Ok(merged.tree.to_pyroscope_tree_bytes(merged.max_nodes))
     }
 
     /// # Errors
@@ -1122,10 +1207,10 @@ impl<S: ProfileStore> FlameEngine<S> {
             .await?;
         Ok(points
             .into_iter()
-            .map(|(labels, points)| LabeledHeatmap {
-                labels,
+            .map(|group| LabeledHeatmap {
+                labels: group.labels,
                 heatmap: bin_heatmap(
-                    &points,
+                    &group.points,
                     range.start_ms,
                     range.end_ms,
                     time_buckets,
@@ -1164,7 +1249,7 @@ impl<S: ProfileStore> FlameEngine<S> {
             if points.is_empty() && !group_by.is_empty() {
                 continue;
             }
-            out.push((labels, points));
+            out.push(crate::LabeledHeatmapPoints { labels, points });
         }
         Ok(out)
     }
@@ -1176,12 +1261,12 @@ fn series_bytes(series: &Vec<Series>) -> usize {
         + series
             .iter()
             .map(|series| {
-                series.points.capacity() * std::mem::size_of::<(i64, f64)>()
-                    + series.labels.capacity() * std::mem::size_of::<(String, String)>()
+                series.points.capacity() * std::mem::size_of::<crate::SamplePoint>()
+                    + series.labels.capacity() * std::mem::size_of::<crate::ProfileLabel>()
                     + series
                         .labels
                         .iter()
-                        .map(|(name, value)| name.capacity() + value.capacity())
+                        .map(|label| label.name.capacity() + label.value.capacity())
                         .sum::<usize>()
             })
             .sum::<usize>()
@@ -1209,7 +1294,7 @@ trait ShardedQuery: Sync {
 /// inclusive `(start_ms, end_ms)` shard.
 struct ShardAdapter<'a, Q> {
     query: Q,
-    ranges: &'a [(i64, i64)],
+    ranges: &'a [MillisRange],
     admission_limits: AdmissionLimits,
 }
 
@@ -1225,7 +1310,7 @@ impl<Q: ShardedQuery> QueryFrontendAdapter for ShardAdapter<'_, Q> {
         self.ranges
             .iter()
             .copied()
-            .map(|(start_ms, end_ms)| {
+            .map(|MillisRange { start_ms, end_ms }| {
                 validate_range(start_ms, end_ms)?;
                 let range = MillisRange { start_ms, end_ms };
                 Ok(PlannedQuery {
@@ -1313,11 +1398,11 @@ impl<S: ProfileStore> ShardedQuery for TreeShards<'_, S> {
 
 struct SeriesShards<'a, S: ProfileStore> {
     engine: &'a FlameEngine<S>,
-    query: (&'a str, &'a str, &'a str),
+    query: ProfileSelection<'a>,
     group_by: &'a [String],
     step: Time,
     agg: SeriesAgg,
-    anchor: (i64, i64),
+    anchor: MillisRange,
     call_sites: &'a [String],
 }
 
@@ -1326,14 +1411,14 @@ impl<S: ProfileStore> ShardedQuery for SeriesShards<'_, S> {
     type Output = Vec<Series>;
 
     fn tenant(&self) -> &str {
-        self.query.0
+        self.query.tenant
     }
 
     fn shard_cache_key(&self, range: MillisRange) -> String {
         format!(
             "profiles-series\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}\0{:?}",
-            self.query.1,
-            self.query.2,
+            self.query.profile_type,
+            self.query.label_selector,
             self.group_by,
             self.step,
             self.agg,
@@ -1349,8 +1434,11 @@ impl<S: ProfileStore> ShardedQuery for SeriesShards<'_, S> {
             .select_series_with_anchor(
                 self.query,
                 self.group_by,
-                (self.step, self.agg),
-                (range.start_ms, range.end_ms),
+                SeriesSampling {
+                    step: self.step,
+                    aggregation: self.agg,
+                },
+                range,
                 self.call_sites,
                 self.anchor,
             )
@@ -1358,22 +1446,34 @@ impl<S: ProfileStore> ShardedQuery for SeriesShards<'_, S> {
     }
 
     fn merge_shards(&self, results: Vec<Vec<Series>>) -> Vec<Series> {
-        let mut merged: BTreeMap<Vec<(String, String)>, BTreeMap<i64, f64>> = BTreeMap::new();
+        let mut merged: BTreeMap<Vec<crate::ProfileLabel>, BTreeMap<i64, f64>> = BTreeMap::new();
         for series in results {
             for item in series {
                 let points = merged.entry(item.labels).or_default();
-                for (timestamp, value) in item.points {
-                    *points.entry(timestamp).or_default() += value;
+                for point in item.points {
+                    *points.entry(point.timestamp_ms).or_default() += point.value;
                 }
             }
         }
-        merged
-            .into_iter()
-            .map(|(labels, points)| Series {
-                labels,
-                points: points.into_iter().collect(),
-            })
-            .collect()
+        let label_sets = merged.keys().cloned().collect::<Vec<_>>();
+        let mut output = Vec::with_capacity(label_sets.len());
+        for labels in label_sets {
+            let Some(mut values_by_timestamp) = merged.remove(&labels) else {
+                continue;
+            };
+            let timestamps = values_by_timestamp.keys().copied().collect::<Vec<_>>();
+            let mut points = Vec::with_capacity(timestamps.len());
+            for timestamp_ms in timestamps {
+                if let Some(value) = values_by_timestamp.remove(&timestamp_ms) {
+                    points.push(crate::SamplePoint {
+                        timestamp_ms,
+                        value,
+                    });
+                }
+            }
+            output.push(Series { labels, points });
+        }
+        output
     }
 }
 

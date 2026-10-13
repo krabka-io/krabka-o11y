@@ -60,7 +60,7 @@ mod tests {
         samples: Vec<LabeledValue>,
         op: ScalarMathOp,
         bounds: &[f64],
-    ) -> Vec<(String, f64)> {
+    ) -> Vec<crate::planner::JobValue> {
         let plan = plan_scalar_math(samples, op, bounds).await.unwrap();
         let batches = plan
             .ctx
@@ -86,13 +86,13 @@ mod tests {
                 .downcast_ref::<Float64ArrayT>()
                 .unwrap();
             for row in 0..batch.num_rows() {
-                got.push((
-                    std::str::from_utf8(l.value(row)).unwrap().to_owned(),
-                    value.value(row),
-                ));
+                got.push(crate::planner::JobValue {
+                    job: std::str::from_utf8(l.value(row)).unwrap().to_owned(),
+                    value: value.value(row),
+                });
             }
         }
-        got.sort_by(|a, b| a.0.cmp(&b.0));
+        got.sort_by(|a, b| a.job.cmp(&b.job));
         got
     }
 
@@ -104,22 +104,33 @@ mod tests {
             &[],
         )
         .await;
-        assert2::assert!(got == vec![("x".to_string(), 3.0), ("y".to_string(), 4.0)]);
+        assert2::assert!(
+            got == vec![
+                crate::planner::JobValue {
+                    job: "x".to_string(),
+                    value: 3.0
+                },
+                crate::planner::JobValue {
+                    job: "y".to_string(),
+                    value: 4.0
+                },
+            ]
+        );
     }
 
     #[tokio::test]
     async fn sqrt_negative_preserves_nan_row() {
         let got = run(vec![labeled("m", "x", -1.0)], ScalarMathOp::Sqrt, &[]).await;
         check!(got.len() == 1);
-        check!(got[0].0 == "x");
-        check!(got[0].1.is_nan());
+        check!(got[0].job == "x");
+        check!(got[0].value.is_nan());
     }
 
     #[tokio::test]
     async fn genuine_nan_value_survives() {
         let got = run(vec![labeled("m", "x", f64::NAN)], ScalarMathOp::Sin, &[]).await;
         assert2::assert!(got.len() == 1);
-        assert2::assert!(got[0].1.is_nan());
+        assert2::assert!(got[0].value.is_nan());
     }
 
     #[tokio::test]
@@ -130,13 +141,29 @@ mod tests {
             &[0.0, 3.0],
         )
         .await;
-        assert2::assert!(got == vec![("x".to_string(), 3.0), ("y".to_string(), 0.0)]);
+        assert2::assert!(
+            got == vec![
+                crate::planner::JobValue {
+                    job: "x".to_string(),
+                    value: 3.0
+                },
+                crate::planner::JobValue {
+                    job: "y".to_string(),
+                    value: 0.0
+                },
+            ]
+        );
     }
 
     #[tokio::test]
     async fn round_uses_to_nearest_bound() {
         let got = run(vec![labeled("m", "x", 12.0)], ScalarMathOp::Round, &[5.0]).await;
-        assert2::assert!(got == vec![("x".to_string(), 10.0)]);
+        assert2::assert!(
+            got == vec![crate::planner::JobValue {
+                job: "x".to_string(),
+                value: 10.0
+            }]
+        );
     }
 }
 

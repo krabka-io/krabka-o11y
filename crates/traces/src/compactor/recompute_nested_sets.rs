@@ -1,7 +1,7 @@
 use super::{
     RecordBatch, SCOL_CHILD_COUNT, SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID,
     SCOL_PARENT_SPAN_ID, SCOL_SPAN_ID, SCOL_TRACE_ID, TracesError, fixed_column,
-    replace_int32_columns,
+    replace_int32_columns, replace_int32_columns::Int32ColumnReplacement,
 };
 use crate::span::nested_set::{BatchNestedSets, SpanIdColumns, batch_nested_sets};
 
@@ -21,19 +21,34 @@ pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, 
     // every trace, so counting from it would credit one trace's root with
     // another's children.
     let mut child_count = vec![0_i32; batch.num_rows()];
-    for (&parent_row, kids) in &children {
+    for &parent_row in children.keys() {
         if left[parent_row] != 0 {
-            child_count[parent_row] = i32::try_from(kids.len()).unwrap_or(i32::MAX);
+            let child_rows = children
+                .get(&parent_row)
+                .expect("the parent row came from the child map");
+            child_count[parent_row] = i32::try_from(child_rows.len()).unwrap_or(i32::MAX);
         }
     }
 
     replace_int32_columns(
         batch,
         &[
-            (SCOL_NESTED_SET_LEFT, left),
-            (SCOL_NESTED_SET_RIGHT, right),
-            (SCOL_PARENT_ID, parent_id),
-            (SCOL_CHILD_COUNT, child_count),
+            Int32ColumnReplacement {
+                name: SCOL_NESTED_SET_LEFT,
+                values: left,
+            },
+            Int32ColumnReplacement {
+                name: SCOL_NESTED_SET_RIGHT,
+                values: right,
+            },
+            Int32ColumnReplacement {
+                name: SCOL_PARENT_ID,
+                values: parent_id,
+            },
+            Int32ColumnReplacement {
+                name: SCOL_CHILD_COUNT,
+                values: child_count,
+            },
         ],
     )
 }

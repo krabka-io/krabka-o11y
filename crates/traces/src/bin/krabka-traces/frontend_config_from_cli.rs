@@ -13,10 +13,10 @@ pub(crate) fn frontend_config_from_cli(
     cli: &Cli,
     listen_addr: SocketAddr,
 ) -> Result<FrontendConfig, Box<dyn std::error::Error + Send + Sync>> {
-    let (querier_scheme, querier_addrs) = parse_querier_addrs(&cli.querier_url)?;
+    let queriers = parse_querier_addrs(&cli.querier_url)?;
     Ok(FrontendConfig {
-        querier_addrs,
-        querier_scheme,
+        querier_addrs: queriers.addresses,
+        querier_scheme: queriers.scheme,
         target_per_job: cli.target_bytes_per_job,
         max_concurrency: cli.query_queue_depth.max(1),
         hot_frontier_ns: cli.live_frontier.unwrap_or(UnixNano(0)).0,

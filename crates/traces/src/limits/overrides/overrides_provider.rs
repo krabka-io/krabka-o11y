@@ -12,6 +12,12 @@ pub struct OverridesProvider {
     api_path: Option<std::sync::Arc<std::path::PathBuf>>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApiOverrideSnapshot {
+    pub raw: Value,
+    pub version: String,
+}
+
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 struct VersionedOverride {
     raw: Value,
@@ -64,12 +70,10 @@ impl OverridesProvider {
     pub fn from_yaml_with_defaults(yaml: &str, defaults: Limits) -> Result<Self, OverridesError> {
         let file = serde_yaml::from_str::<RuntimeFile>(yaml)
             .map_err(|err| OverridesError::Yaml(err.to_string()))?;
-        let per_tenant = file
-            .overrides
-            .iter()
-            .map(|(tenant, limits)| (tenant, merge_limits(&defaults, limits)))
-            .map(|(tenant, limits)| (tenant.clone(), limits))
-            .collect();
+        let mut per_tenant = HashMap::new();
+        for entry in &file.overrides {
+            per_tenant.insert(entry.0.clone(), merge_limits(&defaults, entry.1));
+        }
 
         Ok(Self {
             defaults,
@@ -106,13 +110,16 @@ impl OverridesProvider {
     }
 
     #[must_use]
-    pub fn api_get(&self, tenant: &str) -> Option<(Value, String)> {
+    pub fn api_get(&self, tenant: &str) -> Option<ApiOverrideSnapshot> {
         let _ = self.refresh_api();
         self.api
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(tenant)
-            .map(|entry| (entry.raw.clone(), entry.version.to_string()))
+            .map(|entry| ApiOverrideSnapshot {
+                raw: entry.raw.clone(),
+                version: entry.version.to_string(),
+            })
     }
 
     #[must_use]
@@ -124,7 +131,9 @@ impl OverridesProvider {
             return false;
         };
         raw.as_object().is_some_and(|raw| {
-            raw.iter().any(|(key, value)| {
+            raw.iter().any(|entry| {
+                let key = entry.0;
+                let value = entry.1;
                 !value.is_null()
                     && file
                         .get(key)
@@ -179,7 +188,7 @@ impl OverridesProvider {
         &self,
         tenant: &str,
         patch: Value,
-    ) -> Result<(Value, String), OverrideMutationError> {
+    ) -> Result<ApiOverrideSnapshot, OverrideMutationError> {
         let _file_lock = self.lock_api_file()?;
         let mut api = self
             .api
@@ -207,7 +216,10 @@ impl OverridesProvider {
             *api = previous;
             return Err(error);
         }
-        Ok((raw, version.to_string()))
+        Ok(ApiOverrideSnapshot {
+            raw,
+            version: version.to_string(),
+        })
     }
 
     /// Delete a tenant's API overrides when `expected` matches its version.
@@ -334,7 +346,9 @@ fn merge_json(target: &mut Value, patch: Value) {
                 *target = Value::Object(Map::default());
             }
             let target = target.as_object_mut().expect("target was made an object");
-            for (key, value) in patch {
+            for entry in patch {
+                let key = entry.0;
+                let value = entry.1;
                 if value.is_null() {
                     target.remove(&key);
                 } else {

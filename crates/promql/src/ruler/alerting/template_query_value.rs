@@ -23,19 +23,14 @@ pub(crate) fn template_query_value(result: QueryResult) -> TemplateData {
             .into_iter()
             .map(|sample| {
                 let value = template_sample_value(sample.value);
-                TemplateData::Sample(Arc::new(BTreeMap::from([
-                    (
-                        "Labels".to_owned(),
-                        TemplateData::ByteLabels(
-                            sample
-                                .labels
-                                .iter()
-                                .map(|(name, value)| (name.clone(), value.as_bytes().to_vec()))
-                                .collect(),
-                        ),
-                    ),
-                    ("Value".to_owned(), value),
-                ])))
+                let mut labels = BTreeMap::new();
+                for pair in sample.labels.iter() {
+                    labels.insert(pair.name.to_string(), pair.value.as_bytes().to_vec());
+                }
+                let mut row = BTreeMap::new();
+                row.insert("Labels".to_owned(), TemplateData::ByteLabels(labels));
+                row.insert("Value".to_owned(), value);
+                TemplateData::Sample(Arc::new(row))
             })
             .collect::<Vec<_>>()
             .into(),
@@ -68,18 +63,20 @@ mod tests {
         let first = first.snapshot();
         let second = second.snapshot();
         assert2::assert!(first.len() == 1 && second.len() == 1);
-        let (TemplateData::Sample(first), TemplateData::Sample(second)) = (&first[0], &second[0])
-        else {
+        let TemplateData::Sample(first_sample) = &first[0] else {
+            panic!("expected source sample pointer")
+        };
+        let TemplateData::Sample(second_sample) = &second[0] else {
             panic!("expected source sample pointers")
         };
         assert2::assert!(
-            matches!(first.get("Labels"), Some(TemplateData::ByteLabels(labels)) if labels.is_empty())
+            matches!(first_sample.get("Labels"), Some(TemplateData::ByteLabels(labels)) if labels.is_empty())
         );
         assert2::assert!(
-            matches!(first.get("Value"), Some(TemplateData::Float(value)) if value.to_bits() == 7.0_f64.to_bits())
+            matches!(first_sample.get("Value"), Some(TemplateData::Float(value)) if value.to_bits() == 7.0_f64.to_bits())
         );
-        assert2::assert!(!Arc::ptr_eq(first, second));
-        assert2::assert!(Arc::ptr_eq(first, &Arc::clone(first)));
+        assert2::assert!(!Arc::ptr_eq(first_sample, second_sample));
+        assert2::assert!(Arc::ptr_eq(first_sample, &Arc::clone(first_sample)));
         for result in [
             QueryResult::RangeMatrix(Vec::new()),
             QueryResult::Str {
@@ -94,35 +91,16 @@ mod tests {
     }
     #[test]
     fn query_histograms_preserve_fields_buckets_and_mixed_vector_rows() {
-        use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
-        let histogram = NativeHistogram {
-            schema: 0,
-            is_float: true,
-            reset_hint: ResetHint::Gauge,
-            zero_threshold: 0.001,
-            zero_count: 2.0,
-            count: 8.0,
-            sum: 10.0,
-            positive_spans: vec![BucketSpan {
-                offset: 0,
-                length: 2,
-            }],
-            positive_counts: vec![1.0, 2.0],
-            negative_spans: vec![BucketSpan {
-                offset: 0,
-                length: 2,
-            }],
-            negative_counts: vec![1.0, 2.0],
-            custom_values: None,
-            start_timestamp_ms: Some(123),
-        };
+        use krabka_metrics::ResetHint;
+        let histogram =
+            crate::test_support::two_sided_histogram(8.0, 10.0, ResetHint::Gauge, Some(123));
         let samples = [
             crate::SampleValue::Histogram(histogram),
             crate::SampleValue::Float(7.0),
         ]
         .into_iter()
         .map(|value| crate::InstantSample {
-            labels: crate::PromqlLabels::from_pairs([(
+            labels: crate::PromqlLabels::from_pairs([krabka_metrics::MetricLabelPair::new(
                 "raw",
                 crate::PromqlString::from(vec![0xff]),
             )]),
@@ -145,37 +123,62 @@ mod tests {
         };
         let histogram = histogram.snapshot();
         assert2::assert!(histogram.counter_reset_hint == 3 && histogram.schema == 0);
-        assert2::assert!(
-            (
-                histogram.count.to_bits(),
-                histogram.sum.to_bits(),
-                histogram.zero_count.to_bits()
-            ) == (8.0_f64.to_bits(), 10.0_f64.to_bits(), 2.0_f64.to_bits())
-        );
+        assert2::assert!(histogram.count.to_bits() == 8.0_f64.to_bits());
+        assert2::assert!(histogram.sum.to_bits() == 10.0_f64.to_bits());
+        assert2::assert!(histogram.zero_count.to_bits() == 2.0_f64.to_bits());
         assert2::assert!(
             histogram.positive_buckets == [1.0, 2.0] && histogram.negative_buckets == [1.0, 2.0]
         );
         assert2::assert!(histogram.custom_values.is_empty());
-        let buckets = histogram
-            .display_buckets
-            .iter()
-            .map(|bucket| {
-                (
-                    bucket.lower,
-                    bucket.upper,
-                    bucket.count,
-                    bucket.boundary_rule,
-                )
-            })
-            .collect::<Vec<_>>();
+        #[derive(PartialEq)]
+        struct BucketExpectation {
+            lower: f64,
+            upper: f64,
+            count: f64,
+            boundary_rule: u8,
+        }
+        let mut buckets = Vec::new();
+        for bucket in &histogram.display_buckets {
+            buckets.push(BucketExpectation {
+                lower: bucket.lower,
+                upper: bucket.upper,
+                count: bucket.count,
+                boundary_rule: bucket.boundary_rule,
+            });
+        }
         assert2::assert!(
             buckets
                 == [
-                    (-2.0, -1.0, 2.0, 1),
-                    (-1.0, -0.5, 1.0, 1),
-                    (-0.001, 0.001, 2.0, 3),
-                    (0.5, 1.0, 1.0, 0),
-                    (1.0, 2.0, 2.0, 0)
+                    BucketExpectation {
+                        lower: -2.0,
+                        upper: -1.0,
+                        count: 2.0,
+                        boundary_rule: 1
+                    },
+                    BucketExpectation {
+                        lower: -1.0,
+                        upper: -0.5,
+                        count: 1.0,
+                        boundary_rule: 1
+                    },
+                    BucketExpectation {
+                        lower: -0.001,
+                        upper: 0.001,
+                        count: 2.0,
+                        boundary_rule: 3
+                    },
+                    BucketExpectation {
+                        lower: 0.5,
+                        upper: 1.0,
+                        count: 1.0,
+                        boundary_rule: 0
+                    },
+                    BucketExpectation {
+                        lower: 1.0,
+                        upper: 2.0,
+                        count: 2.0,
+                        boundary_rule: 0
+                    },
                 ]
         );
         let format = krabka_logql::LineFormat::new_prometheus(r#"{{ $h := query "hist" | first | value }}{{ $h.Count }}/{{ $h.Sum }}/{{ $h.Schema }}/{{ $h.UsesCustomBuckets }}/{{ $h.String }}/{{ query "hist" | first | label "raw" }}"#).unwrap();

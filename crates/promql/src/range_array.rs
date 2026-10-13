@@ -52,6 +52,6 @@ use histogram_columns::HistogramColumns;
 pub use histogram_span_view::HistogramSpanView;
 pub use histogram_view::HistogramView;
 use list_offsets::list_offsets;
-pub use range_array_type::RangeArray;
+pub use range_array_type::{PairedRangeArrays, RangeArray, RangeWindow};
 use span_list_value::span_list_value;
 use struct_column::struct_column;

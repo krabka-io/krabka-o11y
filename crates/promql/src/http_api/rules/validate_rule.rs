@@ -3,13 +3,10 @@ use super::{ApiError, parse_promql, yaml_optional_string};
 pub(crate) fn validate_rule(rule: &serde_yaml::Value) -> Result<(), ApiError> {
     let has_record = yaml_optional_string(rule, "record").is_some();
     let has_alert = yaml_optional_string(rule, "alert").is_some();
-    match (has_record, has_alert) {
-        (true, true) | (false, false) => {
-            return Err(ApiError::bad_data(
-                "rule must contain exactly one of record or alert",
-            ));
-        }
-        _ => {}
+    if has_record == has_alert {
+        return Err(ApiError::bad_data(
+            "rule must contain exactly one of record or alert",
+        ));
     }
     let expr = yaml_optional_string(rule, "expr")
         .filter(|expr| !expr.is_empty())

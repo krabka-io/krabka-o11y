@@ -21,9 +21,9 @@ pub(crate) async fn build_object_store(
     metrics: ObjectStoreMetrics,
 ) -> Result<ConfiguredObjectStore, Box<dyn std::error::Error + Send + Sync>> {
     let parsed = url::Url::parse(url)?;
-    let (store, prefix) = object_store::parse_url_opts(&parsed, std::env::vars())?;
+    let parsed_store = object_store::parse_url_opts(&parsed, std::env::vars())?;
     let store = MeteredObjectStore::wrap(
-        std::sync::Arc::new(PrefixStore::new(store, prefix)),
+        std::sync::Arc::new(PrefixStore::new(parsed_store.0, parsed_store.1)),
         metrics,
     );
     verify_object_store_semantics(

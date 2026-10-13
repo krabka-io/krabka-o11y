@@ -4,7 +4,7 @@ use super::{Exemplar, SeriesSample};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Series {
     pub name: String,
-    pub labels: Vec<(String, String)>,
+    pub labels: Vec<krabka_traceql::MetricLabel>,
     pub sample: SeriesSample,
     pub exemplars: Vec<Exemplar>,
     pub timestamp_ms: i64,

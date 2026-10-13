@@ -1,7 +1,7 @@
 use super::{
-    BTreeMap, BTreeSet, BlockStoreError, BloomShard, ByteReader, Result, ShardBlockBounds,
-    ShardedTraceBloom, TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats,
-    dictionary_entry,
+    BTreeMap, BTreeSet, BlockStoreError, BloomShard, Result, ShardBlockBounds, ShardedTraceBloom,
+    TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats, decode_shard_header,
+    dictionary_entry, read_shard_block_prefix,
 };
 
 /// Decodes one shard payload into the tenant it names and its block records.
@@ -15,10 +15,7 @@ use super::{
 /// Returns [`BlockStoreError::InvalidBlock`] when the bytes are not a trace
 /// shard of the current format version, when they end early, or when a bloom
 /// they carry could not be used without panicking.
-pub(crate) fn decode_trace_shard(
-    object_key: &str,
-    bytes: &[u8],
-) -> Result<(String, Vec<TraceBlockStats>)> {
+pub(crate) fn decode_trace_shard(object_key: &str, bytes: &[u8]) -> Result<Vec<TraceBlockStats>> {
     decode(bytes).map_err(|error| match error {
         BlockStoreError::InvalidBlock(message) => {
             BlockStoreError::InvalidBlock(format!("trace index shard `{object_key}`: {message}"))
@@ -27,37 +24,26 @@ pub(crate) fn decode_trace_shard(
     })
 }
 
-fn decode(bytes: &[u8]) -> Result<(String, Vec<TraceBlockStats>)> {
-    let mut reader = ByteReader::new(bytes);
-    if reader.take(TRACE_SHARD_MAGIC.len(), "the magic")? != TRACE_SHARD_MAGIC {
-        return Err(BlockStoreError::InvalidBlock(
-            "is not a trace index shard".to_string(),
-        ));
-    }
-    let version = reader.u8("the format version")?;
-    if version != TRACE_SHARD_FORMAT_VERSION {
-        return Err(BlockStoreError::InvalidBlock(format!(
-            "is format version {version}, expected {TRACE_SHARD_FORMAT_VERSION}"
-        )));
-    }
-
-    let tenant = reader.string("the tenant name")?;
-
-    let dictionary_len = reader.count("dictionary entries")?;
-    let mut dictionary = Vec::with_capacity(dictionary_len);
-    for _ in 0..dictionary_len {
-        dictionary.push(reader.string("a dictionary entry")?);
-    }
+fn decode(bytes: &[u8]) -> Result<Vec<TraceBlockStats>> {
+    let header = decode_shard_header(
+        bytes,
+        &TRACE_SHARD_MAGIC,
+        TRACE_SHARD_FORMAT_VERSION,
+        "a trace index shard",
+    )?;
+    let mut reader = header.reader;
+    let dictionary = header.dictionary;
 
     let block_count = reader.count("blocks")?;
     let mut blocks = Vec::with_capacity(block_count);
     let mut previous_min = 0_i64;
     for _ in 0..block_count {
-        let object_key = reader.string("a block object key")?;
-        let ShardBlockBounds { min_ts, max_ts } = reader.block_bounds(previous_min)?;
+        let block = read_shard_block_prefix(&mut reader, previous_min)?;
+        let object_key = block.object_key;
+        let ShardBlockBounds { min_ts, max_ts } = block.bounds;
         previous_min = min_ts;
-        let row_count = reader.count_unbounded("a block row count")?;
-        let level = reader.block_level()?;
+        let row_count = block.row_count;
+        let level = block.level;
 
         let tag_name_count = reader.count("tag names of a block")?;
         let mut tag_names = BTreeSet::new();
@@ -126,5 +112,5 @@ fn decode(bytes: &[u8]) -> Result<(String, Vec<TraceBlockStats>)> {
         ));
     }
 
-    Ok((tenant, blocks))
+    Ok(blocks)
 }

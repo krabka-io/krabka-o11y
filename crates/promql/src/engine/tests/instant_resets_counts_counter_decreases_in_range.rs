@@ -3,8 +3,8 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_resets_counts_counter_decreases_in_range() {
     let store = SeriesFixture::new(labels(&[
-        ("__name__", "http_requests_total"),
-        ("job", "api"),
+        crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+        crate::test_support::TestLabelPair::new("job", "api"),
     ]))
     .at(0_i64, 0.0)
     .at(60_000, 5.0)

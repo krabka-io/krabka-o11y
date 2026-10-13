@@ -11,6 +11,12 @@ mod tests {
 
     use super::{escape_object_path_segment, unescape_object_path_segment};
 
+    struct EscapeCase {
+        name: &'static str,
+        raw: &'static str,
+        escaped: &'static str,
+    }
+
     #[test]
     fn an_ordinary_name_passes_through_unchanged() {
         for name in [
@@ -37,23 +43,68 @@ mod tests {
     #[test]
     fn every_byte_the_object_store_rewrites_is_escaped_first() {
         let cases = [
-            ("separator", "a/b", "a!2Fb"),
-            ("backslash", "a\\b", "a!5Cb"),
-            ("star", "a*b", "a!2Ab"),
-            ("percent", "a%b", "a!25b"),
-            ("marker", "a!b", "a!21b"),
-            ("control", "a\u{1}b", "a!01b"),
-            ("space", "a b", "a!20b"),
-            ("non ASCII", "\u{e9}", "!C3!A9"),
-            ("traversal", "../other", "..!2Fother"),
-            ("trailing traversal", "a/..", "a!2F.."),
+            EscapeCase {
+                name: "separator",
+                raw: "a/b",
+                escaped: "a!2Fb",
+            },
+            EscapeCase {
+                name: "backslash",
+                raw: "a\\b",
+                escaped: "a!5Cb",
+            },
+            EscapeCase {
+                name: "star",
+                raw: "a*b",
+                escaped: "a!2Ab",
+            },
+            EscapeCase {
+                name: "percent",
+                raw: "a%b",
+                escaped: "a!25b",
+            },
+            EscapeCase {
+                name: "marker",
+                raw: "a!b",
+                escaped: "a!21b",
+            },
+            EscapeCase {
+                name: "control",
+                raw: "a\u{1}b",
+                escaped: "a!01b",
+            },
+            EscapeCase {
+                name: "space",
+                raw: "a b",
+                escaped: "a!20b",
+            },
+            EscapeCase {
+                name: "non ASCII",
+                raw: "\u{e9}",
+                escaped: "!C3!A9",
+            },
+            EscapeCase {
+                name: "traversal",
+                raw: "../other",
+                escaped: "..!2Fother",
+            },
+            EscapeCase {
+                name: "trailing traversal",
+                raw: "a/..",
+                escaped: "a!2F..",
+            },
         ];
 
-        for (name, raw, escaped) in cases {
-            check!(escape_object_path_segment(raw) == escaped, "{name}");
+        for case in cases {
             check!(
-                unescape_object_path_segment(escaped) == Some(raw.into()),
-                "{name}"
+                escape_object_path_segment(case.raw) == case.escaped,
+                "{}",
+                case.name
+            );
+            check!(
+                unescape_object_path_segment(case.escaped) == Some(case.raw.into()),
+                "{}",
+                case.name
             );
         }
     }

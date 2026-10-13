@@ -1,20 +1,41 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct ScalarInputSample {
+    instance: &'static str,
+    value: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn scalar_function_converts_single_sample_vector_and_nan_otherwise() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "single_value"), ("instance", "a")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "single_value"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
+        ]),
         10_000,
         7.0,
     );
-    for (instance, value) in [("a", 1.0), ("b", 2.0)] {
+    for sample in [
+        ScalarInputSample::builder()
+            .instance("a")
+            .value(1.0)
+            .build(),
+        ScalarInputSample::builder()
+            .instance("b")
+            .value(2.0)
+            .build(),
+    ] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "multi_value"), ("instance", instance)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "multi_value"),
+                crate::test_support::TestLabelPair::new("instance", sample.instance),
+            ]),
             10_000,
-            value,
+            sample.value,
         );
     }
 

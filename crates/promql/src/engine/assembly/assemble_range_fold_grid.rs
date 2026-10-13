@@ -55,10 +55,9 @@ pub(crate) fn assemble_range_fold_grid(
                     "range-fold projection missing Int64 eval timestamp column".to_string(),
                 )
             })?;
-        for (row, fp) in row_fingerprints(batch, labels_from_rate_batch)
-            .into_iter()
-            .enumerate()
-        {
+        let fingerprints = row_fingerprints(batch, labels_from_rate_batch);
+        for row in 0..fingerprints.len() {
+            let fp = fingerprints[row];
             if values.is_null(row) {
                 continue;
             }
@@ -72,7 +71,8 @@ pub(crate) fn assemble_range_fold_grid(
         }
     }
     let mut out: Vec<Vec<GridPoint>> = Vec::with_capacity(steps.len());
-    for (index, step) in steps.into_iter().enumerate() {
+    for index in 0..steps.len() {
+        let step = std::mem::take(&mut steps[index]);
         let offset = i64::try_from(index)
             .ok()
             .and_then(|index| index.checked_mul(report_grid.step))
@@ -80,7 +80,11 @@ pub(crate) fn assemble_range_fold_grid(
         let ts_ms = report_grid.start.saturating_add(offset);
         out.push(
             step.into_iter()
-                .map(|(fp, value)| GridPoint { fp, ts_ms, value })
+                .map(|entry| GridPoint {
+                    fp: entry.0,
+                    ts_ms,
+                    value: entry.1,
+                })
                 .collect(),
         );
     }

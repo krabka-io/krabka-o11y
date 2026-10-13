@@ -1,6 +1,6 @@
 use super::{
     Arc, ArrayRef, BooleanBuilder, Float64Builder, HistogramCodecError, Int8Builder, Int64Builder,
-    NativeHistogram, RecordBatch, UInt64Builder, append_f64_list, append_spans,
+    NativeHistogramRow, RecordBatch, UInt64Builder, append_f64_list, append_spans,
     native_histogram_schema, new_f64_list_builder, new_span_list_builder,
     validate_span_count_consistency,
 };
@@ -10,9 +10,10 @@ use super::{
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
 pub fn encode_native_histograms(
-    rows: &[(u64, i64, NativeHistogram)],
+    rows: &[NativeHistogramRow],
 ) -> Result<RecordBatch, HistogramCodecError> {
-    for (_, _, histogram) in rows {
+    for row in rows {
+        let histogram = &row.hist;
         validate_span_count_consistency(&histogram.positive_spans, &histogram.positive_counts)?;
         validate_span_count_consistency(&histogram.negative_spans, &histogram.negative_counts)?;
     }
@@ -33,9 +34,10 @@ pub fn encode_native_histograms(
     let mut custom_values = new_f64_list_builder();
     let mut start_timestamps = Int64Builder::new();
 
-    for (fingerprint, timestamp, histogram) in rows {
-        fingerprints.append_value(*fingerprint);
-        timestamps.append_value(*timestamp);
+    for row in rows {
+        let histogram = &row.hist;
+        fingerprints.append_value(row.fingerprint);
+        timestamps.append_value(row.timestamp_ms);
         schemas.append_value(histogram.schema);
         is_floats.append_value(histogram.is_float);
         reset_hints.append_value(histogram.reset_hint.as_i8());

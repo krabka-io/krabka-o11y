@@ -2,21 +2,20 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use axum::{
     Router,
-    body::Bytes,
+    body::{Body, Bytes},
     extract::State,
     http::{HeaderMap, StatusCode, Uri, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{Host, IntoContainerPort, WaitFor},
-    runners::AsyncRunner,
-};
 use tokio::sync::Mutex;
 
-mod captured_requests;
+#[path = "support/client_harness.rs"]
+mod client_harness;
 
-use self::captured_requests::expect_seen;
+use client_harness::{
+    AsyncRunner as _, GenericImage, ImageExt, WaitFor, expect_seen, spawn_capture_server,
+};
+use testcontainers::core::{Host, IntoContainerPort};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -91,15 +90,11 @@ pyroscope.scrape "self" {
 #[ignore = "requires Docker and the digest-pinned Alloy image"]
 async fn alloy_sends_every_public_protocol_without_a_krabka_adapter() -> TestResult {
     let seen = Arc::new(Mutex::new(BTreeSet::new()));
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
-    let oracle_url = format!(
-        "http://host.docker.internal:{}",
-        listener.local_addr()?.port()
-    );
     let app = Router::new()
         .fallback(capture)
         .with_state(Arc::clone(&seen));
-    tokio::spawn(async move { axum::serve(listener, app).await });
+    let oracle_port = spawn_capture_server(app).await?;
+    let oracle_url = format!("http://host.docker.internal:{oracle_port}");
 
     let tag = std::env::var("KRABKA_ALLOY_IMAGE_TAG")
         .expect("KRABKA_ALLOY_IMAGE_TAG is set by `bazel test --config=docker`");
@@ -180,7 +175,11 @@ async fn capture(
     };
     seen.lock().await.insert(signal);
     if signal == "profiles" {
-        ([(CONTENT_TYPE, content_type)], Bytes::new()).into_response()
+        Response::builder()
+            .header(CONTENT_TYPE, content_type)
+            .body(Body::empty())
+            .expect("build profile capture response")
+            .into_response()
     } else {
         StatusCode::NO_CONTENT.into_response()
     }

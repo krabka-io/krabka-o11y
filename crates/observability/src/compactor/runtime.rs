@@ -3,21 +3,21 @@ use tracing::Instrument;
 use crate::{
     Arc, BTreeMap, BlockDescriptor, BlockIndex, BlockStoreError, BufferedLogHotTail,
     CancellationToken, CompactionError, CompactionFrontierStoreError, CompactorRunError, Instant,
-    JoinHandle, KafkaWalCompactionError, KafkaWalRecord, LabelIndex, LastCompactedPosition,
-    LogCompactionIndexOutput, LogWalConsumer, ObjectPath, ObjectStore, Offset, OverridesProvider,
-    PartitionIndex, ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceRuntimeError,
-    SharedCompactionFrontier, SharedLogDeleteRequests, SystemTime, TenantCompactionIndexCache,
-    Time, TimeExt, UNIX_EPOCH, WalPosition, active_log_delete_filters_from_requests,
-    active_log_delete_tenants, build_compactor_configured_object_store,
+    JoinHandle, KafkaWalCompactionError, KafkaWalHeader, KafkaWalRecord, LabelIndex,
+    LastCompactedPosition, LogCompactionIndexOutput, LogWalConsumer, ObjectPath, ObjectStore,
+    Offset, OverridesProvider, PartitionIndex, ServiceConfig, ServiceDependencies,
+    ServiceRuntimeError, SharedCompactionFrontier, SharedLogDeleteRequests, SystemTime,
+    TenantCompactionIndexCache, Time, TimeExt, UNIX_EPOCH, WalPosition,
+    active_log_delete_filters_from_requests, active_log_delete_tenants,
+    build_compactor_configured_object_store,
     compact_wal_records_to_object_store_with_delete_filters_and_index_output,
-    compactor_delete_requests_for_config, compactor_object_store, decode_kafka_wal_record_envelope,
-    limits_provider_for_config, materialize_delete_requests_in_existing_local_manifest_blocks,
+    compactor::frontier::CompactionWriteOptions, compactor_object_store,
+    decode_kafka_wal_record_envelope, limits_provider_for_config,
     materialize_delete_requests_in_existing_object_store_blocks,
     poll_accumulated_log_compaction_records, read_compaction_frontier_from_object_store, sleep,
     sweep_expired_log_blocks, validate_compactor_policy, wal_compaction_chunks,
     wal_record_time_range, write_compaction_frontier_to_object_store,
 };
-
 mod advance_and_persist_compaction_frontier;
 mod block_store_error_is_object_store;
 mod compact_next_kafka_wal_batch_to_object_store_from_existing_manifest;
@@ -50,6 +50,7 @@ pub(crate) use next_compactor_object_store_backoff::next_compactor_object_store_
 pub(crate) use refresh_compaction_frontier_and_prune::refresh_compaction_frontier_and_prune;
 #[cfg_attr(test, mutants::skip)]
 pub use run_compactor_until_shutdown::run_compactor_until_shutdown;
+pub use set_remote_parent_from_wal_records::set_remote_parent_from_kafka_headers;
 pub(crate) use set_remote_parent_from_wal_records::set_remote_parent_from_wal_records;
 pub(crate) use shared_compaction_frontier_from_object_store::shared_compaction_frontier_from_object_store;
 #[cfg_attr(test, mutants::skip)]

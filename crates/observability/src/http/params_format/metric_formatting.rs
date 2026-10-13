@@ -66,5 +66,5 @@ pub(crate) use has_word_boundary::has_word_boundary;
 pub(crate) use indent_logql_lines::indent_logql_lines;
 pub(crate) use split_top_level_arithmetic_query::split_top_level_arithmetic_query;
 pub(crate) use split_top_level_comparison_query::split_top_level_comparison_query;
-pub(crate) use split_top_level_query::split_top_level_query;
+pub(crate) use split_top_level_query::{TopLevelQuerySplit, split_top_level_query};
 pub(crate) use split_top_level_set_query::split_top_level_set_query;

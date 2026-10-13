@@ -14,23 +14,19 @@ pub async fn encode_registry(registry: &SharedRegistry) -> Result<String, std::f
 async fn export(
     axum::extract::State(registry): axum::extract::State<SharedRegistry>,
 ) -> axum::response::Response {
-    use axum::response::IntoResponse as _;
-
     match encode_registry(&registry).await {
-        Ok(text) => (
-            axum::http::StatusCode::OK,
-            [(
+        Ok(text) => axum::response::Response::builder()
+            .status(axum::http::StatusCode::OK)
+            .header(
                 "content-type",
                 "application/openmetrics-text; version=1.0.0; charset=utf-8",
-            )],
-            text,
-        )
-            .into_response(),
-        Err(e) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("encode: {e}"),
-        )
-            .into_response(),
+            )
+            .body(text.into())
+            .expect("metrics response headers are valid"),
+        Err(e) => axum::response::Response::builder()
+            .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+            .body(format!("encode: {e}").into())
+            .expect("error response status is valid"),
     }
 }
 

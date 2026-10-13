@@ -32,6 +32,12 @@ mod tests {
 
     use super::{RuleEvaluationOutcome, ServiceMetrics};
 
+    struct QueryMetricCase {
+        route: &'static str,
+        outcome: RequestOutcome,
+        elapsed: krabka_units::Time,
+    }
+
     #[tokio::test]
     async fn registry_has_metrics_prefix_and_all_metrics() {
         let m = ServiceMetrics::new();
@@ -45,17 +51,37 @@ mod tests {
             elapsed: millis(12),
         });
         m.ingest.wal_append_failures.inc();
-        for (route, outcome, elapsed) in [
-            ("query", RequestOutcome::Ok, millis(50)),
-            ("query_range", RequestOutcome::Error, millis(1500)),
-            ("series", RequestOutcome::Ok, millis(200)),
-            ("labels", RequestOutcome::Ok, millis(100)),
-            ("label_values", RequestOutcome::Ok, millis(100)),
+        for case in [
+            QueryMetricCase {
+                route: "query",
+                outcome: RequestOutcome::Ok,
+                elapsed: millis(50),
+            },
+            QueryMetricCase {
+                route: "query_range",
+                outcome: RequestOutcome::Error,
+                elapsed: millis(1500),
+            },
+            QueryMetricCase {
+                route: "series",
+                outcome: RequestOutcome::Ok,
+                elapsed: millis(200),
+            },
+            QueryMetricCase {
+                route: "labels",
+                outcome: RequestOutcome::Ok,
+                elapsed: millis(100),
+            },
+            QueryMetricCase {
+                route: "label_values",
+                outcome: RequestOutcome::Ok,
+                elapsed: millis(100),
+            },
         ] {
             m.record_query(QueryRequest {
-                route,
-                outcome,
-                elapsed,
+                route: case.route,
+                outcome: case.outcome,
+                elapsed: case.elapsed,
             });
         }
         // Engine-eval metrics: an instant success, a range failure, and some

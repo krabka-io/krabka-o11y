@@ -7,7 +7,7 @@ pub(crate) async fn build_querier_router(
 ) -> Result<axum::Router, Box<dyn std::error::Error + Send + Sync>> {
     let readiness = krabka_observability::RoleReadiness::new();
     let gates = BlockStoreGates::register(&readiness);
-    let (router, ..) = build_querier_router_with_live(
+    let router_build = build_querier_router_with_live(
         cli,
         ServiceMetrics::new(),
         None,
@@ -17,6 +17,7 @@ pub(crate) async fn build_querier_router(
         &InternalClient::default(),
     )
     .await?;
+    let router = router_build.router;
     Ok(
         krabka_observability::server_security::authenticate_requests(
             router,

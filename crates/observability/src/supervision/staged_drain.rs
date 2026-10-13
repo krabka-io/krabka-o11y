@@ -45,11 +45,11 @@ impl StagedDrain {
     /// An empty drain whose stages each get `stage_timeout` to finish.
     #[must_use]
     pub fn new(stage_timeout: Time) -> Self {
-        let (exits, exited) = tokio::sync::mpsc::unbounded_channel();
+        let channel = tokio::sync::mpsc::unbounded_channel();
         Self {
             stages: Vec::new(),
-            exits,
-            exited,
+            exits: channel.0,
+            exited: channel.1,
             draining: Arc::new(AtomicBool::new(false)),
             stage_timeout,
         }

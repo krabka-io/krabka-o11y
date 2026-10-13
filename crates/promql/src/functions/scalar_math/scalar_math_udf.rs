@@ -1,4 +1,5 @@
 use super::{
+    super::{UdfArityPhase, check_udf_arity},
     Arc, Array, ArrayRef, ColumnarValue, DataFusionError, DataType, DfResult, Float64Array,
     Float64Builder, ScalarFunctionArgs, ScalarMathOp, ScalarUDF, ScalarUDFImpl, Signature,
     Volatility, scalar_f64,
@@ -41,26 +42,23 @@ impl ScalarUDFImpl for ScalarMathUdf {
     /// Every argument is a `Float64` column: the value plus any leading scalars.
     /// This method checks the arity and returns the types unchanged.
     fn coerce_types(&self, arg_types: &[DataType]) -> DfResult<Vec<DataType>> {
-        if arg_types.len() != self.op.arity() {
-            return Err(DataFusionError::Plan(format!(
-                "{} expects {} arguments, got {}",
-                self.name(),
-                self.op.arity(),
-                arg_types.len()
-            )));
-        }
+        check_udf_arity(
+            self.name(),
+            self.op.arity(),
+            arg_types.len(),
+            UdfArityPhase::Plan,
+        )?;
         Ok(arg_types.to_vec())
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DfResult<ColumnarValue> {
         let name = self.name();
-        if args.args.len() != self.op.arity() {
-            return Err(DataFusionError::Execution(format!(
-                "{name} expects {} arguments, got {}",
-                self.op.arity(),
-                args.args.len()
-            )));
-        }
+        check_udf_arity(
+            name,
+            self.op.arity(),
+            args.args.len(),
+            UdfArityPhase::Execution,
+        )?;
         let rows = args.number_rows;
         let params = self.op.scalar_param_count();
 

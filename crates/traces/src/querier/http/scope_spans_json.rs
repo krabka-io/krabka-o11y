@@ -7,10 +7,10 @@ pub(crate) fn scope_spans_json(trace_id: [u8; 16], input_spans: Vec<&SpanRef>) -
     Value::Array(
         groups
             .into_iter()
-            .map(|((name, version, attributes), spans)| {
+            .map(|group| {
                 json!({
-                    "scope": instrumentation_scope_json(&name, &version, &attributes),
-                    "spans": spans
+                    "scope": instrumentation_scope_json(&group.key.name, &group.key.version, &group.key.attributes),
+                    "spans": group.spans
                         .into_iter()
                         .map(|span| trace_span_json(trace_id, span))
                         .collect::<Vec<_>>(),

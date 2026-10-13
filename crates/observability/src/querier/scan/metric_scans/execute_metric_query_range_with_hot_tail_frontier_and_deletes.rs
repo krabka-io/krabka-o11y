@@ -1,9 +1,9 @@
 use std::borrow::Borrow;
 
 use super::{
-    BTreeMap, FsPath, HotTailMetricSamples, LabelIndex, MetricQuery, QueryError, QueryHotTail,
-    SessionContext, StreamPlan, TimeRange, Value, checked_eval_times, loki_matrix_response,
-    metric_plan_scan_sql, metric_samples_from_batches, register_log_blocks,
+    BTreeMap, FsPath, HotTailMetricSamples, MetricRangeScanRequest, PreparedMetricRangeScan,
+    QueryError, SessionContext, Value, loki_matrix_response, metric_plan_scan_sql,
+    metric_samples_from_batches, register_log_blocks,
 };
 use crate::WalLogRecord;
 
@@ -11,14 +11,16 @@ pub(crate) async fn execute_metric_query_range_with_hot_tail_frontier_and_delete
     R: Borrow<WalLogRecord> + Sync,
 >(
     root: impl AsRef<FsPath>,
-    plan: &StreamPlan,
-    query: &MetricQuery,
-    label_index: &LabelIndex,
-    evaluation: (TimeRange, i64),
-    hot_tail: QueryHotTail<'_, R>,
+    request: MetricRangeScanRequest<'_, R>,
 ) -> Result<Value, QueryError> {
-    let (eval_range, step_ns) = evaluation;
-    let eval_times = checked_eval_times(eval_range, step_ns)?;
+    let PreparedMetricRangeScan {
+        plan,
+        query,
+        label_index,
+        eval_range,
+        eval_times,
+        hot_tail,
+    } = request.prepare()?;
     let mut samples = BTreeMap::new();
 
     if !plan.blocks.is_empty() && !plan.fingerprints.is_empty() {

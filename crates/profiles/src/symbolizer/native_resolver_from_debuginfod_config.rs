@@ -1,7 +1,4 @@
-use super::{
-    AddressFallbackResolver, Arc, ChainedResolver, DebuginfodConfig, DebuginfodResolver,
-    FileSystemResolver, NativeResolver,
-};
+use super::{ChainedResolver, DebuginfodConfig, configured_debuginfod_resolvers};
 
 /// Build the native resolver chain with explicit debuginfod resource policy.
 ///
@@ -13,12 +10,7 @@ pub fn native_resolver_from_debuginfod_config(
     urls: Vec<String>,
     config: DebuginfodConfig,
 ) -> Result<ChainedResolver, crate::ProfilesError> {
-    let mut resolvers: Vec<Arc<dyn NativeResolver>> = vec![Arc::new(FileSystemResolver::default())];
-    if !urls.is_empty() {
-        let debuginfod =
-            DebuginfodResolver::with_config(urls, config).map_err(crate::ProfilesError::Block)?;
-        resolvers.push(Arc::new(debuginfod));
-    }
-    resolvers.push(Arc::new(AddressFallbackResolver));
-    Ok(ChainedResolver::new(resolvers))
+    Ok(ChainedResolver::new(configured_debuginfod_resolvers(
+        urls, config, true,
+    )?))
 }

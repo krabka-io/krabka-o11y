@@ -7,7 +7,7 @@ mod enforce;
 mod overrides;
 mod overrides_api_response;
 
-pub use enforce::{IngestEnforcer, QueryEnforcer};
+pub use enforce::{IngestEnforcer, MeasuredAttribute, QueryEnforcer};
 pub use overrides::{OverrideMutationError, OverridesError, OverridesProvider};
 pub(crate) use overrides_api_response::overrides_api_response;
 

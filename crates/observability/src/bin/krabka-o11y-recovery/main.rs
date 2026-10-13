@@ -35,6 +35,12 @@ mod failure;
 mod refuse_missing_parts;
 mod refuse_overlapping_stores;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RecoveryPart {
+    name: String,
+    url: String,
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "krabka-o11y-recovery")]
 struct Cli {
@@ -60,7 +66,7 @@ enum Command {
         /// One part as `NAME=URL`. A `file://` URL names a local directory,
         /// such as the logs `data-root`.
         #[arg(long = "part", value_parser = parse_part, required = true)]
-        parts: Vec<(String, String)>,
+        parts: Vec<RecoveryPart>,
         /// A deployment part that this deployment does not have, such as
         /// `profiles` when no profiles role runs. The cut records it.
         #[arg(long = "omit-part")]
@@ -85,7 +91,7 @@ enum Command {
         backup_url: String,
         /// One target as `NAME=URL`, for every part of the cut.
         #[arg(long = "part", value_parser = parse_part, required = true)]
-        parts: Vec<(String, String)>,
+        parts: Vec<RecoveryPart>,
         #[arg(long)]
         apply: bool,
         #[arg(long)]
@@ -142,7 +148,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             refuse_missing_parts(
                 &parts
                     .iter()
-                    .map(|(name, _)| name.as_str())
+                    .map(|part| part.name.as_str())
                     .collect::<Vec<_>>(),
                 &omitted_parts,
             )?;
@@ -193,31 +199,42 @@ async fn run(cli: Cli) -> Result<(), String> {
     }
 }
 
-fn parse_part(raw: &str) -> Result<(String, String), String> {
-    let (name, url) = raw.split_once('=').ok_or("expected NAME=URL")?;
+fn parse_part(raw: &str) -> Result<RecoveryPart, String> {
+    let separator = raw.find('=').ok_or("expected NAME=URL")?;
+    let name = &raw[..separator];
+    let url = &raw[separator + 1..];
     if name.is_empty() || url.is_empty() {
         return Err("expected NAME=URL".into());
     }
-    Ok((name.into(), url.into()))
+    Ok(RecoveryPart {
+        name: name.into(),
+        url: url.into(),
+    })
 }
 
 /// Opens every part store, after it refuses parts that overlap each other or
 /// the backup set. No store is opened when one overlaps.
-fn open_parts(parts: &[(String, String)], backup_url: &str) -> Result<Vec<DeploymentPart>, String> {
-    let stores = std::iter::once(("the backup set".to_string(), backup_url))
-        .chain(
-            parts
-                .iter()
-                .map(|(name, url)| (format!("part `{name}`"), url.as_str())),
-        )
-        .collect::<Vec<_>>();
+fn open_parts(parts: &[RecoveryPart], backup_url: &str) -> Result<Vec<DeploymentPart>, String> {
+    let stores = std::iter::once(refuse_overlapping_stores::StoreComparison {
+        label: "the backup set".to_string(),
+        raw: backup_url,
+    })
+    .chain(
+        parts
+            .iter()
+            .map(|part| refuse_overlapping_stores::StoreComparison {
+                label: format!("part `{}`", part.name),
+                raw: part.url.as_str(),
+            }),
+    )
+    .collect::<Vec<_>>();
     refuse_overlapping_stores(&stores)?;
     parts
         .iter()
-        .map(|(name, url)| {
+        .map(|part| {
             Ok(DeploymentPart {
-                name: name.clone(),
-                store: open_store(url)?,
+                name: part.name.clone(),
+                store: open_store(&part.url)?,
             })
         })
         .collect()
@@ -236,8 +253,10 @@ fn open_store(raw: &str) -> Result<Arc<dyn ObjectStore>, String> {
             LocalFileSystem::new_with_prefix(path).map_err(|error| error.to_string())?,
         ));
     }
-    let (store, prefix) = parse_url_opts(&url, std::env::vars())
+    let store_config = parse_url_opts(&url, std::env::vars())
         .map_err(|error| format!("object-store configuration failed: {error}"))?;
+    let store = store_config.0;
+    let prefix = store_config.1;
     if prefix.as_ref().is_empty() {
         return Ok(Arc::from(store));
     }
@@ -275,27 +294,50 @@ mod tests {
 
     use super::*;
 
+    struct PartParseCase {
+        raw: &'static str,
+        expected: Option<RecoveryPart>,
+    }
+
+    struct PartOverlapCase {
+        parts: Vec<RecoveryPart>,
+        backup: &'static str,
+        accepted: bool,
+    }
+
     #[test]
     fn parts_are_named_urls() {
         let cases = [
-            (
-                "metrics=s3://krabka-metrics",
-                Ok(("metrics", "s3://krabka-metrics")),
-            ),
-            ("metrics", Err(())),
-            ("=s3://krabka-metrics", Err(())),
-            ("metrics=", Err(())),
+            PartParseCase {
+                raw: "metrics=s3://krabka-metrics",
+                expected: Some(RecoveryPart {
+                    name: "metrics".into(),
+                    url: "s3://krabka-metrics".into(),
+                }),
+            },
+            PartParseCase {
+                raw: "metrics",
+                expected: None,
+            },
+            PartParseCase {
+                raw: "=s3://krabka-metrics",
+                expected: None,
+            },
+            PartParseCase {
+                raw: "metrics=",
+                expected: None,
+            },
         ];
-        for (raw, expected) in cases {
-            let parsed = parse_part(raw);
-            check!(
-                parsed
-                    .as_ref()
-                    .map(|(name, url)| (name.as_str(), url.as_str()))
-                    .map_err(|_| ())
-                    == expected,
-                "{raw}"
-            );
+        for case in cases {
+            match case.expected {
+                Some(expected) => {
+                    let actual = parse_part(case.raw).expect("valid part");
+                    check!(actual == expected, "{}", case.raw);
+                }
+                _ => {
+                    check!(parse_part(case.raw).is_err(), "{}", case.raw);
+                }
+            }
         }
     }
 
@@ -313,32 +355,51 @@ mod tests {
                 .expect("file URL")
                 .to_string()
         };
-        let part = |name: &str, dir: &str| (name.to_string(), url(dir));
+        let part = |name: &str, dir: &str| RecoveryPart {
+            name: name.to_string(),
+            url: url(dir),
+        };
         let cases = [
-            (vec![part("metrics", "metrics")], "backup", true),
-            (vec![part("metrics", "backup")], "backup", false),
-            (vec![part("metrics", "backup/metrics")], "backup", false),
-            (
-                vec![part("metrics", "target"), part("logs", "target")],
-                "backup",
-                false,
-            ),
-            (
-                vec![part("metrics", "target"), part("logs", "target/logs")],
-                "backup",
-                false,
-            ),
+            PartOverlapCase {
+                parts: vec![part("metrics", "metrics")],
+                backup: "backup",
+                accepted: true,
+            },
+            PartOverlapCase {
+                parts: vec![part("metrics", "backup")],
+                backup: "backup",
+                accepted: false,
+            },
+            PartOverlapCase {
+                parts: vec![part("metrics", "backup/metrics")],
+                backup: "backup",
+                accepted: false,
+            },
+            PartOverlapCase {
+                parts: vec![part("metrics", "target"), part("logs", "target")],
+                backup: "backup",
+                accepted: false,
+            },
+            PartOverlapCase {
+                parts: vec![part("metrics", "target"), part("logs", "target/logs")],
+                backup: "backup",
+                accepted: false,
+            },
         ];
-        for (parts, backup, accepted) in cases {
+        for case in cases {
             check!(
-                open_parts(&parts, &url(backup)).is_ok() == accepted,
-                "{parts:?}"
+                open_parts(&case.parts, &url(case.backup)).is_ok() == case.accepted,
+                "{:?}",
+                case.parts
             );
             // A refused command opens no store, so it creates no directory.
-            if !accepted {
-                for (_, dir) in &parts {
-                    let path = Url::parse(dir).expect("URL").to_file_path().expect("path");
-                    check!(!path.exists(), "{dir}");
+            if !case.accepted {
+                for part in &case.parts {
+                    let path = Url::parse(&part.url)
+                        .expect("URL")
+                        .to_file_path()
+                        .expect("path");
+                    check!(!path.exists(), "{}", part.url);
                 }
             }
         }
@@ -405,17 +466,25 @@ mod tests {
         };
         check!(omitted_parts == ["profiles"]);
         check!(
-            broker.names
-                == DeploymentKafkaNames {
-                    metrics_wal_topic: "metrics-a".into(),
-                    metrics_ha_tracker_topic: "ha-a".into(),
-                    metrics_ruler_state_topic: "ruler-a".into(),
-                    logs_wal_topic: "logs-a".into(),
-                    profiles_wal_topic: "profiles-a".into(),
-                    metrics_block_builder_group_id: "metrics-builder-a".into(),
-                    logs_wal_group_id: "logs-builder-a".into(),
-                    profiles_block_builder_group_id: "profiles-builder-a".into(),
-                }
+            (
+                broker.names.metrics_wal_topic.as_str(),
+                broker.names.metrics_ha_tracker_topic.as_str(),
+                broker.names.metrics_ruler_state_topic.as_str(),
+                broker.names.logs_wal_topic.as_str(),
+                broker.names.profiles_wal_topic.as_str(),
+                broker.names.metrics_block_builder_group_id.as_str(),
+                broker.names.logs_wal_group_id.as_str(),
+                broker.names.profiles_block_builder_group_id.as_str(),
+            ) == (
+                "metrics-a",
+                "ha-a",
+                "ruler-a",
+                "logs-a",
+                "profiles-a",
+                "metrics-builder-a",
+                "logs-builder-a",
+                "profiles-builder-a",
+            )
         );
     }
 

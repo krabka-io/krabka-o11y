@@ -8,6 +8,24 @@ use serde_json::{Value, json};
 /// The width of one window in the coefficient of variation.
 pub const CV_WINDOW: Duration = Duration::from_secs(5);
 
+#[derive(Clone, Copy, Debug)]
+struct LatencySample {
+    at: Duration,
+    micros: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LatencyWindow {
+    total_micros: u64,
+    count: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowCoefficientOfVariation {
+    pub coefficient: Option<f64>,
+    pub windows: usize,
+}
+
 /// Every latency one phase observed, with when in the phase it started.
 ///
 /// The samples are kept whole rather than bucketed. A bucketed quantile moves
@@ -15,7 +33,7 @@ pub const CV_WINDOW: Duration = Duration::from_secs(5);
 /// a step that large.
 #[derive(Clone, Debug, Default)]
 pub struct Latencies {
-    samples: Vec<(Duration, u64)>,
+    samples: Vec<LatencySample>,
 }
 
 impl Latencies {
@@ -23,7 +41,7 @@ impl Latencies {
     /// `elapsed`.
     pub fn observe(&mut self, at: Duration, elapsed: Duration) {
         let micros = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
-        self.samples.push((at, micros));
+        self.samples.push(LatencySample { at, micros });
     }
 
     pub fn count(&self) -> u64 {
@@ -32,7 +50,7 @@ impl Latencies {
 
     /// The nearest-rank quantile `numerator / denominator`, in microseconds.
     pub fn quantile(&self, numerator: usize, denominator: usize) -> Option<u64> {
-        let mut sorted: Vec<u64> = self.samples.iter().map(|(_, micros)| *micros).collect();
+        let mut sorted: Vec<u64> = self.samples.iter().map(|sample| sample.micros).collect();
         sorted.sort_unstable();
         let rank = (sorted.len() * numerator).div_ceil(denominator).max(1);
         sorted.get(rank - 1).copied()
@@ -43,44 +61,53 @@ impl Latencies {
     ///
     /// A phase shorter than two windows has no variation to report, so the
     /// value is `None` and the gate treats the phase as unmeasured noise.
-    pub fn window_cv(&self) -> (Option<f64>, usize) {
-        let mut windows: Vec<(u64, u64)> = Vec::new();
-        for (at, micros) in &self.samples {
-            let index = usize::try_from(at.as_millis() / CV_WINDOW.as_millis()).unwrap_or(0);
+    pub fn window_cv(&self) -> WindowCoefficientOfVariation {
+        let mut windows: Vec<LatencyWindow> = Vec::new();
+        for sample in &self.samples {
+            let index = usize::try_from(sample.at.as_millis() / CV_WINDOW.as_millis()).unwrap_or(0);
             if windows.len() <= index {
-                windows.resize(index + 1, (0, 0));
+                windows.resize(index + 1, LatencyWindow::default());
             }
-            windows[index].0 = windows[index].0.saturating_add(*micros);
-            windows[index].1 += 1;
+            windows[index].total_micros = windows[index].total_micros.saturating_add(sample.micros);
+            windows[index].count += 1;
         }
         let means: Vec<f64> = windows
             .iter()
-            .filter(|(_, count)| *count > 0)
-            .map(|(sum, count)| as_f64(*sum) / as_f64(*count))
+            .filter(|window| window.count > 0)
+            .map(|window| as_f64(window.total_micros) / as_f64(window.count))
             .collect();
         if means.len() < 2 {
-            return (None, means.len());
+            return WindowCoefficientOfVariation {
+                coefficient: None,
+                windows: means.len(),
+            };
         }
         let n = as_f64(u64::try_from(means.len()).unwrap_or(u64::MAX));
         let mean = means.iter().sum::<f64>() / n;
         if mean <= 0.0 {
-            return (None, means.len());
+            return WindowCoefficientOfVariation {
+                coefficient: None,
+                windows: means.len(),
+            };
         }
         let variance = means.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / n;
-        (Some(variance.sqrt() / mean), means.len())
+        WindowCoefficientOfVariation {
+            coefficient: Some(variance.sqrt() / mean),
+            windows: means.len(),
+        }
     }
 
     /// The report form: count, quantiles in microseconds, and the window CV.
     pub fn summary(&self) -> Value {
-        let (cv, windows) = self.window_cv();
+        let variation = self.window_cv();
         json!({
             "count": self.count(),
             "p50": self.quantile(50, 100),
             "p95": self.quantile(95, 100),
             "p99": self.quantile(99, 100),
             "max": self.quantile(1, 1),
-            "cv": cv,
-            "cv_windows": windows,
+            "cv": variation.coefficient,
+            "cv_windows": variation.windows,
             "cv_window_seconds": CV_WINDOW.as_secs(),
         })
     }

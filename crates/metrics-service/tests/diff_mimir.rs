@@ -31,7 +31,10 @@ use opentelemetry_proto::tonic::metrics::v1::{
     Gauge, Metric, MetricsData, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric,
     number_data_point,
 };
-use promql_corpus::{CorpusCase, CorpusSeries, KnownDivergence, PromqlCorpus, QueryKind};
+use promql_corpus::{
+    CorpusCase, CorpusFloatSample, CorpusLabel, CorpusSeries, KnownDivergence, PromqlCorpus,
+    QueryKind,
+};
 use prost::Message as _;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -40,6 +43,23 @@ use testcontainers::{
     core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
+
+struct NumericScenario {
+    name: &'static str,
+    values: Vec<f64>,
+    operations: Vec<&'static str>,
+}
+
+struct EngineEndpoint<'a> {
+    base: &'a str,
+    prefix: &'a str,
+}
+
+struct OverflowExpectation<'a> {
+    endpoint: EngineEndpoint<'a>,
+    shards: Option<&'a str>,
+    value: String,
+}
 
 // `normalize` lives with the hand-written seed dataset that `grafana_integration`
 // asserts against; `promql_corpus` reaches it through this module. Nothing else
@@ -360,32 +380,54 @@ async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
 
 fn last_operation_numeric_corpus(at_ms: i64) -> PromqlCorpus {
     let mut corpus = PromqlCorpus::default();
-    for (scenario, values, operations) in [
-        ("overflow", vec![f64::MAX, f64::MAX], &["avg"][..]),
-        (
-            "cancellation",
-            vec![f64::MAX, -f64::MAX],
-            &["sum", "avg"][..],
-        ),
-        ("compensation", vec![1e16, 1.0, 1.0], &["sum", "avg"][..]),
+    for scenario in [
+        NumericScenario {
+            name: "overflow",
+            values: vec![f64::MAX, f64::MAX],
+            operations: vec!["avg"],
+        },
+        NumericScenario {
+            name: "cancellation",
+            values: vec![f64::MAX, -f64::MAX],
+            operations: vec!["sum", "avg"],
+        },
+        NumericScenario {
+            name: "compensation",
+            values: vec![1e16, 1.0, 1.0],
+            operations: vec!["sum", "avg"],
+        },
     ] {
-        for (index, value) in values.into_iter().enumerate() {
+        for entry in scenario.values.into_iter().enumerate() {
+            let index = entry.0;
+            let value = entry.1;
             corpus.series.push(CorpusSeries {
                 labels: vec![
-                    ("__name__".into(), "mimir_last_operation_fold".into()),
-                    ("scenario".into(), scenario.into()),
-                    ("series".into(), index.to_string()),
+                    CorpusLabel {
+                        name: "__name__".into(),
+                        value: "mimir_last_operation_fold".into(),
+                    },
+                    CorpusLabel {
+                        name: "scenario".into(),
+                        value: scenario.name.into(),
+                    },
+                    CorpusLabel {
+                        name: "series".into(),
+                        value: index.to_string(),
+                    },
                 ],
-                floats: vec![(at_ms, value)],
+                floats: vec![CorpusFloatSample {
+                    timestamp_ms: at_ms,
+                    value,
+                }],
                 ..Default::default()
             });
         }
-        for operation in operations {
+        for operation in scenario.operations {
             corpus.cases.push(CorpusCase {
-                name: format!("last_operation_numeric:{scenario}:{operation}"),
+                name: format!("last_operation_numeric:{}:{operation}", scenario.name),
                 promql: format!(
                     "{operation}(last_over_time(mimir_last_operation_fold{{scenario={}}}[30m]))",
-                    quoted(scenario)
+                    quoted(scenario.name)
                 ),
                 kind: QueryKind::Instant { time: at_ms },
                 expects_failure: false,
@@ -407,10 +449,12 @@ async fn verify_numeric_seed(engines: EnginePair<'_>, corpus: &PromqlCorpus) -> 
         let selector = series
             .labels
             .iter()
-            .map(|(name, value)| format!("{name}={}", quoted(value)))
+            .map(|label| format!("{}={}", label.name, quoted(&label.value)))
             .collect::<Vec<_>>()
             .join(",");
-        let (at_ms, value) = series.floats[0];
+        let sample = series.floats[0];
+        let at_ms = sample.timestamp_ms;
+        let value = sample.value;
         let case = CorpusCase {
             name: format!("last_operation_numeric:seed:{{{selector}}}"),
             promql: format!("{{{selector}}}"),
@@ -422,7 +466,10 @@ async fn verify_numeric_seed(engines: EnginePair<'_>, corpus: &PromqlCorpus) -> 
                 .trim_end_matches('0')
                 .trim_end_matches('.'),
         )?;
-        let labels: BTreeMap<_, _> = series.labels.iter().cloned().collect();
+        let mut labels = serde_json::Map::new();
+        for label in &series.labels {
+            labels.insert(label.name.clone(), Value::String(label.value.clone()));
+        }
         let expected = serde_json::json!({
             "status": "success",
             "data": {
@@ -430,17 +477,26 @@ async fn verify_numeric_seed(engines: EnginePair<'_>, corpus: &PromqlCorpus) -> 
                 "result": [{"metric": labels, "value": [timestamp, value.to_string()]}]
             }
         });
-        for (base, prefix) in [(krabka_base, ""), (mimir_base, "/prometheus")] {
+        for endpoint in [
+            EngineEndpoint {
+                base: krabka_base,
+                prefix: "",
+            },
+            EngineEndpoint {
+                base: mimir_base,
+                prefix: "/prometheus",
+            },
+        ] {
             PromApi {
-                base,
-                prefix,
+                base: endpoint.base,
+                prefix: endpoint.prefix,
                 tenant: Some(TENANT),
             }
             .wait_for_query_ready(client, &case.promql, at_ms)
             .await?;
             let response = PromApi {
-                base,
-                prefix,
+                base: endpoint.base,
+                prefix: endpoint.prefix,
                 tenant: Some(TENANT),
             }
             .query_case(client, &case)
@@ -448,7 +504,8 @@ async fn verify_numeric_seed(engines: EnginePair<'_>, corpus: &PromqlCorpus) -> 
             let mismatch = promql_corpus::compare_case(&case, &response, &expected);
             assert!(
                 mismatch.is_none(),
-                "{base}: {}",
+                "{}: {}",
+                endpoint.base,
                 mismatch.unwrap_or_default()
             );
         }
@@ -481,15 +538,36 @@ async fn verify_numeric_overflow(engines: EnginePair<'_>, corpus: &PromqlCorpus)
     )?;
     // Keep the default sharded disagreement, but do not let its exemption hide
     // an incorrect finite result or an unrelated upstream error.
-    for (base, prefix, shards, value) in [
-        (krabka_base, "", None, f64::MAX.to_string()),
-        (mimir_base, "/prometheus", Some("0"), f64::MAX.to_string()),
-        (mimir_base, "/prometheus", None, "+Inf".into()),
+    for expected in [
+        OverflowExpectation {
+            endpoint: EngineEndpoint {
+                base: krabka_base,
+                prefix: "",
+            },
+            shards: None,
+            value: f64::MAX.to_string(),
+        },
+        OverflowExpectation {
+            endpoint: EngineEndpoint {
+                base: mimir_base,
+                prefix: "/prometheus",
+            },
+            shards: Some("0"),
+            value: f64::MAX.to_string(),
+        },
+        OverflowExpectation {
+            endpoint: EngineEndpoint {
+                base: mimir_base,
+                prefix: "/prometheus",
+            },
+            shards: None,
+            value: "+Inf".into(),
+        },
     ] {
         let mut request = client
             .get(query_url(
-                base,
-                &format!("{prefix}/api/v1/query"),
+                expected.endpoint.base,
+                &format!("{}/api/v1/query", expected.endpoint.prefix),
                 &[
                     QueryParam {
                         name: "query",
@@ -502,23 +580,27 @@ async fn verify_numeric_overflow(engines: EnginePair<'_>, corpus: &PromqlCorpus)
                 ],
             ))
             .header("X-Scope-OrgID", TENANT);
-        if let Some(shards) = shards {
+        if let Some(shards) = expected.shards {
             request = request.header("Sharding-Control", shards);
         }
         let response = request.send().await?;
         assert!(
             response.status() == StatusCode::OK,
-            "{base}, shards={shards:?}"
+            "{}, shards={:?}",
+            expected.endpoint.base,
+            expected.shards
         );
         let response: Value = response.json().await?;
-        let expected = serde_json::json!({
+        let expected_json = serde_json::json!({
             "status": "success",
-            "data": {"resultType": "vector", "result": [{"metric": {}, "value": [timestamp, value]}]}
+            "data": {"resultType": "vector", "result": [{"metric": {}, "value": [timestamp, expected.value]}]}
         });
-        let mismatch = promql_corpus::compare_case(case, &response, &expected);
+        let mismatch = promql_corpus::compare_case(case, &response, &expected_json);
         assert!(
             mismatch.is_none(),
-            "{base}, shards={shards:?}: {}",
+            "{}, shards={:?}: {}",
+            expected.endpoint.base,
+            expected.shards,
             mismatch.unwrap_or_default()
         );
     }
@@ -659,9 +741,21 @@ struct IngestResponse {
     body: Bytes,
 }
 
+#[derive(Clone, Copy)]
+struct RequestHeader<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
+impl<'a> RequestHeader<'a> {
+    fn new(name: &'a str, value: &'a str) -> Self {
+        Self { name, value }
+    }
+}
+
 struct IngestCase<'a> {
     path: &'a str,
-    request_headers: &'a [(&'a str, &'a str)],
+    request_headers: &'a [RequestHeader<'a>],
     response_headers: &'a [&'a str],
     metric: &'a str,
     expected_value: &'a str,
@@ -701,8 +795,8 @@ async fn verify_ingest_contract(engines: EnginePair<'_>) -> TestResult {
         IngestCase {
             path: "/api/v1/push",
             request_headers: &[
-                ("Content-Type", "application/x-protobuf"),
-                ("Content-Encoding", "snappy"),
+                RequestHeader::new("Content-Type", "application/x-protobuf"),
+                RequestHeader::new("Content-Encoding", "snappy"),
             ],
             response_headers: &[],
             metric: "m11_remote_write_v1",
@@ -738,12 +832,12 @@ async fn verify_ingest_contract(engines: EnginePair<'_>) -> TestResult {
         IngestCase {
             path: "/api/v1/push",
             request_headers: &[
-                (
+                RequestHeader::new(
                     "Content-Type",
                     "application/x-protobuf;proto=io.prometheus.write.v2.Request",
                 ),
-                ("Content-Encoding", "snappy"),
-                ("X-Prometheus-Remote-Write-Version", "2.0.0"),
+                RequestHeader::new("Content-Encoding", "snappy"),
+                RequestHeader::new("X-Prometheus-Remote-Write-Version", "2.0.0"),
             ],
             response_headers: &[
                 "x-prometheus-remote-write-samples-written",
@@ -784,7 +878,7 @@ async fn verify_ingest_contract(engines: EnginePair<'_>) -> TestResult {
         engines,
         IngestCase {
             path: "/otlp/v1/metrics",
-            request_headers: &[("Content-Type", "application/x-protobuf")],
+            request_headers: &[RequestHeader::new("Content-Type", "application/x-protobuf")],
             response_headers: &["content-type", "content-length", "x-content-type-options"],
             metric: "m11_otlp_gauge",
             expected_value: "3",
@@ -800,7 +894,7 @@ async fn verify_ingest_contract(engines: EnginePair<'_>) -> TestResult {
         engines,
         IngestCase {
             path: "/api/v1/push/influx/write?precision=ms",
-            request_headers: &[("Content-Type", "text/plain")],
+            request_headers: &[RequestHeader::new("Content-Type", "text/plain")],
             response_headers: &["content-type", "content-length"],
             metric: "m11_influx",
             expected_value: "4",
@@ -942,15 +1036,15 @@ async fn post_ingest(
     client: &reqwest::Client,
     base: &str,
     path: &str,
-    headers: &[(&str, &str)],
+    headers: &[RequestHeader<'_>],
     body: &[u8],
 ) -> TestResult<IngestResponse> {
     let mut request = client
         .post(format!("{base}{path}"))
         .header("X-Scope-OrgID", TENANT)
         .body(body.to_vec());
-    for (name, value) in headers {
-        request = request.header(*name, *value);
+    for header in headers {
+        request = request.header(header.name, header.value);
     }
     let response = request.send().await?;
     Ok(IngestResponse {

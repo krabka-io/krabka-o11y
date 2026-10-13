@@ -22,10 +22,14 @@ pub(crate) fn requested_log_level(
     // non-empty body it would merely append a trailing `&`, which the
     // parameter parser skips. Dropping them the other way, to `false`, does
     // change the answer: a level named only in the query string is lost.
-    let raw_params = match (raw_query, body_query.is_empty()) {
-        (Some(raw_query), true) if !raw_query.is_empty() => raw_query.to_owned(),
-        (Some(raw_query), false) if !raw_query.is_empty() => format!("{body_query}&{raw_query}"),
-        _ => body_query,
+    let raw_params = if let Some(raw_query) = raw_query.filter(|query| !query.is_empty()) {
+        if body_query.is_empty() {
+            raw_query.to_owned()
+        } else {
+            format!("{body_query}&{raw_query}")
+        }
+    } else {
+        body_query
     };
     parse_log_level_param(Some(&raw_params))
 }

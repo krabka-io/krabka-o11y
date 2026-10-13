@@ -102,12 +102,12 @@ where
                 let tenant = tenant.as_ref();
                 let entries = store.load_all(tenant);
                 let mut keys = BTreeSet::new();
-                for (key, value) in entries {
+                for entry in entries {
                     if generator
-                        .restore_edge_checkpoint(tenant, &key, &value)
+                        .restore_edge_checkpoint(tenant, &entry.key, &entry.value)
                         .is_ok()
                     {
-                        keys.insert(key);
+                        keys.insert(entry.key);
                     }
                 }
                 checkpoint_keys.insert(tenant.to_string(), keys);
@@ -237,17 +237,21 @@ where
             .lock()
             .expect("metrics generator checkpoint key mutex poisoned");
 
-        for (tenant, entries) in checkpoints {
-            let current: BTreeSet<Vec<u8>> = entries.iter().map(|(key, _)| key.clone()).collect();
-            for (key, value) in entries {
-                store.save(&tenant, &key, &value);
+        for checkpoint in checkpoints {
+            let current: BTreeSet<Vec<u8>> = checkpoint
+                .entries
+                .iter()
+                .map(|entry| entry.key.clone())
+                .collect();
+            for entry in checkpoint.entries {
+                store.save(&checkpoint.tenant, &entry.key, &entry.value);
             }
-            if let Some(old_keys) = previous.get(&tenant) {
+            if let Some(old_keys) = previous.get(&checkpoint.tenant) {
                 for old_key in old_keys.difference(&current) {
-                    store.save(&tenant, old_key, b"");
+                    store.save(&checkpoint.tenant, old_key, b"");
                 }
             }
-            previous.insert(tenant, current);
+            previous.insert(checkpoint.tenant, current);
         }
     }
 
@@ -326,6 +330,16 @@ mod tests {
 
     fn service() -> MetricsGenService<MockSpanSource, MockRemoteWriteSink> {
         service_at(&MockClock::new(0))
+    }
+
+    async fn service_with_pending_failed_write()
+    -> MetricsGenService<MockSpanSource, MockRemoteWriteSink> {
+        let svc = service();
+        svc.source
+            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0; 8])]);
+        svc.poll_once(100).await.unwrap();
+        svc.sink.fail_next();
+        svc
     }
 
     // A service with default config and empty mocks, reading time from `clock`.
@@ -433,11 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_does_not_commit_when_write_fails() {
-        let svc = service();
-        svc.source
-            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0; 8])]);
-        svc.poll_once(100).await.unwrap();
-        svc.sink.fail_next();
+        let svc = service_with_pending_failed_write().await;
 
         let result = svc.collect_once().await;
 
@@ -447,11 +457,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_retries_pending_payload_after_write_failure() {
-        let svc = service();
-        svc.source
-            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0; 8])]);
-        svc.poll_once(100).await.unwrap();
-        svc.sink.fail_next();
+        let svc = service_with_pending_failed_write().await;
 
         check!(svc.collect_once().await.is_err());
         check!(svc.source.commits() == 0);

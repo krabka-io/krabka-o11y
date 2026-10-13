@@ -40,7 +40,9 @@ impl OverridesProvider {
         // from what the operator wrote rather than from the compiled-in value.
         let defaults = parsed.defaults.merge_over(defaults);
         let mut per_tenant = HashMap::new();
-        for (tenant, partial) in parsed.overrides {
+        for tenant_entry in parsed.overrides {
+            let tenant = tenant_entry.0;
+            let partial = tenant_entry.1;
             if let Err(reason) = partial.validate() {
                 return Err(OverridesError::Invalid { tenant, reason });
             }

@@ -14,8 +14,8 @@ use axum::{
     http::{Request, StatusCode},
 };
 use krabka_blockstore::{
-    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogLabels, LogRow,
-    TimeRange, labels, log_block_object_path, write_log_block, write_log_block_to_object_store,
+    BlockDescriptor, BlockKey, LabelIndex, LabelPair, LogBlockIndex as BlockIndex, LogLabels,
+    LogRow, TimeRange, log_block_object_path, write_log_block, write_log_block_to_object_store,
     write_log_index_manifest, write_tenant_log_index_manifest_to_object_store,
     write_tenant_log_index_shard_to_object_store, write_tenant_log_index_shards_to_object_store,
 };
@@ -33,17 +33,61 @@ use support::{
     tenant_object_store_shard_catalog_config_fixture,
 };
 
-const API_PROD: [(&str, &str); 2] = [("app", "api"), ("env", "prod")];
-const API_STAGE: [(&str, &str); 2] = [("app", "api"), ("env", "stage")];
+fn log_labels(pairs: impl IntoIterator<Item = LabelPair>) -> LogLabels {
+    let mut labels = LogLabels::new();
+    for pair in pairs {
+        labels.insert(pair.name, pair.value);
+    }
+    labels
+}
+
+fn api_prod_labels() -> LogLabels {
+    log_labels([LabelPair::new("app", "api"), LabelPair::new("env", "prod")])
+}
+
+fn api_stage_labels() -> LogLabels {
+    log_labels([LabelPair::new("app", "api"), LabelPair::new("env", "stage")])
+}
+
+struct IndexedSource {
+    labels: LogLabels,
+    fingerprint: u64,
+}
+
+struct QueryLimitCase {
+    limit: usize,
+    end: i64,
+    interval: Option<i64>,
+    expected_rows: usize,
+}
+
+#[derive(Clone)]
+struct MetadataEntry {
+    line: &'static str,
+    user: &'static str,
+}
+
+struct TimedEntries {
+    timestamp: i64,
+    entries: Vec<MetadataEntry>,
+}
+
+struct UriResponseCase {
+    uri: &'static str,
+    expected: Value,
+}
+
 const ERROR_QUERY_RANGE: &str = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000";
 const MISSING_BLOCK_WARNING: &str =
     "failed to read block tenant=tenant-a/partition=0/offsets=20-29/time=20-29.parquet";
 const SECONDS: i64 = 1_000_000_000;
 
 async fn assert_query_range_reads_api_error(state: QuerierState) {
-    let (status, body) = Tenant("tenant-a")
+    let response = Tenant("tenant-a")
         .get_json(&loki_router(state), ERROR_QUERY_RANGE)
         .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(body == expected_api_error());
@@ -71,7 +115,9 @@ async fn query_endpoint_can_load_tenant_index_from_object_store_shard_catalog() 
 
 #[tokio::test]
 async fn query_endpoint_can_build_querier_from_object_store_shard_catalog_config() {
-    let (state, _dir) = tenant_object_store_shard_catalog_config_fixture().await;
+    let state = tenant_object_store_shard_catalog_config_fixture()
+        .await
+        .state;
     assert_query_range_reads_api_error(state).await;
 }
 
@@ -145,7 +191,7 @@ async fn hot_tail_at_30ns<'a>(hot_lines: impl IntoIterator<Item = HotLine<'a>>) 
                 labels: hot_line.source.clone(),
                 timestamp_ns: 30,
                 line: hot_line.line.into(),
-                structured_metadata: labels([("user", hot_line.user)]),
+                structured_metadata: log_labels([LabelPair::new("user", hot_line.user)]),
                 position: None,
             })
             .await
@@ -193,24 +239,39 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
     let prefix = ObjectPath::from("indexes");
     let mut label_index = LabelIndex::default();
     let sources = ["a", "b"].map(|replica| {
-        let source = labels([("app", "api"), ("replica", replica)]);
-        let fingerprint = label_index.insert_series("tenant-a", source.clone());
-        (source, fingerprint)
+        let labels = log_labels([
+            LabelPair::new("app", "api"),
+            LabelPair::new("replica", replica),
+        ]);
+        let fingerprint = label_index.insert_series("tenant-a", labels.clone());
+        IndexedSource {
+            labels,
+            fingerprint,
+        }
     });
     let mut block_index = BlockIndex::default();
-    for (start, end) in [(10, 20), (30, 30)] {
+    for span in [
+        BlockSpan {
+            first: 10,
+            last: 20,
+        },
+        BlockSpan {
+            first: 30,
+            last: 30,
+        },
+    ] {
         let rows = sources
             .iter()
-            .flat_map(|(_, fingerprint)| {
+            .flat_map(|source| {
                 [10, 20, 30]
                     .into_iter()
-                    .filter(move |timestamp| (start..=end).contains(timestamp))
+                    .filter(move |timestamp| (span.first..=span.last).contains(timestamp))
                     .map(|timestamp| {
                         LogRow::new(
-                            *fingerprint,
+                            source.fingerprint,
                             timestamp,
                             format!("line-{timestamp}"),
-                            labels([("user", "alice")]),
+                            log_labels([LabelPair::new("user", "alice")]),
                         )
                     })
             })
@@ -222,8 +283,8 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
                 &block_key(
                     "tenant-a",
                     BlockSpan {
-                        first: start,
-                        last: end,
+                        first: span.first,
+                        last: span.last,
                     },
                 ),
                 rows,
@@ -240,8 +301,8 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
         block_index: &block_index,
         hot_lines: sources
             .iter()
-            .map(|(source, _)| HotLine {
-                source,
+            .map(|source| HotLine {
+                source: &source.labels,
                 line: "line-30",
                 user: "alice",
             })
@@ -251,30 +312,59 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
     for encoding in [LabelEncoding::Flat, LabelEncoding::Categorized] {
         let categorized = encoding == LabelEncoding::Categorized;
         for direction in ["forward", "backward"] {
-            for (limit, end, interval, expected_rows) in [
-                (2, 40, None, 1),
-                (4, 40, None, 2),
-                (6, 40, None, 3),
-                (4, 30, None, 2),
-                (4, 40, Some(15), 2),
+            for case in [
+                QueryLimitCase {
+                    limit: 2,
+                    end: 40,
+                    interval: None,
+                    expected_rows: 1,
+                },
+                QueryLimitCase {
+                    limit: 4,
+                    end: 40,
+                    interval: None,
+                    expected_rows: 2,
+                },
+                QueryLimitCase {
+                    limit: 6,
+                    end: 40,
+                    interval: None,
+                    expected_rows: 3,
+                },
+                QueryLimitCase {
+                    limit: 4,
+                    end: 30,
+                    interval: None,
+                    expected_rows: 2,
+                },
+                QueryLimitCase {
+                    limit: 4,
+                    end: 40,
+                    interval: Some(15),
+                    expected_rows: 2,
+                },
             ] {
-                let interval_query = interval
+                let interval_query = case
+                    .interval
                     .map(|interval| format!("&interval=0.{interval:09}"))
                     .unwrap_or_default();
                 let result = query_streams(&app, &format!(
-                        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.{end:09}&direction={direction}&limit={limit}{interval_query}"
+                        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.{}&direction={direction}&limit={}{}",
+                        format!("{:09}", case.end), case.limit, interval_query
                     ), encoding)
                 .await;
-                let expected = sources.iter().map(|(source, _)| {
-                    let mut stream = source.clone();
+                let expected = sources.iter().map(|source| {
+                    let mut stream = source.labels.clone();
                     if !categorized { stream.insert("user".into(), "alice".into()); }
-                    let mut timestamps = match (end, interval) {
-                        (30, _) => vec![10, 20],
-                        (_, Some(_)) => vec![10, 30],
-                        _ => vec![10, 20, 30],
+                    let mut timestamps = if case.end == 30 {
+                        vec![10, 20]
+                    } else if case.interval.is_some() {
+                        vec![10, 30]
+                    } else {
+                        vec![10, 20, 30]
                     };
                     if direction == "backward" { timestamps.reverse(); }
-                    let values = timestamps.into_iter().take(expected_rows).map(|timestamp| {
+                    let values = timestamps.into_iter().take(case.expected_rows).map(|timestamp| {
                         if categorized {
                             json!([timestamp.to_string(), format!("line-{timestamp}"), {"structuredMetadata": {"user": "alice"}}])
                         } else {
@@ -296,15 +386,39 @@ async fn nonadjacent_hot_and_cold_rows_keep_unique_entries_and_metadata() {
         let data_root = tempfile::tempdir().unwrap();
         let store = LocalFileSystem::new_with_prefix(object_dir.path()).unwrap();
         let prefix = ObjectPath::from("indexes");
-        let source = labels([("app", "api")]);
+        let source = log_labels([LabelPair::new("app", "api")]);
         let mut label_index = LabelIndex::default();
         let fingerprint = label_index.insert_series("tenant-a", source.clone());
-        let mut newest_rows = vec![("A", "alice"), ("B", "alice")];
+        let mut newest_rows = vec![
+            MetadataEntry {
+                line: "A",
+                user: "alice",
+            },
+            MetadataEntry {
+                line: "B",
+                user: "alice",
+            },
+        ];
         if distinct_metadata {
-            newest_rows.push(("A", "bob"));
+            newest_rows.push(MetadataEntry {
+                line: "A",
+                user: "bob",
+            });
         }
         let mut block_index = BlockIndex::default();
-        for (timestamp, entries) in [(10, vec![("old", "alice")]), (30, newest_rows.clone())] {
+        for batch in [
+            TimedEntries {
+                timestamp: 10,
+                entries: vec![MetadataEntry {
+                    line: "old",
+                    user: "alice",
+                }],
+            },
+            TimedEntries {
+                timestamp: 30,
+                entries: newest_rows.clone(),
+            },
+        ] {
             block_index.insert(
                 write_log_block_to_object_store(
                     &store,
@@ -312,14 +426,20 @@ async fn nonadjacent_hot_and_cold_rows_keep_unique_entries_and_metadata() {
                     &block_key(
                         "tenant-a",
                         BlockSpan {
-                            first: timestamp,
-                            last: timestamp,
+                            first: batch.timestamp,
+                            last: batch.timestamp,
                         },
                     ),
-                    entries
+                    batch
+                        .entries
                         .into_iter()
-                        .map(|(line, user)| {
-                            LogRow::new(fingerprint, timestamp, line, labels([("user", user)]))
+                        .map(|entry| {
+                            LogRow::new(
+                                fingerprint,
+                                batch.timestamp,
+                                entry.line,
+                                log_labels([LabelPair::new("user", entry.user)]),
+                            )
                         })
                         .collect(),
                 )
@@ -335,10 +455,10 @@ async fn nonadjacent_hot_and_cold_rows_keep_unique_entries_and_metadata() {
             block_index: &block_index,
             hot_lines: newest_rows
                 .into_iter()
-                .map(|(line, user)| HotLine {
+                .map(|entry| HotLine {
                     source: &source,
-                    line,
-                    user,
+                    line: entry.line,
+                    user: entry.user,
                 })
                 .collect(),
         })
@@ -537,9 +657,14 @@ fn with_missing_block_warning(mut response: Value) -> Value {
 
 /// A tenant-a manifest whose `api` block at 10-19 holds `lines`, and that also
 /// names a block at 20-29 whose object was never written.
-async fn manifest_with_missing_block(entries: &[LogEntry<'_>]) -> (Router, u64) {
+struct AppWithBlockBytes {
+    app: Router,
+    block_bytes: u64,
+}
+
+async fn manifest_with_missing_block(entries: &[LogEntry<'_>]) -> AppWithBlockBytes {
     let mut index = ObjectStoreIndex::new();
-    let api = index.series("tenant-a", labels(API_PROD));
+    let api = index.series("tenant-a", api_prod_labels());
     let readable_block_bytes = index
         .block(
             &block_key(
@@ -569,15 +694,21 @@ async fn manifest_with_missing_block(entries: &[LogEntry<'_>]) -> (Router, u64) 
             QuerierIndexSource::TenantObjectStoreManifest,
         )
         .await;
-    (app, readable_block_bytes)
+    AppWithBlockBytes {
+        app,
+        block_bytes: readable_block_bytes,
+    }
 }
 
 #[tokio::test]
 async fn configured_object_store_query_returns_partial_warning_for_missing_block() {
-    let (app, readable_block_bytes) =
-        manifest_with_missing_block(&[log_entry(19, "api error")]).await;
+    let fixture = manifest_with_missing_block(&[log_entry(19, "api error")]).await;
+    let app = fixture.app;
+    let readable_block_bytes = fixture.block_bytes;
 
-    let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+    let response = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -601,7 +732,7 @@ async fn configured_object_store_query_returns_partial_warning_for_missing_block
 #[tokio::test]
 async fn configured_object_store_backward_limited_query_stops_after_newest_block() {
     let mut index = ObjectStoreIndex::new();
-    let api = index.series("tenant-a", labels(API_PROD));
+    let api = index.series("tenant-a", api_prod_labels());
     index.missing_block(
         BlockSpan {
             first: 10,
@@ -632,8 +763,10 @@ async fn configured_object_store_backward_limited_query_stops_after_newest_block
         )
         .await;
 
-    let (status, body) = Tenant("tenant-a").get_json(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=backward&limit=1")
+    let response = Tenant("tenant-a").get_json(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=backward&limit=1")
     .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -655,7 +788,7 @@ async fn configured_object_store_backward_limited_query_stops_after_newest_block
 #[tokio::test]
 async fn configured_object_store_query_merges_hot_tail_with_source_split_stats() {
     let mut index = ObjectStoreIndex::new();
-    let api = index.series("tenant-a", labels(API_PROD));
+    let api = index.series("tenant-a", api_prod_labels());
     let cold_block_bytes = index
         .block(
             &block_key(
@@ -674,7 +807,7 @@ async fn configured_object_store_query_merges_hot_tail_with_source_split_stats()
     hot_tail
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),
-            labels: labels(API_PROD),
+            labels: api_prod_labels(),
             timestamp_ns: 20,
             line: "api hot error".to_string(),
             structured_metadata: BTreeMap::new(),
@@ -697,9 +830,11 @@ async fn configured_object_store_query_merges_hot_tail_with_source_split_stats()
         )
         .await;
 
-    let (status, body) = Tenant("tenant-a")
+    let response = Tenant("tenant-a")
         .get_json(&app, &format!("{ERROR_QUERY_RANGE}&direction=forward"))
         .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -723,11 +858,15 @@ async fn configured_object_store_query_merges_hot_tail_with_source_split_stats()
 
 #[tokio::test]
 async fn configured_object_store_metric_query_returns_partial_warning_for_missing_block() {
-    let (app, readable_block_bytes) =
+    let fixture =
         manifest_with_missing_block(&[log_entry(10, "api ok"), log_entry(19, "api error")]).await;
+    let app = fixture.app;
+    let readable_block_bytes = fixture.block_bytes;
 
-    let (status, body) = Tenant("tenant-a").get_json(&app, "/loki/api/v1/query_range?query=count_over_time(%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D)&start=0.000000030&end=0.000000030&step=1ns")
+    let response = Tenant("tenant-a").get_json(&app, "/loki/api/v1/query_range?query=count_over_time(%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D)&start=0.000000030&end=0.000000030&step=1ns")
     .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -754,7 +893,7 @@ async fn configured_object_store_metric_query_returns_partial_warning_for_missin
 #[tokio::test]
 async fn configured_object_store_index_stats_endpoint_counts_entries_from_object_store_blocks() {
     let mut index = ObjectStoreIndex::new();
-    let api = index.series("tenant-a", labels(API_PROD));
+    let api = index.series("tenant-a", api_prod_labels());
     let expected_block_bytes = index
         .block(
             &block_key(
@@ -778,8 +917,10 @@ async fn configured_object_store_index_stats_endpoint_counts_entries_from_object
         )
         .await;
 
-    let (status, body) = Tenant("tenant-a").get_json(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019")
+    let response = Tenant("tenant-a").get_json(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019")
     .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -794,9 +935,9 @@ async fn configured_object_store_index_stats_endpoint_counts_entries_from_object
 
 /// A manifest for tenant-b alone, with one `api` row at 29, served by a
 /// querier that takes the tenant from each request.
-async fn tenant_b_manifest(line: &str, metadata: BTreeMap<String, String>) -> (Router, u64) {
+async fn tenant_b_manifest(line: &str, metadata: BTreeMap<String, String>) -> AppWithBlockBytes {
     let mut index = ObjectStoreIndex::new();
-    let tenant_b_api = index.series("tenant-b", labels(API_STAGE));
+    let tenant_b_api = index.series("tenant-b", api_stage_labels());
     let bytes = index
         .block(
             &block_key(
@@ -813,16 +954,22 @@ async fn tenant_b_manifest(line: &str, metadata: BTreeMap<String, String>) -> (R
     let app = index
         .router(None, QuerierIndexSource::TenantObjectStoreManifest)
         .await;
-    (app, bytes)
+    AppWithBlockBytes {
+        app,
+        block_bytes: bytes,
+    }
 }
 
 #[tokio::test]
 async fn configured_object_store_index_stats_endpoint_loads_request_tenant_manifest() {
-    let (app, expected_block_bytes) =
-        tenant_b_manifest("tenant-b api error", BTreeMap::new()).await;
+    let fixture = tenant_b_manifest("tenant-b api error", BTreeMap::new()).await;
+    let app = fixture.app;
+    let expected_block_bytes = fixture.block_bytes;
 
-    let (status, body) = Tenant("tenant-b").get_json(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029")
+    let response = Tenant("tenant-b").get_json(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029")
     .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -837,11 +984,14 @@ async fn configured_object_store_index_stats_endpoint_loads_request_tenant_manif
 
 #[tokio::test]
 async fn configured_object_store_index_volume_endpoint_loads_request_tenant_manifest() {
-    let (app, expected_block_bytes) =
-        tenant_b_manifest("tenant-b api error", BTreeMap::new()).await;
+    let fixture = tenant_b_manifest("tenant-b api error", BTreeMap::new()).await;
+    let app = fixture.app;
+    let expected_block_bytes = fixture.block_bytes;
 
-    let (status, body) = Tenant("tenant-b").get_json(&app, "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029")
+    let response = Tenant("tenant-b").get_json(&app, "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029")
     .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -866,7 +1016,7 @@ async fn configured_object_store_index_volume_endpoint_loads_request_tenant_mani
 #[tokio::test]
 async fn configured_object_store_patterns_endpoint_loads_request_tenant_manifest() {
     let mut index = ObjectStoreIndex::new();
-    let tenant_b_api = index.series("tenant-b", labels(API_STAGE));
+    let tenant_b_api = index.series("tenant-b", api_stage_labels());
     index
         .block(
             &block_key(
@@ -897,12 +1047,14 @@ async fn configured_object_store_patterns_endpoint_loads_request_tenant_manifest
         .router(None, QuerierIndexSource::TenantObjectStoreManifest)
         .await;
 
-    let (status, body) = Tenant("tenant-b")
+    let response = Tenant("tenant-b")
         .get_json(
             &app,
             "/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2.0&step=1s",
         )
         .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -923,14 +1075,17 @@ async fn configured_object_store_patterns_endpoint_loads_request_tenant_manifest
 
 #[tokio::test]
 async fn configured_object_store_detected_fields_endpoint_loads_request_tenant_manifest() {
-    let (app, _) = tenant_b_manifest(
+    let fixture = tenant_b_manifest(
         r#"{"status":500}"#,
-        BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+        log_labels([LabelPair::new("trace_id", "abc")]),
     )
     .await;
+    let app = fixture.app;
 
-    let (status, body) = Tenant("tenant-b").get_json(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029&limit=10")
+    let response = Tenant("tenant-b").get_json(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000020&end=0.000000029&limit=10")
     .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -958,8 +1113,8 @@ async fn configured_object_store_detected_fields_endpoint_loads_request_tenant_m
 #[tokio::test]
 async fn configured_object_store_querier_loads_manifest_for_request_tenant_header() {
     let mut index = ObjectStoreIndex::new();
-    let prod_api = index.series("tenant-a", labels(API_PROD));
-    let stage_api = index.series("tenant-b", labels(API_STAGE));
+    let prod_api = index.series("tenant-a", api_prod_labels());
+    let stage_api = index.series("tenant-b", api_stage_labels());
     index
         .block(
             &block_key(
@@ -1004,7 +1159,9 @@ async fn configured_object_store_querier_loads_manifest_for_request_tenant_heade
 }
 
 async fn assert_tenant_b_reads_stage_error(app: &Router, stage_block_bytes: u64) {
-    let (status, body) = Tenant("tenant-b").get_json(app, ERROR_QUERY_RANGE).await;
+    let response = Tenant("tenant-b").get_json(app, ERROR_QUERY_RANGE).await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -1024,7 +1181,9 @@ async fn assert_tenant_b_reads_stage_error(app: &Router, stage_block_bytes: u64)
 }
 
 async fn assert_tenant_b_labels(app: &Router, uri: &str) {
-    let (status, body) = Tenant("tenant-b").get_json(app, uri).await;
+    let response = Tenant("tenant-b").get_json(app, uri).await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(body == json!({"status": "success", "data": ["app", "env"]}));
@@ -1033,7 +1192,7 @@ async fn assert_tenant_b_labels(app: &Router, uri: &str) {
 #[tokio::test]
 async fn configured_object_store_labels_endpoint_loads_manifest_for_request_tenant_header() {
     let mut index = ObjectStoreIndex::new();
-    index.series("tenant-b", labels(API_STAGE));
+    index.series("tenant-b", api_stage_labels());
     index.write_manifest("tenant-b").await;
     let app = index
         .router(None, QuerierIndexSource::TenantObjectStoreManifest)
@@ -1045,7 +1204,7 @@ async fn configured_object_store_labels_endpoint_loads_manifest_for_request_tena
 #[tokio::test]
 async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_tenant_header() {
     let mut index = ObjectStoreIndex::new();
-    let tenant_b_api = index.series("tenant-b", labels(API_STAGE));
+    let tenant_b_api = index.series("tenant-b", api_stage_labels());
     let tenant_b_block_bytes = index
         .block(
             &block_key(
@@ -1079,7 +1238,7 @@ async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_
 #[tokio::test]
 async fn configured_object_store_shard_catalog_labels_endpoint_loads_request_tenant_shards() {
     let mut index = ObjectStoreIndex::new();
-    let tenant_b_api = index.series("tenant-b", labels(API_STAGE));
+    let tenant_b_api = index.series("tenant-b", api_stage_labels());
     index
         .block(
             &block_key(
@@ -1120,11 +1279,16 @@ enum TenantB {
 
 /// Writes the `api` block at 10-19 s to `dir`, with a `tenant-b` series
 /// beside it when `tenant_b` says so, and returns the indexes that name it.
-fn api_seconds_block(dir: &Path, tenant_b: TenantB) -> (LabelIndex, BlockIndex) {
+struct ApiSecondsIndexes {
+    labels: LabelIndex,
+    blocks: BlockIndex,
+}
+
+fn api_seconds_block(dir: &Path, tenant_b: TenantB) -> ApiSecondsIndexes {
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels(API_PROD));
+    let api = label_index.insert_series("tenant-a", api_prod_labels());
     if tenant_b == TenantB::Present {
-        label_index.insert_series("tenant-b", labels(API_PROD));
+        label_index.insert_series("tenant-b", api_prod_labels());
     }
 
     let api_block = write_log_block(
@@ -1145,13 +1309,16 @@ fn api_seconds_block(dir: &Path, tenant_b: TenantB) -> (LabelIndex, BlockIndex) 
 
     let mut block_index = BlockIndex::default();
     block_index.insert(api_block);
-    (label_index, block_index)
+    ApiSecondsIndexes {
+        labels: label_index,
+        blocks: block_index,
+    }
 }
 
 fn persisted_fixture() -> QuerierState {
     let dir = tempfile::tempdir().unwrap().keep();
-    let (label_index, block_index) = api_seconds_block(&dir, TenantB::Absent);
-    write_log_index_manifest(&dir, &label_index, &block_index).unwrap();
+    let indexes = api_seconds_block(&dir, TenantB::Absent);
+    write_log_index_manifest(&dir, &indexes.labels, &indexes.blocks).unwrap();
 
     QuerierState::from_manifest(dir).unwrap()
 }
@@ -1160,13 +1327,13 @@ async fn tenant_object_store_fixture() -> QuerierState {
     let dir = tempfile::tempdir().unwrap().keep();
     let store = LocalFileSystem::new_with_prefix(&dir).unwrap();
     let prefix = ObjectPath::from("indexes");
-    let (label_index, block_index) = api_seconds_block(&dir, TenantB::Present);
+    let indexes = api_seconds_block(&dir, TenantB::Present);
     write_tenant_log_index_manifest_to_object_store(
         &store,
         &prefix,
         "tenant-a",
-        &label_index,
-        &block_index,
+        &indexes.labels,
+        &indexes.blocks,
     )
     .await
     .unwrap();
@@ -1181,14 +1348,14 @@ async fn tenant_object_store_shard_fixture() -> QuerierState {
     let store = LocalFileSystem::new_with_prefix(&dir).unwrap();
     let prefix = ObjectPath::from("indexes");
     let shard_range = TimeRange::new(0, 30 * SECONDS).unwrap();
-    let (label_index, block_index) = api_seconds_block(&dir, TenantB::Present);
+    let indexes = api_seconds_block(&dir, TenantB::Present);
     write_tenant_log_index_shard_to_object_store(
         &store,
         &prefix,
         "tenant-a",
         shard_range,
-        &label_index,
-        &block_index,
+        &indexes.labels,
+        &indexes.blocks,
     )
     .await
     .unwrap();
@@ -1199,7 +1366,9 @@ async fn tenant_object_store_shard_fixture() -> QuerierState {
 }
 
 async fn tenant_object_store_shard_catalog_fixture() -> QuerierState {
-    let (_, store, dir) = loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
+    let fixture = loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
+    let store = fixture.store;
+    let dir = fixture.dir;
 
     QuerierState::from_tenant_object_store_shards(
         dir,
@@ -1219,10 +1388,19 @@ async fn tenant_object_store_shard_catalog_fixture() -> QuerierState {
 /// object is then deleted, which is what a sweep does to a live querier: the
 /// index is unchanged, and the bytes are gone. Both blocks hold the `api`
 /// series, so every query for `api` plans both and meets the gap.
-async fn retention_swept_fixture() -> (Router, u64, u64) {
+struct RetentionSweptFixture {
+    app: Router,
+    surviving_bytes: u64,
+    swept_bytes: u64,
+}
+
+async fn retention_swept_fixture() -> RetentionSweptFixture {
     let mut index = ObjectStoreIndex::new();
-    let api = index.series("tenant-a", labels(API_PROD));
-    let web = index.series("tenant-a", labels([("app", "web"), ("env", "prod")]));
+    let api = index.series("tenant-a", api_prod_labels());
+    let web = index.series(
+        "tenant-a",
+        log_labels([LabelPair::new("app", "web"), LabelPair::new("env", "prod")]),
+    );
 
     let surviving_bytes = index
         .block(
@@ -1268,7 +1446,11 @@ async fn retention_swept_fixture() -> (Router, u64, u64) {
             QuerierIndexSource::TenantObjectStoreManifest,
         )
         .await;
-    (app, surviving_bytes, swept_bytes)
+    RetentionSweptFixture {
+        app,
+        surviving_bytes,
+        swept_bytes,
+    }
 }
 
 /// A retention sweep deletes block objects while queriers run, so every read
@@ -1284,48 +1466,51 @@ async fn retention_swept_fixture() -> (Router, u64, u64) {
 /// index-level fallback, so they answer from the surviving block alone.
 #[tokio::test]
 async fn a_retention_swept_block_degrades_every_read_surface_instead_of_failing() {
-    let (app, surviving_bytes, swept_bytes) = retention_swept_fixture().await;
+    let fixture = retention_swept_fixture().await;
+    let app = fixture.app;
+    let surviving_bytes = fixture.surviving_bytes;
+    let swept_bytes = fixture.swept_bytes;
 
     let cases = vec![
-        (
-            "/loki/api/v1/labels?start=0.000000010&end=0.000000029",
-            json!({"status": "success", "data": ["app", "env"]}),
-        ),
-        (
-            "/loki/api/v1/label/app/values?start=0.000000010&end=0.000000029",
-            json!({"status": "success", "data": ["api", "web"]}),
-        ),
-        (
-            "/loki/api/v1/series?match%5B%5D=%7Benv%3D%22prod%22%7D&start=0.000000010&end=0.000000029",
-            json!({
+        UriResponseCase {
+            uri: "/loki/api/v1/labels?start=0.000000010&end=0.000000029",
+            expected: json!({"status": "success", "data": ["app", "env"]}),
+        },
+        UriResponseCase {
+            uri: "/loki/api/v1/label/app/values?start=0.000000010&end=0.000000029",
+            expected: json!({"status": "success", "data": ["api", "web"]}),
+        },
+        UriResponseCase {
+            uri: "/loki/api/v1/series?match%5B%5D=%7Benv%3D%22prod%22%7D&start=0.000000010&end=0.000000029",
+            expected: json!({
                 "status": "success",
                 "data": [
                     {"app": "api", "env": "prod"},
                     {"app": "web", "env": "prod"},
                 ],
             }),
-        ),
-        (
-            "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000029",
-            json!({
+        },
+        UriResponseCase {
+            uri: "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000029",
+            expected: json!({
                 "streams": 1,
                 "chunks": 2,
                 "entries": 1,
                 "bytes": surviving_bytes + swept_bytes,
             }),
-        ),
-        (
-            "/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000029&step=1000000000",
-            json!({
+        },
+        UriResponseCase {
+            uri: "/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000029&step=1000000000",
+            expected: json!({
                 "status": "success",
                 "data": [
                     {"pattern": r#"{"status":"<_>"}"#, "samples": [[0, 1]]},
                 ],
             }),
-        ),
-        (
-            "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000029&limit=10",
-            json!({
+        },
+        UriResponseCase {
+            uri: "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000029&limit=10",
+            expected: json!({
                 "fields": [
 
                     {
@@ -1338,17 +1523,20 @@ async fn a_retention_swept_block_degrades_every_read_surface_instead_of_failing(
                 ],
                 "limit": 10,
             }),
-        ),
+        },
     ];
 
-    for (uri, expected) in cases {
-        let (status, body) = Tenant("tenant-a").get_json(&app, uri).await;
+    for case in cases {
+        let response = Tenant("tenant-a").get_json(&app, case.uri).await;
+        let status = response.status;
+        let body = response.body;
 
         assert!(
             status == StatusCode::OK,
-            "{uri} answers 200 despite the swept block"
+            "{} answers 200 despite the swept block",
+            case.uri
         );
-        assert!(body == expected, "{uri}");
+        assert!(body == case.expected, "{}", case.uri);
     }
 }
 
@@ -1365,7 +1553,7 @@ async fn a_retention_swept_block_degrades_every_read_surface_instead_of_failing(
 #[tokio::test]
 async fn a_present_but_malformed_block_still_fails_the_request() {
     let mut index = ObjectStoreIndex::new();
-    let api = index.series("tenant-a", labels(API_PROD));
+    let api = index.series("tenant-a", api_prod_labels());
 
     let key = block_key(
         "tenant-a",

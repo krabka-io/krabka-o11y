@@ -2,11 +2,13 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn range_query_accepts_parenthesized_expression() {
-    let store = SeriesFixture::new(labels(&[("__name__", "up")]))
-        .at(0_i64, 0.0)
-        .at(60_000, 1.0)
-        .at(120_000, 2.0)
-        .store();
+    let store = SeriesFixture::new(labels(&[crate::test_support::TestLabelPair::new(
+        "__name__", "up",
+    )]))
+    .at(0_i64, 0.0)
+    .at(60_000, 1.0)
+    .at(120_000, 2.0)
+    .store();
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine

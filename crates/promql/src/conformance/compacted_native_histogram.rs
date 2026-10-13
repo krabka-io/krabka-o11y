@@ -8,11 +8,17 @@ use super::{NativeHistogram, compact_spanned_histogram_counts, spanned_histogram
 /// in how the answer was encoded.
 pub(crate) fn compacted_native_histogram(histogram: &NativeHistogram) -> NativeHistogram {
     let mut out = histogram.clone();
-    (out.positive_spans, out.positive_counts) = compact_spanned_histogram_counts(
-        spanned_histogram_counts(&histogram.positive_spans, &histogram.positive_counts),
-    );
-    (out.negative_spans, out.negative_counts) = compact_spanned_histogram_counts(
-        spanned_histogram_counts(&histogram.negative_spans, &histogram.negative_counts),
-    );
+    let positive = compact_spanned_histogram_counts(spanned_histogram_counts(
+        &histogram.positive_spans,
+        &histogram.positive_counts,
+    ));
+    out.positive_spans = positive.spans;
+    out.positive_counts = positive.counts;
+    let negative = compact_spanned_histogram_counts(spanned_histogram_counts(
+        &histogram.negative_spans,
+        &histogram.negative_counts,
+    ));
+    out.negative_spans = negative.spans;
+    out.negative_counts = negative.counts;
     out
 }

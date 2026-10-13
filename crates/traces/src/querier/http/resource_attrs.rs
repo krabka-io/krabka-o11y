@@ -1,3 +1,1 @@
-use super::AttrValue;
-
-pub(crate) type ResourceAttrs = Vec<(String, AttrValue)>;
+pub(crate) type ResourceAttrs = Vec<krabka_traceql::Attribute>;

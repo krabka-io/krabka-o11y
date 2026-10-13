@@ -1,4 +1,6 @@
-use super::prelude::{check, instant_series, json, range_pairs, range_series, timed_sample};
+use super::prelude::{
+    check, formatted_sample, instant_series, json, range_pairs, range_series, timed_sample,
+};
 
 mod a_binary_set_operator_keeps_the_subset_it_names;
 mod a_top_level_arithmetic_split_names_the_operator_it_found;

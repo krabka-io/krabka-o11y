@@ -15,7 +15,10 @@ pub(crate) fn consuming_a_hot_metric_sample_spends_its_budget_once_per_unit() {
     labels.insert("app".to_string(), "api".to_string());
     let other = Labels::default();
     let sample = serde_json::json!([1_700_000_000, "1"]);
-    let key = |labels: &Labels| (labels.clone(), "1700000000".to_string());
+    let key = |labels: &Labels| super::super::prelude::HotSampleKey {
+        labels: labels.clone(),
+        timestamp_key: "1700000000".to_string(),
+    };
 
     let mut counts = BTreeMap::new();
     counts.insert(key(&labels), 2_u64);

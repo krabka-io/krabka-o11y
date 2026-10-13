@@ -1,10 +1,15 @@
 use super::{
     BTreeMap, BTreeSet, BlockBuildOptions, BlockMeta, BlockWriter, MaxOffset, MinOffset,
-    RecordBatch, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanRecord, SummaryColumns,
-    TraceBlockStats, TraceIndex, TracesError, WindowStartNs, collect_tags, concat_batches,
-    group_by_trace, object_key, prefixed_object_key, span_batch_with_promoted_attrs,
-    span_block_decl, span_block_schema_with_promoted_attrs,
+    OffsetRange, RecordBatch, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanRecord,
+    SummaryColumns, TraceBlockStats, TraceIndex, TracesError, WindowStartNs, collect_tags,
+    concat_batches, group_by_trace, object_key, prefixed_object_key,
+    span_batch_with_promoted_attrs, span_block_decl, span_block_schema_with_promoted_attrs,
 };
+
+struct TraceBatch {
+    trace_id: [u8; 16],
+    batch: RecordBatch,
+}
 
 pub(crate) async fn build_blocks_with_options(
     writer: &BlockWriter,
@@ -12,26 +17,29 @@ pub(crate) async fn build_blocks_with_options(
     tenant: &str,
     partition: i32,
     records: &[SpanRecord],
-    offset_range: (i64, i64),
+    offset_range: OffsetRange,
     options: BlockBuildOptions<'_>,
 ) -> Result<Vec<BlockMeta>, TracesError> {
-    let grouped = group_by_trace(records);
-    let mut per_trace: Vec<([u8; 16], RecordBatch)> = Vec::new();
+    let mut grouped = group_by_trace(records);
+    let mut per_trace: Vec<TraceBatch> = Vec::new();
     let mut tag_names = BTreeSet::new();
     let mut tag_values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut window_start_ns = i64::MAX;
 
-    for ((record_tenant, trace_id), spans) in grouped {
-        if record_tenant != tenant {
+    while let Some(identity) = grouped.keys().next().cloned() {
+        let spans = grouped
+            .remove(&identity)
+            .expect("the trace identity came from this map");
+        if identity.tenant != tenant {
             continue;
         }
         window_start_ns =
             window_start_ns.min(spans.iter().map(|span| span.start_ns).min().unwrap_or(0));
         collect_tags(&spans, &mut tag_names, &mut tag_values);
-        per_trace.push((
-            trace_id,
-            span_batch_with_promoted_attrs(&spans, options.promoted_attrs)?,
-        ));
+        per_trace.push(TraceBatch {
+            trace_id: identity.trace_id,
+            batch: span_batch_with_promoted_attrs(&spans, options.promoted_attrs)?,
+        });
     }
 
     if per_trace.is_empty() {
@@ -44,14 +52,14 @@ pub(crate) async fn build_blocks_with_options(
     // start, so ordering the per-trace batches by trace id orders the block.
     // Doing it here rather than leaning on the grouping map's key order keeps
     // the invariant a property of this function.
-    per_trace.sort_by_key(|(trace_id, _)| *trace_id);
+    per_trace.sort_by_key(|trace| trace.trace_id);
     let traces = per_trace
         .iter()
-        .map(|(trace_id, _)| *trace_id)
+        .map(|trace| trace.trace_id)
         .collect::<Vec<_>>();
     let batches = per_trace
         .into_iter()
-        .map(|(_, batch)| batch)
+        .map(|trace| trace.batch)
         .collect::<Vec<_>>();
 
     let schema = span_block_schema_with_promoted_attrs(options.promoted_attrs);
@@ -60,8 +68,8 @@ pub(crate) async fn build_blocks_with_options(
     let key = object_key(
         tenant,
         partition,
-        MinOffset(offset_range.0),
-        MaxOffset(offset_range.1),
+        MinOffset(offset_range.min),
+        MaxOffset(offset_range.max),
         WindowStartNs(window_start_ns),
     );
     let key = prefixed_object_key(options.object_key_prefix, &key);

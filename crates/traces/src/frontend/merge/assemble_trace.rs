@@ -3,6 +3,13 @@ use super::{
     union_trace_bodies,
 };
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssembledTrace {
+    pub trace: Option<TraceByIdResponseJson>,
+    pub metrics: Metrics,
+    pub status: TraceStatus,
+}
+
 /// Assemble one trace from per-querier by-id partials.
 ///
 /// This unions `resourceSpans`, dedupes spans by `spanId`, and accumulates
@@ -11,10 +18,7 @@ use super::{
 ///
 /// It returns `None` when no querier returned the trace.
 #[must_use]
-pub fn assemble_trace(
-    partials: Vec<TracePartial>,
-    max_trace: ByteSize,
-) -> (Option<TraceByIdResponseJson>, Metrics, TraceStatus) {
+pub fn assemble_trace(partials: Vec<TracePartial>, max_trace: ByteSize) -> AssembledTrace {
     let mut metrics = Metrics::default();
     let mut acc: Option<TraceByIdResponseJson> = None;
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -40,5 +44,9 @@ pub fn assemble_trace(
         Some(t) if any_partial || t.approx_size() > max_trace => TraceStatus::Partial,
         _ => TraceStatus::Complete,
     };
-    (acc, metrics, status)
+    AssembledTrace {
+        trace: acc,
+        metrics,
+        status,
+    }
 }

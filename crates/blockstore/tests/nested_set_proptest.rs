@@ -5,6 +5,12 @@ use std::collections::HashMap;
 use krabka_blockstore::{CycleSpans, SpanNode, assign_nested_set};
 use proptest::prelude::*;
 
+#[derive(Debug)]
+struct ForestSeed {
+    n: usize,
+    parents: Vec<Option<usize>>,
+}
+
 fn sid(n: u32) -> [u8; 8] {
     let b = n.to_le_bytes();
     [b[0], b[1], b[2], b[3], 0, 0, 0, 0]
@@ -16,21 +22,22 @@ fn arb_forest() -> impl Strategy<Value = Vec<SpanNode>> {
             let parents = (1..n)
                 .map(|i| prop_oneof![Just(None), (0_usize..i).prop_map(Some)])
                 .collect::<Vec<_>>();
-            (Just(n), parents)
+            parents.prop_map(move |parents| ForestSeed { n, parents })
         })
-        .prop_map(|(n, parents)| {
+        .prop_map(|seed| {
             let mut spans = vec![SpanNode {
                 span_id: sid(0),
                 parent_span_id: None,
             }];
-            for (i, parent) in parents.into_iter().enumerate() {
+            for i in 0..seed.parents.len() {
+                let parent = seed.parents[i];
                 let child = u32::try_from(i + 1).unwrap();
                 spans.push(SpanNode {
                     span_id: sid(child),
                     parent_span_id: parent.map(|p| sid(u32::try_from(p).unwrap())),
                 });
             }
-            debug_assert_eq!(spans.len(), n);
+            debug_assert_eq!(spans.len(), seed.n);
             spans
         })
 }
@@ -41,14 +48,17 @@ proptest! {
     #[test]
     fn nested_set_intervals_are_valid(spans in arb_forest()) {
         let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
-        let by_id: HashMap<[u8; 8], usize> =
-            spans.iter().enumerate().map(|(i, s)| (s.span_id, i)).collect();
+        let mut by_id: HashMap<[u8; 8], usize> = HashMap::new();
+        for i in 0..spans.len() {
+            by_id.insert(spans[i].span_id, i);
+        }
 
         for n in &ns {
             prop_assert!(n.nested_set_left < n.nested_set_right);
         }
 
-        for (i, span) in spans.iter().enumerate() {
+        for i in 0..spans.len() {
+            let span = &spans[i];
             if let Some(parent) = span.parent_span_id.and_then(|p| by_id.get(&p).copied()) {
                 if parent == i {
                     // Self-parented span is treated as a root: -1 sentinel.

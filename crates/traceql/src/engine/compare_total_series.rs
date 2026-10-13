@@ -8,9 +8,9 @@ pub(crate) fn compare_total_series(
     range: MetricsRange,
 ) -> TraceMetricSeries {
     TraceMetricSeries {
-        labels: vec![(
-            META_TYPE_KEY.to_string(),
-            group.total_meta_type().to_string(),
+        labels: vec![super::MetricLabel::new(
+            META_TYPE_KEY,
+            group.total_meta_type(),
         )],
         label_types: BTreeMap::default(),
         points: compare_points(buckets, range),

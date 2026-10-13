@@ -18,8 +18,8 @@ use axum::{
 };
 use krabka_blockstore::validate_against;
 use krabka_metrics::{
-    ClockReadingPayload, MetricBlockKind, SamplePayload, WalRecord, clock_reading_decl,
-    compact_wal_records, compaction_object_key,
+    ClockReadingPayload, MetricBlockKind, MetricLabelPair, SamplePayload, WalRecord,
+    clock_reading_decl, compact_wal_records, compaction_object_key,
     distributor::{
         CLOCK_READING_METRIC, DistributorState, ProduceError, WalSink, clock_series,
         clock_wal_records,
@@ -137,19 +137,20 @@ fn decode_one(wire: pb::clocks::ClockReading) -> DecodedClockReading {
 fn projection(
     readings: &[DecodedClockReading],
     ingest: UnixNanos,
-) -> BTreeMap<Vec<(String, String)>, f64> {
-    clock_series(readings, ingest)
-        .into_iter()
-        .filter_map(|series| {
-            let sample = series.samples.first().copied()?;
-            let labels = series
-                .labels
-                .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect();
-            Some((labels, sample.value))
-        })
-        .collect()
+) -> BTreeMap<Vec<MetricLabelPair<String>>, f64> {
+    let mut projection = BTreeMap::new();
+    for series in clock_series(readings, ingest) {
+        let Some(sample) = series.samples.first().copied() else {
+            continue;
+        };
+        let labels = series
+            .labels
+            .iter()
+            .map(|pair| MetricLabelPair::new(pair.name.clone(), pair.value.clone().into()))
+            .collect();
+        projection.insert(labels, sample.value);
+    }
+    projection
 }
 
 /// Builds the label key a projected series carries.
@@ -158,24 +159,24 @@ fn key(
     node: &str,
     clock: &str,
     source: &str,
-    extra: &[(&str, &str)],
-) -> Vec<(String, String)> {
+    extra: &[MetricLabelPair<&str>],
+) -> Vec<MetricLabelPair<String>> {
     let mut labels = vec![
-        ("__name__".to_string(), name.to_string()),
-        ("clock".to_string(), clock.to_string()),
-        ("node".to_string(), node.to_string()),
-        ("source".to_string(), source.to_string()),
+        MetricLabelPair::new("__name__", name.to_string()),
+        MetricLabelPair::new("clock", clock.to_string()),
+        MetricLabelPair::new("node", node.to_string()),
+        MetricLabelPair::new("source", source.to_string()),
     ];
     labels.extend(
         extra
             .iter()
-            .map(|(name, value)| ((*name).to_string(), (*value).to_string())),
+            .map(|pair| MetricLabelPair::new(pair.name.clone(), pair.value.to_string())),
     );
     labels.sort();
     labels
 }
 
-fn ntp_key(name: &str, extra: &[(&str, &str)]) -> Vec<(String, String)> {
+fn ntp_key(name: &str, extra: &[MetricLabelPair<&str>]) -> Vec<MetricLabelPair<String>> {
     key(name, "host-a", "CLOCK_REALTIME", "ntp", extra)
 }
 
@@ -289,101 +290,83 @@ fn an_unspecified_gnss_fix_is_absent_rather_than_a_rejection() {
     );
 }
 
-#[test]
-fn every_malformed_reading_is_an_error_and_not_a_panic() {
-    type Matches = fn(&ClockWireError) -> bool;
+#[derive(Debug)]
+struct MalformedReadingCase {
+    reading: pb::clocks::ClockReading,
+    expected: MalformedReadingError,
+}
 
-    let cases: [(&str, pb::clocks::ClockReading, Matches); 7] = [
-        (
-            "empty node",
-            pb::clocks::ClockReading {
-                node: String::new(),
-                ..ntp_wire()
-            },
-            |error| matches!(error, ClockWireError::EmptyIdentity { field: "node", .. }),
-        ),
-        (
-            "empty clock",
-            pb::clocks::ClockReading {
-                clock: String::new(),
-                ..ntp_wire()
-            },
-            |error| matches!(error, ClockWireError::EmptyIdentity { field: "clock", .. }),
-        ),
-        (
-            "negative uncertainty",
-            pb::clocks::ClockReading {
-                uncertainty_nanos: -1,
-                ..ntp_wire()
-            },
-            |error| matches!(error, ClockWireError::NegativeUncertainty { .. }),
-        ),
-        (
-            "far-future reading",
-            pb::clocks::ClockReading {
-                reading_unix_nanos: i64::MAX,
-                ..ntp_wire()
-            },
-            |error| matches!(error, ClockWireError::ReadingTooFarInFuture { .. }),
-        ),
-        (
-            "unspecified source kind",
-            pb::clocks::ClockReading {
-                source_kind: pb::clocks::SourceKind::Unspecified.into(),
-                ..ntp_wire()
-            },
-            |error| {
-                matches!(
-                    error,
-                    ClockWireError::UnspecifiedEnum {
-                        field: "source_kind",
-                        ..
-                    }
-                )
-            },
-        ),
-        (
-            "unspecified sync state",
-            pb::clocks::ClockReading {
-                sync_state: pb::clocks::SyncState::Unspecified.into(),
-                ..ntp_wire()
-            },
-            |error| {
-                matches!(
-                    error,
-                    ClockWireError::UnspecifiedEnum {
-                        field: "sync_state",
-                        ..
-                    }
-                )
-            },
-        ),
-        (
-            "unknown source kind discriminant",
-            pb::clocks::ClockReading {
-                source_kind: 4242,
-                ..ntp_wire()
-            },
-            |error| {
-                matches!(
-                    error,
-                    ClockWireError::UnknownEnum {
-                        field: "source_kind",
-                        value: 4242,
-                        ..
-                    }
-                )
-            },
-        ),
-    ];
+#[derive(Debug)]
+enum MalformedReadingError {
+    EmptyNode,
+    EmptyClock,
+    NegativeUncertainty,
+    FarFuture,
+    UnspecifiedSource,
+    UnspecifiedSyncState,
+    UnknownSource,
+}
 
-    for (name, wire, matches) in cases {
-        let error = decode_clock_readings(&snappy_batch(&[wire]), mebibytes(1))
-            .expect_err("malformed reading is rejected");
-
-        check!(matches(&error), "case `{name}` gave {error}");
-        check!(error.status_code() == 400, "case `{name}`");
+impl MalformedReadingError {
+    fn matches(&self, error: &ClockWireError) -> bool {
+        match self {
+            Self::EmptyNode => {
+                matches!(error, ClockWireError::EmptyIdentity { field: "node", .. })
+            }
+            Self::EmptyClock => {
+                matches!(error, ClockWireError::EmptyIdentity { field: "clock", .. })
+            }
+            Self::NegativeUncertainty => {
+                matches!(error, ClockWireError::NegativeUncertainty { .. })
+            }
+            Self::FarFuture => {
+                matches!(error, ClockWireError::ReadingTooFarInFuture { .. })
+            }
+            Self::UnspecifiedSource => matches!(
+                error,
+                ClockWireError::UnspecifiedEnum {
+                    field: "source_kind",
+                    ..
+                }
+            ),
+            Self::UnspecifiedSyncState => matches!(
+                error,
+                ClockWireError::UnspecifiedEnum {
+                    field: "sync_state",
+                    ..
+                }
+            ),
+            Self::UnknownSource => matches!(
+                error,
+                ClockWireError::UnknownEnum {
+                    field: "source_kind",
+                    value: 4242,
+                    ..
+                }
+            ),
+        }
     }
+}
+
+#[yare::parameterized(
+    empty_node = { MalformedReadingCase { reading: pb::clocks::ClockReading { node: String::new(), ..ntp_wire() }, expected: MalformedReadingError::EmptyNode } },
+    empty_clock = { MalformedReadingCase { reading: pb::clocks::ClockReading { clock: String::new(), ..ntp_wire() }, expected: MalformedReadingError::EmptyClock } },
+    negative_uncertainty = { MalformedReadingCase { reading: pb::clocks::ClockReading { uncertainty_nanos: -1, ..ntp_wire() }, expected: MalformedReadingError::NegativeUncertainty } },
+    far_future = { MalformedReadingCase { reading: pb::clocks::ClockReading { reading_unix_nanos: i64::MAX, ..ntp_wire() }, expected: MalformedReadingError::FarFuture } },
+    unspecified_source = { MalformedReadingCase { reading: pb::clocks::ClockReading { source_kind: pb::clocks::SourceKind::Unspecified.into(), ..ntp_wire() }, expected: MalformedReadingError::UnspecifiedSource } },
+    unspecified_sync_state = { MalformedReadingCase { reading: pb::clocks::ClockReading { sync_state: pb::clocks::SyncState::Unspecified.into(), ..ntp_wire() }, expected: MalformedReadingError::UnspecifiedSyncState } },
+    unknown_source = { MalformedReadingCase { reading: pb::clocks::ClockReading { source_kind: 4242, ..ntp_wire() }, expected: MalformedReadingError::UnknownSource } },
+)]
+fn every_malformed_reading_is_an_error_and_not_a_panic(case: MalformedReadingCase) {
+    let error = decode_clock_readings(&snappy_batch(&[case.reading]), mebibytes(1))
+        .expect_err("malformed reading is rejected");
+
+    check!(
+        case.expected.matches(&error),
+        "case {:?} gave {error}",
+        case.expected
+    );
+    check!(error.status_code() == 400, "case {:?}", case.expected);
 }
 
 #[test]
@@ -426,23 +409,38 @@ fn the_ntp_projection_is_exactly_the_expected_series() {
                 (ntp_key("krabka_clock_root_dispersion_seconds", &[]), 0.003),
                 (ntp_key("krabka_clock_stratum", &[]), 2.0),
                 (
-                    ntp_key("krabka_clock_sync_state", &[("state", "synchronized")]),
+                    ntp_key(
+                        "krabka_clock_sync_state",
+                        &[MetricLabelPair::new("state", "synchronized")]
+                    ),
                     1.0
                 ),
                 (
-                    ntp_key("krabka_clock_sync_state", &[("state", "holdover")]),
+                    ntp_key(
+                        "krabka_clock_sync_state",
+                        &[MetricLabelPair::new("state", "holdover")]
+                    ),
                     0.0
                 ),
                 (
-                    ntp_key("krabka_clock_sync_state", &[("state", "free_running")]),
+                    ntp_key(
+                        "krabka_clock_sync_state",
+                        &[MetricLabelPair::new("state", "free_running")]
+                    ),
                     0.0
                 ),
                 (
-                    ntp_key("krabka_clock_sync_state", &[("state", "unsynchronized")]),
+                    ntp_key(
+                        "krabka_clock_sync_state",
+                        &[MetricLabelPair::new("state", "unsynchronized")]
+                    ),
                     0.0
                 ),
                 (
-                    ntp_key("krabka_clock_sync_state", &[("state", "stepped")]),
+                    ntp_key(
+                        "krabka_clock_sync_state",
+                        &[MetricLabelPair::new("state", "stepped")]
+                    ),
                     0.0
                 ),
             ])
@@ -464,7 +462,12 @@ fn a_state_transition_moves_the_one_and_zeroes_the_rest() {
         "unsynchronized",
         "stepped",
     ]
-    .map(|state| projected[&ntp_key("krabka_clock_sync_state", &[("state", state)])])
+    .map(|state| {
+        projected[&ntp_key(
+            "krabka_clock_sync_state",
+            &[MetricLabelPair::new("state", state)],
+        )]
+    })
     .map(is_set);
 
     assert!(states == [false, true, false, false, false]);
@@ -479,8 +482,8 @@ fn an_ntp_host_publishes_no_ptp_path_delay() {
         .filter_map(|labels| {
             labels
                 .into_iter()
-                .find(|(name, _)| name == "__name__")
-                .map(|(_, value)| value)
+                .find(|label| label.name == "__name__")
+                .map(|label| label.value)
         })
         .collect::<Vec<_>>();
 
@@ -503,7 +506,7 @@ fn a_gnss_reading_publishes_the_whole_fix_family() {
                 "host-c",
                 "gnss0",
                 "gnss",
-                &[("fix", fix)],
+                &[MetricLabelPair::new("fix", fix)],
             )]
         })
         .map(is_set);
@@ -536,7 +539,7 @@ fn a_reading_with_no_gnss_fix_publishes_no_fix_family() {
         "host-c",
         "gnss0",
         "gnss",
-        &[("fix", "none")]
+        &[MetricLabelPair::new("fix", "none")]
     )));
 }
 
@@ -554,10 +557,10 @@ fn the_clock_wal_record_carries_the_identity_and_the_ingest_stamp() {
             == vec![WalRecord {
                 tenant: "tenant-a".to_string(),
                 labels: vec![
-                    ("__name__".to_string(), CLOCK_READING_METRIC.into()),
-                    ("node".to_string(), "host-a".into()),
-                    ("clock".to_string(), "CLOCK_REALTIME".into()),
-                    ("source".to_string(), "ntp".into()),
+                    krabka_metrics::MetricLabelPair::new("__name__", CLOCK_READING_METRIC.into()),
+                    krabka_metrics::MetricLabelPair::new("node", "host-a".into()),
+                    krabka_metrics::MetricLabelPair::new("clock", "CLOCK_REALTIME".into()),
+                    krabka_metrics::MetricLabelPair::new("source", "ntp".into()),
                 ],
                 payload: SamplePayload::ClockReading(Box::new(ClockReadingPayload {
                     reading,
@@ -608,7 +611,7 @@ fn the_clock_block_dictionary_encodes_its_identity_columns() {
     let schema = batch.schema();
 
     for column in [CCOL_NODE, CCOL_SOURCE_KIND, CCOL_SYNC_STATE] {
-        let (_, field) = schema.column_with_name(column).expect("column");
+        let field = schema.column_with_name(column).expect("column").1;
         check!(
             field.data_type()
                 == &DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
@@ -769,8 +772,8 @@ async fn a_pushed_batch_lands_as_a_clock_record_and_its_projection() {
             record
                 .labels
                 .iter()
-                .find(|(name, _)| name == "__name__")
-                .map(|(_, value)| value.clone())
+                .find(|label| label.name == "__name__")
+                .map(|label| label.value.clone())
         })
         .collect::<Vec<_>>();
     check!(float_names.contains(&"krabka_clock_path_delay_seconds".into()));
@@ -795,11 +798,11 @@ async fn the_ingest_skew_series_reflects_the_stamp() {
     let skew = records
         .iter()
         .find_map(|record| {
-            let is_skew = record.labels.iter().any(|(name, value)| {
-                name == "__name__" && value == "krabka_clock_ingest_skew_seconds"
+            let is_skew = record.labels.iter().any(|label| {
+                label.name == "__name__" && label.value == "krabka_clock_ingest_skew_seconds"
             });
-            match (&record.payload, is_skew) {
-                (SamplePayload::Float { value, .. }, true) => Some(*value),
+            match &record.payload {
+                SamplePayload::Float { value, .. } if is_skew => Some(*value),
                 _ => None,
             }
         })

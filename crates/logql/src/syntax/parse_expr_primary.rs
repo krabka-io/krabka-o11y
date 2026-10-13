@@ -4,6 +4,17 @@ use super::{
     parse_string_arg, parse_variants, syntax_error,
 };
 
+struct SortFunction {
+    name: &'static str,
+    descending: bool,
+}
+
+struct SelectionFunction {
+    name: &'static str,
+    largest: bool,
+    approximate: bool,
+}
+
 pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
     if let Some(inner) = outer_metric_parentheses_inner(input) {
         return parse_expr(inner);
@@ -11,23 +22,48 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
     if let Some(expression) = parse_variants(input)? {
         return Ok(expression);
     }
-    for (name, descending) in [("sort_desc", true), ("sort", false)] {
-        if let Some(args) = function_args(input, name)? {
+    let sort_functions = [
+        SortFunction {
+            name: "sort_desc",
+            descending: true,
+        },
+        SortFunction {
+            name: "sort",
+            descending: false,
+        },
+    ];
+    for function_index in 0..sort_functions.len() {
+        let function = &sort_functions[function_index];
+        if let Some(args) = function_args(input, function.name)? {
             if args.len() != 1 {
                 return Err(syntax_error("expected one function argument"));
             }
             return Ok(LogqlExpr::Sort {
                 expr: Box::new(parse_expr(args[0])?),
-                descending,
+                descending: function.descending,
             });
         }
     }
-    for (name, largest, approximate) in [
-        ("topk", true, false),
-        ("bottomk", false, false),
-        ("approx_topk", true, true),
-    ] {
-        if let Some(args) = function_args(input, name)? {
+    let selection_functions = [
+        SelectionFunction {
+            name: "topk",
+            largest: true,
+            approximate: false,
+        },
+        SelectionFunction {
+            name: "bottomk",
+            largest: false,
+            approximate: false,
+        },
+        SelectionFunction {
+            name: "approx_topk",
+            largest: true,
+            approximate: true,
+        },
+    ];
+    for function_index in 0..selection_functions.len() {
+        let function = &selection_functions[function_index];
+        if let Some(args) = function_args(input, function.name)? {
             if let Ok(query) = parse_metric_query(input) {
                 return Ok(LogqlExpr::Metric {
                     query,
@@ -41,7 +77,7 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
                 .trim()
                 .parse()
                 .map_err(|_| syntax_error("expected integer selection limit"))?;
-            if approximate && limit == 0 {
+            if function.approximate && limit == 0 {
                 return Err(syntax_error(&format!(
                     "invalid parameter (must be greater than 0) approx_topk({}",
                     args[0].trim()
@@ -50,8 +86,8 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
             return Ok(LogqlExpr::Selection {
                 expr: Box::new(parse_expr(args[1])?),
                 limit,
-                largest,
-                approximate,
+                largest: function.largest,
+                approximate: function.approximate,
             });
         }
     }

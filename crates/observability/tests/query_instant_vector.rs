@@ -2,6 +2,11 @@
 
 mod support;
 
+struct SignedVectorCase {
+    query: &'static str,
+    sign: &'static str,
+}
+
 use assert2::assert;
 use axum::{
     body::Body,
@@ -120,11 +125,23 @@ async fn query_endpoint_rejects_signed_vector_function_literals_like_loki() {
     let state = fixture();
     let app = loki_router(state);
 
-    for (query, sign) in [("vector%28-2.5e-1%29", "-"), ("vector%28%2B.5%29", "+")] {
+    for case in [
+        SignedVectorCase {
+            query: "vector%28-2.5e-1%29",
+            sign: "-",
+        },
+        SignedVectorCase {
+            query: "vector%28%2B.5%29",
+            sign: "+",
+        },
+    ] {
         let response = Tenant("tenant-a")
             .get(
                 &app,
-                &format!("/loki/api/v1/query?query={query}&time=4000000000000000000"),
+                &format!(
+                    "/loki/api/v1/query?query={}&time=4000000000000000000",
+                    case.query
+                ),
             )
             .await;
 
@@ -132,7 +149,8 @@ async fn query_endpoint_rejects_signed_vector_function_literals_like_loki() {
         assert!(
             text_body(response).await
                 == format!(
-                    "parse error at line 1, col 8: syntax error: unexpected {sign}, expecting NUMBER"
+                    "parse error at line 1, col 8: syntax error: unexpected {}, expecting NUMBER",
+                    case.sign
                 )
         );
     }

@@ -1,5 +1,18 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct FloatSampleCase {
+    labels: krabka_blockstore::Labels,
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct QueryResultTypeCase {
+    query: &'static str,
+    time_ms: i64,
+    expected_type: &'static str,
+}
+
 /// Differential parity for the top-level structural node kinds.
 ///
 /// The node kinds are unary negation, a bare numeric literal, a bare string
@@ -14,92 +27,197 @@ pub(crate) async fn structural_node_planner_path_matches_interpreter() {
 
     let mut store = InMemoryMetricStore::new();
     let stale_bits = stale_nan();
-    for (lbls, ts, value) in [
-        (
-            labels(&[("__name__", "m"), ("job", "api")]),
-            60_000_i64,
-            2.0,
-        ),
-        (labels(&[("__name__", "m"), ("job", "api")]), 120_000, 3.0),
-        (labels(&[("__name__", "m"), ("job", "db")]), 120_000, 7.0),
+    for sample in [
+        FloatSampleCase::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]))
+            .timestamp_ms(60_000)
+            .value(2.0)
+            .build(),
+        FloatSampleCase::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]))
+            .timestamp_ms(120_000)
+            .value(3.0)
+            .build(),
+        FloatSampleCase::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "db"),
+            ]))
+            .timestamp_ms(120_000)
+            .value(7.0)
+            .build(),
         // A genuine NaN latest-in-window sample (kept, negated to NaN).
-        (
-            labels(&[("__name__", "m"), ("job", "nan")]),
-            120_000,
-            f64::NAN,
-        ),
+        FloatSampleCase::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "nan"),
+            ]))
+            .timestamp_ms(120_000)
+            .value(f64::NAN)
+            .build(),
         // A stale marker (dropped on both paths).
-        (
-            labels(&[("__name__", "m"), ("job", "stale")]),
-            120_000,
-            stale_bits,
-        ),
-        // A series with a short history for the matrix / subquery / smoothed
-        // shapes.
-        (labels(&[("__name__", "g")]), 0, 1.0),
-        (labels(&[("__name__", "g")]), 60_000, 2.0),
-        (labels(&[("__name__", "g")]), 120_000, 4.0),
-        (labels(&[("__name__", "g")]), 180_000, 8.0),
-        (labels(&[("__name__", "g")]), 240_000, 16.0),
+        FloatSampleCase::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "stale"),
+            ]))
+            .timestamp_ms(120_000)
+            .value(stale_bits)
+            .build(),
+        // A series with a short history for the matrix / subquery / smoothed shapes.
+        FloatSampleCase::builder()
+            .labels(labels(&[crate::test_support::TestLabelPair::new(
+                "__name__", "g",
+            )]))
+            .timestamp_ms(0)
+            .value(1.0)
+            .build(),
+        FloatSampleCase::builder()
+            .labels(labels(&[crate::test_support::TestLabelPair::new(
+                "__name__", "g",
+            )]))
+            .timestamp_ms(60_000)
+            .value(2.0)
+            .build(),
+        FloatSampleCase::builder()
+            .labels(labels(&[crate::test_support::TestLabelPair::new(
+                "__name__", "g",
+            )]))
+            .timestamp_ms(120_000)
+            .value(4.0)
+            .build(),
+        FloatSampleCase::builder()
+            .labels(labels(&[crate::test_support::TestLabelPair::new(
+                "__name__", "g",
+            )]))
+            .timestamp_ms(180_000)
+            .value(8.0)
+            .build(),
+        FloatSampleCase::builder()
+            .labels(labels(&[crate::test_support::TestLabelPair::new(
+                "__name__", "g",
+            )]))
+            .timestamp_ms(240_000)
+            .value(16.0)
+            .build(),
     ] {
-        store.push_float("t", lbls, ts, value);
+        store.push_float("t", sample.labels, sample.timestamp_ms, sample.value);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    let queries: &[(&str, i64)] = &[
+    let queries: &[QueryAt] = &[
         // Unary over a vector (drops `__name__`, negates each value, keeps a
         // genuine NaN, drops the stale marker).
-        ("-m", 120_000),
+        QueryAt {
+            query: "-m",
+            time_ms: 120_000,
+        },
         // Unary over an aggregate result (vector).
-        ("-sum(m)", 120_000),
+        QueryAt {
+            query: "-sum(m)",
+            time_ms: 120_000,
+        },
         // Unary over a scalar.
-        ("-(1 + 2)", 120_000),
+        QueryAt {
+            query: "-(1 + 2)",
+            time_ms: 120_000,
+        },
         // Double negation.
-        ("- -m", 120_000),
+        QueryAt {
+            query: "- -m",
+            time_ms: 120_000,
+        },
         // Bare numeric / string literals.
-        ("42", 120_000),
-        ("-7.5", 120_000),
-        (r#""hello""#, 120_000),
+        QueryAt {
+            query: "42",
+            time_ms: 120_000,
+        },
+        QueryAt {
+            query: "-7.5",
+            time_ms: 120_000,
+        },
+        QueryAt {
+            query: r#""hello""#,
+            time_ms: 120_000,
+        },
         // Raw matrix selector / subquery (RangeMatrix from query_instant).
-        ("g[3m]", 240_000),
-        ("m[2m]", 120_000),
-        ("g[4m:1m]", 240_000),
+        QueryAt {
+            query: "g[3m]",
+            time_ms: 240_000,
+        },
+        QueryAt {
+            query: "m[2m]",
+            time_ms: 120_000,
+        },
+        QueryAt {
+            query: "g[4m:1m]",
+            time_ms: 240_000,
+        },
         // `smoothed` extended selector (vector). The extension parser is not
         // feature-gated, so this routes in both build configs.
-        ("smoothed(g)", 90_000),
+        QueryAt {
+            query: "smoothed(g)",
+            time_ms: 90_000,
+        },
     ];
 
-    for &(query, time_ms) in queries {
-        // The recursive planner must claim every one of these.
-        let (via_operators, via_interpreter) =
-            planned_and_interpreted(&engine, query, time_ms).await;
-        let via_operators = sort_instant_result(via_operators);
-        let via_interpreter = sort_instant_result(via_interpreter);
-
-        assert2::assert!(query_results_match(&via_interpreter, &via_operators));
-    }
+    // The recursive planner must claim every one of these.
+    assert_call_planner_matches_interpreter(&engine, &queries).await;
 
     // Pin the result types the parity above relies on.
-    for (query, time_ms, want) in [
-        ("42", 120_000_i64, "scalar"),
-        (r#""hello""#, 120_000, "string"),
-        ("g[3m]", 240_000, "matrix"),
-        ("g[4m:1m]", 240_000, "matrix"),
-        ("-m", 120_000, "vector"),
-        ("-(1 + 2)", 120_000, "scalar"),
+    for case in [
+        QueryResultTypeCase {
+            query: "42",
+            time_ms: 120_000,
+            expected_type: "scalar",
+        },
+        QueryResultTypeCase {
+            query: r#""hello""#,
+            time_ms: 120_000,
+            expected_type: "string",
+        },
+        QueryResultTypeCase {
+            query: "g[3m]",
+            time_ms: 240_000,
+            expected_type: "matrix",
+        },
+        QueryResultTypeCase {
+            query: "g[4m:1m]",
+            time_ms: 240_000,
+            expected_type: "matrix",
+        },
+        QueryResultTypeCase {
+            query: "-m",
+            time_ms: 120_000,
+            expected_type: "vector",
+        },
+        QueryResultTypeCase {
+            query: "-(1 + 2)",
+            time_ms: 120_000,
+            expected_type: "scalar",
+        },
     ] {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap();
+        let expr = parse_promql_with_duration_context(
+            case.query,
+            DurationExprContext::instant(case.time_ms),
+        )
+        .unwrap();
         let plan = engine
-            .plan_instant_expr("t", &expr, time_ms)
+            .plan_instant_expr("t", &expr, case.time_ms)
             .await
             .unwrap()
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
+            .unwrap_or_else(|| panic!("`{}` did not route through the planner", case.query));
         let result = engine
-            .assemble_planned_instant(plan, time_ms)
+            .assemble_planned_instant(plan, case.time_ms)
             .await
             .unwrap();
-        assert2::assert!(result.result_type() == want);
+        assert2::assert!(result.result_type() == case.expected_type);
     }
 
     // The `anchored` modifier on an instant-vector selector is the same hard

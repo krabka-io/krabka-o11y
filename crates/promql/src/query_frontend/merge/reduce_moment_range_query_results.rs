@@ -1,5 +1,5 @@
 use super::{
-    MomentReduction, PromqlError, QueryResult, RangeSeries, SampleValue,
+    MomentReduction, PromqlError, QueryResult, RangeSeries, RangeSeriesSample, SampleValue,
     float_samples_by_fingerprint,
 };
 
@@ -39,7 +39,9 @@ pub(crate) fn reduce_moment_range_query_results(
         let samples = series
             .samples
             .into_iter()
-            .filter_map(|(ts_ms, value)| {
+            .filter_map(|sample| {
+                let ts_ms = sample.timestamp_ms;
+                let value = sample.value;
                 let SampleValue::Float(sum) = value else {
                     return None;
                 };
@@ -54,7 +56,7 @@ pub(crate) fn reduce_moment_range_query_results(
                     MomentReduction::Stddev => variance.sqrt(),
                     MomentReduction::Stdvar => variance,
                 };
-                Some((ts_ms, SampleValue::Float(value)))
+                Some(RangeSeriesSample::new(ts_ms, SampleValue::Float(value)))
             })
             .collect::<Vec<_>>();
         if !samples.is_empty() {

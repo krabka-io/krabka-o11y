@@ -1,13 +1,12 @@
-use super::{IntoResponse, Response, Serialize, StatusCode, text_response};
+use super::{Response, Serialize, StatusCode, text_response};
 
 pub(crate) fn loki_yaml_response(status: StatusCode, value: &impl Serialize) -> Response {
     match serde_yaml::to_string(value) {
-        Ok(body) => (
-            status,
-            [("content-type", "application/yaml; charset=utf-8")],
-            body,
-        )
-            .into_response(),
+        Ok(body) => Response::builder()
+            .status(status)
+            .header("content-type", "application/yaml; charset=utf-8")
+            .body(body.into())
+            .expect("YAML response headers are valid"),
         Err(source) => text_response(StatusCode::INTERNAL_SERVER_ERROR, &source.to_string()),
     }
 }

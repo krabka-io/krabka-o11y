@@ -12,6 +12,7 @@ use krabka_blockstore::{
     BlockLevel, BlockStore, BlockTimestampUnit, BlockWriter, CompactionPolicy,
     DEFAULT_BLOCK_READ_MAX, Labels, RetentionWindows, TenantId,
 };
+use krabka_integration::LabelEntry;
 use krabka_metrics::{
     DeferredBlockDeletions, FloatRow, IngestEnforcer, Limits, ObjectStoreCompactionIndexSink,
     TenantCompactionRows, compact_metric_blocks_once, enforce_compaction_retention,
@@ -23,7 +24,7 @@ use num_traits::ToPrimitive as _;
 use serde_json::{Value, json};
 use tokio::sync::Mutex as AsyncMutex;
 
-use super::{Batch, Signal, Stores, WriteOutcome, config::mix, due, err, now_ms};
+use super::{Batch, Signal, Stores, WriteOutcome, config::mix, err, labels, now_ms};
 
 const METRIC: &str = "soak_samples";
 
@@ -32,7 +33,7 @@ pub struct MetricsSignal {
     seed: u64,
     enforcer: IngestEnforcer,
     limits: Mutex<HashMap<String, Limits>>,
-    reader: AsyncMutex<Option<(Instant, Arc<PromqlEngine<MetricBlockStore>>)>>,
+    reader: AsyncMutex<Option<super::CachedEngine<PromqlEngine<MetricBlockStore>>>>,
     deferred: AsyncMutex<DeferredBlockDeletions>,
 }
 
@@ -71,24 +72,22 @@ impl MetricsSignal {
     }
 
     async fn engine(&self, fresh: bool) -> Result<Arc<PromqlEngine<MetricBlockStore>>, String> {
-        let mut reader = self.reader.lock().await;
-        if let Some((at, engine)) = reader.as_ref()
-            && !due(Some(*at), fresh)
-        {
-            return Ok(Arc::clone(engine));
-        }
-        let manifests = list_compaction_manifests(&self.stores.read)
-            .await
-            .map_err(err)?;
-        let base = url::Url::parse("memory:///").map_err(err)?;
-        let store = MetricBlockStore::from_compaction_manifests(
-            BlockStore::new(Arc::clone(&self.stores.read), base),
-            None,
-            &manifests,
-        );
-        let engine = Arc::new(PromqlEngine::new(Arc::new(store), EngineOpts::default()));
-        *reader = Some((Instant::now(), Arc::clone(&engine)));
-        Ok(engine)
+        super::cached_engine(&self.reader, fresh, || async {
+            let manifests = list_compaction_manifests(&self.stores.read)
+                .await
+                .map_err(err)?;
+            let base = url::Url::parse("memory:///").map_err(err)?;
+            let store = MetricBlockStore::from_compaction_manifests(
+                BlockStore::new(Arc::clone(&self.stores.read), base),
+                None,
+                &manifests,
+            );
+            Ok(Arc::new(PromqlEngine::new(
+                Arc::new(store),
+                EngineOpts::default(),
+            )))
+        })
+        .await
     }
 }
 
@@ -106,9 +105,15 @@ impl Signal for MetricsSignal {
         let mut series_labels = BTreeMap::new();
         let mut float_rows = Vec::new();
         for series in 0..batch.series {
-            let labels = Labels::from_pairs([
-                ("__name__", METRIC.to_string()),
-                ("series", series.to_string()),
+            let labels = labels([
+                LabelEntry {
+                    name: "__name__".into(),
+                    value: METRIC.into(),
+                },
+                LabelEntry {
+                    name: "series".into(),
+                    value: series.to_string(),
+                },
             ]);
             let fingerprint = labels.fingerprint();
             series_labels.insert(fingerprint, labels.into());

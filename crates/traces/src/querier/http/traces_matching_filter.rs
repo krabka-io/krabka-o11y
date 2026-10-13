@@ -1,6 +1,6 @@
 use super::{
-    AppState, IntoResponse, Response, SpanStore, StatusCode, TimeRange, TraceSpans, Uri,
-    matching_traces, q_filter_limit, scan_options_param, traceql_query_error_response,
+    AppState, Response, SpanStore, StatusCode, TimeRange, TraceSpans, Uri, matching_traces,
+    q_filter_limit, scan_options_param, status_text_response, traceql_query_error_response,
 };
 
 /// A tag request's `q` filter.
@@ -29,13 +29,13 @@ where
         window,
     } = filter;
     let scan_options = scan_options_param(uri)
-        .map_err(|err| Box::new((StatusCode::BAD_REQUEST, err).into_response()))?;
+        .map_err(|err| Box::new(status_text_response(StatusCode::BAD_REQUEST, err)))?;
     let limit = q_filter_limit(
         uri,
         state.engine.max_traces(),
         state.cfg.tag_query_filter_autocomplete_limit,
     )
-    .map_err(|err| Box::new((StatusCode::BAD_REQUEST, err).into_response()))?;
+    .map_err(|err| Box::new(status_text_response(StatusCode::BAD_REQUEST, err)))?;
     matching_traces(
         state.engine.as_ref(),
         tenant,

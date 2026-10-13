@@ -50,18 +50,14 @@ impl SampleGroupBuffer {
         &mut self,
         min_rows: usize,
     ) -> Result<Option<RecordBatch>, ProfilesError> {
-        if self.rows < min_rows {
-            return Ok(None);
-        }
-        let gathered = self.gather()?;
-        let cut = last_bucket_start(&gathered, self.resolution_ns)?;
-        if cut == 0 {
-            self.pending = vec![gathered];
-            return Ok(None);
-        }
-        self.rows = gathered.num_rows() - cut;
-        self.pending = vec![gathered.slice(cut, self.rows)];
-        Ok(Some(gathered.slice(0, cut)))
+        krabka_blockstore::take_complete_batch(
+            &self.schema,
+            &mut self.pending,
+            &mut self.rows,
+            min_rows,
+            |batch| last_bucket_start(batch, self.resolution_ns),
+            |error| ProfilesError::Block(error.to_string()),
+        )
     }
 
     /// Everything left once the merge is spent, at which point the last bucket
@@ -134,8 +130,9 @@ fn last_bucket_start(batch: &RecordBatch, resolution_ns: i64) -> Result<usize, P
     };
 
     let last = batch.num_rows() - 1;
-    let (last_fingerprint, last_bucket, last_name) =
-        (fingerprints.value(last), bucket(last), profile_name(last)?);
+    let last_fingerprint = fingerprints.value(last);
+    let last_bucket = bucket(last);
+    let last_name = profile_name(last)?;
     let mut start = last;
     while start > 0
         && fingerprints.value(start - 1) == last_fingerprint

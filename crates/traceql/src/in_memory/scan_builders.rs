@@ -28,7 +28,7 @@ impl ScanBuilders {
         index: usize,
         event: Option<&EventRef>,
         link: Option<&LinkRef>,
-        attr_builders: &mut [(String, AttrBuilder)],
+        attr_builders: &mut [AttrBuilderEntry],
     ) -> Result<()> {
         let columns = &mut self.span;
         columns
@@ -76,8 +76,10 @@ impl ScanBuilders {
             .append_value(&span.instrumentation_version);
         self.append_event(event);
         self.append_link(link)?;
-        for (key, builder) in attr_builders {
-            builder.append(nested_attr_value(key, span, event, link));
+        for entry in attr_builders {
+            entry
+                .builder
+                .append(nested_attr_value(&entry.key, span, event, link));
         }
         Ok(())
     }

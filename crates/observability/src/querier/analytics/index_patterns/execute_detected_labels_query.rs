@@ -27,8 +27,11 @@ pub(crate) async fn execute_detected_labels_query(
     let label_sets = series_data(state, security, headers, &series_params).await?;
     let mut values_by_label = BTreeMap::<String, BTreeSet<String>>::new();
     for labels in label_sets {
-        for (name, value) in labels {
-            values_by_label.entry(name).or_default().insert(value);
+        for label in labels {
+            values_by_label
+                .entry(label.0.to_owned())
+                .or_default()
+                .insert(label.1.to_owned());
         }
     }
     if values_by_label.is_empty() {
@@ -38,10 +41,10 @@ pub(crate) async fn execute_detected_labels_query(
     let detected_labels = values_by_label
         .into_iter()
         .take(params.limit)
-        .map(|(label, values)| {
+        .map(|entry| {
             json!({
-                "label": label,
-                "cardinality": values.len(),
+                "label": entry.0,
+                "cardinality": entry.1.len(),
             })
         })
         .collect::<Vec<_>>();

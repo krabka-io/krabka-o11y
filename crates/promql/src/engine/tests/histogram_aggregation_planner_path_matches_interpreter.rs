@@ -1,5 +1,16 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct FloatAggregationSample {
+    instance: &'static str,
+    value: f64,
+}
+
+struct AggregationQueryCase {
+    query: &'static str,
+    timestamp_ms: i64,
+}
+
 /// Differential parity for histogram-bearing aggregations in the planner.
 ///
 /// The recursive planner routes these aggregations through the shared
@@ -39,24 +50,45 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
     // them into one group.
     store.push_histogram(
         "t",
-        labels(&[("__name__", "m"), ("g", "hist"), ("instance", "0")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "m"),
+            crate::test_support::TestLabelPair::new("g", "hist"),
+            crate::test_support::TestLabelPair::new("instance", "0"),
+        ]),
         300_000,
         seed_histogram(4.0, 6.0),
     );
     store.push_histogram(
         "t",
-        labels(&[("__name__", "m"), ("g", "hist"), ("instance", "1")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "m"),
+            crate::test_support::TestLabelPair::new("g", "hist"),
+            crate::test_support::TestLabelPair::new("instance", "1"),
+        ]),
         300_000,
         seed_histogram(8.0, 20.0),
     );
     // Group g="float": TWO float members (so the float aggregations reduce a
     // real group and `count`/`group` see floats).
-    for (instance, value) in [("0", 2.0), ("1", 6.0)] {
+    for sample in [
+        FloatAggregationSample::builder()
+            .instance("0")
+            .value(2.0)
+            .build(),
+        FloatAggregationSample::builder()
+            .instance("1")
+            .value(6.0)
+            .build(),
+    ] {
         store.push_float(
             "t",
-            labels(&[("__name__", "m"), ("g", "float"), ("instance", instance)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("g", "float"),
+                crate::test_support::TestLabelPair::new("instance", sample.instance),
+            ]),
             300_000,
-            value,
+            sample.value,
         );
     }
     // Group g="mixed": ONE float + ONE histogram in the same group. Under
@@ -65,13 +97,21 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
     // float survives.
     store.push_float(
         "t",
-        labels(&[("__name__", "m"), ("g", "mixed"), ("instance", "0")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "m"),
+            crate::test_support::TestLabelPair::new("g", "mixed"),
+            crate::test_support::TestLabelPair::new("instance", "0"),
+        ]),
         300_000,
         10.0,
     );
     store.push_histogram(
         "t",
-        labels(&[("__name__", "m"), ("g", "mixed"), ("instance", "1")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "m"),
+            crate::test_support::TestLabelPair::new("g", "mixed"),
+            crate::test_support::TestLabelPair::new("instance", "1"),
+        ]),
         300_000,
         seed_histogram(2.0, 3.0),
     );
@@ -79,47 +119,87 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
 
     let queries = [
         // sum/avg MERGE histograms per group; the mixed group is dropped.
-        ("sum by (g) (m)", 300_000_i64),
-        ("avg by (g) (m)", 300_000),
-        ("sum without (instance) (m)", 300_000),
-        ("avg without (instance) (m)", 300_000),
+        AggregationQueryCase {
+            query: "sum by (g) (m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "avg by (g) (m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "sum without (instance) (m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "avg without (instance) (m)",
+            timestamp_ms: 300_000,
+        },
         // Global sum over everything: the lone global group mixes floats and
         // histograms, so it is dropped entirely (empty result).
-        ("sum(m)", 300_000),
+        AggregationQueryCase {
+            query: "sum(m)",
+            timestamp_ms: 300_000,
+        },
         // count/group count every sample regardless of type.
-        ("count by (g) (m)", 300_000),
-        ("group by (g) (m)", 300_000),
-        ("count without (instance) (m)", 300_000),
-        ("count(m)", 300_000),
+        AggregationQueryCase {
+            query: "count by (g) (m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "group by (g) (m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "count without (instance) (m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "count(m)",
+            timestamp_ms: 300_000,
+        },
         // min/max/stddev/stdvar IGNORE histograms (reduce only floats); the
         // all-histogram g="hist" group produces no row, g="float" reduces its
         // two floats, g="mixed" reduces just its one float.
-        ("min by (g) (m)", 300_000),
-        ("max by (g) (m)", 300_000),
-        ("stddev by (g) (m)", 300_000),
-        ("stdvar by (g) (m)", 300_000),
+        AggregationQueryCase {
+            query: "min by (g) (m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "max by (g) (m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "stddev by (g) (m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "stdvar by (g) (m)",
+            timestamp_ms: 300_000,
+        },
         // topk/bottomk/quantile also IGNORE histograms.
-        ("topk by (g) (1, m)", 300_000),
-        ("bottomk by (g) (1, m)", 300_000),
-        ("quantile by (g) (0.5, m)", 300_000),
+        AggregationQueryCase {
+            query: "topk by (g) (1, m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "bottomk by (g) (1, m)",
+            timestamp_ms: 300_000,
+        },
+        AggregationQueryCase {
+            query: "quantile by (g) (0.5, m)",
+            timestamp_ms: 300_000,
+        },
         // count_values formats histogram values as Prometheus bucket notation.
-        ("count_values by (g) (\"v\", m)", 300_000),
+        AggregationQueryCase {
+            query: "count_values by (g) (\"v\", m)",
+            timestamp_ms: 300_000,
+        },
     ];
 
-    for (query, time_ms) in queries {
-        let ((via_operators, operator_annotations), (via_interpreter, interpreter_annotations)) =
-            annotated_planned_and_interpreted(&engine, query, time_ms).await;
-
-        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
-
-        let via_interpreter = normalize(via_interpreter);
-        let via_operators = normalize(via_operators);
-        // `instant_samples_match` compares histogram payloads structurally
-        // (via `SampleValue` `PartialEq`) and floats bit-exactly.
-        assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
-        // Annotation parity: the shared kernel emits identical (here: no)
-        // annotations on both paths.
-        assert2::assert!(operator_annotations == interpreter_annotations);
+    for case in queries {
+        assert_annotated_call_planner_matches_interpreter(&engine, case.query, case.timestamp_ms)
+            .await;
     }
 
     // Pin the absolute histogram-aware rules (not just operator==interpreter).

@@ -20,25 +20,75 @@ pub(crate) fn column_comparison_sql(comparison: ColumnComparison<'_>) -> Result<
         op,
         operand: value,
     } = comparison;
-    Ok(match (op, value) {
-        (ComparisonOp::Eq, Value::Nil) => format!("{col} IS NULL"),
-        (ComparisonOp::Neq, Value::Nil) => format!("{col} IS NOT NULL"),
-        (ComparisonOp::Re, Value::Str(pattern)) => {
-            format!("regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Nre, Value::Str(pattern)) => {
-            format!("NOT regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Eq, v) => format!("{col} = {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Neq, v) => format!("{col} != {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lt, v) => format!("{col} < {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lte, v) => format!("{col} <= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gt, v) => format!("{col} > {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gte, v) => format!("{col} >= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Re | ComparisonOp::Nre, _) => {
-            return Err(TraceqlError::Plan(
-                "regex comparison requires string value".into(),
-            ));
-        }
-    })
+    Ok(
+        match (ColumnComparison {
+            col,
+            field,
+            op,
+            operand: value,
+        }) {
+            ColumnComparison {
+                op: ComparisonOp::Eq,
+                operand: Value::Nil,
+                ..
+            } => format!("{col} IS NULL"),
+            ColumnComparison {
+                op: ComparisonOp::Neq,
+                operand: Value::Nil,
+                ..
+            } => format!("{col} IS NOT NULL"),
+            ColumnComparison {
+                op: ComparisonOp::Re,
+                operand: Value::Str(pattern),
+                ..
+            } => {
+                format!("regexp_like({col}, {})", string_lit(&anchored(pattern)))
+            }
+            ColumnComparison {
+                op: ComparisonOp::Nre,
+                operand: Value::Str(pattern),
+                ..
+            } => {
+                format!("NOT regexp_like({col}, {})", string_lit(&anchored(pattern)))
+            }
+            ColumnComparison {
+                op: ComparisonOp::Eq,
+                operand: v,
+                ..
+            } => format!("{col} = {}", comparison_value_sql(field, v)?),
+            ColumnComparison {
+                op: ComparisonOp::Neq,
+                operand: v,
+                ..
+            } => format!("{col} != {}", comparison_value_sql(field, v)?),
+            ColumnComparison {
+                op: ComparisonOp::Lt,
+                operand: v,
+                ..
+            } => format!("{col} < {}", comparison_value_sql(field, v)?),
+            ColumnComparison {
+                op: ComparisonOp::Lte,
+                operand: v,
+                ..
+            } => format!("{col} <= {}", comparison_value_sql(field, v)?),
+            ColumnComparison {
+                op: ComparisonOp::Gt,
+                operand: v,
+                ..
+            } => format!("{col} > {}", comparison_value_sql(field, v)?),
+            ColumnComparison {
+                op: ComparisonOp::Gte,
+                operand: v,
+                ..
+            } => format!("{col} >= {}", comparison_value_sql(field, v)?),
+            ColumnComparison {
+                op: ComparisonOp::Re | ComparisonOp::Nre,
+                ..
+            } => {
+                return Err(TraceqlError::Plan(
+                    "regex comparison requires string value".into(),
+                ));
+            }
+        },
+    )
 }

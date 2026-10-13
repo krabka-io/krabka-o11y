@@ -23,13 +23,13 @@ pub(crate) async fn avg_over_time_scales_a_native_histogram_by_one_over_the_coun
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "h")]),
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "h")]),
         10_000,
         histogram(4.0),
     );
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "h")]),
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "h")]),
         20_000,
         histogram(6.0),
     );

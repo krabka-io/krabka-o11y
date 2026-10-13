@@ -31,7 +31,9 @@ pub async fn audit_metrics_objects(
 ) -> Result<Vec<StorageFinding>, StorageAuditError> {
     let mut live = LiveBlockSet::default();
     let mut findings = Vec::new();
-    for (key, listed) in inventory.of_signal(StorageSignal::Metrics) {
+    for entry in inventory.of_signal(StorageSignal::Metrics) {
+        let key = entry.key;
+        let listed = entry.listed;
         let ObjectRole::MetricsIndex { block } = &listed.object.role else {
             continue;
         };
@@ -72,7 +74,9 @@ pub async fn audit_metrics_objects(
             findings.push(problem);
         }
     }
-    for (key, listed) in inventory.blocks(StorageSignal::Metrics) {
+    for entry in inventory.blocks(StorageSignal::Metrics) {
+        let key = entry.key;
+        let listed = entry.listed;
         if !live.contains(key) && live.knows(listed.object.tenant.as_deref()) {
             findings.push(unindexed_block_finding(
                 key,

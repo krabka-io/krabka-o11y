@@ -25,6 +25,67 @@ mod tests {
     use super::*;
     use crate::{SpansetExpr, parser::parse};
 
+    struct IntrinsicColumnCase {
+        intrinsic: Intrinsic,
+        column: &'static str,
+    }
+
+    struct ComparisonSqlCase {
+        op: ComparisonOp,
+        expected: String,
+    }
+
+    struct QuerySqlCase {
+        query: &'static str,
+        expected: &'static str,
+    }
+
+    struct EnumCodeCase {
+        name: &'static str,
+        code: i32,
+    }
+
+    struct ValueSqlCase {
+        value: Value,
+        expected: &'static str,
+    }
+
+    struct ScopeNameCase {
+        scope: Scope,
+        expected: &'static str,
+    }
+
+    struct QualifiedComparisonCase {
+        op: ComparisonOp,
+        value: Value,
+        expected: String,
+    }
+
+    struct ScopeMatchCase {
+        scope: Scope,
+        expected: MatchScope,
+    }
+
+    struct ComparisonMatchCase {
+        op: ComparisonOp,
+        expected: MatchCmp,
+    }
+
+    struct ValueMatchCase {
+        value: Value,
+        expected: MatchValue,
+    }
+
+    struct IntrinsicKeyCase {
+        intrinsic: Intrinsic,
+        expected: &'static str,
+    }
+
+    struct QueryBoolCase {
+        query: &'static str,
+        expected: bool,
+    }
+
     fn selector(query: &str) -> FieldExpr {
         let q = parse(query).unwrap();
         let SpansetExpr::Selector(fe) = q.root else {
@@ -159,34 +220,98 @@ mod tests {
     #[test]
     fn field_to_column_maps_all_intrinsics() {
         let cases = [
-            (Intrinsic::Name, COL_NAME),
-            (Intrinsic::Duration, COL_DURATION),
-            (Intrinsic::Kind, COL_KIND),
-            (Intrinsic::Status, COL_STATUS_CODE),
-            (Intrinsic::StatusMessage, COL_STATUS_MESSAGE),
-            (Intrinsic::Id, COL_SPAN_ID),
-            (Intrinsic::ParentId, COL_PARENT_SPAN_ID),
-            (Intrinsic::TraceDuration, COL_TRACE_DURATION),
-            (Intrinsic::TraceRootName, COL_ROOT_SPAN_NAME),
-            (Intrinsic::TraceRootService, COL_ROOT_SERVICE_NAME),
-            (Intrinsic::TraceId, COL_TRACE_ID),
-            (Intrinsic::NestedSetLeft, COL_NS_LEFT),
-            (Intrinsic::NestedSetRight, COL_NS_RIGHT),
-            (Intrinsic::NestedSetParent, COL_PARENT_ID),
-            (Intrinsic::ChildCount, COL_CHILD_COUNT),
-            (Intrinsic::InstrumentationName, COL_INSTRUMENTATION_NAME),
-            (
-                Intrinsic::InstrumentationVersion,
-                COL_INSTRUMENTATION_VERSION,
-            ),
-            (Intrinsic::EventName, COL_EVENT_NAME),
-            (Intrinsic::EventTimeSinceStart, COL_EVENT_TIME_SINCE_START),
-            (Intrinsic::LinkTraceId, COL_LINK_TRACE_ID),
-            (Intrinsic::LinkSpanId, COL_LINK_SPAN_ID),
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::Name,
+                column: COL_NAME,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::Duration,
+                column: COL_DURATION,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::Kind,
+                column: COL_KIND,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::Status,
+                column: COL_STATUS_CODE,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::StatusMessage,
+                column: COL_STATUS_MESSAGE,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::Id,
+                column: COL_SPAN_ID,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::ParentId,
+                column: COL_PARENT_SPAN_ID,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::TraceDuration,
+                column: COL_TRACE_DURATION,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::TraceRootName,
+                column: COL_ROOT_SPAN_NAME,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::TraceRootService,
+                column: COL_ROOT_SERVICE_NAME,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::TraceId,
+                column: COL_TRACE_ID,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::NestedSetLeft,
+                column: COL_NS_LEFT,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::NestedSetRight,
+                column: COL_NS_RIGHT,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::NestedSetParent,
+                column: COL_PARENT_ID,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::ChildCount,
+                column: COL_CHILD_COUNT,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::InstrumentationName,
+                column: COL_INSTRUMENTATION_NAME,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::InstrumentationVersion,
+                column: COL_INSTRUMENTATION_VERSION,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::EventName,
+                column: COL_EVENT_NAME,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::EventTimeSinceStart,
+                column: COL_EVENT_TIME_SINCE_START,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::LinkTraceId,
+                column: COL_LINK_TRACE_ID,
+            },
+            IntrinsicColumnCase {
+                intrinsic: Intrinsic::LinkSpanId,
+                column: COL_LINK_SPAN_ID,
+            },
         ];
-        for (intrinsic, expected) in cases {
-            let col = field_to_column(&intrinsic_field(intrinsic.clone()));
-            assert!(col == expected, "intrinsic {intrinsic:?} -> {col}");
+        for case in cases {
+            let col = field_to_column(&intrinsic_field(case.intrinsic.clone()));
+            assert!(
+                col == case.column,
+                "intrinsic {:?} -> {col}",
+                case.intrinsic
+            );
         }
     }
 
@@ -229,16 +354,35 @@ mod tests {
         let field = attr_field(Scope::Both, "x");
         let col = ident(&field_to_column(&field));
         let cases = [
-            (ComparisonOp::Eq, format!("{col} = 1")),
-            (ComparisonOp::Neq, format!("{col} != 1")),
-            (ComparisonOp::Lt, format!("{col} < 1")),
-            (ComparisonOp::Lte, format!("{col} <= 1")),
-            (ComparisonOp::Gt, format!("{col} > 1")),
-            (ComparisonOp::Gte, format!("{col} >= 1")),
+            ComparisonSqlCase {
+                op: ComparisonOp::Eq,
+                expected: format!("{col} = 1"),
+            },
+            ComparisonSqlCase {
+                op: ComparisonOp::Neq,
+                expected: format!("{col} != 1"),
+            },
+            ComparisonSqlCase {
+                op: ComparisonOp::Lt,
+                expected: format!("{col} < 1"),
+            },
+            ComparisonSqlCase {
+                op: ComparisonOp::Lte,
+                expected: format!("{col} <= 1"),
+            },
+            ComparisonSqlCase {
+                op: ComparisonOp::Gt,
+                expected: format!("{col} > 1"),
+            },
+            ComparisonSqlCase {
+                op: ComparisonOp::Gte,
+                expected: format!("{col} >= 1"),
+            },
         ];
-        for (op, expected) in cases {
+        for case in cases {
+            let op = case.op;
             let sql = comparison_to_sql(&field, op, &Value::Int(1)).unwrap();
-            assert!(sql == expected, "{op:?} -> {sql}");
+            assert!(sql == case.expected, "{op:?} -> {sql}");
         }
     }
 
@@ -279,16 +423,22 @@ mod tests {
 
     #[test]
     fn field_expr_to_sql_combines_boolean_operators() {
-        for (query, expected) in [
-            (
-                "{ .a = 1 && .b = 2 }",
-                "(\"attr.a\" = 1 AND \"attr.b\" = 2)",
-            ),
-            ("{ .a = 1 || .b = 2 }", "(\"attr.a\" = 1 OR \"attr.b\" = 2)"),
-            ("{ !(.a = 1) }", "(NOT \"attr.a\" = 1)"),
+        for case in [
+            QuerySqlCase {
+                query: "{ .a = 1 && .b = 2 }",
+                expected: "(\"attr.a\" = 1 AND \"attr.b\" = 2)",
+            },
+            QuerySqlCase {
+                query: "{ .a = 1 || .b = 2 }",
+                expected: "(\"attr.a\" = 1 OR \"attr.b\" = 2)",
+            },
+            QuerySqlCase {
+                query: "{ !(.a = 1) }",
+                expected: "(NOT \"attr.a\" = 1)",
+            },
         ] {
-            let sql = field_expr_to_sql(&selector(query)).unwrap();
-            assert!(sql == expected, "{query} -> {sql}");
+            let sql = field_expr_to_sql(&selector(case.query)).unwrap();
+            assert!(sql == case.expected, "{} -> {sql}", case.query);
         }
     }
 
@@ -428,19 +578,22 @@ mod tests {
 
     #[test]
     fn qualified_sql_routes_parent_to_parent_alias() {
-        for (query, expected) in [
-            (
-                "{ parent.a = 1 && .b = 2 }",
-                "(p.\"attr.a\" = 1 AND s.\"attr.b\" = 2)",
-            ),
-            (
-                "{ parent.a = 1 || .b = 2 }",
-                "(p.\"attr.a\" = 1 OR s.\"attr.b\" = 2)",
-            ),
-            ("{ !(parent.a = 1) }", "(NOT p.\"attr.a\" = 1)"),
+        for case in [
+            QuerySqlCase {
+                query: "{ parent.a = 1 && .b = 2 }",
+                expected: "(p.\"attr.a\" = 1 AND s.\"attr.b\" = 2)",
+            },
+            QuerySqlCase {
+                query: "{ parent.a = 1 || .b = 2 }",
+                expected: "(p.\"attr.a\" = 1 OR s.\"attr.b\" = 2)",
+            },
+            QuerySqlCase {
+                query: "{ !(parent.a = 1) }",
+                expected: "(NOT p.\"attr.a\" = 1)",
+            },
         ] {
-            let sql = field_expr_to_sql_qualified(&selector(query), "s", "p").unwrap();
-            assert!(sql == expected, "{query} -> {sql}");
+            let sql = field_expr_to_sql_qualified(&selector(case.query), "s", "p").unwrap();
+            assert!(sql == case.expected, "{} -> {sql}", case.query);
         }
     }
 
@@ -449,9 +602,30 @@ mod tests {
     #[test]
     fn comparison_value_sql_maps_status_enum() {
         let status = intrinsic_field(Intrinsic::Status);
-        for (name, code) in [("unset", 0), ("ok", 1), ("error", 2), ("ERROR", 2)] {
-            let sql = comparison_value_sql(&status, &Value::Str(name.into())).unwrap();
-            assert!(sql == code.to_string(), "status {name} -> {sql}");
+        for case in [
+            EnumCodeCase {
+                name: "unset",
+                code: 0,
+            },
+            EnumCodeCase {
+                name: "ok",
+                code: 1,
+            },
+            EnumCodeCase {
+                name: "error",
+                code: 2,
+            },
+            EnumCodeCase {
+                name: "ERROR",
+                code: 2,
+            },
+        ] {
+            let sql = comparison_value_sql(&status, &Value::Str(case.name.into())).unwrap();
+            assert!(
+                sql == case.code.to_string(),
+                "status {} -> {sql}",
+                case.name
+            );
         }
         let err = comparison_value_sql(&status, &Value::Str("bogus".into()));
         assert!(matches!(err, Err(TraceqlError::Plan(_))));
@@ -460,17 +634,38 @@ mod tests {
     #[test]
     fn comparison_value_sql_maps_kind_enum() {
         let kind = intrinsic_field(Intrinsic::Kind);
-        for (name, code) in [
-            ("unspecified", 0),
-            ("internal", 1),
-            ("server", 2),
-            ("client", 3),
-            ("producer", 4),
-            ("consumer", 5),
-            ("Server", 2),
+        for case in [
+            EnumCodeCase {
+                name: "unspecified",
+                code: 0,
+            },
+            EnumCodeCase {
+                name: "internal",
+                code: 1,
+            },
+            EnumCodeCase {
+                name: "server",
+                code: 2,
+            },
+            EnumCodeCase {
+                name: "client",
+                code: 3,
+            },
+            EnumCodeCase {
+                name: "producer",
+                code: 4,
+            },
+            EnumCodeCase {
+                name: "consumer",
+                code: 5,
+            },
+            EnumCodeCase {
+                name: "Server",
+                code: 2,
+            },
         ] {
-            let sql = comparison_value_sql(&kind, &Value::Str(name.into())).unwrap();
-            assert!(sql == code.to_string(), "kind {name} -> {sql}");
+            let sql = comparison_value_sql(&kind, &Value::Str(case.name.into())).unwrap();
+            assert!(sql == case.code.to_string(), "kind {} -> {sql}", case.name);
         }
         let err = comparison_value_sql(&kind, &Value::Str("bogus".into()));
         assert!(matches!(err, Err(TraceqlError::Plan(_))));
@@ -533,14 +728,26 @@ mod tests {
     #[test]
     fn comparison_value_sql_plain_field_uses_value_sql() {
         let field = attr_field(Scope::Both, "x");
-        for (value, expected) in [
-            (Value::Int(7), "7"),
-            (Value::Str("hi".into()), "'hi'"),
-            (Value::Bool(true), "true"),
-            (Value::Duration(5), "5"),
+        for case in [
+            ValueSqlCase {
+                value: Value::Int(7),
+                expected: "7",
+            },
+            ValueSqlCase {
+                value: Value::Str("hi".into()),
+                expected: "'hi'",
+            },
+            ValueSqlCase {
+                value: Value::Bool(true),
+                expected: "true",
+            },
+            ValueSqlCase {
+                value: Value::Duration(5),
+                expected: "5",
+            },
         ] {
-            let sql = comparison_value_sql(&field, &value).unwrap();
-            assert!(sql == expected, "{value:?} -> {sql}");
+            let sql = comparison_value_sql(&field, &case.value).unwrap();
+            assert!(sql == case.expected, "{:?} -> {sql}", case.value);
         }
     }
 
@@ -559,18 +766,39 @@ mod tests {
     #[test]
     fn intrinsic_name_labels_known_intrinsics() {
         let cases = [
-            (Scope::Intrinsic(Intrinsic::TraceId), "trace:id"),
-            (Scope::Intrinsic(Intrinsic::Id), "span:id"),
-            (Scope::Intrinsic(Intrinsic::ParentId), "span:parentID"),
-            (Scope::Intrinsic(Intrinsic::Kind), "span:kind"),
-            (Scope::Intrinsic(Intrinsic::Status), "span:status"),
+            ScopeNameCase {
+                scope: Scope::Intrinsic(Intrinsic::TraceId),
+                expected: "trace:id",
+            },
+            ScopeNameCase {
+                scope: Scope::Intrinsic(Intrinsic::Id),
+                expected: "span:id",
+            },
+            ScopeNameCase {
+                scope: Scope::Intrinsic(Intrinsic::ParentId),
+                expected: "span:parentID",
+            },
+            ScopeNameCase {
+                scope: Scope::Intrinsic(Intrinsic::Kind),
+                expected: "span:kind",
+            },
+            ScopeNameCase {
+                scope: Scope::Intrinsic(Intrinsic::Status),
+                expected: "span:status",
+            },
             // Anything else collapses to the generic label.
-            (Scope::Both, "intrinsic"),
-            (Scope::Intrinsic(Intrinsic::Name), "intrinsic"),
+            ScopeNameCase {
+                scope: Scope::Both,
+                expected: "intrinsic",
+            },
+            ScopeNameCase {
+                scope: Scope::Intrinsic(Intrinsic::Name),
+                expected: "intrinsic",
+            },
         ];
-        for (scope, expected) in cases {
-            let name = intrinsic_name(&scope);
-            assert!(name == expected, "{scope:?} -> {name}");
+        for case in cases {
+            let name = intrinsic_name(&case.scope);
+            assert!(name == case.expected, "{:?} -> {name}", case.scope);
         }
     }
 
@@ -588,37 +816,74 @@ mod tests {
         let field = attr_field(Scope::Parent, "a");
         let col = qualified_field_ident(&field, "s", "p");
         let cases = [
-            (ComparisonOp::Eq, Value::Int(1), format!("{col} = 1")),
-            (ComparisonOp::Neq, Value::Int(1), format!("{col} != 1")),
-            (ComparisonOp::Lt, Value::Int(1), format!("{col} < 1")),
-            (ComparisonOp::Lte, Value::Int(1), format!("{col} <= 1")),
-            (ComparisonOp::Gt, Value::Int(1), format!("{col} > 1")),
-            (ComparisonOp::Gte, Value::Int(1), format!("{col} >= 1")),
+            QualifiedComparisonCase {
+                op: ComparisonOp::Eq,
+                value: Value::Int(1),
+                expected: format!("{col} = 1"),
+            },
+            QualifiedComparisonCase {
+                op: ComparisonOp::Neq,
+                value: Value::Int(1),
+                expected: format!("{col} != 1"),
+            },
+            QualifiedComparisonCase {
+                op: ComparisonOp::Lt,
+                value: Value::Int(1),
+                expected: format!("{col} < 1"),
+            },
+            QualifiedComparisonCase {
+                op: ComparisonOp::Lte,
+                value: Value::Int(1),
+                expected: format!("{col} <= 1"),
+            },
+            QualifiedComparisonCase {
+                op: ComparisonOp::Gt,
+                value: Value::Int(1),
+                expected: format!("{col} > 1"),
+            },
+            QualifiedComparisonCase {
+                op: ComparisonOp::Gte,
+                value: Value::Int(1),
+                expected: format!("{col} >= 1"),
+            },
             // nil
-            (ComparisonOp::Eq, Value::Nil, format!("{col} IS NULL")),
-            (ComparisonOp::Neq, Value::Nil, format!("{col} IS NOT NULL")),
+            QualifiedComparisonCase {
+                op: ComparisonOp::Eq,
+                value: Value::Nil,
+                expected: format!("{col} IS NULL"),
+            },
+            QualifiedComparisonCase {
+                op: ComparisonOp::Neq,
+                value: Value::Nil,
+                expected: format!("{col} IS NOT NULL"),
+            },
             // regex
-            (
-                ComparisonOp::Re,
-                Value::Str("x".into()),
-                format!("regexp_like({col}, '^(?:x)$')"),
-            ),
-            (
-                ComparisonOp::Nre,
-                Value::Str("x".into()),
-                format!("NOT regexp_like({col}, '^(?:x)$')"),
-            ),
+            QualifiedComparisonCase {
+                op: ComparisonOp::Re,
+                value: Value::Str("x".into()),
+                expected: format!("regexp_like({col}, '^(?:x)$')"),
+            },
+            QualifiedComparisonCase {
+                op: ComparisonOp::Nre,
+                value: Value::Str("x".into()),
+                expected: format!("NOT regexp_like({col}, '^(?:x)$')"),
+            },
         ];
-        for (op, value, expected) in cases {
+        for case in cases {
             let sql = comparison_to_sql_qualified(&QualifiedComparison {
                 field: &field,
-                op,
-                operand: &value,
+                op: case.op,
+                operand: &case.value,
                 span_alias: "s",
                 parent_alias: "p",
             })
             .unwrap();
-            assert!(sql == expected, "{op:?} {value:?} -> {sql}");
+            assert!(
+                sql == case.expected,
+                "{:?} {:?} -> {sql}",
+                case.op,
+                case.value
+            );
         }
         // regex against non-string errors
         let err = comparison_to_sql_qualified(&QualifiedComparison {
@@ -789,52 +1054,118 @@ mod tests {
     #[test]
     fn match_scope_covers_every_scope() {
         let cases = [
-            (Scope::Both, MatchScope::Both),
-            (Scope::Span, MatchScope::Span),
-            (Scope::Resource, MatchScope::Resource),
-            (Scope::Parent, MatchScope::Parent),
-            (Scope::Event, MatchScope::Event),
-            (Scope::Link, MatchScope::Link),
-            (Scope::Instrumentation, MatchScope::Instrumentation),
-            (Scope::Intrinsic(Intrinsic::Name), MatchScope::Intrinsic),
+            ScopeMatchCase {
+                scope: Scope::Both,
+                expected: MatchScope::Both,
+            },
+            ScopeMatchCase {
+                scope: Scope::Span,
+                expected: MatchScope::Span,
+            },
+            ScopeMatchCase {
+                scope: Scope::Resource,
+                expected: MatchScope::Resource,
+            },
+            ScopeMatchCase {
+                scope: Scope::Parent,
+                expected: MatchScope::Parent,
+            },
+            ScopeMatchCase {
+                scope: Scope::Event,
+                expected: MatchScope::Event,
+            },
+            ScopeMatchCase {
+                scope: Scope::Link,
+                expected: MatchScope::Link,
+            },
+            ScopeMatchCase {
+                scope: Scope::Instrumentation,
+                expected: MatchScope::Instrumentation,
+            },
+            ScopeMatchCase {
+                scope: Scope::Intrinsic(Intrinsic::Name),
+                expected: MatchScope::Intrinsic,
+            },
         ];
-        for (scope, expected) in cases {
-            let got = match_scope(&scope);
-            assert!(got == expected, "{scope:?} -> {got:?}");
+        for case in cases {
+            let got = match_scope(&case.scope);
+            assert!(got == case.expected, "{:?} -> {got:?}", case.scope);
         }
     }
 
     #[test]
     fn match_cmp_covers_every_operator() {
         let cases = [
-            (ComparisonOp::Eq, MatchCmp::Eq),
-            (ComparisonOp::Neq, MatchCmp::Neq),
-            (ComparisonOp::Lt, MatchCmp::Lt),
-            (ComparisonOp::Lte, MatchCmp::Lte),
-            (ComparisonOp::Gt, MatchCmp::Gt),
-            (ComparisonOp::Gte, MatchCmp::Gte),
-            (ComparisonOp::Re, MatchCmp::Re),
-            (ComparisonOp::Nre, MatchCmp::Nre),
+            ComparisonMatchCase {
+                op: ComparisonOp::Eq,
+                expected: MatchCmp::Eq,
+            },
+            ComparisonMatchCase {
+                op: ComparisonOp::Neq,
+                expected: MatchCmp::Neq,
+            },
+            ComparisonMatchCase {
+                op: ComparisonOp::Lt,
+                expected: MatchCmp::Lt,
+            },
+            ComparisonMatchCase {
+                op: ComparisonOp::Lte,
+                expected: MatchCmp::Lte,
+            },
+            ComparisonMatchCase {
+                op: ComparisonOp::Gt,
+                expected: MatchCmp::Gt,
+            },
+            ComparisonMatchCase {
+                op: ComparisonOp::Gte,
+                expected: MatchCmp::Gte,
+            },
+            ComparisonMatchCase {
+                op: ComparisonOp::Re,
+                expected: MatchCmp::Re,
+            },
+            ComparisonMatchCase {
+                op: ComparisonOp::Nre,
+                expected: MatchCmp::Nre,
+            },
         ];
-        for (op, expected) in cases {
-            let got = match_cmp(op);
-            assert!(got == expected, "{op:?} -> {got:?}");
+        for case in cases {
+            let got = match_cmp(case.op);
+            assert!(got == case.expected, "{:?} -> {got:?}", case.op);
         }
     }
 
     #[test]
     fn match_value_covers_every_value_kind() {
         let cases = [
-            (Value::Str("x".into()), MatchValue::Str("x".into())),
-            (Value::Int(3), MatchValue::Int(3)),
-            (Value::Duration(9), MatchValue::Int(9)),
-            (Value::Float(1.5), MatchValue::Float(1.5)),
-            (Value::Bool(true), MatchValue::Bool(true)),
-            (Value::Nil, MatchValue::Nil),
+            ValueMatchCase {
+                value: Value::Str("x".into()),
+                expected: MatchValue::Str("x".into()),
+            },
+            ValueMatchCase {
+                value: Value::Int(3),
+                expected: MatchValue::Int(3),
+            },
+            ValueMatchCase {
+                value: Value::Duration(9),
+                expected: MatchValue::Int(9),
+            },
+            ValueMatchCase {
+                value: Value::Float(1.5),
+                expected: MatchValue::Float(1.5),
+            },
+            ValueMatchCase {
+                value: Value::Bool(true),
+                expected: MatchValue::Bool(true),
+            },
+            ValueMatchCase {
+                value: Value::Nil,
+                expected: MatchValue::Nil,
+            },
         ];
-        for (value, expected) in cases {
-            let got = match_value(&value);
-            assert!(got == expected, "{value:?} -> {got:?}");
+        for case in cases {
+            let got = match_value(&case.value);
+            assert!(got == case.expected, "{:?} -> {got:?}", case.value);
         }
     }
 
@@ -842,15 +1173,30 @@ mod tests {
     fn matcher_key_uses_intrinsic_canonical_names() {
         // `Intrinsic::tag_name` pins every variant's name; the key delegates to it.
         let cases = [
-            (Intrinsic::Name, "span:name"),
-            (Intrinsic::ParentId, "span:parentID"),
-            (Intrinsic::TraceRootService, "trace:rootService"),
-            (Intrinsic::NestedSetParent, "span:nestedSetParent"),
-            (Intrinsic::LinkSpanId, "link:spanID"),
+            IntrinsicKeyCase {
+                intrinsic: Intrinsic::Name,
+                expected: "span:name",
+            },
+            IntrinsicKeyCase {
+                intrinsic: Intrinsic::ParentId,
+                expected: "span:parentID",
+            },
+            IntrinsicKeyCase {
+                intrinsic: Intrinsic::TraceRootService,
+                expected: "trace:rootService",
+            },
+            IntrinsicKeyCase {
+                intrinsic: Intrinsic::NestedSetParent,
+                expected: "span:nestedSetParent",
+            },
+            IntrinsicKeyCase {
+                intrinsic: Intrinsic::LinkSpanId,
+                expected: "link:spanID",
+            },
         ];
-        for (intrinsic, expected) in cases {
-            let key = matcher_key(&intrinsic_field(intrinsic.clone()));
-            assert!(key == expected, "{intrinsic:?} -> {key}");
+        for case in cases {
+            let key = matcher_key(&intrinsic_field(case.intrinsic.clone()));
+            assert!(key == case.expected, "{:?} -> {key}", case.intrinsic);
         }
         // Non-intrinsic scopes keep the raw attribute key.
         assert!(matcher_key(&attr_field(Scope::Span, "http.method")) == "http.method");
@@ -877,42 +1223,84 @@ mod tests {
 
     #[test]
     fn has_nested_scope_detects_event_link_and_intrinsics() {
-        for (query, expected) in [
-            ("{ event.foo = 1 }", true),
-            ("{ link.foo = 1 }", true),
-            ("{ event:name = \"x\" }", true),
-            ("{ link:traceID = \"x\" }", true),
-            ("{ .a = 1 || event.b = 2 }", true),
-            ("{ !(link.b = 2) }", true),
-            ("{ .a = 1 && .b = 2 }", false),
+        for case in [
+            QueryBoolCase {
+                query: "{ event.foo = 1 }",
+                expected: true,
+            },
+            QueryBoolCase {
+                query: "{ link.foo = 1 }",
+                expected: true,
+            },
+            QueryBoolCase {
+                query: "{ event:name = \"x\" }",
+                expected: true,
+            },
+            QueryBoolCase {
+                query: "{ link:traceID = \"x\" }",
+                expected: true,
+            },
+            QueryBoolCase {
+                query: "{ .a = 1 || event.b = 2 }",
+                expected: true,
+            },
+            QueryBoolCase {
+                query: "{ !(link.b = 2) }",
+                expected: true,
+            },
+            QueryBoolCase {
+                query: "{ .a = 1 && .b = 2 }",
+                expected: false,
+            },
         ] {
-            let got = has_nested_scope(&selector(query));
-            assert!(got == expected, "{query} -> {got}");
+            let got = has_nested_scope(&selector(case.query));
+            assert!(got == case.expected, "{} -> {got}", case.query);
         }
     }
 
     #[test]
     fn has_parent_scope_detects_parent_across_combinators() {
-        for (query, expected) in [
-            ("{ parent.a = 1 }", true),
-            ("{ .a = 1 && parent.b = 2 }", true),
-            ("{ !(parent.b = 2) }", true),
-            ("{ .a = 1 }", false),
+        for case in [
+            QueryBoolCase {
+                query: "{ parent.a = 1 }",
+                expected: true,
+            },
+            QueryBoolCase {
+                query: "{ .a = 1 && parent.b = 2 }",
+                expected: true,
+            },
+            QueryBoolCase {
+                query: "{ !(parent.b = 2) }",
+                expected: true,
+            },
+            QueryBoolCase {
+                query: "{ .a = 1 }",
+                expected: false,
+            },
         ] {
-            let got = has_parent_scope(&selector(query));
-            assert!(got == expected, "{query} -> {got}");
+            let got = has_parent_scope(&selector(case.query));
+            assert!(got == case.expected, "{} -> {got}", case.query);
         }
     }
 
     #[test]
     fn unfiltered_parent_table_is_needed_only_for_nested_parent_selectors() {
-        for (query, expected) in [
-            ("{ event:name = \"x\" }", false),
-            ("{ parent.a = 1 }", false),
-            ("{ event:name = \"x\" && parent.a = 1 }", true),
+        for case in [
+            QueryBoolCase {
+                query: "{ event:name = \"x\" }",
+                expected: false,
+            },
+            QueryBoolCase {
+                query: "{ parent.a = 1 }",
+                expected: false,
+            },
+            QueryBoolCase {
+                query: "{ event:name = \"x\" && parent.a = 1 }",
+                expected: true,
+            },
         ] {
-            let got = needs_unfiltered_parent_table(&selector(query));
-            assert!(got == expected, "{query} -> {got}");
+            let got = needs_unfiltered_parent_table(&selector(case.query));
+            assert!(got == case.expected, "{} -> {got}", case.query);
         }
     }
 
@@ -939,6 +1327,7 @@ mod comparison_to_sql;
 mod comparison_to_sql_qualified;
 mod comparison_value_sql;
 mod enum_value_sql;
+mod field_expr_has_field;
 mod field_expr_to_matcher_disjuncts;
 mod field_expr_to_matchers;
 mod field_expr_to_negated_matcher_disjuncts;

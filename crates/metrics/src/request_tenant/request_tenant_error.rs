@@ -44,11 +44,12 @@ impl IntoResponse for RequestTenantError {
     // `http.Error`. That writes plain text with a trailing line break, so the
     // body is never the JSON error envelope of the Prometheus API.
     fn into_response(self) -> Response {
-        (
-            self.http_status(),
-            [(X_CONTENT_TYPE_OPTIONS, "nosniff")],
-            format!("{self}\n"),
-        )
-            .into_response()
+        let mut response = format!("{self}\n").into_response();
+        *response.status_mut() = self.http_status();
+        response.headers_mut().insert(
+            X_CONTENT_TYPE_OPTIONS,
+            "nosniff".parse().expect("static header"),
+        );
+        response
     }
 }

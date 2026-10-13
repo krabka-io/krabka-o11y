@@ -3,6 +3,12 @@ use super::{
     check_range_resolution, push_sharded_subqueries, query_supports_frontend_sharding,
 };
 
+struct OpenSplitRange {
+    window: i64,
+    start_ms: i64,
+    end_ms: i64,
+}
+
 /// Plans query-frontend fan-out for a Prometheus range query.
 ///
 /// Time splitting happens first. Sub-range boundaries align to absolute
@@ -61,26 +67,30 @@ pub fn plan_range_query(
     let mut eval = start_ms;
     // Track the open sub-range: the absolute window it belongs to plus the first
     // and last eval timestamps seen in that window.
-    let mut current: Option<(i64, i64, i64)> = None;
+    let mut current: Option<OpenSplitRange> = None;
 
     while eval <= end_ms {
         let window = absolute_split_window(eval, split_interval_ms);
         match current.as_mut() {
-            Some((open_window, _, last)) if *open_window == window => {
-                *last = eval;
+            Some(open_range) if open_range.window == window => {
+                open_range.end_ms = eval;
             }
             _ => {
-                if let Some((_, range_start, range_end)) = current.take() {
+                if let Some(open_range) = current.take() {
                     push_sharded_subqueries(
                         &mut subqueries,
                         query,
-                        range_start,
-                        range_end,
+                        open_range.start_ms,
+                        open_range.end_ms,
                         step,
                         shard_count,
                     );
                 }
-                current = Some((window, eval, eval));
+                current = Some(OpenSplitRange {
+                    window,
+                    start_ms: eval,
+                    end_ms: eval,
+                });
             }
         }
 
@@ -90,12 +100,12 @@ pub fn plan_range_query(
         eval = next_eval;
     }
 
-    if let Some((_, range_start, range_end)) = current {
+    if let Some(open_range) = current {
         push_sharded_subqueries(
             &mut subqueries,
             query,
-            range_start,
-            range_end,
+            open_range.start_ms,
+            open_range.end_ms,
             step,
             shard_count,
         );

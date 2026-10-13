@@ -9,7 +9,7 @@ use promql_parser::parser::LabelModifier;
 
 use super::{MomentReduction, QueryShardReducer, RankReduction};
 use crate::{
-    PromqlError, PromqlLabels as Labels, QueryResult, RangeSeries, SampleValue,
+    PromqlError, PromqlLabels as Labels, QueryResult, RangeSeries, RangeSeriesSample, SampleValue,
     engine::add_compatible_native_histogram,
 };
 

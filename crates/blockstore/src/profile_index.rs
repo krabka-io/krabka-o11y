@@ -10,6 +10,7 @@ use std::{
 };
 
 use krabka_units::prelude::*;
+pub use profile_index_type::ProfileBlockRegistration;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -22,7 +23,7 @@ use crate::{
         PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, TenantShardMerge,
         UNBOUNDED_SHARD_RANGE, shard_ranges_for_span, touched_shard_ranges,
     },
-    labels::{Labels, SeriesFingerprint},
+    labels::{LabelPair, Labels, SeriesFingerprint},
     matcher::LabelMatcher,
 };
 
@@ -44,8 +45,8 @@ mod tests {
     const CPU_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
     const HEAP_TYPE: &str = "memory:alloc_space:bytes:space:bytes";
 
-    fn labels(pairs: &[(&str, &str)]) -> Labels {
-        Labels::from_pairs(pairs.iter().copied())
+    fn labels(pairs: &[LabelPair]) -> Labels {
+        Labels::from_pairs(pairs.iter().cloned())
     }
 
     fn strings(values: &[&str]) -> Vec<String> {
@@ -54,9 +55,9 @@ mod tests {
 
     fn profile_labels(name: &str, profile_type: &str, service_name: &str) -> Labels {
         labels(&[
-            ("__name__", name),
-            ("__profile_type__", profile_type),
-            ("service_name", service_name),
+            LabelPair::new("__name__", name),
+            LabelPair::new("__profile_type__", profile_type),
+            LabelPair::new("service_name", service_name),
         ])
     }
 
@@ -73,18 +74,41 @@ mod tests {
     fn seed() -> ProfileIndex {
         let mut index = ProfileIndex::new();
         let cpu = labels(&[
-            ("__name__", "process_cpu"),
-            ("__profile_type__", CPU_TYPE),
-            ("service_name", "checkout"),
+            LabelPair::new("__name__", "process_cpu"),
+            LabelPair::new("__profile_type__", CPU_TYPE),
+            LabelPair::new("service_name", "checkout"),
         ]);
         let heap = labels(&[
-            ("__name__", "memory"),
-            ("__profile_type__", HEAP_TYPE),
-            ("service_name", "checkout"),
+            LabelPair::new("__name__", "memory"),
+            LabelPair::new("__profile_type__", HEAP_TYPE),
+            LabelPair::new("service_name", "checkout"),
         ]);
         index.add_series("t", cpu.fingerprint(), &cpu).unwrap();
         index.add_series("t", heap.fingerprint(), &heap).unwrap();
         index
+    }
+
+    struct StoredPartitionedSeed {
+        index: ProfileIndex,
+        store: Arc<dyn ObjectStore>,
+    }
+
+    async fn stored_partitioned_seed() -> StoredPartitionedSeed {
+        use object_store::memory::InMemory;
+
+        let mut index = seed();
+        seed_partitioned_block(&mut index);
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        StoredPartitionedSeed { index, store }
+    }
+
+    fn assert_partitioned_seed(index: &ProfileIndex) {
+        assert2::assert!(index.profile_types("t") == strings(&[HEAP_TYPE, CPU_TYPE]));
+        assert2::assert!(index.stacktrace_partitions("blocks/p1.parquet") == vec![0, 1]);
     }
 
     /// Registers one block carrying `seed`'s series, with stacktrace
@@ -129,8 +153,8 @@ mod tests {
         index.replace_profile_blocks(
             "t",
             &strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
-            &[(
-                BlockMeta {
+            &[ProfileBlockRegistration {
+                meta: BlockMeta {
                     tenant: "t".to_string(),
                     object_key: "compacted.parquet".to_string(),
                     min_ts: 100,
@@ -139,8 +163,8 @@ mod tests {
                     fingerprints: vec![checkout.cpu, checkout.heap],
                     level: BlockLevel::INGESTED,
                 },
-                vec![9],
-            )],
+                partitions: vec![9],
+            }],
         );
         index
             .save_latest_snapshot(store, "index/profiles.json")
@@ -151,12 +175,14 @@ mod tests {
             .unwrap()
     }
 
-    fn seed_with_blocks() -> (
-        ProfileIndex,
-        SeriesFingerprint,
-        SeriesFingerprint,
-        SeriesFingerprint,
-    ) {
+    struct ProfileSeedWithBlocks {
+        index: ProfileIndex,
+        cpu_checkout: SeriesFingerprint,
+        heap_checkout: SeriesFingerprint,
+        cpu_payments: SeriesFingerprint,
+    }
+
+    fn seed_with_blocks() -> ProfileSeedWithBlocks {
         let mut index = ProfileIndex::new();
         let cpu_checkout = profile_labels("process_cpu", CPU_TYPE, "checkout");
         let heap_checkout = profile_labels("memory", HEAP_TYPE, "checkout");
@@ -207,7 +233,12 @@ mod tests {
             <ProfileIndex as BlockIndex>::add_block(&mut index, &meta);
         }
 
-        (index, cpu_checkout_fp, heap_checkout_fp, cpu_payments_fp)
+        ProfileSeedWithBlocks {
+            index,
+            cpu_checkout: cpu_checkout_fp,
+            heap_checkout: heap_checkout_fp,
+            cpu_payments: cpu_payments_fp,
+        }
     }
 
     #[test]
@@ -244,7 +275,12 @@ mod tests {
 
     #[test]
     fn profile_index_matching_and_block_helpers_return_pruned_metadata() {
-        let (index, cpu_checkout, heap_checkout, cpu_payments) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index,
+            cpu_checkout,
+            heap_checkout,
+            cpu_payments,
+        } = seed_with_blocks();
 
         assert2::assert!(
             index
@@ -277,7 +313,13 @@ mod tests {
                 180,
             ) == strings(&["cpu-checkout.parquet", "cpu-payments.parquet"])
         );
-        assert2::assert!(index.block_time_bounds("t", 175, 180) == Some((100, 250)));
+        assert2::assert!(
+            index.block_time_bounds("t", 175, 180)
+                == Some(crate::block::BlockTimeBounds {
+                    min_ts: 100,
+                    max_ts: 250
+                })
+        );
         assert2::assert!(index.block_time_bounds("t", 450, 500) == None);
         assert2::assert!(
             BlockIndex::candidate_blocks(&index, "t", 175, 180)
@@ -288,7 +330,12 @@ mod tests {
 
     #[test]
     fn profile_index_profile_type_helpers_return_pruned_metadata() {
-        let (index, cpu_checkout, heap_checkout, _) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index,
+            cpu_checkout,
+            heap_checkout,
+            ..
+        } = seed_with_blocks();
 
         assert2::assert!(index.profile_types_for_time("t", 175, 180) == strings(&[CPU_TYPE]));
         assert2::assert!(index.profile_types_for_time("t", 320, 330) == strings(&[HEAP_TYPE]));
@@ -304,7 +351,12 @@ mod tests {
 
     #[test]
     fn profile_index_label_helpers_return_pruned_metadata() {
-        let (index, cpu_checkout, heap_checkout, _) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index,
+            cpu_checkout,
+            heap_checkout,
+            ..
+        } = seed_with_blocks();
 
         assert2::assert!(
             index
@@ -356,7 +408,12 @@ mod tests {
 
     #[test]
     fn profile_index_series_helpers_return_projected_metadata() {
-        let (index, cpu_checkout, heap_checkout, cpu_payments) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index,
+            cpu_checkout,
+            heap_checkout,
+            cpu_payments,
+        } = seed_with_blocks();
 
         let mut blocks = index.all_blocks();
         blocks.sort_by(|left, right| left.object_key.cmp(&right.object_key));
@@ -365,16 +422,16 @@ mod tests {
                 .series_for_time("t", &[], &["service_name".to_string()], 175, 180)
                 .unwrap()
                 == vec![
-                    vec![("service_name".to_string(), "checkout".to_string())],
-                    vec![("service_name".to_string(), "payments".to_string())],
+                    vec![LabelPair::new("service_name", "checkout")],
+                    vec![LabelPair::new("service_name", "payments")],
                 ]
         );
         assert2::assert!(
             index.series_for_fingerprints("t", &BTreeSet::from([heap_checkout]), &[])
                 == vec![vec![
-                    ("__name__".to_string(), "memory".to_string()),
-                    ("__profile_type__".to_string(), HEAP_TYPE.to_string()),
-                    ("service_name".to_string(), "checkout".to_string()),
+                    LabelPair::new("__name__", "memory"),
+                    LabelPair::new("__profile_type__", HEAP_TYPE),
+                    LabelPair::new("service_name", "checkout"),
                 ]]
         );
         assert2::assert!(
@@ -386,8 +443,8 @@ mod tests {
                 )
                 .unwrap()
                 == vec![
-                    vec![("__name__".to_string(), "memory".to_string())],
-                    vec![("__name__".to_string(), "process_cpu".to_string())],
+                    vec![LabelPair::new("__name__", "memory")],
+                    vec![LabelPair::new("__name__", "process_cpu")],
                 ]
         );
         assert2::assert!(
@@ -457,12 +514,12 @@ mod tests {
     fn replace_profile_blocks_removes_old_partition_maps() {
         let mut index = seed();
         let labels = labels(&[
-            ("__name__", "process_cpu"),
-            (
+            LabelPair::new("__name__", "process_cpu"),
+            LabelPair::new(
                 "__profile_type__",
                 "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
             ),
-            ("service_name", "checkout"),
+            LabelPair::new("service_name", "checkout"),
         ]);
         let fp = labels.fingerprint();
         index.add_block(&BlockMeta {
@@ -479,8 +536,8 @@ mod tests {
         index.replace_profile_blocks(
             "t",
             &["old.parquet".to_string()],
-            &[(
-                BlockMeta {
+            &[ProfileBlockRegistration {
+                meta: BlockMeta {
                     tenant: "t".to_string(),
                     object_key: "new.parquet".to_string(),
                     min_ts: 0,
@@ -489,8 +546,8 @@ mod tests {
                     fingerprints: vec![fp],
                     level: BlockLevel::INGESTED,
                 },
-                vec![99],
-            )],
+                partitions: vec![99],
+            }],
         );
 
         assert2::assert!(index.stacktrace_partitions("old.parquet").is_empty());
@@ -502,20 +559,11 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_round_trips() {
-        use object_store::memory::InMemory;
-
-        let mut index = seed();
-        seed_partitioned_block(&mut index);
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        index
-            .save_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
+        let StoredPartitionedSeed { store, .. } = stored_partitioned_seed().await;
         let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
             .await
             .unwrap();
-        assert2::assert!(loaded.profile_types("t") == strings(&[HEAP_TYPE, CPU_TYPE]));
-        assert2::assert!(loaded.stacktrace_partitions("blocks/p1.parquet") == vec![0, 1]);
+        assert_partitioned_seed(&loaded);
     }
 
     #[tokio::test]
@@ -576,8 +624,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert2::assert!(loaded.profile_types("t") == strings(&[HEAP_TYPE, CPU_TYPE]));
-        assert2::assert!(loaded.stacktrace_partitions("blocks/p1.parquet") == vec![0, 1]);
+        assert_partitioned_seed(&loaded);
     }
 
     #[tokio::test]
@@ -635,7 +682,9 @@ mod tests {
         use object_store::memory::InMemory;
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (published, ..) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index: published, ..
+        } = seed_with_blocks();
         published
             .save_latest_snapshot(&store, "index/profiles.json")
             .await
@@ -691,7 +740,12 @@ mod tests {
         use object_store::memory::InMemory;
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (mut index, cpu_checkout_fp, heap_checkout_fp, _) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index: mut index,
+            cpu_checkout: cpu_checkout_fp,
+            heap_checkout: heap_checkout_fp,
+            ..
+        } = seed_with_blocks();
         index.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
         index
             .save_latest_snapshot(&store, "index/profiles.json")
@@ -738,8 +792,8 @@ mod tests {
         compactor.replace_profile_blocks(
             "t",
             &strings(&["cpu-checkout.parquet"]),
-            &[(
-                BlockMeta {
+            &[ProfileBlockRegistration {
+                meta: BlockMeta {
                     tenant: "t".to_string(),
                     object_key: "compacted.parquet".to_string(),
                     min_ts: 100,
@@ -748,8 +802,8 @@ mod tests {
                     fingerprints: vec![cpu_checkout_fp],
                     level: BlockLevel::INGESTED,
                 },
-                vec![9],
-            )],
+                partitions: vec![9],
+            }],
         );
         compactor
     }
@@ -759,7 +813,11 @@ mod tests {
         use object_store::memory::InMemory;
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (mut writer, cpu_checkout_fp, ..) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index: mut writer,
+            cpu_checkout: cpu_checkout_fp,
+            ..
+        } = seed_with_blocks();
         writer.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
         writer
             .save_latest_snapshot(&store, "index/profiles.json")
@@ -830,7 +888,11 @@ mod tests {
         use object_store::memory::InMemory;
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (mut published, cpu_checkout_fp, ..) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index: mut published,
+            cpu_checkout: cpu_checkout_fp,
+            ..
+        } = seed_with_blocks();
         published.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
         published
             .save_latest_snapshot(&store, "index/profiles.json")
@@ -924,7 +986,12 @@ mod tests {
 
     /// An in-memory store holding a snapshot of an index seeded with thirty
     /// days, one block a day, and that index.
-    async fn thirty_days_saved_to_memory() -> (Arc<dyn ObjectStore>, ProfileIndex) {
+    struct ThirtyDayProfileIndex {
+        store: Arc<dyn ObjectStore>,
+        index: ProfileIndex,
+    }
+
+    async fn thirty_days_saved_to_memory() -> ThirtyDayProfileIndex {
         use object_store::memory::InMemory;
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
@@ -934,7 +1001,7 @@ mod tests {
             .save_latest_snapshot(&store, "index/profiles.json")
             .await
             .unwrap();
-        (store, index)
+        ThirtyDayProfileIndex { store, index }
     }
 
     async fn payload_object_keys(store: &Arc<dyn ObjectStore>) -> Vec<String> {
@@ -958,7 +1025,10 @@ mod tests {
     /// rewrote.
     #[tokio::test]
     async fn a_flush_publishes_only_the_shards_its_own_blocks_fall_in() {
-        let (store, mut index) = thirty_days_saved_to_memory().await;
+        let ThirtyDayProfileIndex {
+            store,
+            index: mut index,
+        } = thirty_days_saved_to_memory().await;
         let before = payload_object_keys(&store).await;
         check!(before.len() == 30, "one shard a day");
 
@@ -982,7 +1052,7 @@ mod tests {
     /// load has for that range.
     #[tokio::test]
     async fn a_query_about_one_day_loads_one_days_shard() {
-        let (store, _index) = thirty_days_saved_to_memory().await;
+        let ThirtyDayProfileIndex { store, .. } = thirty_days_saved_to_memory().await;
 
         let day = 7;
         let scoped =
@@ -1091,15 +1161,8 @@ mod tests {
     #[tokio::test]
     async fn load_missing_shard_payload_preserves_object_store_error_text() {
         use futures::StreamExt as _;
-        use object_store::memory::InMemory;
 
-        let mut index = seed();
-        seed_partitioned_block(&mut index);
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        index
-            .save_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
+        let StoredPartitionedSeed { store, .. } = stored_partitioned_seed().await;
 
         let prefix = Path::from("index/profiles/payloads");
         let payload = store
@@ -1122,15 +1185,20 @@ mod tests {
 
     #[test]
     fn a_compacted_profile_block_records_its_level_on_its_own_record() {
-        let (mut index, cpu_checkout_fp, heap_checkout_fp, _) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index: mut index,
+            cpu_checkout: cpu_checkout_fp,
+            heap_checkout: heap_checkout_fp,
+            ..
+        } = seed_with_blocks();
         index.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
         check!(index.block_level("cpu-checkout.parquet") == BlockLevel::INGESTED);
 
         let level = index.replace_profile_blocks(
             "t",
             &strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
-            &[(
-                BlockMeta {
+            &[ProfileBlockRegistration {
+                meta: BlockMeta {
                     tenant: "t".to_string(),
                     object_key: "compacted.parquet".to_string(),
                     min_ts: 100,
@@ -1141,8 +1209,8 @@ mod tests {
                     // handing over a level here cannot get the ladder wrong.
                     level: BlockLevel::INGESTED,
                 },
-                vec![9],
-            )],
+                partitions: vec![9],
+            }],
         );
 
         check!(level == BlockLevel(1));
@@ -1185,7 +1253,7 @@ mod tests {
 
     #[test]
     fn profile_compaction_candidates_take_their_bounds_from_the_series_postings() {
-        let (index, ..) = seed_with_blocks();
+        let ProfileSeedWithBlocks { index, .. } = seed_with_blocks();
         check!(
             index.compaction_candidates()
                 == vec![
@@ -1225,7 +1293,12 @@ mod tests {
         use object_store::memory::InMemory;
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (mut index, cpu_checkout_fp, heap_checkout_fp, _) = seed_with_blocks();
+        let ProfileSeedWithBlocks {
+            index: mut index,
+            cpu_checkout: cpu_checkout_fp,
+            heap_checkout: heap_checkout_fp,
+            ..
+        } = seed_with_blocks();
         index
             .save_latest_snapshot(&store, "index/profiles.json")
             .await
@@ -1260,7 +1333,10 @@ mod tests {
     #[test]
     fn a_series_without_a_profile_type_label_is_refused_by_name() {
         let mut index = ProfileIndex::new();
-        let untyped = labels(&[("__name__", "process_cpu"), ("service_name", "checkout")]);
+        let untyped = labels(&[
+            LabelPair::new("__name__", "process_cpu"),
+            LabelPair::new("service_name", "checkout"),
+        ]);
 
         let error = index
             .add_series("t", untyped.fingerprint(), &untyped)
@@ -1303,7 +1379,10 @@ mod tests {
     #[test]
     fn a_refused_series_registers_neither_labels_nor_a_profile_type() {
         let mut index = ProfileIndex::new();
-        let untyped = labels(&[("__name__", "process_cpu"), ("service_name", "checkout")]);
+        let untyped = labels(&[
+            LabelPair::new("__name__", "process_cpu"),
+            LabelPair::new("service_name", "checkout"),
+        ]);
 
         check!(
             index

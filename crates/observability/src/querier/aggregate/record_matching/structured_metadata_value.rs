@@ -4,28 +4,13 @@ pub(crate) fn structured_metadata_value(
     metadata: &MapArray,
     row: usize,
 ) -> Result<Labels, QueryError> {
-    let entries = metadata.value(row);
-    let keys = entries
-        .column_by_name("key")
-        .and_then(|array| array.as_any().downcast_ref::<StringArray>())
-        .ok_or(QueryError::InvalidColumn {
-            column: "structured_metadata.key",
-            expected: "Utf8",
+    let entries =
+        krabka_blockstore::map_array_string_entries(metadata, row, |column, expected| {
+            QueryError::InvalidColumn { column, expected }
         })?;
-    let values = entries
-        .column_by_name("value")
-        .and_then(|array| array.as_any().downcast_ref::<StringArray>())
-        .ok_or(QueryError::InvalidColumn {
-            column: "structured_metadata.value",
-            expected: "Utf8",
-        })?;
-
-    Ok((0..entries.len())
-        .map(|index| {
-            (
-                keys.value(index).to_string(),
-                values.value(index).to_string(),
-            )
-        })
-        .collect())
+    let mut labels = Labels::new();
+    for entry in entries {
+        labels.insert(entry.key, entry.value);
+    }
+    Ok(labels)
 }

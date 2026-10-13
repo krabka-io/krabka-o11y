@@ -217,17 +217,21 @@ pub async fn run(ctx: &Context, plan: &Plan) -> Value {
     let measured = Instant::now().max(window.until).duration_since(window.from);
 
     let stats = std::mem::take(&mut *stats.lock().expect("the stats lock is not poisoned"));
-    let (writes, reads) = stats
+    let writes = stats
         .tenants
         .values()
-        .fold((0, 0), |(w, r), t| (w + t.accepted_batches, r + t.queries));
+        .map(|tenant| tenant.accepted_batches)
+        .sum();
+    let reads = stats.tenants.values().map(|tenant| tenant.queries).sum();
     let object_store =
         meters_after.report_since(&meters_before, writes, reads, stats.maintenance.passes);
-    let tenants: BTreeMap<&str, Value> = stats
-        .tenants
-        .iter()
-        .map(|(tenant, t)| (*tenant, tenant_report(t, measured)))
-        .collect();
+    let mut tenants = BTreeMap::new();
+    for tenant in stats.tenants.keys() {
+        tenants.insert(
+            tenant.as_str(),
+            tenant_report(&stats.tenants[tenant], measured),
+        );
+    }
     let primary = tenants.get(plan.primary).cloned().unwrap_or(Value::Null);
     let error_rate = stats.tenants.get(plan.primary).map_or(0.0, error_rate);
     let exercised = Exercised {
@@ -589,7 +593,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_operation_that_spans_the_warmup_edge_is_not_measured_in_part() {
         let backing: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (stores, meters) = StoreMeters::wrap(&backing, "runner-test");
+        let metered = StoreMeters::wrap(&backing, "runner-test");
+        let stores = metered.stores;
+        let meters = metered.meters;
         let ctx = Context {
             signal: Arc::new(TwoRequests {
                 stores: stores.clone(),
@@ -624,23 +630,28 @@ mod tests {
 
         let entry = run(&ctx, &plan).await;
 
+        struct StoreSummary {
+            operations: Option<u64>,
+            requests: Option<u64>,
+            requests_per_operation: Option<f64>,
+        }
         let side = |path: &str| {
             let store = &entry["object_store"][path];
-            (
-                store["ops"].as_u64(),
-                store["total_requests"].as_u64(),
-                store["requests_per_op"].as_f64(),
-            )
+            StoreSummary {
+                operations: store["ops"].as_u64(),
+                requests: store["total_requests"].as_u64(),
+                requests_per_operation: store["requests_per_op"].as_f64(),
+            }
         };
-        let (write_ops, write_requests, write_ratio) = side("write");
-        let (read_ops, read_requests, read_ratio) = side("read");
-        check!(write_ops.is_some_and(|ops| ops > 0));
-        check!(write_requests == write_ops.map(|ops| ops * 2));
-        check!(write_ratio == Some(2.0));
-        check!(read_ops.is_some_and(|ops| ops > 0));
-        check!(read_requests == read_ops.map(|ops| ops * 2));
-        check!(read_ratio == Some(2.0));
-        check!(entry["ingest"]["accepted_batches"].as_u64() == write_ops);
+        let writes = side("write");
+        let reads = side("read");
+        check!(writes.operations.is_some_and(|ops| ops > 0));
+        check!(writes.requests == writes.operations.map(|ops| ops * 2));
+        check!(writes.requests_per_operation == Some(2.0));
+        check!(reads.operations.is_some_and(|ops| ops > 0));
+        check!(reads.requests == reads.operations.map(|ops| ops * 2));
+        check!(reads.requests_per_operation == Some(2.0));
+        check!(entry["ingest"]["accepted_batches"].as_u64() == writes.operations);
         check!(entry["ingest"]["latency_us"]["count"].as_u64() == write_ops);
         check!(entry["query"]["latency_us"]["count"].as_u64() == read_ops);
         // The warm-up ran past its nominal length to let its last operation

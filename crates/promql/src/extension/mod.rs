@@ -105,6 +105,7 @@ macro_rules! settings_batch_exec_methods {
 
 pub mod instant_manipulate;
 pub mod normalize;
+mod physical_exec_common;
 pub mod planner;
 pub mod range_manipulate;
 pub mod series_divide;

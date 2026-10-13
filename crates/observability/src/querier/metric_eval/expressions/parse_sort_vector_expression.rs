@@ -1,7 +1,8 @@
 use super::{SortVectorExpression, split_logql_function_arguments};
 
 pub(crate) fn parse_sort_vector_expression(query: &str) -> Option<SortVectorExpression> {
-    for (function_name, descending) in [("sort", false), ("sort_desc", true)] {
+    for function_name in ["sort", "sort_desc"] {
+        let descending = function_name == "sort_desc";
         let Some(arguments) = split_logql_function_arguments(query, function_name) else {
             continue;
         };

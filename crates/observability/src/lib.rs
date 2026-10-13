@@ -195,7 +195,8 @@ pub use compactor::{
     compact_kafka_wal_records_to_object_store, compact_log_block_to_object_store,
     compact_next_kafka_wal_batch_to_object_store, compact_wal_records_to_object_store,
     read_compaction_frontier_from_object_store, run_compactor_once, run_compactor_until_idle,
-    run_compactor_until_shutdown, write_compaction_frontier_to_object_store,
+    run_compactor_until_shutdown, set_remote_parent_from_kafka_headers,
+    write_compaction_frontier_to_object_store,
 };
 pub use config::{
     QuerierIndexSource, Role, ServiceConfig, ServiceConfigError, ServiceRuntimeError,
@@ -226,7 +227,7 @@ pub use log_level::{
 };
 pub use panic_containment::{PanicSafeShared, contain_handler_panics};
 pub use querier::{
-    QuerierState, build_querier_state, execute_metric_query,
+    MetricEvaluationRange, QuerierState, build_querier_state, execute_metric_query,
     execute_metric_query_from_object_store, execute_metric_query_range,
     execute_metric_query_range_from_object_store, execute_metric_query_range_with_hot_tail,
     execute_metric_query_range_with_hot_tail_frontier, execute_metric_query_with_hot_tail,
@@ -266,8 +267,9 @@ pub(crate) use self::{
             validate_compactor_policy,
         },
         delete_materialization::{
-            LogCompactionIndexOutput, TenantCompactionIndexCache, active_log_delete_tenants,
-            compact_log_block_to_object_store_with_index_output, insert_descriptor_labels,
+            LogCompactionIndexOutput, TenantCompactionIndexCache, TenantLogIndexes,
+            active_log_delete_tenants, compact_log_block_to_object_store_with_index_output,
+            insert_descriptor_labels,
             materialize_delete_requests_in_existing_local_manifest_blocks,
             materialize_delete_requests_in_existing_object_store_blocks,
             poll_accumulated_log_compaction_records, wal_compaction_chunks, wal_record_time_range,
@@ -408,7 +410,7 @@ pub(crate) use self::{
                 wants_loki_parquet,
             },
             parquet_responses::{
-                add_loki_query_stats, add_loki_query_stats_for_metric_plan,
+                MetricEvaluationWindow, add_loki_query_stats, add_loki_query_stats_for_metric_plan,
                 add_loki_query_stats_for_metric_plan_with_hot_tail,
                 add_loki_query_stats_for_stream_blocks_with_hot_tail,
                 add_loki_query_stats_for_stream_plan,
@@ -440,9 +442,10 @@ pub(crate) use self::{
                 parse_metric_sample_value, sort_loki_stream_values,
             },
             sample_windows::{
-                FormattedMetricSeries, METRIC_DECIMAL_SCALE, MetricSamples, MetricValue,
-                MetricWindow, apply_absent_over_time, format_metric_samples,
-                is_unwrapped_metric_query, merge_metric_samples, metric_samples_from_batches,
+                FormattedMetricSeries, FormattedMetricSeriesEntry, METRIC_DECIMAL_SCALE,
+                MetricSamples, MetricValue, MetricWindow, apply_absent_over_time,
+                format_metric_samples, is_unwrapped_metric_query, merge_metric_samples,
+                metric_samples_from_batches,
             },
         },
         analytics::{
@@ -496,10 +499,11 @@ pub(crate) use self::{
             scalar_samples::{
                 HttpMetricQuery, Rational, ScalarSample, decimal_scaled_numerator,
                 execute_http_metric_query, gcd_signed, impl_rational_division_ops,
-                parse_scalar_sample, rational_to_f64, resolved_range_step,
-                validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
-                validate_loki_volume_query_range_limit, validate_query_entries_limit,
-                validate_query_range_limit, validate_query_string_bytes_limit,
+                impl_rational_float_conversion, parse_scalar_sample, rational_to_f64,
+                resolved_range_step, validate_loki_query_range_resolution,
+                validate_loki_range_query_range_limit, validate_loki_volume_query_range_limit,
+                validate_query_entries_limit, validate_query_range_limit,
+                validate_query_string_bytes_limit,
             },
             validation::{
                 LabelReplaceArguments, VectorScalarExpressionParser, apply_label_join_fields,

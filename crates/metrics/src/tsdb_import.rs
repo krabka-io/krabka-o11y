@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     BucketSpan, CompactionIndexError, CompactionIndexManifest, CompactionObjectPlan, FloatRow,
-    HistogramCodecError, MetricBlockKind, MetricLabels as Labels, MetricString, NativeHistogram,
-    NativeHistogramRow, ResetHint, TenantBatches, TenantCompactionRows,
+    HistogramCodecError, MetricBlockKind, MetricLabelPair, MetricLabels as Labels, MetricString,
+    NativeHistogram, NativeHistogramRow, ResetHint, TenantBatches, TenantCompactionRows,
     compactor::{compaction_index_key, series_labels_for_kind},
     encode_tenant_batches,
     wire::validate_spans_and_counts,
@@ -86,7 +86,7 @@ use self::{
     chunk_encoding::ChunkEncoding,
     chunk_error::ChunkError,
     chunk_meta::ChunkMeta,
-    chunk_samples::ChunkSamples,
+    chunk_samples::{ChunkSamples, TimestampedFloatSample, TimestampedHistogramSample},
     chunk_segments::ChunkSegments,
     counter_reset_hint::counter_reset_hint,
     create_import_json::create_import_json,

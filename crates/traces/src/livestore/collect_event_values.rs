@@ -3,16 +3,19 @@ use super::{BTreeSet, Span, typed_value_parts};
 pub(crate) fn collect_event_values(
     span: &Span,
     tag: &str,
-    values: &mut BTreeSet<(String, String)>,
+    values: &mut BTreeSet<krabka_traceql::TypedValue>,
 ) {
     for event in &span.events {
         match tag {
             "event:name" => {
-                values.insert(("string".into(), event.name.clone()));
+                values.insert(krabka_traceql::TypedValue::new(
+                    "string",
+                    event.name.clone(),
+                ));
             }
             "event:timeSinceStart" => {
-                values.insert((
-                    "duration".into(),
+                values.insert(krabka_traceql::TypedValue::new(
+                    "duration",
                     event
                         .time_unix_nano
                         .saturating_sub(span.start_ns)

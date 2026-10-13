@@ -20,10 +20,10 @@ pub fn image(name: &str) -> GenericImage {
     let reference = std::env::var(format!("KRABKA_{name}_IMAGE_ID"))
         .or_else(|_| std::env::var(&variable))
         .unwrap_or_else(|_| panic!("{variable} is set by `bazel test --config=docker`"));
-    let (repository, tag) = reference
+    let image_parts = reference
         .rsplit_once(':')
         .expect("image reference has a tag or content ID");
-    GenericImage::new(repository, tag)
+    GenericImage::new(image_parts.0, image_parts.1)
 }
 
 pub async fn start(

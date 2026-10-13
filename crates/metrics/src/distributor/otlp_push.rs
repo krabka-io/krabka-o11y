@@ -18,18 +18,20 @@ pub(crate) async fn otlp_push(
         metrics.record_ingest(IngestRequest {
             outcome: RequestOutcome::from_result(&result),
             body: ingest.body_size,
-            items: result.as_ref().map_or(0, |(_, items, _)| *items),
+            items: result.as_ref().map_or(0, |outcome| outcome.items),
             elapsed: ingest.started.elapsed().as_time(),
         });
     }
     match result {
-        Ok((success, _items, partial_success)) => {
-            let mut response = success.into_response();
+        Ok(outcome) => {
+            let mut response = outcome.success.into_response();
             let body = ExportMetricsServiceResponse {
-                partial_success: partial_success.map(|partial| ExportMetricsPartialSuccess {
-                    rejected_data_points: i64::try_from(partial.rejected_data_points)
-                        .unwrap_or(i64::MAX),
-                    error_message: partial.error_message,
+                partial_success: outcome.partial_success.map(|partial| {
+                    ExportMetricsPartialSuccess {
+                        rejected_data_points: i64::try_from(partial.rejected_data_points)
+                            .unwrap_or(i64::MAX),
+                        error_message: partial.error_message,
+                    }
                 }),
             }
             .encode_to_vec();

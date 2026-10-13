@@ -3,6 +3,11 @@ use super::{
     SkippedBlock, StreamExt, TryStreamExt, instrument, probe_block, stream,
 };
 
+pub(crate) struct ProbedBlocks {
+    pub readable: Vec<ProbedBlock>,
+    pub skipped: Vec<SkippedBlock>,
+}
+
 /// Splits `keys` into the blocks a scan can read and the blocks it must skip.
 ///
 /// Reading one block's footer is what settles the question, and it is cheap: a
@@ -28,7 +33,7 @@ pub(crate) async fn probe_blocks(
     keys: &[String],
     max_bytes: ByteSize,
     cache: &BlockMetadataCache,
-) -> Result<(Vec<ProbedBlock>, Vec<SkippedBlock>)> {
+) -> Result<ProbedBlocks> {
     // Owned captures, and no closure; see `require_blocks` for why.
     let mut probes = Vec::with_capacity(keys.len());
     for object_key in keys {
@@ -70,5 +75,5 @@ pub(crate) async fn probe_blocks(
             "skipping unreadable block"
         );
     }
-    Ok((readable, skipped))
+    Ok(ProbedBlocks { readable, skipped })
 }

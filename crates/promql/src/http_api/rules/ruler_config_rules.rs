@@ -8,7 +8,7 @@ pub(crate) async fn ruler_config_rules<S: MetricStore>(
     Extension(principal): Extension<Principal>,
     headers: HeaderMap,
 ) -> Response {
-    let (_, rules) = match tenant_ruler_rules(
+    let snapshot = match tenant_ruler_rules(
         &state,
         RequestAuth {
             headers: &headers,
@@ -18,9 +18,9 @@ pub(crate) async fn ruler_config_rules<S: MetricStore>(
         Ok(tenant_rules) => tenant_rules,
         Err(rejection) => return rejection.into_response(),
     };
-    let rules = rules
-        .into_iter()
-        .map(|(namespace, groups)| (namespace, groups.into_values().collect::<Vec<_>>()))
-        .collect::<BTreeMap<_, _>>();
+    let mut rules = BTreeMap::new();
+    for entry in snapshot.rules {
+        rules.insert(entry.0, entry.1.into_values().collect::<Vec<_>>());
+    }
     yaml_response(StatusCode::OK, &rules)
 }

@@ -11,7 +11,8 @@ pub(crate) fn resolved_to_pprof_with_max_nodes(
     max_nodes: i64,
 ) -> PprofProfile {
     let mut totals = BTreeMap::<Vec<ResolvedFunction>, i64>::new();
-    for (locations, value) in &samples {
+    for locations in samples.keys() {
+        let value = samples[locations];
         let mut path = Vec::new();
         for function in locations
             .iter()
@@ -36,7 +37,11 @@ pub(crate) fn resolved_to_pprof_with_max_nodes(
         line: 0,
     });
     let mut merged = BTreeMap::<Vec<ResolvedLocation>, i64>::new();
-    for (mut locations, value) in samples {
+    let sample_paths = samples.keys().cloned().collect::<Vec<_>>();
+    for mut locations in sample_paths {
+        let Some(value) = samples.get(&locations).copied() else {
+            continue;
+        };
         let functions = locations
             .iter()
             .flat_map(|location| location.lines.iter().map(|line| line.function.clone()))
@@ -73,8 +78,11 @@ pub(crate) fn resolved_to_pprof_with_max_nodes(
         *merged.entry(locations).or_default() += value;
     }
     let mut builder = PprofBuilder::new(profile_type);
-    for (locations, value) in merged {
-        builder.add_resolved_sample(&locations, value);
+    let merged_paths = merged.keys().cloned().collect::<Vec<_>>();
+    for locations in merged_paths {
+        if let Some(value) = merged.get(&locations) {
+            builder.add_resolved_sample(&locations, *value);
+        }
     }
     if threshold > 0 {
         builder.location_id(&other);
@@ -98,10 +106,9 @@ mod tests {
     fn cumulative_cutoff_keeps_shared_root_and_ties() {
         let profile_type =
             ProfileType::parse("process_cpu:cpu:nanoseconds:cpu:nanoseconds").unwrap();
-        let samples = BTreeMap::from([
-            (vec![location("root")], 40),
-            (vec![location("hot"), location("root")], 100),
-        ]);
+        let mut samples = BTreeMap::new();
+        samples.insert(vec![location("root")], 40);
+        samples.insert(vec![location("hot"), location("root")], 100);
         let profile = resolved_to_pprof_with_max_nodes(samples, &profile_type, 1);
         let inner = profile.inner();
         check!(
@@ -114,7 +121,9 @@ mod tests {
         );
         check!(inner.sample.len() == 2);
         check!(inner.location.len() == 3);
-        let tied = BTreeMap::from([(vec![location("left")], 7), (vec![location("right")], 7)]);
+        let mut tied = BTreeMap::new();
+        tied.insert(vec![location("left")], 7);
+        tied.insert(vec![location("right")], 7);
         let profile = resolved_to_pprof_with_max_nodes(tied, &profile_type, 1);
         check!(profile.inner().sample.len() == 2);
         check!(

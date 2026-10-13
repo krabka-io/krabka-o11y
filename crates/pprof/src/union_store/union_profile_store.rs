@@ -1,7 +1,6 @@
 use super::{
-    Arc, BTreeSet, LabelMatcher, MemTable, ProfileError, ProfileScan, ProfileStats, ProfileStore,
-    RecordBatch, UnionSymbols, collect_and_remap, filter_hot_samples, max_option, min_option,
-    profile_samples_schema, sorted_union,
+    Arc, BTreeSet, LabelMatcher, ProfileError, ProfileScan, ProfileStats, ProfileStore,
+    UnionSymbols, collect_and_remap, filter_hot_samples, max_option, min_option, sorted_union,
 };
 
 #[derive(Clone)]
@@ -47,10 +46,7 @@ where
         let samples_table = "samples".to_string();
         if let Some(mut batches) = filter_hot_samples(&hot, &cold)? {
             batches.extend(cold);
-            if batches.is_empty() {
-                batches.push(RecordBatch::new_empty(profile_samples_schema()));
-            }
-            let table = MemTable::try_new(profile_samples_schema(), vec![batches])
+            let table = crate::profile_samples_mem_table(batches)
                 .map_err(|err| ProfileError::Store(err.to_string()))?;
             ctx.register_table(&samples_table, Arc::new(table))
                 .map_err(|err| ProfileError::Store(err.to_string()))?;
@@ -60,15 +56,14 @@ where
                 symbols: Arc::new(symbols),
             });
         }
-        for (name, mut batches) in [("hot_samples", hot), ("cold_samples", cold)] {
-            if batches.is_empty() {
-                batches.push(RecordBatch::new_empty(profile_samples_schema()));
-            }
-            let table = MemTable::try_new(profile_samples_schema(), vec![batches])
-                .map_err(|err| ProfileError::Store(err.to_string()))?;
-            ctx.register_table(name, Arc::new(table))
-                .map_err(|err| ProfileError::Store(err.to_string()))?;
-        }
+        let hot_table = crate::profile_samples_mem_table(hot)
+            .map_err(|err| ProfileError::Store(err.to_string()))?;
+        ctx.register_table("hot_samples", Arc::new(hot_table))
+            .map_err(|err| ProfileError::Store(err.to_string()))?;
+        let cold_table = crate::profile_samples_mem_table(cold)
+            .map_err(|err| ProfileError::Store(err.to_string()))?;
+        ctx.register_table("cold_samples", Arc::new(cold_table))
+            .map_err(|err| ProfileError::Store(err.to_string()))?;
         // A persisted WAL sample replaces its hot copy. Distinct WAL records
         // remain distinct even when their timestamps, labels and values match.
         // Downsampled rows retain every contributing identity.
@@ -172,7 +167,7 @@ where
         label_names: &[String],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<Vec<(String, String)>>, ProfileError> {
+    ) -> Result<Vec<Vec<crate::ProfileLabel>>, ProfileError> {
         let hot = self
             .hot
             .series(tenant, matchers, label_names, start_ms, end_ms)

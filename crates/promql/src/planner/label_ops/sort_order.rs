@@ -23,14 +23,19 @@ impl SortOrder {
     /// A histogram sample reaches this comparison as a `NaN` through
     /// `sort_value`, and so sorts last as well.
     pub(crate) fn compare(self, left: f64, right: f64) -> Ordering {
-        match (left.is_nan(), right.is_nan()) {
-            (true, true) => Ordering::Equal,
-            (true, false) => Ordering::Greater,
-            (false, true) => Ordering::Less,
-            (false, false) => match self {
+        if left.is_nan() {
+            if right.is_nan() {
+                Ordering::Equal
+            } else {
+                Ordering::Greater
+            }
+        } else if right.is_nan() {
+            Ordering::Less
+        } else {
+            match self {
                 Self::Ascending => left.total_cmp(&right),
                 Self::Descending => right.total_cmp(&left),
-            },
+            }
         }
     }
 }

@@ -14,7 +14,9 @@ pub(crate) fn speedscope_to_pprof(
     let frame_names = frames
         .iter()
         .enumerate()
-        .map(|(idx, frame)| {
+        .map(|entry| {
+            let idx = entry.0;
+            let frame = entry.1;
             frame
                 .get("name")
                 .and_then(serde_json::Value::as_str)
@@ -29,10 +31,12 @@ pub(crate) fn speedscope_to_pprof(
         .get("profiles")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| ProfilesError::Decode("speedscope profiles missing".to_string()))?;
-    let mut stacks = BTreeMap::<Vec<(String, i32)>, i64>::new();
+    let mut stacks = BTreeMap::<Vec<super::LegacyStackFrame>, i64>::new();
     let mut sample_unit = default_unit.to_string();
 
-    for (profile_idx, profile) in profiles.iter().enumerate() {
+    for profile_entry in profiles.iter().enumerate() {
+        let profile_idx = profile_entry.0;
+        let profile = profile_entry.1;
         let profile_type = profile
             .get("type")
             .and_then(serde_json::Value::as_str)
@@ -60,7 +64,9 @@ pub(crate) fn speedscope_to_pprof(
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        for (sample_idx, sample) in samples.iter().enumerate() {
+        for sample_entry in samples.iter().enumerate() {
+            let sample_idx = sample_entry.0;
+            let sample = sample_entry.1;
             let stack = sample.as_array().ok_or_else(|| {
                 ProfilesError::Decode(format!(
                     "speedscope profiles[{profile_idx}].samples[{sample_idx}] must be an array"
@@ -84,7 +90,10 @@ pub(crate) fn speedscope_to_pprof(
                             "speedscope frame index {frame_idx} is out of bounds"
                         ))
                     })?;
-                frames.push((name.clone(), 0));
+                frames.push(super::LegacyStackFrame {
+                    name: name.clone(),
+                    line: 0,
+                });
             }
             if frames.is_empty() {
                 return Err(ProfilesError::Decode(format!(

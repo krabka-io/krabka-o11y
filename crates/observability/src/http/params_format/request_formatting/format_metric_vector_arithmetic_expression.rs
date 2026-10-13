@@ -4,14 +4,22 @@ use super::{
 };
 
 pub(crate) fn format_metric_vector_arithmetic_expression(query: &str) -> Option<String> {
-    let (left_text, operator, right_text) = split_top_level_arithmetic_query(query)?;
-    let (modifiers, right_text) = split_leading_vector_binary_modifiers(right_text);
-    let (left, right) = format_metric_and_vector_operands(OperandTexts {
+    let split = split_top_level_arithmetic_query(query)?;
+    let left_text = split.left;
+    let operator = split.operator;
+    let right_text = split.right;
+    let split_modifiers = split_leading_vector_binary_modifiers(right_text);
+    let modifiers = split_modifiers.modifiers;
+    let right_text = split_modifiers.remainder;
+    let operands = format_metric_and_vector_operands(OperandTexts {
         left: left_text,
         right: right_text,
     })?;
 
     Some(format_metric_vector_binary_expression(
-        &left, operator, modifiers, &right,
+        &operands.left,
+        operator,
+        modifiers,
+        &operands.right,
     ))
 }

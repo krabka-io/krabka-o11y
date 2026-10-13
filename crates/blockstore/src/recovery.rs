@@ -29,6 +29,27 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ObjectDigest {
+    size: u64,
+    sha256: String,
+}
+
+struct CopyManifestCounts {
+    created: usize,
+    already_present: usize,
+}
+
+struct LoadedDeploymentCut {
+    cut: DeploymentCut,
+    digest: String,
+}
+
+pub(super) struct LoadedBackupManifest {
+    pub(super) manifest: BackupManifest,
+    pub(super) digest: String,
+}
+
 use crate::TenantId;
 
 /// Completion marker written last in every backup set.
@@ -53,6 +74,19 @@ pub struct WalOffset {
     pub topic: String,
     pub partition: i32,
     pub next_offset: i64,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct WalOffsetKey {
+    topic: String,
+    partition: i32,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct GroupOffsetKey {
+    group: String,
+    topic: String,
+    partition: i32,
 }
 
 /// One immutable object in a backup set.
@@ -224,8 +258,7 @@ async fn create_part_backup(
 
     let before = audit_backup(backup, &manifest).await?;
     refuse_unsafe("backup", &before, true)?;
-    let (created, already_present) =
-        copy_manifest_objects(source, backup, &manifest, chunk).await?;
+    let copied = copy_manifest_objects(source, backup, &manifest, chunk).await?;
     let _ = put_create_or_equal(
         backup,
         &ObjectPath::from(BACKUP_MANIFEST_PATH),
@@ -235,8 +268,8 @@ async fn create_part_backup(
     let audit = audit_backup(backup, &manifest).await?;
     refuse_unsafe("backup", &audit, false)?;
     Ok(RestoreReport {
-        created,
-        already_present,
+        created: copied.created,
+        already_present: copied.already_present,
         audit,
     })
 }
@@ -286,15 +319,15 @@ async fn audit(
 ) -> Result<AuditReport, RecoveryError> {
     validate_manifest(manifest)?;
     let actual = inventory(store, ignore_completion_marker).await?;
-    let expected = manifest
-        .objects
-        .iter()
-        .map(|object| (object.path.as_str(), object))
-        .collect::<BTreeMap<_, _>>();
-    let actual = actual
-        .iter()
-        .map(|object| (object.path.as_str(), object))
-        .collect::<BTreeMap<_, _>>();
+    let mut expected = BTreeMap::new();
+    for object in &manifest.objects {
+        expected.insert(object.path.as_str(), object);
+    }
+    let mut actual_by_path = BTreeMap::new();
+    for object in &actual {
+        actual_by_path.insert(object.path.as_str(), object);
+    }
+    let actual = actual_by_path;
     let mut findings = Vec::new();
 
     for object in &manifest.objects {
@@ -367,12 +400,12 @@ async fn copy_restored_part(
     manifest: &BackupManifest,
     chunk: usize,
 ) -> Result<RestoreReport, RecoveryError> {
-    let (created, already_present) = copy_manifest_objects(backup, target, manifest, chunk).await?;
+    let copied = copy_manifest_objects(backup, target, manifest, chunk).await?;
     let audit = audit_recovery_target(target, manifest).await?;
     refuse_unsafe("restore target", &audit, false)?;
     Ok(RestoreReport {
-        created,
-        already_present,
+        created: copied.created,
+        already_present: copied.already_present,
         audit,
     })
 }
@@ -382,20 +415,23 @@ async fn load_backup_manifest_optional(
 ) -> Result<Option<BackupManifest>, RecoveryError> {
     Ok(load_backup_manifest_with_digest(backup)
         .await?
-        .map(|(manifest, _)| manifest))
+        .map(|loaded| loaded.manifest))
 }
 
 /// The manifest and the SHA-256 of its stored bytes, or `None` when the part
 /// has no completion marker.
-async fn load_backup_manifest_with_digest(
+pub(super) async fn load_backup_manifest_with_digest(
     backup: &dyn ObjectStore,
-) -> Result<Option<(BackupManifest, String)>, RecoveryError> {
+) -> Result<Option<LoadedBackupManifest>, RecoveryError> {
     let Some(bytes) = get_optional(backup, BACKUP_MANIFEST_PATH).await? else {
         return Ok(None);
     };
     let manifest = serde_json::from_slice::<BackupManifest>(&bytes)?;
     validate_manifest(&manifest)?;
-    Ok(Some((manifest, digest(&bytes))))
+    Ok(Some(LoadedBackupManifest {
+        manifest,
+        digest: digest(&bytes),
+    }))
 }
 
 async fn get_optional(
@@ -438,11 +474,11 @@ async fn inventory(
         if ignore_completion_marker && path.as_ref() == BACKUP_MANIFEST_PATH {
             continue;
         }
-        let (size, sha256) = object_digest(store, &path).await?;
+        let checksum = object_digest(store, &path).await?;
         objects.push(BackupObject {
             path: path.to_string(),
-            size,
-            sha256,
+            size: checksum.size,
+            sha256: checksum.sha256,
         });
     }
     Ok(objects)
@@ -453,7 +489,7 @@ async fn inventory(
 async fn object_digest(
     store: &dyn ObjectStore,
     path: &ObjectPath,
-) -> Result<(u64, String), RecoveryError> {
+) -> Result<ObjectDigest, RecoveryError> {
     let mut stream = store.get(path).await?.into_stream();
     let mut hasher = Sha256::new();
     let mut size = 0_u64;
@@ -461,7 +497,10 @@ async fn object_digest(
         hasher.update(&chunk);
         size += chunk_len(&chunk, path)?;
     }
-    Ok((size, hex::encode(hasher.finalize())))
+    Ok(ObjectDigest {
+        size,
+        sha256: hex::encode(hasher.finalize()),
+    })
 }
 
 fn chunk_len(chunk: &[u8], path: &ObjectPath) -> Result<u64, RecoveryError> {
@@ -483,7 +522,7 @@ async fn copy_manifest_objects(
     target: &dyn ObjectStore,
     manifest: &BackupManifest,
     chunk: usize,
-) -> Result<(usize, usize), RecoveryError> {
+) -> Result<CopyManifestCounts, RecoveryError> {
     let mut created = 0;
     let mut already_present = 0;
     for object in &manifest.objects {
@@ -501,7 +540,10 @@ async fn copy_manifest_objects(
             already_present += 1;
         }
     }
-    Ok((created, already_present))
+    Ok(CopyManifestCounts {
+        created,
+        already_present,
+    })
 }
 
 fn changed_source(object: &BackupObject) -> RecoveryError {
@@ -548,7 +590,11 @@ async fn stream_create_or_equal(
 ) -> Result<bool, RecoveryError> {
     match target.head(path).await {
         Ok(_) => {
-            return if object_digest(target, path).await? == (object.size, object.sha256.clone()) {
+            return if object_digest(target, path).await?
+                == (ObjectDigest {
+                    size: object.size,
+                    sha256: object.sha256.clone(),
+                }) {
                 Ok(false)
             } else {
                 Err(already_exists(path))
@@ -609,7 +655,10 @@ async fn put_create_or_equal(
     path: &ObjectPath,
     bytes: Vec<u8>,
 ) -> Result<bool, RecoveryError> {
-    let expected = (chunk_len(&bytes, path)?, digest(&bytes));
+    let expected = ObjectDigest {
+        size: chunk_len(&bytes, path)?,
+        sha256: digest(&bytes),
+    };
     match store
         .put_opts(
             path,
@@ -690,12 +739,12 @@ fn validate_wal_offsets(wal_offsets: &[WalOffset]) -> Result<(), RecoveryError> 
             "the consistent cut records no WAL offsets".into(),
         ));
     }
-    if wal_offsets
-        .windows(2)
-        .any(|pair| (&pair[0].topic, pair[0].partition) >= (&pair[1].topic, pair[1].partition))
-        || wal_offsets
-            .iter()
-            .any(|offset| offset.topic.is_empty() || offset.partition < 0 || offset.next_offset < 0)
+    if wal_offsets.windows(2).any(|pair| {
+        pair[0].topic > pair[1].topic
+            || (pair[0].topic == pair[1].topic && pair[0].partition >= pair[1].partition)
+    }) || wal_offsets
+        .iter()
+        .any(|offset| offset.topic.is_empty() || offset.partition < 0 || offset.next_offset < 0)
     {
         return Err(RecoveryError::InvalidManifest(
             "WAL offsets must be sorted, unique, and non-negative".into(),
@@ -730,13 +779,18 @@ async fn refuse_unplanned_objects(
     Ok(())
 }
 
-async fn load_cut(backup: &dyn ObjectStore) -> Result<(DeploymentCut, String), RecoveryError> {
+pub(super) async fn load_cut(
+    backup: &dyn ObjectStore,
+) -> Result<LoadedDeploymentCut, RecoveryError> {
     let bytes = get_optional(backup, CUT_MANIFEST_PATH)
         .await?
         .ok_or_else(|| RecoveryError::MixedSet("the backup set has no sealed cut".into()))?;
     let cut = serde_json::from_slice::<DeploymentCut>(&bytes)?;
     validate_cut(&cut)?;
-    Ok((cut, digest(&bytes)))
+    Ok(LoadedDeploymentCut {
+        cut,
+        digest: digest(&bytes),
+    })
 }
 
 fn validate_part_name(name: &str) -> Result<(), RecoveryError> {
@@ -796,8 +850,11 @@ fn validate_cut(cut: &DeploymentCut) -> Result<(), RecoveryError> {
     }
     validate_wal_offsets(&cut.broker.wal_offsets)?;
     if cut.broker.group_offsets.windows(2).any(|pair| {
-        (&pair[0].group, &pair[0].topic, pair[0].partition)
-            >= (&pair[1].group, &pair[1].topic, pair[1].partition)
+        pair[0].group > pair[1].group
+            || (pair[0].group == pair[1].group && pair[0].topic > pair[1].topic)
+            || (pair[0].group == pair[1].group
+                && pair[0].topic == pair[1].topic
+                && pair[0].partition >= pair[1].partition)
     }) || cut
         .broker
         .group_offsets
@@ -848,34 +905,46 @@ fn compare_snapshots(expected: &BrokerSnapshot, actual: &BrokerSnapshot) -> Vec<
         snapshot
             .wal_offsets
             .iter()
-            .map(|offset| ((offset.topic.clone(), offset.partition), offset.next_offset))
+            .map(|offset| WalOffsetKey {
+                topic: offset.topic.clone(),
+                partition: offset.partition,
+            })
+            .zip(snapshot.wal_offsets.iter().map(|offset| offset.next_offset))
             .collect::<BTreeMap<_, _>>()
     };
     let groups = |snapshot: &BrokerSnapshot| {
         snapshot
             .group_offsets
             .iter()
-            .map(|offset| {
-                (
-                    (offset.group.clone(), offset.topic.clone(), offset.partition),
-                    offset.next_offset,
-                )
+            .map(|offset| GroupOffsetKey {
+                group: offset.group.clone(),
+                topic: offset.topic.clone(),
+                partition: offset.partition,
             })
+            .zip(
+                snapshot
+                    .group_offsets
+                    .iter()
+                    .map(|offset| offset.next_offset),
+            )
             .collect::<BTreeMap<_, _>>()
     };
-    let (expected_wal, actual_wal) = (wal(expected), wal(actual));
-    let (expected_groups, actual_groups) = (groups(expected), groups(actual));
+    let expected_wal = wal(expected);
+    let actual_wal = wal(actual);
+    let expected_groups = groups(expected);
+    let actual_groups = groups(actual);
     let mut findings = Vec::new();
     for key in expected_wal
         .keys()
         .chain(actual_wal.keys())
         .collect::<BTreeSet<_>>()
     {
-        let (expected, actual) = (expected_wal.get(key), actual_wal.get(key));
+        let expected = expected_wal.get(key);
+        let actual = actual_wal.get(key);
         if expected != actual {
             findings.push(BrokerFinding::WalOffset {
-                topic: key.0.clone(),
-                partition: key.1,
+                topic: key.topic.clone(),
+                partition: key.partition,
                 expected: expected.copied(),
                 actual: actual.copied(),
             });
@@ -886,12 +955,13 @@ fn compare_snapshots(expected: &BrokerSnapshot, actual: &BrokerSnapshot) -> Vec<
         .chain(actual_groups.keys())
         .collect::<BTreeSet<_>>()
     {
-        let (expected, actual) = (expected_groups.get(key), actual_groups.get(key));
+        let expected = expected_groups.get(key);
+        let actual = actual_groups.get(key);
         if expected != actual {
             findings.push(BrokerFinding::GroupOffset {
-                group: key.0.clone(),
-                topic: key.1.clone(),
-                partition: key.2,
+                group: key.group.clone(),
+                topic: key.topic.clone(),
+                partition: key.partition,
                 expected: expected.copied(),
                 actual: actual.copied(),
             });
@@ -910,16 +980,17 @@ async fn check_drained_groups(
     let committed = snapshot
         .group_offsets
         .iter()
-        .map(|offset| {
-            (
-                (
-                    offset.group.as_str(),
-                    offset.topic.as_str(),
-                    offset.partition,
-                ),
-                offset.next_offset,
-            )
+        .map(|offset| GroupOffsetKey {
+            group: offset.group.clone(),
+            topic: offset.topic.clone(),
+            partition: offset.partition,
         })
+        .zip(
+            snapshot
+                .group_offsets
+                .iter()
+                .map(|offset| offset.next_offset),
+        )
         .collect::<BTreeMap<_, _>>();
     let mut findings = Vec::new();
     for group in drained {
@@ -938,11 +1009,11 @@ async fn check_drained_groups(
         }
         for offset in partitions {
             let found = committed
-                .get(&(
-                    group.group.as_str(),
-                    offset.topic.as_str(),
-                    offset.partition,
-                ))
+                .get(&GroupOffsetKey {
+                    group: group.group.clone(),
+                    topic: offset.topic.clone(),
+                    partition: offset.partition,
+                })
                 .copied();
             // A group with no committed offset reads from the start.
             let from = found.unwrap_or(0);

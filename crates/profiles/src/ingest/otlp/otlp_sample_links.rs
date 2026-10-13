@@ -1,6 +1,9 @@
 use super::{ProfilesError, pb, span_id_u64_from_be_slice};
 
-pub(crate) type OtlpSampleLinks = (Vec<Option<u64>>, Vec<Option<Vec<u8>>>);
+pub(crate) struct OtlpSampleLinks {
+    pub(crate) span_ids: Vec<Option<u64>>,
+    pub(crate) trace_ids: Vec<Option<Vec<u8>>>,
+}
 
 pub(crate) fn otlp_sample_links(
     profile: &pb::otlp_profiles::Profile,
@@ -32,5 +35,8 @@ pub(crate) fn otlp_sample_links(
         span_ids.push(span_id);
         trace_ids.push(trace_id);
     }
-    Ok((span_ids, trace_ids))
+    Ok(OtlpSampleLinks {
+        span_ids,
+        trace_ids,
+    })
 }

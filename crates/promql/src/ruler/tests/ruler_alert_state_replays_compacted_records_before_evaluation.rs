@@ -10,10 +10,9 @@ for: 5m
 ",
     )
     .expect("alerting rule yaml");
-    let alert_labels = BTreeMap::from([
-        ("alertname".to_string(), "InstanceUp".to_string()),
-        ("job".to_string(), "api".to_string()),
-    ]);
+    let mut alert_labels = BTreeMap::new();
+    alert_labels.insert("alertname".to_string(), "InstanceUp".to_string());
+    alert_labels.insert("job".to_string(), "api".to_string());
     let mut state = super::super::RulerAlertState::default();
     state.apply_record(super::super::RulerAlertStateRecord {
         tenant: "tenant-a".to_string(),

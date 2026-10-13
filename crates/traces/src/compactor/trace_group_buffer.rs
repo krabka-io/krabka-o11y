@@ -51,19 +51,14 @@ impl TraceGroupBuffer {
         &mut self,
         min_rows: usize,
     ) -> Result<Option<RecordBatch>, TracesError> {
-        if self.rows < min_rows {
-            return Ok(None);
-        }
-        let gathered = self.gather()?;
-        let cut = last_trace_start(&gathered)?;
-        if cut == 0 {
-            // One trace, still open. Keep it whole and wait for its end.
-            self.pending = vec![gathered];
-            return Ok(None);
-        }
-        self.rows = gathered.num_rows() - cut;
-        self.pending = vec![gathered.slice(cut, self.rows)];
-        Ok(Some(gathered.slice(0, cut)))
+        krabka_blockstore::take_complete_batch(
+            &self.schema,
+            &mut self.pending,
+            &mut self.rows,
+            min_rows,
+            last_trace_start,
+            |error| TracesError::Block(error.to_string()),
+        )
     }
 
     /// Everything left once the merge is spent, at which point the last trace
@@ -114,9 +109,11 @@ fn last_trace_start(batch: &RecordBatch) -> Result<usize, TracesError> {
 
 /// Whether two rows carry the same trace id, a null id matching only a null.
 fn same_trace(trace_ids: &FixedSizeBinaryArray, left: usize, right: usize) -> bool {
-    match (trace_ids.is_null(left), trace_ids.is_null(right)) {
-        (true, true) => true,
-        (false, false) => trace_ids.value(left) == trace_ids.value(right),
-        _ => false,
+    let left_is_null = trace_ids.is_null(left);
+    let right_is_null = trace_ids.is_null(right);
+    if left_is_null || right_is_null {
+        left_is_null && right_is_null
+    } else {
+        trace_ids.value(left) == trace_ids.value(right)
     }
 }

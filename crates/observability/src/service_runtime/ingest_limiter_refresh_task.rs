@@ -1,4 +1,4 @@
-use super::{Arc, CancellationToken, JoinHandle, LogIngestLimiter};
+use super::{Arc, BackgroundTask, CancellationToken, LogIngestLimiter};
 
 /// Spawns the task that keeps the distributor's ingest limiter fresh until
 /// `token` is cancelled.
@@ -8,10 +8,10 @@ use super::{Arc, CancellationToken, JoinHandle, LogIngestLimiter};
 pub(crate) fn ingest_limiter_refresh_task(
     limiter: &Arc<dyn LogIngestLimiter>,
     token: &CancellationToken,
-) -> (&'static str, JoinHandle<()>) {
+) -> BackgroundTask {
     let limiter = Arc::clone(limiter);
     let token = token.clone();
-    (
+    BackgroundTask::new(
         "distributor ingest limits",
         tokio::spawn(async move { limiter.keep_fresh(token).await }),
     )

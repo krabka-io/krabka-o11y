@@ -73,28 +73,37 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
     auth: RequestAuth<'_>,
     params: CardinalityParams,
 ) -> Response {
-    let (tenant, series) = match authorized_cardinality_series(state, auth, &params).await {
+    let selected = match authorized_cardinality_series(state, auth, &params).await {
         Ok(selected) => selected,
         Err(rejection) => return rejection.into_response(),
     };
-    if let Err(error) = enforce_selected_series_limit(state, &tenant, series.len()) {
+    if let Err(error) =
+        enforce_selected_series_limit(state, &selected.tenant, selected.series.len())
+    {
         return error.into_response();
     }
-    let active = match state.store.cardinality_active_series(tenant.as_str()).await {
+    let active = match state
+        .store
+        .cardinality_active_series(selected.tenant.as_str())
+        .await
+    {
         Ok(series) => series
             .into_iter()
             .map(|labels| labels.fingerprint())
             .collect::<std::collections::BTreeSet<_>>(),
         Err(error) => return ApiError::from(error).into_response(),
     };
-    let metric_by_fingerprint = series
-        .into_iter()
-        .filter(|labels| active.contains(&labels.fingerprint()))
-        .filter_map(|labels| {
-            let metric = labels.get("__name__")?.to_owned();
-            Some((labels.fingerprint(), metric))
-        })
-        .collect::<BTreeMap<_, _>>();
+    let mut metric_by_fingerprint = BTreeMap::new();
+    for labels in selected.series {
+        let fingerprint = labels.fingerprint();
+        if !active.contains(&fingerprint) {
+            continue;
+        }
+        let Some(metric) = labels.get("__name__") else {
+            continue;
+        };
+        metric_by_fingerprint.insert(fingerprint, metric.to_owned());
+    }
 
     let matcher_sets = match params.selector.as_deref() {
         Some(selector) => match selector_matchers(selector) {
@@ -107,7 +116,7 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
     for matchers in matcher_sets {
         let scan = match state
             .store
-            .scan(tenant.as_str(), &matchers, i64::MIN, i64::MAX)
+            .scan(selected.tenant.as_str(), &matchers, i64::MIN, i64::MAX)
             .await
         {
             Ok(scan) => scan,
@@ -123,7 +132,9 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
                     Ok(decoded) => decoded,
                     Err(error) => return ApiError::internal(error.to_string()).into_response(),
                 };
-                for (fingerprint, timestamp, _, _) in decoded {
+                for row in decoded {
+                    let fingerprint = row.fingerprint;
+                    let timestamp = row.timestamp_ms;
                     if metric_by_fingerprint.contains_key(&fingerprint)
                         && latest
                             .get(&fingerprint)
@@ -146,7 +157,10 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
                 Ok(decoded) => decoded,
                 Err(error) => return ApiError::internal(error.to_string()).into_response(),
             };
-            for (fingerprint, timestamp, histogram) in decoded {
+            for row in decoded {
+                let fingerprint = row.fingerprint;
+                let timestamp = row.timestamp_ms;
+                let histogram = row.hist;
                 if !metric_by_fingerprint.contains_key(&fingerprint) {
                     continue;
                 }
@@ -169,7 +183,10 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
     }
 
     let mut metrics = BTreeMap::<String, ActiveNativeHistogramMetric>::new();
-    for (fingerprint, sample) in latest {
+    for fingerprint in latest.keys().copied().collect::<Vec<_>>() {
+        let sample = latest
+            .remove(&fingerprint)
+            .expect("fingerprint came from the latest sample map");
         let LatestSample::Histogram {
             timestamp: _,
             bucket_count,
@@ -207,18 +224,17 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
     let response = ActiveNativeHistogramMetricsResponse {
         data: metrics.into_values().collect(),
     };
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/json"),
-            (
-                header::HeaderName::from_static("x-mimir-response-streaming-enabled"),
-                "true",
-            ),
-        ],
-        serde_json::to_vec(&response).expect("cardinality response is serializable"),
-    )
-        .into_response()
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::HeaderName::from_static("x-mimir-response-streaming-enabled"),
+            "true",
+        )
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&response).expect("cardinality response is serializable"),
+        ))
+        .expect("static cardinality response headers are valid")
 }
 
 /// Reads every row of a scan's registered `table`.

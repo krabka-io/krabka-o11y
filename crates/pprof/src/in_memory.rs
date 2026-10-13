@@ -6,16 +6,59 @@ use std::{
 };
 
 use arrow::record_batch::RecordBatch;
-use datafusion::catalog::MemTable;
 use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
 use regex::Regex;
 
 use crate::{
     error::ProfileError,
-    samples::profile_samples_schema,
     store::{ProfileScan, ProfileStats, ProfileStore},
     symbol_db::SymbolDb,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileIdentity<'a> {
+    pub tenant: &'a str,
+    pub profile_type: &'a str,
+}
+
+impl<'a> ProfileIdentity<'a> {
+    #[must_use]
+    pub const fn new(tenant: &'a str, profile_type: &'a str) -> Self {
+        Self {
+            tenant,
+            profile_type,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StacktraceIdentity {
+    pub partition: u64,
+    pub stacktrace_id: u32,
+}
+
+impl StacktraceIdentity {
+    #[must_use]
+    pub const fn new(partition: u64, stacktrace_id: u32) -> Self {
+        Self {
+            partition,
+            stacktrace_id,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SampleValues {
+    pub value: i64,
+    pub total_value: i64,
+}
+
+impl SampleValues {
+    #[must_use]
+    pub const fn new(value: i64, total_value: i64) -> Self {
+        Self { value, total_value }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -27,7 +70,13 @@ mod tests {
     use krabka_blockstore::{LabelMatcher, MatchOp};
 
     use super::*;
-    use crate::{FunctionRec, LineRec, LocationRec};
+    use crate::{FunctionRec, LineRec, LocationRec, ProfileLabel};
+
+    struct SampleIdentity {
+        tenant: &'static str,
+        id: &'static str,
+        timestamp_ms: i64,
+    }
 
     fn store_with_two_samples() -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
@@ -64,10 +113,28 @@ mod tests {
         let st_work = store.symbols_mut().intern_stacktrace(0, &[l_work, l_main]);
         let st_main = store.symbols_mut().intern_stacktrace(0, &[l_main]);
         let pt = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
-        let labels = vec![("service_name".to_string(), "checkout".to_string())];
-        store.push_sample(("t", pt), labels.clone(), (0, st_work), 10, 1000);
-        store.push_sample(("t", pt), labels.clone(), (0, st_work), 5, 1000);
-        store.push_sample(("t", pt), labels, (0, st_main), 3, 1000);
+        let labels = vec![ProfileLabel::new("service_name", "checkout")];
+        store.push_sample(
+            ProfileIdentity::new("t", pt),
+            labels.clone(),
+            StacktraceIdentity::new(0, st_work),
+            10,
+            1000,
+        );
+        store.push_sample(
+            ProfileIdentity::new("t", pt),
+            labels.clone(),
+            StacktraceIdentity::new(0, st_work),
+            5,
+            1000,
+        );
+        store.push_sample(
+            ProfileIdentity::new("t", pt),
+            labels,
+            StacktraceIdentity::new(0, st_main),
+            3,
+            1000,
+        );
         store
     }
 
@@ -76,15 +143,40 @@ mod tests {
         let mut store = InMemoryProfileStore::new();
         let pt = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
         let public = vec![
-            ("service_name".into(), "api".into()),
-            ("__profile_type__".into(), pt.into()),
+            ProfileLabel::new("service_name", "api"),
+            ProfileLabel::new("__profile_type__", pt),
         ];
-        for (tenant, id, timestamp) in [("t", "a", 1000), ("t", "b", 2000), ("u", "c", 1000)] {
+        for sample in [
+            SampleIdentity {
+                tenant: "t",
+                id: "a",
+                timestamp_ms: 1000,
+            },
+            SampleIdentity {
+                tenant: "t",
+                id: "b",
+                timestamp_ms: 2000,
+            },
+            SampleIdentity {
+                tenant: "u",
+                id: "c",
+                timestamp_ms: 1000,
+            },
+        ] {
             let mut labels = public.clone();
-            labels.push(("__profile_id__".into(), id.into()));
-            store.push_sample((tenant, pt), labels, (0, 0), 5, timestamp);
+            labels.push(ProfileLabel::new("__profile_id__", sample.id));
+            store.push_sample(
+                ProfileIdentity::new(sample.tenant, pt),
+                labels,
+                StacktraceIdentity::new(0, 0),
+                5,
+                sample.timestamp_ms,
+            );
         }
-        let expected = Labels::from_pairs(public).fingerprint();
+        let expected = Labels::from_pairs(public.iter().map(|label| {
+            krabka_blockstore::LabelPair::new(label.name.clone(), label.value.clone())
+        }))
+        .fingerprint();
         let analysis = store.query_stats("t", pt, &[], 1000, 2000).await.unwrap();
         assert!(analysis.fingerprints == BTreeSet::from([expected]));
         assert!(analysis.profile_count == 2);
@@ -164,7 +256,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(series == vec![vec![("service_name".to_string(), "checkout".to_string())]]);
+        assert!(series == vec![vec![ProfileLabel::new("service_name", "checkout")]]);
 
         // Empty `label_names` means "return the full label set" (the Pyroscope
         // `/series` convention), mirroring `krabka_blockstore`'s index. It must
@@ -175,7 +267,7 @@ mod tests {
             .series("t", &[] as &[LabelMatcher], &[], 0, 5000)
             .await
             .unwrap();
-        assert!(unprojected == vec![vec![("service_name".to_string(), "checkout".to_string())]]);
+        assert!(unprojected == vec![vec![ProfileLabel::new("service_name", "checkout")]]);
     }
 
     #[tokio::test]
@@ -183,16 +275,16 @@ mod tests {
         let mut store = InMemoryProfileStore::new();
         let pt = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
         store.push_sample(
-            ("t", pt),
-            vec![("service_name".to_string(), "early".to_string())],
-            (0, 0),
+            ProfileIdentity::new("t", pt),
+            vec![ProfileLabel::new("service_name", "early")],
+            StacktraceIdentity::new(0, 0),
             1,
             1000,
         );
         store.push_sample(
-            ("t", pt),
-            vec![("service_name".to_string(), "inside".to_string())],
-            (0, 0),
+            ProfileIdentity::new("t", pt),
+            vec![ProfileLabel::new("service_name", "inside")],
+            StacktraceIdentity::new(0, 0),
             1,
             2000,
         );
@@ -219,16 +311,16 @@ mod tests {
         let mut store = InMemoryProfileStore::new();
         let pt = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
         store.push_sample(
-            ("t", pt),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, 0),
+            ProfileIdentity::new("t", pt),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, 0),
             1,
             1000,
         );
         store.push_sample(
-            ("t", pt),
-            vec![("service_name".to_string(), "worker".to_string())],
-            (0, 0),
+            ProfileIdentity::new("t", pt),
+            vec![ProfileLabel::new("service_name", "worker")],
+            StacktraceIdentity::new(0, 0),
             1,
             1000,
         );
@@ -256,9 +348,9 @@ mod tests {
         let pt = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
         for service in ["checkout", "api"] {
             store.push_sample(
-                ("t", pt),
-                vec![("service_name".to_string(), service.to_string())],
-                (0, 0),
+                ProfileIdentity::new("t", pt),
+                vec![ProfileLabel::new("service_name", service)],
+                StacktraceIdentity::new(0, 0),
                 1,
                 1000,
             );
@@ -300,11 +392,17 @@ mod tests {
         let mut store = InMemoryProfileStore::new();
         let pt = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
         let labels = vec![
-            ("service_name".to_string(), "api".to_string()),
-            ("__name__".to_string(), "process_cpu".to_string()),
-            ("__profile_type__".to_string(), pt.to_string()),
+            ProfileLabel::new("service_name", "api"),
+            ProfileLabel::new("__name__", "process_cpu"),
+            ProfileLabel::new("__profile_type__", pt),
         ];
-        store.push_sample(("t", pt), labels, (0, 0), 1, 1000);
+        store.push_sample(
+            ProfileIdentity::new("t", pt),
+            labels,
+            StacktraceIdentity::new(0, 0),
+            1,
+            1000,
+        );
 
         // Projected onto the drilldown's exact label list (request order is
         // `service_name, __profile_type__`) — the response must still be sorted.
@@ -321,8 +419,8 @@ mod tests {
         assert!(
             projected
                 == vec![vec![
-                    ("__profile_type__".to_string(), pt.to_string()),
-                    ("service_name".to_string(), "api".to_string()),
+                    ProfileLabel::new("__profile_type__", pt),
+                    ProfileLabel::new("service_name", "api"),
                 ]]
         );
 
@@ -333,9 +431,9 @@ mod tests {
             .unwrap();
         assert!(
             full == vec![vec![
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("__profile_type__".to_string(), pt.to_string()),
-                ("service_name".to_string(), "api".to_string()),
+                ProfileLabel::new("__name__", "process_cpu"),
+                ProfileLabel::new("__profile_type__", pt),
+                ProfileLabel::new("service_name", "api"),
             ]]
         );
     }
@@ -354,7 +452,7 @@ use compile_matchers::compile_matchers;
 use compiled_matcher::CompiledMatcher;
 use encode_rows::encode_rows;
 use fingerprint_labels::{fingerprint_labels, queried_series_fingerprint};
-pub use in_memory_profile_store::InMemoryProfileStore;
+pub use in_memory_profile_store::{InMemoryProfileStore, SampleAssociations, SampleProvenance};
 use label_value::label_value;
 use row_matches::row_matches;
 use sample_row::SampleRow;

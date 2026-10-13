@@ -1,25 +1,31 @@
 use std::borrow::Borrow;
 
 use super::{
-    Arc, BTreeMap, ColdBlockScan, HotTailMetricSamples, LabelIndex, MetricQuery, QueryError,
-    QueryHotTail, StreamPlan, TimeRange, Value, checked_eval_times,
-    collect_object_store_metric_log_batches, loki_matrix_response_with_warnings,
-    merge_metric_samples, metric_samples_from_batches,
+    Arc, BTreeMap, ColdBlockScan, HotTailMetricSamples, MetricRangeScanRequest,
+    PreparedMetricRangeScan, QueryError, Value, collect_object_store_metric_log_batches,
+    loki_matrix_response_with_warnings, merge_metric_samples, metric_samples_from_batches,
 };
-use crate::WalLogRecord;
+use crate::{BlockDescriptor, RecordBatch, WalLogRecord};
+
+struct MetricBlockCollectionResult<'a> {
+    block: &'a BlockDescriptor,
+    result: Result<Vec<RecordBatch>, QueryError>,
+}
 
 pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes<
     R: Borrow<WalLogRecord> + Sync,
 >(
     cold: ColdBlockScan<'_>,
-    plan: &StreamPlan,
-    query: &MetricQuery,
-    label_index: &LabelIndex,
-    evaluation: (TimeRange, i64),
-    hot_tail: QueryHotTail<'_, R>,
+    request: MetricRangeScanRequest<'_, R>,
 ) -> Result<Value, QueryError> {
-    let (eval_range, step_ns) = evaluation;
-    let eval_times = checked_eval_times(eval_range, step_ns)?;
+    let PreparedMetricRangeScan {
+        plan,
+        query,
+        label_index,
+        eval_range,
+        eval_times,
+        hot_tail,
+    } = request.prepare()?;
     let mut samples = BTreeMap::new();
     let mut warnings = Vec::new();
 
@@ -44,13 +50,14 @@ pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_f
                         eval_range,
                     )
                     .await;
-                    (block, result)
+                    MetricBlockCollectionResult { block, result }
                 }
             }))
             .await;
 
-            for (block, result) in results {
-                let Ok(batches) = result else {
+            for result in results {
+                let block = result.block;
+                let Ok(batches) = result.result else {
                     warnings.push(format!("failed to read block {}", block.key.object_key()));
                     continue;
                 };

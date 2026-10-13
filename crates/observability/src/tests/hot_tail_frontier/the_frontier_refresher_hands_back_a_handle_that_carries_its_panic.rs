@@ -11,7 +11,9 @@ use crate::compactor::runtime::spawn_compaction_frontier_refresher;
 /// that and carries on. What ends the task without a word is a panic, and a
 /// store that panics on `get` is the shortest way to one.
 #[derive(Debug)]
-struct PanicOnGetStore(object_store::memory::InMemory);
+struct PanicOnGetStore {
+    inner: object_store::memory::InMemory,
+}
 
 impl std::fmt::Display for PanicOnGetStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -19,24 +21,9 @@ impl std::fmt::Display for PanicOnGetStore {
     }
 }
 
-#[async_trait::async_trait]
-impl ObjectStore for PanicOnGetStore {
-    async fn put_opts(
-        &self,
-        location: &object_store::path::Path,
-        payload: object_store::PutPayload,
-        opts: object_store::PutOptions,
-    ) -> object_store::Result<object_store::PutResult> {
-        self.0.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &object_store::path::Path,
-        opts: object_store::PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-        self.0.put_multipart_opts(location, opts).await
-    }
+krabka_blockstore::delegate_object_store! {
+    PanicOnGetStore => inner;
+    forward [put_opts, put_multipart_opts, delete_stream, list, list_with_delimiter, copy_opts];
 
     async fn get_opts(
         &self,
@@ -44,41 +31,6 @@ impl ObjectStore for PanicOnGetStore {
         _options: object_store::GetOptions,
     ) -> object_store::Result<object_store::GetResult> {
         panic!("the frontier object could not be read");
-    }
-
-    fn delete_stream(
-        &self,
-        locations: futures_util::stream::BoxStream<
-            'static,
-            object_store::Result<object_store::path::Path>,
-        >,
-    ) -> futures_util::stream::BoxStream<'static, object_store::Result<object_store::path::Path>>
-    {
-        self.0.delete_stream(locations)
-    }
-
-    fn list(
-        &self,
-        prefix: Option<&object_store::path::Path>,
-    ) -> futures_util::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
-    {
-        self.0.list(prefix)
-    }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&object_store::path::Path>,
-    ) -> object_store::Result<object_store::ListResult> {
-        self.0.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &object_store::path::Path,
-        to: &object_store::path::Path,
-        options: object_store::CopyOptions,
-    ) -> object_store::Result<()> {
-        self.0.copy_opts(from, to, options).await
     }
 }
 
@@ -94,7 +46,9 @@ impl ObjectStore for PanicOnGetStore {
 async fn the_frontier_refresher_hands_back_a_handle_that_carries_its_panic() {
     let token = CancellationToken::new();
     let handle = spawn_compaction_frontier_refresher(
-        Arc::new(PanicOnGetStore(object_store::memory::InMemory::new())),
+        Arc::new(PanicOnGetStore {
+            inner: object_store::memory::InMemory::new(),
+        }),
         ObjectPath::default(),
         SharedCompactionFrontier::default(),
         BufferedLogHotTail::default(),

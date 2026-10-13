@@ -1,6 +1,7 @@
 use super::{
-    Arc, ColdBlockScan, CompactionFrontier, LabelIndex, MetricQuery, ObjectPath, ObjectStore,
-    QueryError, QueryHotTail, StreamPlan, TimeRange, Value, default_block_fetch_concurrency,
+    Arc, ColdBlockScan, CompactionFrontier, LabelIndex, MetricEvaluationRange, MetricQuery,
+    ObjectPath, ObjectStore, QueryError, QueryHotTail, StreamPlan, TimeRange, Value,
+    default_block_fetch_concurrency,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier,
 };
 
@@ -24,7 +25,7 @@ pub async fn execute_metric_query_range_from_object_store(
         plan,
         query,
         label_index,
-        (eval_range, step_ns),
+        MetricEvaluationRange::new(eval_range, step_ns),
         QueryHotTail::<crate::WalLogRecord> {
             records: &[],
             frontier: &CompactionFrontier::new(i64::MAX),

@@ -2,6 +2,7 @@ use super::{
     ByteSize, DecodedExemplar, DecodedSample, DecodedSeries, Message, WireError, labels_from_v1,
     metadata_series_from_v1, pb, snappy_block_decode, v1_histogram_to_native,
 };
+use crate::wire::DecodedHistogramSample;
 
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
@@ -21,7 +22,12 @@ pub fn decode_v1(body: &[u8], max_decompressed: ByteSize) -> Result<Vec<DecodedS
         let histograms = series
             .histograms
             .iter()
-            .map(|histogram| Ok((histogram.timestamp, v1_histogram_to_native(histogram)?)))
+            .map(|histogram| {
+                Ok(DecodedHistogramSample {
+                    timestamp_ms: histogram.timestamp,
+                    histogram: v1_histogram_to_native(histogram)?,
+                })
+            })
             .collect::<Result<Vec<_>, WireError>>()?;
         let exemplars = series
             .exemplars

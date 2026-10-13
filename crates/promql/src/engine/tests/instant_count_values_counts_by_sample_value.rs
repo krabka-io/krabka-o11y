@@ -3,16 +3,29 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_count_values_counts_by_sample_value() {
     let mut store = InMemoryMetricStore::new();
-    for (instance, value) in [200.0, 200.0, 500.0].into_iter().enumerate() {
+    for case in [
+        InstanceValueCase {
+            instance: "0",
+            value: 200.0,
+        },
+        InstanceValueCase {
+            instance: "1",
+            value: 200.0,
+        },
+        InstanceValueCase {
+            instance: "2",
+            value: 500.0,
+        },
+    ] {
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "http_responses_total"),
-                ("job", "api"),
-                ("instance", &instance.to_string()),
+                crate::test_support::TestLabelPair::new("__name__", "http_responses_total"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", case.instance),
             ]),
             10_000,
-            value,
+            case.value,
         );
     }
 

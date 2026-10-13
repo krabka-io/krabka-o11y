@@ -34,20 +34,15 @@ pub(crate) fn ruler_rule_set_filter_keeps_only_groups_due_for_evaluation() {
 
     let due = super::super::filter_ruler_rule_set_due_for_eval("tenant-a", &rules, &state, 180_000);
 
-    let due_group_names = due
-        .iter()
-        .map(|(namespace, groups)| {
-            (
-                namespace.clone(),
-                groups.keys().cloned().collect::<BTreeSet<_>>(),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    assert2::assert!(
-        due_group_names
-            == BTreeMap::from([
-                ("team-a".to_string(), BTreeSet::from(["new".to_string()])),
-                ("team-b".to_string(), BTreeSet::from(["due".to_string()])),
-            ])
-    );
+    let mut due_group_names = BTreeMap::new();
+    for entry in &due {
+        due_group_names.insert(
+            entry.0.clone(),
+            entry.1.keys().cloned().collect::<BTreeSet<_>>(),
+        );
+    }
+    let mut expected_group_names = BTreeMap::new();
+    expected_group_names.insert("team-a".to_string(), BTreeSet::from(["new".to_string()]));
+    expected_group_names.insert("team-b".to_string(), BTreeSet::from(["due".to_string()]));
+    assert2::assert!(due_group_names == expected_group_names);
 }

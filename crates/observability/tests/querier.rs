@@ -8,17 +8,18 @@ use std::{
 use assert2::assert;
 use async_trait::async_trait;
 use krabka_blockstore::{
-    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogLabels, LogRow,
-    TimeRange, labels, write_log_block, write_log_block_to_object_store,
+    BlockDescriptor, BlockKey, LabelIndex, LabelPair, LogBlockIndex as BlockIndex, LogLabels,
+    LogRow, TimeRange, write_log_block, write_log_block_to_object_store,
 };
 use krabka_logql::{
     MetricQuery, StreamPlan, StreamQuery, parse_metric_query, parse_query, plan_stream_query,
 };
 use krabka_observability::{
-    BufferedLogHotTail, CompactionFrontier, KafkaWalHeader, KafkaWalRecord, LogWalConsumer, Offset,
-    PartitionIndex, QueryError, WalConsumerError, WalLogRecord, WalPosition,
-    build_kafka_wal_record, execute_metric_query, execute_metric_query_from_object_store,
-    execute_metric_query_range, execute_metric_query_range_with_hot_tail, execute_stream_query,
+    BufferedLogHotTail, CompactionFrontier, KafkaWalHeader, KafkaWalRecord, LogWalConsumer,
+    MetricEvaluationRange, Offset, PartitionIndex, QueryError, WalConsumerError, WalLogRecord,
+    WalPosition, build_kafka_wal_record, execute_metric_query,
+    execute_metric_query_from_object_store, execute_metric_query_range,
+    execute_metric_query_range_with_hot_tail, execute_stream_query,
     execute_stream_query_from_object_store, execute_stream_query_with_hot_tail,
     execute_stream_query_with_hot_tail_frontier, execute_tail_query,
     execute_tail_query_with_frontier, metric_plan_scan_sql, poll_log_hot_tail_once,
@@ -30,8 +31,25 @@ use serde_json::{Value, json};
 use support::{BlockSpan, LogEntry, log_entry};
 
 const TENANT: &str = "tenant-a";
-const API_PROD: [(&str, &str); 2] = [("app", "api"), ("env", "prod")];
-const API_JSON: [(&str, &str); 2] = [("app", "api"), ("format", "json")];
+
+fn log_labels(pairs: impl IntoIterator<Item = LabelPair>) -> LogLabels {
+    let mut labels = LogLabels::new();
+    for pair in pairs {
+        labels.insert(pair.name, pair.value);
+    }
+    labels
+}
+
+fn api_prod_labels() -> LogLabels {
+    log_labels([LabelPair::new("app", "api"), LabelPair::new("env", "prod")])
+}
+
+fn api_json_labels() -> LogLabels {
+    log_labels([
+        LabelPair::new("app", "api"),
+        LabelPair::new("format", "json"),
+    ])
+}
 const COST_ROWS: [LogEntry; 3] = [
     log_entry(10, "cost=7"),
     log_entry(20, "cost=5"),
@@ -130,9 +148,12 @@ impl Fixture {
         self.plan(WHOLE_FIXTURE, parse_query(query).unwrap())
     }
 
-    fn metric_plan(&self, range: TimeRange, query: &str) -> (StreamPlan, MetricQuery) {
+    fn metric_plan(&self, range: TimeRange, query: &str) -> MetricPlan {
         let query = parse_metric_query(query).unwrap();
-        (self.plan(range, query.stream.clone()), query)
+        MetricPlan {
+            plan: self.plan(range, query.stream.clone()),
+            query,
+        }
     }
 
     async fn stream(&self, query: &str) -> Value {
@@ -153,16 +174,22 @@ impl Fixture {
     }
 
     async fn metric(&self, query: &str) -> Result<Value, QueryError> {
-        let (plan, query) = self.metric_plan(WHOLE_FIXTURE, query);
-        execute_metric_query(self.dir.path(), &plan, &query, &self.label_index).await
+        let metric_plan = self.metric_plan(WHOLE_FIXTURE, query);
+        execute_metric_query(
+            self.dir.path(),
+            &metric_plan.plan,
+            &metric_plan.query,
+            &self.label_index,
+        )
+        .await
     }
 
     async fn metric_range(&self, range_query: &RangeQuery<'_>) -> Value {
-        let (plan, query) = self.metric_plan(range_query.plan, range_query.query);
+        let metric_plan = self.metric_plan(range_query.plan, range_query.query);
         execute_metric_query_range(
             self.dir.path(),
-            &plan,
-            &query,
+            &metric_plan.plan,
+            &metric_plan.query,
             &self.label_index,
             range_query.eval,
             range_query.step_ns,
@@ -175,13 +202,13 @@ impl Fixture {
         &self,
         hot_query: &HotTailQuery<'_>,
     ) -> Result<Value, QueryError> {
-        let (plan, query) = self.metric_plan(hot_query.plan, hot_query.query);
+        let metric_plan = self.metric_plan(hot_query.plan, hot_query.query);
         execute_metric_query_range_with_hot_tail(
             self.dir.path(),
-            &plan,
-            &query,
+            &metric_plan.plan,
+            &metric_plan.query,
             &self.label_index,
-            (TimeRange::new(30, 30).unwrap(), 1),
+            MetricEvaluationRange::new(TimeRange::new(30, 30).unwrap(), 1),
             hot_query.hot_tail,
             hot_query.compacted_through_ns,
         )
@@ -222,6 +249,31 @@ struct PodSample<'a> {
     sample_value: &'a str,
 }
 
+struct IndexedLogLine {
+    timestamp_ns: i64,
+    line: &'static str,
+}
+
+struct ExpectedStream {
+    labels: LogLabels,
+    values: Value,
+}
+
+struct MetricAggregationCase {
+    query: &'static str,
+    expected_values: Value,
+}
+
+struct MetricScalarCase {
+    query: &'static str,
+    expected_value: &'static str,
+}
+
+struct SortedPodsCase {
+    query: &'static str,
+    expected_pods: [&'static str; 3],
+}
+
 /// Sets one field of a JSON object.
 trait WithField {
     fn with_field(self, key: &str, field_value: Value) -> Self;
@@ -260,13 +312,16 @@ fn single_series(series_labels: LogLabels, span: BlockSpan, entries: &[LogEntry<
 }
 
 fn api(span: BlockSpan, entries: &[LogEntry<'_>]) -> Fixture {
-    single_series(labels(API_PROD), span, entries)
+    single_series(api_prod_labels(), span, entries)
 }
 
 fn api_and_worker(api_span: BlockSpan, api_entries: &[LogEntry<'_>]) -> Fixture {
     let mut fixture = Fixture::new();
-    let api = fixture.series(labels(API_PROD));
-    let worker = fixture.series(labels([("app", "worker"), ("env", "prod")]));
+    let api = fixture.series(api_prod_labels());
+    let worker = fixture.series(log_labels([
+        LabelPair::new("app", "worker"),
+        LabelPair::new("env", "prod"),
+    ]));
     fixture.block(PartitionIndex(0), api_span, rows(api, api_entries));
     fixture.block(
         PartitionIndex(1),
@@ -280,7 +335,13 @@ fn api_and_worker(api_span: BlockSpan, api_entries: &[LogEntry<'_>]) -> Fixture 
 }
 
 fn prod_pods<const N: usize>(fixture: &mut Fixture, pods: [&str; N]) -> [u64; N] {
-    pods.map(|pod| fixture.series(labels([("app", "api"), ("env", "prod"), ("pod", pod)])))
+    pods.map(|pod| {
+        fixture.series(log_labels([
+            LabelPair::new("app", "api"),
+            LabelPair::new("env", "prod"),
+            LabelPair::new("pod", pod),
+        ]))
+    })
 }
 
 fn hot(tenant: &str, stream_labels: LogLabels, entry: LogEntry<'_>) -> WalLogRecord {
@@ -295,7 +356,7 @@ fn hot(tenant: &str, stream_labels: LogLabels, entry: LogEntry<'_>) -> WalLogRec
 }
 
 fn api_hot(timestamp_ns: i64, line: &str) -> WalLogRecord {
-    hot(TENANT, labels(API_PROD), log_entry(timestamp_ns, line))
+    hot(TENANT, api_prod_labels(), log_entry(timestamp_ns, line))
 }
 
 fn positioned(record: WalLogRecord, offset: i64) -> WalLogRecord {
@@ -308,14 +369,24 @@ fn positioned(record: WalLogRecord, offset: i64) -> WalLogRecord {
     }
 }
 
-fn frontier_hot_tail() -> (Vec<WalLogRecord>, CompactionFrontier) {
-    (
-        vec![
+struct FrontierHotTail {
+    records: Vec<WalLogRecord>,
+    frontier: CompactionFrontier,
+}
+
+fn frontier_hot_tail() -> FrontierHotTail {
+    FrontierHotTail {
+        records: vec![
             positioned(api_hot(20, "already compacted error"), 42),
             positioned(api_hot(21, "new hot error"), 43),
         ],
-        CompactionFrontier::new(19).with_partition_offset(PartitionIndex(0), Offset(42)),
-    )
+        frontier: CompactionFrontier::new(19).with_partition_offset(PartitionIndex(0), Offset(42)),
+    }
+}
+
+struct MetricPlan {
+    plan: StreamPlan,
+    query: MetricQuery,
 }
 
 fn fingerprints(plan: &StreamPlan) -> String {
@@ -399,32 +470,52 @@ async fn large_sparse_stream_selection_keeps_only_matching_fingerprints_and_rows
     let prefix = ObjectPath::from("large-selection");
     let mut label_index = LabelIndex::default();
     let mut rows = Vec::new();
-    let mut expected_streams = BTreeMap::new();
+    let mut expected_streams = Vec::new();
     let mut decoys = Vec::new();
     for stream in 0..6_500 {
         let selected = stream % 5 != 0;
-        let source_labels = labels([
-            ("app", if selected { "api" } else { "worker" }),
-            ("series", &format!("{stream:04}")),
+        let source_labels = log_labels([
+            LabelPair::new("app", if selected { "api" } else { "worker" }),
+            LabelPair::new("series", format!("{stream:04}")),
         ]);
         let fingerprint = label_index.insert_series("tenant-a", source_labels.clone());
-        let metadata = labels([("payload", &format!("metadata-{stream}"))]);
-        for (timestamp, line) in [
-            (9, "accepted before"),
-            (10, "accepted first"),
-            (11, "rejected"),
-            (20, "accepted last"),
-            (21, "accepted after"),
+        let metadata = log_labels([LabelPair::new("payload", format!("metadata-{stream}"))]);
+        for entry in [
+            IndexedLogLine {
+                timestamp_ns: 9,
+                line: "accepted before",
+            },
+            IndexedLogLine {
+                timestamp_ns: 10,
+                line: "accepted first",
+            },
+            IndexedLogLine {
+                timestamp_ns: 11,
+                line: "rejected",
+            },
+            IndexedLogLine {
+                timestamp_ns: 20,
+                line: "accepted last",
+            },
+            IndexedLogLine {
+                timestamp_ns: 21,
+                line: "accepted after",
+            },
         ] {
-            rows.push(LogRow::new(fingerprint, timestamp, line, metadata.clone()));
+            rows.push(LogRow::new(
+                fingerprint,
+                entry.timestamp_ns,
+                entry.line,
+                metadata.clone(),
+            ));
         }
         if selected {
             let mut output_labels = source_labels;
             output_labels.extend(metadata);
-            expected_streams.insert(
-                output_labels,
-                json!([["10", "accepted first"], ["20", "accepted last"]]),
-            );
+            expected_streams.push(ExpectedStream {
+                labels: output_labels,
+                values: json!([["10", "accepted first"], ["20", "accepted last"]]),
+            });
         } else {
             decoys.push(fingerprint);
         }
@@ -455,13 +546,14 @@ async fn large_sparse_stream_selection_keeps_only_matching_fingerprints_and_rows
             .iter()
             .any(|fingerprint| *fingerprint > first && *fingerprint < last)
     );
+    expected_streams.sort_by(|left, right| left.labels.cmp(&right.labels));
     let expected_metrics = expected_streams
-        .keys()
-        .map(|metric| json!({"metric": metric, "values": [[0.000_000_02, "1"]]}))
+        .iter()
+        .map(|stream| json!({"metric": stream.labels, "values": [[0.000_000_02, "1"]]}))
         .collect::<Vec<_>>();
     let expected = expected_streams
         .into_iter()
-        .map(|(stream, values)| json!({"stream": stream, "values": values}))
+        .map(|stream| json!({"stream": stream.labels, "values": stream.values}))
         .collect::<Vec<_>>();
     let actual =
         execute_stream_query_from_object_store(Arc::clone(&store), &prefix, &plan, &label_index)
@@ -527,7 +619,7 @@ async fn executes_stream_query_merging_cold_blocks_with_hot_wal_tail() {
         api_hot(20, "api hot error"),
         hot(
             "tenant-b",
-            labels(API_PROD),
+            api_prod_labels(),
             log_entry(21, "other tenant error"),
         ),
     ];
@@ -580,17 +672,22 @@ fn metric_plan_scan_sql_uses_eval_range_selector_and_stream_pushdowns() {
         },
         &[log_entry(19, "api error")],
     );
-    let (plan, query) = fixture.metric_plan(
+    let metric_plan = fixture.metric_plan(
         TimeRange {
             start_ns: 0,
             end_ns: 40,
         },
         r#"count_over_time({app=~".+"} |= "error" [20ns])"#,
     );
-    let fingerprints = fingerprints(&plan);
+    let fingerprints = fingerprints(&metric_plan.plan);
 
     assert!(
-        metric_plan_scan_sql(&plan, &query, TimeRange::new(30, 40).unwrap()).unwrap()
+        metric_plan_scan_sql(
+            &metric_plan.plan,
+            &metric_plan.query,
+            TimeRange::new(30, 40).unwrap()
+        )
+        .unwrap()
             == format!(
                 "select series_fingerprint, timestamp_ns, line, structured_metadata \
                  from logs \
@@ -606,14 +703,14 @@ fn metric_plan_scan_sql_uses_eval_range_selector_and_stream_pushdowns() {
 async fn executes_stream_query_filters_hot_tail_by_partition_offset_frontier() {
     let fixture = Fixture::new();
     let plan = fixture.stream_plan(r#"{app="api"} |= "error""#);
-    let (hot_tail, frontier) = frontier_hot_tail();
+    let hot_tail = frontier_hot_tail();
 
     let response = execute_stream_query_with_hot_tail_frontier(
         fixture.dir.path(),
         &plan,
         &fixture.label_index,
-        &hot_tail,
-        &frontier,
+        &hot_tail.records,
+        &hot_tail.frontier,
     )
     .await
     .unwrap();
@@ -624,7 +721,7 @@ async fn executes_stream_query_filters_hot_tail_by_partition_offset_frontier() {
 #[tokio::test]
 async fn hot_tail_buffer_polls_and_decodes_kafka_wal_records() {
     let record = WalLogRecord {
-        structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+        structured_metadata: log_labels([LabelPair::new("trace_id", "abc")]),
         ..api_hot(1_900_000, "api error")
     };
     let produced = build_kafka_wal_record("__krabka_observability_logs_wal", &record).unwrap();
@@ -679,7 +776,7 @@ async fn hot_tail_buffer_polls_and_decodes_kafka_wal_records() {
                     }),
                     ..hot(
                         TENANT,
-                        labels([("app", "worker")]),
+                        log_labels([LabelPair::new("app", "worker")]),
                         log_entry(2_000_000, "worker error")
                     )
                 },
@@ -695,12 +792,15 @@ fn executes_tail_query_over_hot_wal_tail_as_loki_streams_json_frame() {
         api_hot(20, "api hot error"),
         hot(
             "tenant-b",
-            labels(API_PROD),
+            api_prod_labels(),
             log_entry(21, "other tenant error"),
         ),
         hot(
             TENANT,
-            labels([("app", "worker"), ("env", "prod")]),
+            log_labels([
+                LabelPair::new("app", "worker"),
+                LabelPair::new("env", "prod"),
+            ]),
             log_entry(22, "worker error"),
         ),
     ];
@@ -713,9 +813,9 @@ fn executes_tail_query_over_hot_wal_tail_as_loki_streams_json_frame() {
 #[test]
 fn executes_tail_query_filters_hot_tail_by_partition_offset_frontier() {
     let plan = Fixture::new().stream_plan(r#"{app="api"} |= "error""#);
-    let (hot_tail, frontier) = frontier_hot_tail();
+    let hot_tail = frontier_hot_tail();
 
-    let response = execute_tail_query_with_frontier(&plan, &hot_tail, &frontier);
+    let response = execute_tail_query_with_frontier(&plan, &hot_tail.records, &hot_tail.frontier);
 
     assert!(response == api_tail_frame(json!([["21", "new hot error"]])));
 }
@@ -723,8 +823,8 @@ fn executes_tail_query_filters_hot_tail_by_partition_offset_frontier() {
 #[tokio::test]
 async fn executes_stream_query_with_json_field_filter_over_structured_metadata() {
     let mut fixture = Fixture::new();
-    let api = fixture.series(labels(API_PROD));
-    let status = |code: &str| BTreeMap::from([("status".to_string(), code.to_string())]);
+    let api = fixture.series(api_prod_labels());
+    let status = |code: &str| log_labels([LabelPair::new("status", code)]);
     fixture.block(
         PartitionIndex(0),
         BlockSpan {
@@ -762,8 +862,11 @@ async fn executes_stream_query_with_json_field_filter_over_structured_metadata()
 #[tokio::test]
 async fn executes_stream_query_with_field_filter_over_original_labels() {
     let mut fixture = Fixture::new();
-    let api = fixture.series(labels(API_PROD));
-    let api_dev = fixture.series(labels([("app", "api"), ("env", "dev")]));
+    let api = fixture.series(api_prod_labels());
+    let api_dev = fixture.series(log_labels([
+        LabelPair::new("app", "api"),
+        LabelPair::new("env", "dev"),
+    ]));
     fixture.block(
         PartitionIndex(0),
         BlockSpan {
@@ -1289,7 +1392,7 @@ async fn executes_absent_over_time_query_for_empty_plan() {
 #[tokio::test]
 async fn count_over_time_honors_json_parser_error_filters() {
     let fixture = single_series(
-        labels(API_JSON),
+        api_json_labels(),
         BlockSpan {
             first: 10,
             last: 29,
@@ -1432,7 +1535,7 @@ async fn executes_bytes_over_time_merging_cold_blocks_with_hot_wal_tail() {
 #[tokio::test]
 async fn metric_query_rejects_unfiltered_cold_block_pipeline_errors() {
     let fixture = single_series(
-        labels(API_JSON),
+        api_json_labels(),
         BlockSpan {
             first: 20,
             last: 20,
@@ -1451,8 +1554,8 @@ async fn metric_query_rejects_unfiltered_cold_block_pipeline_errors() {
 #[tokio::test]
 async fn metric_query_rejects_unfiltered_hot_tail_pipeline_errors() {
     let mut fixture = Fixture::new();
-    fixture.series(labels(API_JSON));
-    let hot_tail = [hot(TENANT, labels(API_JSON), log_entry(20, "not json"))];
+    fixture.series(api_json_labels());
+    let hot_tail = [hot(TENANT, api_json_labels(), log_entry(20, "not json"))];
 
     let error = fixture
         .metric_with_hot_tail(&HotTailQuery {
@@ -1671,8 +1774,14 @@ async fn executes_metric_query_with_range_offset() {
 #[tokio::test]
 async fn executes_avg_over_time_unwrap_metric_query_with_range_grouping() {
     let mut fixture = Fixture::new();
-    let pod_a = fixture.series(labels([("app", "api"), ("pod", "a")]));
-    let pod_b = fixture.series(labels([("app", "api"), ("pod", "b")]));
+    let pod_a = fixture.series(log_labels([
+        LabelPair::new("app", "api"),
+        LabelPair::new("pod", "a"),
+    ]));
+    let pod_b = fixture.series(log_labels([
+        LabelPair::new("app", "api"),
+        LabelPair::new("pod", "b"),
+    ]));
     fixture.block(
         PartitionIndex(0),
         BlockSpan {
@@ -2002,36 +2111,36 @@ async fn executes_count_min_and_max_vector_aggregations() {
     );
 
     let cases = [
-        (
-            r#"count by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
-            json!([
+        MetricAggregationCase {
+            query: r#"count by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
+            expected_values: json!([
                 [0.000_000_01, "1"],
                 [0.000_000_02, "2"],
                 [0.000_000_03, "2"]
             ]),
-        ),
-        (
-            r#"min by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
-            json!([
+        },
+        MetricAggregationCase {
+            query: r#"min by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
+            expected_values: json!([
                 [0.000_000_01, "1"],
                 [0.000_000_02, "1"],
                 [0.000_000_03, "1"]
             ]),
-        ),
-        (
-            r#"max by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
-            json!([
+        },
+        MetricAggregationCase {
+            query: r#"max by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
+            expected_values: json!([
                 [0.000_000_01, "1"],
                 [0.000_000_02, "2"],
                 [0.000_000_03, "1"]
             ]),
-        ),
+        },
     ];
 
-    for (query, expected_values) in cases {
+    for case in cases {
         let response = fixture
             .metric_range(&RangeQuery {
-                query,
+                query: case.query,
                 plan: STEPPED_PLAN,
                 eval: TimeRange {
                     start_ns: 10,
@@ -2041,7 +2150,7 @@ async fn executes_count_min_and_max_vector_aggregations() {
             })
             .await;
 
-        assert!(response == env_matrix(expected_values));
+        assert!(response == env_matrix(case.expected_values));
     }
 }
 
@@ -2112,20 +2221,20 @@ async fn executes_stdvar_and_stddev_vector_aggregations() {
     let fixture = three_prod_pods_with_one_two_three_errors();
 
     let cases = [
-        (
-            r#"stdvar by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
-            "0.666666666",
-        ),
-        (
-            r#"stddev by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
-            "0.81649658",
-        ),
+        MetricScalarCase {
+            query: r#"stdvar by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
+            expected_value: "0.666666666",
+        },
+        MetricScalarCase {
+            query: r#"stddev by (env) (count_over_time({app="api"} |= "error" [20ns]))"#,
+            expected_value: "0.81649658",
+        },
     ];
 
-    for (query, expected_value) in cases {
+    for case in cases {
         let response = fixture
             .metric_range(&RangeQuery {
-                query,
+                query: case.query,
                 plan: STEPPED_PLAN,
                 eval: TimeRange {
                     start_ns: 30,
@@ -2135,7 +2244,7 @@ async fn executes_stdvar_and_stddev_vector_aggregations() {
             })
             .await;
 
-        assert!(response == env_matrix(json!([[0.000_000_03, expected_value]])));
+        assert!(response == env_matrix(json!([[0.000_000_03, case.expected_value]])));
     }
 }
 
@@ -2169,8 +2278,16 @@ fn pod_matrix(samples: &[PodSample<'_>]) -> Value {
 async fn executes_topk_and_bottomk_vector_aggregations() {
     let mut fixture = Fixture::new();
     let [api_a, api_b] = prod_pods(&mut fixture, ["a", "b"]);
-    let worker_a = fixture.series(labels([("app", "api"), ("env", "stage"), ("pod", "a")]));
-    let worker_b = fixture.series(labels([("app", "api"), ("env", "stage"), ("pod", "b")]));
+    let worker_a = fixture.series(log_labels([
+        LabelPair::new("app", "api"),
+        LabelPair::new("env", "stage"),
+        LabelPair::new("pod", "a"),
+    ]));
+    let worker_b = fixture.series(log_labels([
+        LabelPair::new("app", "api"),
+        LabelPair::new("env", "stage"),
+        LabelPair::new("pod", "b"),
+    ]));
     fixture.block(
         PartitionIndex(0),
         BlockSpan {
@@ -2190,9 +2307,9 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
     );
 
     let cases = [
-        (
-            r#"topk by (env) (1, count_over_time({app="api"} |= "error" [30ns]))"#,
-            pod_matrix(&[
+        MetricAggregationCase {
+            query: r#"topk by (env) (1, count_over_time({app="api"} |= "error" [30ns]))"#,
+            expected_values: pod_matrix(&[
                 PodSample {
                     env: "prod",
                     pod: "b",
@@ -2204,10 +2321,10 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
                     sample_value: "2",
                 },
             ]),
-        ),
-        (
-            r#"approx_topk(2, count_over_time({app="api"} |= "error" [30ns]))"#,
-            pod_matrix(&[
+        },
+        MetricAggregationCase {
+            query: r#"approx_topk(2, count_over_time({app="api"} |= "error" [30ns]))"#,
+            expected_values: pod_matrix(&[
                 PodSample {
                     env: "prod",
                     pod: "a",
@@ -2219,10 +2336,10 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
                     sample_value: "3",
                 },
             ]),
-        ),
-        (
-            r#"bottomk(2, count_over_time({app="api"} |= "error" [30ns]))"#,
-            pod_matrix(&[
+        },
+        MetricAggregationCase {
+            query: r#"bottomk(2, count_over_time({app="api"} |= "error" [30ns]))"#,
+            expected_values: pod_matrix(&[
                 PodSample {
                     env: "prod",
                     pod: "a",
@@ -2234,13 +2351,13 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
                     sample_value: "1",
                 },
             ]),
-        ),
+        },
     ];
 
-    for (query, expected) in cases {
+    for case in cases {
         let response = fixture
             .metric_range(&RangeQuery {
-                query,
+                query: case.query,
                 plan: WHOLE_FIXTURE,
                 eval: TimeRange {
                     start_ns: 30,
@@ -2250,7 +2367,7 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
             })
             .await;
 
-        assert!(response == expected);
+        assert!(response == case.expected_values);
     }
 }
 
@@ -2274,19 +2391,19 @@ async fn executes_sort_and_sort_desc_vector_aggregations() {
         ],
     );
 
-    for (query, expected_pods) in [
-        (
-            r#"sort(count_over_time({app="api"} |= "error" [30ns]))"#,
-            ["b", "a", "c"],
-        ),
-        (
-            r#"sort_desc(count_over_time({app="api"} |= "error" [30ns]))"#,
-            ["c", "a", "b"],
-        ),
+    for case in [
+        SortedPodsCase {
+            query: r#"sort(count_over_time({app="api"} |= "error" [30ns]))"#,
+            expected_pods: ["b", "a", "c"],
+        },
+        SortedPodsCase {
+            query: r#"sort_desc(count_over_time({app="api"} |= "error" [30ns]))"#,
+            expected_pods: ["c", "a", "b"],
+        },
     ] {
         let response = fixture
             .metric_range(&RangeQuery {
-                query,
+                query: case.query,
                 plan: WHOLE_FIXTURE,
                 eval: TimeRange {
                     start_ns: 30,
@@ -2302,7 +2419,7 @@ async fn executes_sort_and_sort_desc_vector_aggregations() {
             .iter()
             .map(|series| series["metric"]["pod"].as_str().unwrap())
             .collect::<Vec<_>>();
-        assert!(pods == expected_pods);
+        assert!(pods == case.expected_pods);
     }
 }
 
@@ -2316,8 +2433,11 @@ async fn empty_stream_plan_returns_empty_loki_streams_result() {
 #[tokio::test]
 async fn executes_stream_query_over_object_store_blocks_as_loki_json() {
     let mut fixture = Fixture::new();
-    let api = fixture.series(labels(API_PROD));
-    let worker = fixture.series(labels([("app", "worker"), ("env", "prod")]));
+    let api = fixture.series(api_prod_labels());
+    let worker = fixture.series(log_labels([
+        LabelPair::new("app", "worker"),
+        LabelPair::new("env", "prod"),
+    ]));
     fixture
         .object_block(
             PartitionIndex(0),
@@ -2348,7 +2468,7 @@ async fn executes_stream_query_over_object_store_blocks_as_loki_json() {
 
 async fn object_store_with_missing_block(entries: &[LogEntry<'_>]) -> Fixture {
     let mut fixture = Fixture::new();
-    let api = fixture.series(labels(API_PROD));
+    let api = fixture.series(api_prod_labels());
     fixture
         .object_block(
             PartitionIndex(0),
@@ -2385,7 +2505,7 @@ async fn object_store_metric_query_returns_partial_result_with_warning_for_unrea
     let fixture =
         object_store_with_missing_block(&[log_entry(10, "api ok"), log_entry(19, "api error")])
             .await;
-    let (plan, query) = fixture.metric_plan(
+    let metric_plan = fixture.metric_plan(
         WHOLE_FIXTURE,
         r#"count_over_time({app="api"} |= "error" [30ns])"#,
     );
@@ -2393,8 +2513,8 @@ async fn object_store_metric_query_returns_partial_result_with_warning_for_unrea
     let response = execute_metric_query_from_object_store(
         Arc::clone(&fixture.store),
         &fixture.prefix,
-        &plan,
-        &query,
+        &metric_plan.plan,
+        &metric_plan.query,
         &fixture.label_index,
     )
     .await

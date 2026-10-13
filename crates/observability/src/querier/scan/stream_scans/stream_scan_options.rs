@@ -18,6 +18,31 @@ pub(crate) struct StreamScanOptions {
     pub(crate) encoding: LokiStreamEncoding,
 }
 
+#[derive(Hash, PartialEq, Eq)]
+struct StreamEntryIdentity<'a, Timestamp> {
+    labels: &'a Labels,
+    timestamp_ns: &'a Timestamp,
+    line: &'a str,
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct LocalEntryIdentity<'a, Timestamp> {
+    timestamp_ns: &'a Timestamp,
+    line: &'a str,
+}
+
+struct StreamEntryRef<'a> {
+    labels: &'a Labels,
+    entry: &'a LokiStreamEntry,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+struct StreamHeapEntry {
+    priority: i128,
+    stream_index: usize,
+    entry_index: usize,
+}
+
 impl StreamScanOptions {
     pub(crate) fn exhaustive() -> Self {
         Self {
@@ -75,23 +100,37 @@ impl StreamScanOptions {
         };
         // A cold row can still be in the hot tail until the frontier advances.
         let mut seen = HashSet::new();
-        streams
-            .iter()
-            .chain(hot_streams.iter())
-            .flat_map(|(labels, entries)| entries.iter().map(move |entry| (labels, entry)))
-            .filter(|(_, entry)| {
-                entry.parsed_timestamp_ns().is_some_and(|timestamp| {
-                    self.end_exclusive.is_none_or(|end| timestamp < end)
-                        && match self.direction {
-                            LokiDirection::Forward => {
-                                timestamp < next_block.key.time_range.start_ns
-                            }
-                            LokiDirection::Backward => timestamp > next_block.key.time_range.end_ns,
-                        }
+        [streams, hot_streams]
+            .into_iter()
+            .flat_map(|stream_map| stream_map.keys().zip(stream_map.values()))
+            .flat_map(|stream| {
+                stream.1.iter().map(move |entry| StreamEntryRef {
+                    labels: stream.0,
+                    entry,
                 })
             })
-            .filter(|(labels, entry)| {
-                seen.insert((*labels, &entry.timestamp_ns, entry.line.as_str()))
+            .filter(|candidate| {
+                candidate
+                    .entry
+                    .parsed_timestamp_ns()
+                    .is_some_and(|timestamp| {
+                        self.end_exclusive.is_none_or(|end| timestamp < end)
+                            && match self.direction {
+                                LokiDirection::Forward => {
+                                    timestamp < next_block.key.time_range.start_ns
+                                }
+                                LokiDirection::Backward => {
+                                    timestamp > next_block.key.time_range.end_ns
+                                }
+                            }
+                    })
+            })
+            .filter(|candidate| {
+                seen.insert(StreamEntryIdentity {
+                    labels: candidate.labels,
+                    timestamp_ns: &candidate.entry.timestamp_ns,
+                    line: candidate.entry.line.as_str(),
+                })
             })
             .take(limit)
             .count()
@@ -114,7 +153,12 @@ impl StreamScanOptions {
                 let mut seen = HashSet::new();
                 entries
                     .iter()
-                    .map(|entry| seen.insert((&entry.timestamp_ns, entry.line.as_str())))
+                    .map(|entry| {
+                        seen.insert(LocalEntryIdentity {
+                            timestamp_ns: &entry.timestamp_ns,
+                            line: entry.line.as_str(),
+                        })
+                    })
                     .collect::<Vec<_>>()
             }
             .into_iter();
@@ -180,7 +224,8 @@ impl StreamScanOptions {
         let by_stream = streams.values().collect::<Vec<_>>();
         let mut selected = vec![0; by_stream.len()];
         let mut heads = BinaryHeap::with_capacity(by_stream.len());
-        for (stream_index, entries) in by_stream.iter().enumerate() {
+        for stream_index in 0..by_stream.len() {
+            let entries = by_stream[stream_index];
             if entries.is_empty() {
                 continue;
             }
@@ -188,16 +233,18 @@ impl StreamScanOptions {
                 LokiDirection::Forward => 0,
                 LokiDirection::Backward => entries.len() - 1,
             };
-            heads.push(Reverse((
-                priority(&entries[entry_index]),
+            heads.push(Reverse(StreamHeapEntry {
+                priority: priority(&entries[entry_index]),
                 stream_index,
                 entry_index,
-            )));
+            }));
         }
         for _ in 0..limit {
-            let Some(Reverse((_, stream_index, entry_index))) = heads.pop() else {
+            let Some(Reverse(candidate)) = heads.pop() else {
                 break;
             };
+            let stream_index = candidate.stream_index;
+            let entry_index = candidate.entry_index;
             selected[stream_index] += 1;
             let entries = by_stream[stream_index];
             let next = match self.direction {
@@ -207,7 +254,11 @@ impl StreamScanOptions {
                 LokiDirection::Backward => entry_index.checked_sub(1),
             };
             if let Some(next) = next {
-                heads.push(Reverse((priority(&entries[next]), stream_index, next)));
+                heads.push(Reverse(StreamHeapEntry {
+                    priority: priority(&entries[next]),
+                    stream_index,
+                    entry_index: next,
+                }));
             }
         }
         let mut counts = selected.into_iter();
@@ -239,82 +290,180 @@ mod tests {
     use super::*;
     use crate::{apply_loki_stream_options, loki_streams_response};
 
+    struct TestLabel {
+        name: &'static str,
+        value: &'static str,
+    }
+
+    fn test_labels(entries: impl IntoIterator<Item = TestLabel>) -> Labels {
+        let mut labels = Labels::new();
+        for entry in entries {
+            labels.insert(entry.name.into(), entry.value.into());
+        }
+        labels
+    }
+
+    struct TestStream {
+        app: &'static str,
+        timestamps: Vec<i64>,
+    }
+
+    struct TestEntry {
+        app: &'static str,
+        timestamp_ns: i64,
+    }
+
+    struct LimitCase {
+        limit: Option<usize>,
+        end: Option<i64>,
+    }
+
+    struct ConcurrencyCase {
+        encoding: LokiStreamEncoding,
+        limit: Option<usize>,
+        interval: Option<i64>,
+        configured: usize,
+        expected: usize,
+    }
+
     fn streams() -> BTreeMap<Labels, Vec<LokiStreamEntry>> {
-        [("a", vec![1, 5, 8, 8]), ("b", vec![3, 6, 9])]
-            .into_iter()
-            .map(|(app, timestamps)| {
-                let labels = Labels::from([("app".into(), app.into())]);
-                let entries = timestamps
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, ts)| {
-                        LokiStreamEntry::new(
-                            ts,
-                            format!("{app}-{index}"),
-                            Labels::new(),
-                            Labels::new(),
-                        )
-                    })
-                    .collect();
-                (labels, entries)
-            })
-            .collect()
+        let source_streams = [
+            TestStream {
+                app: "a",
+                timestamps: vec![1, 5, 8, 8],
+            },
+            TestStream {
+                app: "b",
+                timestamps: vec![3, 6, 9],
+            },
+        ];
+        let mut streams = BTreeMap::new();
+        for stream in source_streams {
+            let labels = test_labels([TestLabel {
+                name: "app",
+                value: stream.app,
+            }]);
+            let mut index = 0;
+            let entries = stream
+                .timestamps
+                .into_iter()
+                .map(|timestamp_ns| {
+                    let entry_index = index;
+                    index += 1;
+                    LokiStreamEntry::new(
+                        timestamp_ns,
+                        format!("{}-{entry_index}", stream.app),
+                        Labels::new(),
+                        Labels::new(),
+                    )
+                })
+                .collect();
+            streams.insert(labels, entries);
+        }
+        streams
     }
 
     fn escaped_and_unicode_streams() -> BTreeMap<Labels, Vec<LokiStreamEntry>> {
-        let mut streams = ["\n", "\"", "/", "\\", "é", "λ", "🎉"]
-            .into_iter()
-            .map(|app| {
-                let labels = Labels::from([("app".into(), app.into())]);
-                let entries: Vec<_> = [1, 5, 5, 7, 9]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, timestamp)| {
-                        LokiStreamEntry::new(
-                            timestamp,
-                            format!("{app}-{index}"),
-                            Labels::from([("source".into(), "metadata".into())]),
-                            Labels::from([("parser".into(), "value".into())]),
-                        )
-                    })
-                    .collect();
-                (labels, entries)
-            })
-            .collect::<BTreeMap<_, _>>();
+        let mut streams = BTreeMap::new();
+        for app in ["\n", "\"", "/", "\\", "é", "λ", "🎉"] {
+            let labels = test_labels([TestLabel {
+                name: "app",
+                value: app,
+            }]);
+            let mut index = 0;
+            let entries: Vec<_> = [1, 5, 5, 7, 9]
+                .into_iter()
+                .map(|timestamp| {
+                    let entry_index = index;
+                    index += 1;
+                    LokiStreamEntry::new(
+                        timestamp,
+                        format!("{app}-{entry_index}"),
+                        test_labels([TestLabel {
+                            name: "source",
+                            value: "metadata",
+                        }]),
+                        test_labels([TestLabel {
+                            name: "parser",
+                            value: "value",
+                        }]),
+                    )
+                })
+                .collect();
+            streams.insert(labels, entries);
+        }
         // A map and its strict extension sort differently as label maps and
         // serialized JSON objects. Equal times expose that distinction.
         let entries = streams
-            .get(&Labels::from([("app".into(), "/".into())]))
+            .get(&test_labels([TestLabel {
+                name: "app",
+                value: "/",
+            }]))
             .unwrap()
             .clone();
         streams.insert(
-            Labels::from([("app".into(), "/".into()), ("zone".into(), "é".into())]),
+            test_labels([
+                TestLabel {
+                    name: "app",
+                    value: "/",
+                },
+                TestLabel {
+                    name: "zone",
+                    value: "é",
+                },
+            ]),
             entries,
         );
         streams
     }
 
     fn extreme_streams() -> BTreeMap<Labels, Vec<LokiStreamEntry>> {
-        [
-            ("a", vec![i64::MIN, -1, 0, i64::MAX]),
-            ("b", vec![i64::MIN, 0, i64::MAX]),
-        ]
-        .into_iter()
-        .map(|(app, times)| {
-            let entries = times
-                .into_iter()
-                .map(|time| {
-                    LokiStreamEntry::new(
-                        time,
-                        format!("{app}-{time}"),
-                        Labels::new(),
-                        Labels::new(),
-                    )
-                })
-                .collect();
-            (Labels::from([("app".into(), app.into())]), entries)
-        })
-        .collect()
+        let source_entries = [
+            TestEntry {
+                app: "a",
+                timestamp_ns: i64::MIN,
+            },
+            TestEntry {
+                app: "a",
+                timestamp_ns: -1,
+            },
+            TestEntry {
+                app: "a",
+                timestamp_ns: 0,
+            },
+            TestEntry {
+                app: "a",
+                timestamp_ns: i64::MAX,
+            },
+            TestEntry {
+                app: "b",
+                timestamp_ns: i64::MIN,
+            },
+            TestEntry {
+                app: "b",
+                timestamp_ns: 0,
+            },
+            TestEntry {
+                app: "b",
+                timestamp_ns: i64::MAX,
+            },
+        ];
+        let mut streams = BTreeMap::new();
+        for source_entry in source_entries {
+            let labels = test_labels([TestLabel {
+                name: "app",
+                value: source_entry.app,
+            }]);
+            streams.entry(labels).or_insert_with(Vec::new).push({
+                LokiStreamEntry::new(
+                    source_entry.timestamp_ns,
+                    format!("{}-{}", source_entry.app, source_entry.timestamp_ns),
+                    Labels::new(),
+                    Labels::new(),
+                )
+            });
+        }
+        streams
     }
 
     fn malformed_streams() -> BTreeMap<Labels, Vec<LokiStreamEntry>> {
@@ -322,23 +471,54 @@ mod tests {
         let mut malformed =
             LokiStreamEntry::new(0, "malformed".into(), Labels::new(), Labels::new());
         malformed.timestamp_ns = "not-a-timestamp".into();
-        streams.insert(Labels::from([("app".into(), "c".into())]), vec![malformed]);
+        streams.insert(
+            test_labels([TestLabel {
+                name: "app",
+                value: "c",
+            }]),
+            vec![malformed],
+        );
         streams
     }
 
     #[test]
     fn typed_limit_matches_the_full_json_response() {
         for direction in [LokiDirection::Forward, LokiDirection::Backward] {
-            for (limit, end) in [
-                (Some(1), None),
-                (Some(2), None),
-                (Some(3), None),
-                (Some(9), None),
-                (Some(3), Some(7)),
-                (Some(0), None),
-                (Some(10), Some(7)),
-                (None, None),
+            for case in [
+                LimitCase {
+                    limit: Some(1),
+                    end: None,
+                },
+                LimitCase {
+                    limit: Some(2),
+                    end: None,
+                },
+                LimitCase {
+                    limit: Some(3),
+                    end: None,
+                },
+                LimitCase {
+                    limit: Some(9),
+                    end: None,
+                },
+                LimitCase {
+                    limit: Some(3),
+                    end: Some(7),
+                },
+                LimitCase {
+                    limit: Some(0),
+                    end: None,
+                },
+                LimitCase {
+                    limit: Some(10),
+                    end: Some(7),
+                },
+                LimitCase {
+                    limit: None,
+                    end: None,
+                },
             ] {
+                let LimitCase { limit, end } = case;
                 let stream_options = LokiStreamOptions {
                     direction,
                     limit,
@@ -396,21 +576,106 @@ mod tests {
 
     #[test]
     fn block_fetch_concurrency_keeps_the_configured_bound_for_exhaustive_scans() {
-        for (encoding, limit, interval, configured, expected) in [
-            (LokiStreamEncoding::Folded, Some(1), None, 8, 1),
-            (LokiStreamEncoding::CategorizeLabels, Some(1), None, 8, 8),
-            (LokiStreamEncoding::Folded, Some(0), None, 8, 1),
-            (LokiStreamEncoding::CategorizeLabels, Some(0), None, 8, 8),
-            (LokiStreamEncoding::Folded, Some(3), None, 8, 3),
-            (LokiStreamEncoding::Folded, Some(12), None, 8, 8),
-            (LokiStreamEncoding::Folded, None, None, 8, 8),
-            (LokiStreamEncoding::CategorizeLabels, None, None, 8, 8),
-            (LokiStreamEncoding::Folded, Some(1), Some(2), 8, 8),
-            (LokiStreamEncoding::CategorizeLabels, Some(1), Some(2), 8, 8),
-            (LokiStreamEncoding::Folded, Some(0), Some(0), 8, 8),
-            (LokiStreamEncoding::Folded, Some(1), None, 1, 1),
-            (LokiStreamEncoding::CategorizeLabels, Some(1), None, 1, 1),
+        for case in [
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::Folded,
+                limit: Some(1),
+                interval: None,
+                configured: 8,
+                expected: 1,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::CategorizeLabels,
+                limit: Some(1),
+                interval: None,
+                configured: 8,
+                expected: 8,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::Folded,
+                limit: Some(0),
+                interval: None,
+                configured: 8,
+                expected: 1,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::CategorizeLabels,
+                limit: Some(0),
+                interval: None,
+                configured: 8,
+                expected: 8,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::Folded,
+                limit: Some(3),
+                interval: None,
+                configured: 8,
+                expected: 3,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::Folded,
+                limit: Some(12),
+                interval: None,
+                configured: 8,
+                expected: 8,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::Folded,
+                limit: None,
+                interval: None,
+                configured: 8,
+                expected: 8,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::CategorizeLabels,
+                limit: None,
+                interval: None,
+                configured: 8,
+                expected: 8,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::Folded,
+                limit: Some(1),
+                interval: Some(2),
+                configured: 8,
+                expected: 8,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::CategorizeLabels,
+                limit: Some(1),
+                interval: Some(2),
+                configured: 8,
+                expected: 8,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::Folded,
+                limit: Some(0),
+                interval: Some(0),
+                configured: 8,
+                expected: 8,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::Folded,
+                limit: Some(1),
+                interval: None,
+                configured: 1,
+                expected: 1,
+            },
+            ConcurrencyCase {
+                encoding: LokiStreamEncoding::CategorizeLabels,
+                limit: Some(1),
+                interval: None,
+                configured: 1,
+                expected: 1,
+            },
         ] {
+            let ConcurrencyCase {
+                encoding,
+                limit,
+                interval,
+                configured,
+                expected,
+            } = case;
             let options = StreamScanOptions::from_stream_options(
                 LokiStreamOptions {
                     direction: LokiDirection::Forward,

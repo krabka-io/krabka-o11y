@@ -1,9 +1,23 @@
-use std::{collections::hash_map::RandomState, hash::BuildHasher};
+use std::{
+    collections::hash_map::RandomState,
+    hash::{BuildHasher, Hash, Hasher},
+};
 
 use super::{
     BTreeMap, COL_SPAN_ID, COL_START, COL_TRACE_ID, HashSet, RecordBatch, Result, UnixNano,
     fixed_8, fixed_16, i64_value,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ExemplarRow {
+    pub(crate) batch_index: usize,
+    pub(crate) row_index: usize,
+}
+
+struct ExemplarCandidate {
+    score: u64,
+    row: ExemplarRow,
+}
 
 // A keyed random priority chooses each unique span with equal probability.
 // This has the same one-span-per-trace distribution as Tempo's reservoir.
@@ -12,10 +26,13 @@ pub(crate) fn sample_exemplar_rows(
     start: UnixNano,
     end: UnixNano,
     limit: usize,
-) -> Result<HashSet<(usize, usize)>> {
+) -> Result<HashSet<ExemplarRow>> {
     let random = RandomState::new();
     sample_rows(batches, start, end, limit, |trace, span| {
-        random.hash_one((trace, span))
+        let mut hasher = random.build_hasher();
+        trace.hash(&mut hasher);
+        span.hash(&mut hasher);
+        hasher.finish()
     })
 }
 
@@ -25,12 +42,13 @@ fn sample_rows(
     end: UnixNano,
     limit: usize,
     priority: impl Fn(&[u8; 16], &[u8]) -> u64,
-) -> Result<HashSet<(usize, usize)>> {
+) -> Result<HashSet<ExemplarRow>> {
     let mut traces = BTreeMap::new();
     if limit == 0 {
         return Ok(HashSet::new());
     }
-    for (batch_index, batch) in batches.iter().enumerate() {
+    for batch_index in 0..batches.len() {
+        let batch = &batches[batch_index];
         for row in 0..batch.num_rows() {
             let timestamp = UnixNano(i64_value(batch, COL_START, row)?);
             if timestamp < start || timestamp > end {
@@ -42,15 +60,25 @@ fn sample_rows(
             }
             let span = fixed_8(batch, COL_SPAN_ID, row)?;
             let score = priority(&trace, &span);
-            let choice = traces.entry(trace).or_insert((score, batch_index, row));
-            if score < choice.0 {
-                *choice = (score, batch_index, row);
+            let choice = traces.entry(trace).or_insert(ExemplarCandidate {
+                score,
+                row: ExemplarRow {
+                    batch_index,
+                    row_index: row,
+                },
+            });
+            if score < choice.score {
+                choice.score = score;
+                choice.row = ExemplarRow {
+                    batch_index,
+                    row_index: row,
+                };
             }
         }
     }
     Ok(traces
         .into_values()
-        .map(|(_, batch, row)| (batch, row))
+        .map(|candidate| candidate.row)
         .collect())
 }
 
@@ -66,12 +94,27 @@ mod tests {
 
     use super::*;
 
-    fn batch(rows: &[(u8, u8, i64)]) -> RecordBatch {
+    #[derive(bon::Builder)]
+    struct SpanSampleRow {
+        trace: u8,
+        span: u8,
+        timestamp: i64,
+    }
+
+    fn sample_row(trace: u8, span: u8, timestamp: i64) -> SpanSampleRow {
+        SpanSampleRow::builder()
+            .trace(trace)
+            .span(span)
+            .timestamp(timestamp)
+            .build()
+    }
+
+    fn batch(rows: &[SpanSampleRow]) -> RecordBatch {
         let mut traces = FixedSizeBinaryBuilder::new(16);
         let mut spans = FixedSizeBinaryBuilder::new(8);
-        for (trace, span, _) in rows {
-            traces.append_value([*trace; 16]).unwrap();
-            spans.append_value([*span; 8]).unwrap();
+        for row in rows {
+            traces.append_value([row.trace; 16]).unwrap();
+            spans.append_value([row.span; 8]).unwrap();
         }
         RecordBatch::try_new(
             Arc::new(Schema::new(vec![
@@ -83,9 +126,7 @@ mod tests {
                 Arc::new(traces.finish()),
                 Arc::new(spans.finish()),
                 Arc::new(Int64Array::from(
-                    rows.iter()
-                        .map(|(_, _, timestamp)| *timestamp)
-                        .collect::<Vec<_>>(),
+                    rows.iter().map(|row| row.timestamp).collect::<Vec<_>>(),
                 )),
             ],
         )
@@ -95,14 +136,35 @@ mod tests {
     #[test]
     fn each_trace_gets_one_choice_across_batches_without_admitting_outside_spans() {
         let batches = vec![
-            batch(&[(1, 9, 10), (1, 5, 20), (1, 2, 30), (2, 1, 101)]),
-            batch(&[(2, 4, 40), (3, 1, 50), (1, 2, 30)]),
+            batch(&[
+                sample_row(1, 9, 10),
+                sample_row(1, 5, 20),
+                sample_row(1, 2, 30),
+                sample_row(2, 1, 101),
+            ]),
+            batch(&[
+                sample_row(2, 4, 40),
+                sample_row(3, 1, 50),
+                sample_row(1, 2, 30),
+            ]),
         ];
         let selected = sample_rows(&batches, UnixNano(0), UnixNano(100), 2, |_, span| {
             u64::from(span[0])
         })
         .unwrap();
-        assert!(selected == HashSet::from([(0, 2), (1, 0)]));
+        assert!(
+            selected
+                == HashSet::from([
+                    ExemplarRow {
+                        batch_index: 0,
+                        row_index: 2
+                    },
+                    ExemplarRow {
+                        batch_index: 1,
+                        row_index: 0
+                    },
+                ])
+        );
         assert!(
             sample_rows(&batches, UnixNano(0), UnixNano(100), 0, |_, _| 0)
                 .unwrap()
@@ -119,7 +181,13 @@ mod tests {
                 5 => 1,
                 _ => 2,
             };
-            assert!(selected == HashSet::from([(0, row)]));
+            assert!(
+                selected
+                    == HashSet::from([ExemplarRow {
+                        batch_index: 0,
+                        row_index: row,
+                    }])
+            );
         }
     }
 }

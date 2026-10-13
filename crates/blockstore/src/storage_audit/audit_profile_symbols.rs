@@ -4,6 +4,11 @@ use super::{
     is_older_than_grace,
 };
 
+struct ProfileSymbolFindingDetails {
+    kind: StorageFindingKind,
+    detail: String,
+}
+
 /// Checks profile blocks against their `.symdb` symbol tables.
 ///
 /// The block builder and the compactor both write the symbol table after the
@@ -34,7 +39,9 @@ pub async fn audit_profile_symbols(
             .meta(key)
             .is_some_and(|meta| is_older_than_grace(meta, options.grace, options.now))
     };
-    for (key, listed) in inventory.of_signal(StorageSignal::Profiles) {
+    for entry in inventory.of_signal(StorageSignal::Profiles) {
+        let key = entry.key;
+        let listed = entry.listed;
         let tenant = listed.object.tenant.clone();
         match &listed.object.role {
             ObjectRole::Symbols { block } => {
@@ -45,25 +52,28 @@ pub async fn audit_profile_symbols(
                 if block_present && !live.knows(tenant.as_deref()) {
                     continue;
                 }
-                let (kind, detail) = if old(key) && (!block_present || old(block)) {
+                let details = if old(key) && (!block_present || old(block)) {
                     let detail = if block_present {
                         format!("block `{block}` is an orphan")
                     } else {
                         format!("block `{block}` is gone")
                     };
-                    (StorageFindingKind::OrphanSidecar, detail)
+                    ProfileSymbolFindingDetails {
+                        kind: StorageFindingKind::OrphanSidecar,
+                        detail,
+                    }
                 } else {
-                    (
-                        StorageFindingKind::Pending,
-                        format!("block `{block}` is not in the index yet"),
-                    )
+                    ProfileSymbolFindingDetails {
+                        kind: StorageFindingKind::Pending,
+                        detail: format!("block `{block}` is not in the index yet"),
+                    }
                 };
                 findings.push(StorageFinding::new(
-                    kind,
+                    details.kind,
                     StorageSignal::Profiles,
                     tenant,
                     key,
-                    detail,
+                    details.detail,
                 ));
             }
             ObjectRole::Block(_) if live.contains(key) => {

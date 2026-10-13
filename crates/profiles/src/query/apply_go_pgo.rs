@@ -1,5 +1,26 @@
 use super::{BTreeMap, pb};
 
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct CanonicalLine {
+    function_id: u64,
+    line: i64,
+}
+
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct CanonicalLocation {
+    mapping_id: u64,
+    address: u64,
+    is_folded: bool,
+    lines: Vec<CanonicalLine>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ObservedSample {
+    stack: Vec<CanonicalLine>,
+    values: Vec<i64>,
+}
+
 /// The pinned Go-PGO resolver trims leaf-first locations, clears callee line
 /// numbers, and merges stacks made identical by the transformation.
 pub(crate) fn apply_go_pgo(
@@ -30,16 +51,19 @@ pub(crate) fn apply_go_pgo(
     let mut locations = BTreeMap::new();
     let mut aliases = BTreeMap::new();
     for location in &profile.location {
-        let key = (
-            location.mapping_id,
-            location.address,
-            location.is_folded,
-            location
+        let key = CanonicalLocation {
+            mapping_id: location.mapping_id,
+            address: location.address,
+            is_folded: location.is_folded,
+            lines: location
                 .line
                 .iter()
-                .map(|line| (line.function_id, line.line))
-                .collect::<Vec<_>>(),
-        );
+                .map(|line| CanonicalLine {
+                    function_id: line.function_id,
+                    line: line.line,
+                })
+                .collect(),
+        };
         let id = *locations.entry(key).or_insert(location.id);
         aliases.insert(location.id, id);
     }
@@ -55,8 +79,9 @@ pub(crate) fn apply_go_pgo(
         merged
             .entry(sample.location_id.clone())
             .and_modify(|existing| {
-                for (value, extra) in existing.value.iter_mut().zip(&sample.value) {
-                    *value = value.saturating_add(*extra);
+                for index in 0..existing.value.len().min(sample.value.len()) {
+                    existing.value[index] =
+                        existing.value[index].saturating_add(sample.value[index]);
                 }
             })
             .or_insert(sample);
@@ -225,7 +250,7 @@ mod tests {
             ..Default::default()
         };
         apply_go_pgo(&mut profile, Some(&selector));
-        let mut observed: Vec<_> = profile
+        let mut observed: Vec<ObservedSample> = profile
             .sample
             .iter()
             .map(|sample| {
@@ -238,17 +263,47 @@ mod tests {
                             .iter()
                             .find(|location| location.id == *id)
                             .unwrap();
-                        (location.line[0].function_id, location.line[0].line)
+                        CanonicalLine {
+                            function_id: location.line[0].function_id,
+                            line: location.line[0].line,
+                        }
                     })
                     .collect();
-                (stack, sample.value.clone())
+                ObservedSample {
+                    stack,
+                    values: sample.value.clone(),
+                }
             })
             .collect();
         observed.sort();
         // The pinned resolver clears a shared location globally. A caller
         // occurrence also becomes line zero when another sample uses it as
         // a leaf: resolver_pprof_go_pgo.go::clearCalleeLineNumber.
-        check!(observed == vec![(vec![(1, 0)], vec![40]), (vec![(2, 0), (1, 0)], vec![100])]);
+        check!(
+            observed
+                == vec![
+                    ObservedSample {
+                        stack: vec![CanonicalLine {
+                            function_id: 1,
+                            line: 0
+                        }],
+                        values: vec![40],
+                    },
+                    ObservedSample {
+                        stack: vec![
+                            CanonicalLine {
+                                function_id: 2,
+                                line: 0
+                            },
+                            CanonicalLine {
+                                function_id: 1,
+                                line: 0
+                            },
+                        ],
+                        values: vec![100],
+                    },
+                ]
+        );
         check!(profile.location.len() == 2);
     }
 }

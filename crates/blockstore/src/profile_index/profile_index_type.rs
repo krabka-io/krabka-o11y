@@ -1,11 +1,17 @@
 use super::{
     BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, CompactionCandidate,
-    Index, IndexShardRange, LABEL_PROFILE_TYPE, LabelMatcher, Labels, PROFILE_INDEX_SHARD_WIDTH,
-    PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, ProfileShard, Result,
-    SeriesFingerprint, TenantProfileExtras, TenantShardMerge, UNBOUNDED_SHARD_RANGE,
-    decode_profile_shard, encode_profile_shard, level_above, profile_block_fingerprint,
-    render_series_labels, shard_ranges_for_span, touched_shard_ranges,
+    Index, IndexShardRange, LABEL_PROFILE_TYPE, LabelMatcher, LabelPair, Labels,
+    PROFILE_INDEX_SHARD_WIDTH, PendingBlockAdditions, PendingBlockRemovals, PendingRemoval,
+    ProfileShard, Result, SeriesFingerprint, TenantProfileExtras, TenantShardMerge,
+    UNBOUNDED_SHARD_RANGE, decode_profile_shard, encode_profile_shard, level_above,
+    profile_block_fingerprint, render_series_labels, shard_ranges_for_span, touched_shard_ranges,
 };
+
+#[derive(Clone, Debug)]
+pub struct ProfileBlockRegistration {
+    pub meta: BlockMeta,
+    pub partitions: Vec<u64>,
+}
 
 /// How an oversized or unreadable profile-index snapshot names itself in errors.
 const SNAPSHOT_LABEL: &str = "profile index snapshot";
@@ -161,7 +167,12 @@ impl ProfileIndex {
     }
 
     #[must_use]
-    pub fn block_time_bounds(&self, tenant: &str, min_ts: i64, max_ts: i64) -> Option<(i64, i64)> {
+    pub fn block_time_bounds(
+        &self,
+        tenant: &str,
+        min_ts: i64,
+        max_ts: i64,
+    ) -> Option<crate::block::BlockTimeBounds> {
         self.series.block_time_bounds(tenant, min_ts, max_ts)
     }
 
@@ -180,13 +191,18 @@ impl ProfileIndex {
             .map(|extras| {
                 extras
                     .profile_types
-                    .iter()
-                    .filter(|(_, fps)| {
+                    .keys()
+                    .filter(|profile_type| {
                         !self
-                            .candidate_blocks_for_series(tenant, fps, min_ts, max_ts)
+                            .candidate_blocks_for_series(
+                                tenant,
+                                &extras.profile_types[*profile_type],
+                                min_ts,
+                                max_ts,
+                            )
                             .is_empty()
                     })
-                    .map(|(profile_type, _)| profile_type.clone())
+                    .map(|profile_type| profile_type.clone())
                     .collect()
             })
             .unwrap_or_default()
@@ -202,8 +218,8 @@ impl ProfileIndex {
         min_ts: i64,
         max_ts: i64,
     ) -> Result<Vec<String>> {
-        let fps = self.matching_fingerprints(tenant, matchers)?;
-        let active = self.active_fingerprints_for_time(tenant, &fps, min_ts, max_ts);
+        let active =
+            self.matching_fingerprints_active_for_time(tenant, matchers, min_ts, max_ts)?;
         Ok(self
             .series
             .label_values_for_fingerprints(tenant, name, &active))
@@ -230,9 +246,9 @@ impl ProfileIndex {
             .map(|extras| {
                 extras
                     .profile_types
-                    .iter()
-                    .filter(|(_, type_fps)| !type_fps.is_disjoint(fps))
-                    .map(|(profile_type, _)| profile_type.clone())
+                    .keys()
+                    .filter(|profile_type| !extras.profile_types[*profile_type].is_disjoint(fps))
+                    .map(|profile_type| profile_type.clone())
                     .collect()
             })
             .unwrap_or_default()
@@ -247,9 +263,20 @@ impl ProfileIndex {
         min_ts: i64,
         max_ts: i64,
     ) -> Result<Vec<String>> {
-        let fps = self.matching_fingerprints(tenant, matchers)?;
-        let active = self.active_fingerprints_for_time(tenant, &fps, min_ts, max_ts);
+        let active =
+            self.matching_fingerprints_active_for_time(tenant, matchers, min_ts, max_ts)?;
         Ok(self.series.label_names_for_fingerprints(tenant, &active))
+    }
+
+    fn matching_fingerprints_active_for_time(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        min_ts: i64,
+        max_ts: i64,
+    ) -> Result<BTreeSet<SeriesFingerprint>> {
+        let fps = self.matching_fingerprints(tenant, matchers)?;
+        Ok(self.active_fingerprints_for_time(tenant, &fps, min_ts, max_ts))
     }
 
     #[must_use]
@@ -270,7 +297,7 @@ impl ProfileIndex {
         label_names: &[String],
         min_ts: i64,
         max_ts: i64,
-    ) -> Result<Vec<Vec<(String, String)>>> {
+    ) -> Result<Vec<Vec<LabelPair>>> {
         let fps = self.matching_fingerprints(tenant, matchers)?;
         let active = self.active_fingerprints_for_time(tenant, &fps, min_ts, max_ts);
         Ok(self
@@ -284,7 +311,7 @@ impl ProfileIndex {
         tenant: &str,
         fps: &BTreeSet<SeriesFingerprint>,
         label_names: &[String],
-    ) -> Vec<Vec<(String, String)>> {
+    ) -> Vec<Vec<LabelPair>> {
         self.series
             .series_for_fingerprints(tenant, fps, label_names)
     }
@@ -372,14 +399,15 @@ impl ProfileIndex {
         &mut self,
         tenant: &str,
         remove_keys: &[String],
-        add: &[(BlockMeta, Vec<u64>)],
+        add: &[ProfileBlockRegistration],
     ) -> BlockLevel {
         let dropped: BTreeSet<&str> = remove_keys.iter().map(String::as_str).collect();
         self.retire_profile_blocks(tenant, &dropped);
         // A compaction may reuse the key of a block it replaces. That block is
         // live again, so it must not be replayed as a removal.
-        for (meta, _) in add {
-            self.pending_removals.forget(tenant, &meta.object_key);
+        for registration in add {
+            self.pending_removals
+                .forget(tenant, &registration.meta.object_key);
         }
         for key in remove_keys {
             self.block_partitions.remove(key);
@@ -389,19 +417,23 @@ impl ProfileIndex {
         // inputs are long gone, and re-deriving from nothing would demote a
         // compacted block back to level zero every save.
         let mut level = level_above(remove_keys.iter().map(|key| self.block_level(key)));
-        for (meta, _) in add {
-            level = level.max(self.block_level(&meta.object_key));
+        for registration in add {
+            level = level.max(self.block_level(&registration.meta.object_key));
         }
         let metas = add
             .iter()
-            .map(|(meta, _)| BlockMeta {
+            .map(|registration| BlockMeta {
                 level,
-                ..meta.clone()
+                ..registration.meta.clone()
             })
             .collect::<Vec<_>>();
         self.series.replace_blocks(tenant, remove_keys, &metas);
-        for (meta, partitions) in add {
-            self.add_profile_block(tenant, &meta.object_key, partitions.clone());
+        for registration in add {
+            self.add_profile_block(
+                tenant,
+                &registration.meta.object_key,
+                registration.partitions.clone(),
+            );
         }
         level
     }
@@ -437,7 +469,7 @@ impl ProfileIndex {
     /// before they are. A removal that named only the object key would also
     /// drop a block another writer has since written under that key.
     fn retire_profile_blocks(&self, tenant: &str, dropped: &BTreeSet<&str>) {
-        let retired: Vec<(String, PendingRemoval)> = self
+        let retired: Vec<crate::index_snapshot::PendingBlockRemoval> = self
             .all_blocks()
             .into_iter()
             .filter(|meta| meta.tenant == tenant && dropped.contains(meta.object_key.as_str()))
@@ -448,15 +480,13 @@ impl ProfileIndex {
                     min_ts: meta.min_ts,
                     max_ts: meta.max_ts,
                 };
-                (meta.object_key, removal)
+                crate::index_snapshot::PendingBlockRemoval {
+                    object_key: meta.object_key,
+                    removal,
+                }
             })
             .collect();
-        self.pending_removals.record(
-            tenant,
-            retired
-                .iter()
-                .map(|(key, removal)| (key.as_str(), *removal)),
-        );
+        self.pending_removals.record(tenant, retired);
         for key in dropped {
             self.pending_additions.forget(key);
         }
@@ -504,7 +534,7 @@ impl ProfileIndex {
         tenant: &str,
         matchers: &[LabelMatcher],
         label_names: &[String],
-    ) -> Result<Vec<Vec<(String, String)>>> {
+    ) -> Result<Vec<Vec<LabelPair>>> {
         self.series.series_projected(tenant, matchers, label_names)
     }
 
@@ -550,7 +580,7 @@ impl ProfileIndex {
         let mut shards: BTreeMap<IndexShardRange, ProfileShard> = BTreeMap::new();
         let carried = merge
             .read_touched(&touched, |range, object_key, bytes| {
-                let (_, decoded) = decode_profile_shard(object_key, bytes)?;
+                let decoded = decode_profile_shard(object_key, bytes)?;
                 let held = shards.entry(range).or_default();
                 held.index.merge_from(&decoded.index);
                 held.partitions.extend(decoded.partitions);
@@ -562,52 +592,33 @@ impl ProfileIndex {
         // is not the one the base carries retires a block that is no
         // longer there, and publishing over it would either hide a live
         // block or double-count a retired one.
-        for (object_key, removal) in removed.into_iter().flatten() {
-            let unchanged = shards.values().any(|shard| {
-                shard
-                    .index
-                    .all_blocks(tenant)
-                    .into_iter()
-                    .find(|meta| meta.object_key == *object_key)
-                    .is_some_and(|meta| {
-                        let partitions = shard
-                            .partitions
-                            .get(object_key)
-                            .cloned()
-                            .unwrap_or_default();
-                        profile_block_fingerprint(&meta, &partitions) == removal.fingerprint
-                    })
-            });
-            if !unchanged {
-                return Err(BlockStoreError::InvalidBlock(format!(
-                    "profile compaction input `{object_key}` changed before its replacement was published"
-                )));
+        if let Some(removed) = removed {
+            for object_key in removed.keys() {
+                let removal = &removed[object_key];
+                let unchanged = shards.values().any(|shard| {
+                    shard_has_removed_version(shard, tenant, object_key, removal.fingerprint)
+                });
+                if !unchanged {
+                    return Err(BlockStoreError::InvalidBlock(format!(
+                        "profile compaction input `{object_key}` changed before its replacement was published"
+                    )));
+                }
             }
         }
 
-        for (object_key, removal) in removed.into_iter().flatten() {
-            // Only the record the removal pinned itself to is dropped. A
-            // block written under the same key since is a different block,
-            // and dropping it would hide an object nothing else names.
-            for shard in shards.values_mut() {
-                let matches = shard
-                    .index
-                    .all_blocks(tenant)
-                    .into_iter()
-                    .find(|meta| meta.object_key == *object_key)
-                    .is_some_and(|meta| {
-                        let partitions = shard
-                            .partitions
-                            .get(object_key)
-                            .cloned()
-                            .unwrap_or_default();
-                        profile_block_fingerprint(&meta, &partitions) == removal.fingerprint
-                    });
-                if matches {
-                    shard
-                        .index
-                        .replace_blocks(tenant, std::slice::from_ref(object_key), &[]);
-                    shard.partitions.remove(object_key);
+        if let Some(removed) = removed {
+            for object_key in removed.keys() {
+                let removal = &removed[object_key];
+                // Only the record the removal pinned itself to is dropped. A
+                // block written under the same key since is a different block,
+                // and dropping it would hide an object nothing else names.
+                for shard in shards.values_mut() {
+                    if shard_has_removed_version(shard, tenant, object_key, removal.fingerprint) {
+                        shard
+                            .index
+                            .replace_blocks(tenant, std::slice::from_ref(object_key), &[]);
+                        shard.partitions.remove(object_key);
+                    }
                 }
             }
         }
@@ -637,13 +648,19 @@ impl ProfileIndex {
 
         if !unbound.is_empty() {
             let shard = shards.entry(UNBOUNDED_SHARD_RANGE).or_default();
-            for (fingerprint, labels) in &unbound {
-                shard.index.add_series(tenant, *fingerprint, labels);
+            for series in &unbound {
+                shard
+                    .index
+                    .add_series(tenant, series.fingerprint, &series.labels);
             }
         }
 
         merge.carry(carried);
-        for (range, shard) in shards {
+        let ranges = shards.keys().copied().collect::<Vec<_>>();
+        for range in ranges {
+            let Some(shard) = shards.remove(&range) else {
+                continue;
+            };
             if shard.index.block_count(tenant) == 0 && shard.index.series_count(tenant) == 0 {
                 // Nothing left in the slot, so the manifest stops naming
                 // it and the sweep reclaims what it named.
@@ -661,7 +678,7 @@ impl ProfileIndex {
 
     /// Folds one shard payload into a load.
     fn load_shard(&mut self, _tenant: &str, object_key: &str, bytes: &[u8]) -> Result<()> {
-        let (_, decoded) = decode_profile_shard(object_key, bytes)?;
+        let decoded = decode_profile_shard(object_key, bytes)?;
         self.series.merge_from(&decoded.index);
         self.block_partitions.extend(decoded.partitions);
         Ok(())
@@ -682,8 +699,8 @@ impl ProfileIndex {
     fn rebuild_profile_types(&mut self) {
         self.extras.clear();
         for tenant in self.series.tenant_names().cloned().collect::<Vec<_>>() {
-            for (fingerprint, labels) in self.series.series_pairs(&tenant) {
-                let Some(profile_type) = labels.get(LABEL_PROFILE_TYPE) else {
+            for series in self.series.series_pairs(&tenant) {
+                let Some(profile_type) = series.labels.get(LABEL_PROFILE_TYPE) else {
                     // `add_series` refuses a series without the label, so a
                     // published shard should hold none. If one does, it came
                     // from bytes this build did not write, and the series is
@@ -691,9 +708,9 @@ impl ProfileIndex {
                     // drop it quietly.
                     tracing::warn!(
                         %tenant,
-                        %fingerprint,
+                        fingerprint = %series.fingerprint,
                         label = LABEL_PROFILE_TYPE,
-                        series = %render_series_labels(&labels),
+                        labels = %render_series_labels(&series.labels),
                         "profile series in a loaded shard has no profile-type label; \
                          no profile-type selector will reach it"
                     );
@@ -705,10 +722,31 @@ impl ProfileIndex {
                     .profile_types
                     .entry(profile_type.to_string())
                     .or_default()
-                    .insert(fingerprint);
+                    .insert(series.fingerprint);
             }
         }
     }
+}
+
+fn shard_has_removed_version(
+    shard: &ProfileShard,
+    tenant: &str,
+    object_key: &str,
+    fingerprint: u64,
+) -> bool {
+    shard
+        .index
+        .all_blocks(tenant)
+        .into_iter()
+        .find(|meta| meta.object_key == object_key)
+        .is_some_and(|meta| {
+            let partitions = shard
+                .partitions
+                .get(object_key)
+                .cloned()
+                .unwrap_or_default();
+            profile_block_fingerprint(&meta, &partitions) == fingerprint
+        })
 }
 
 impl BlockIndex for ProfileIndex {

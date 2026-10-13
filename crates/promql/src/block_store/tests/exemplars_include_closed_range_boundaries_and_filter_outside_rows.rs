@@ -1,25 +1,70 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct ExemplarFixture {
+    timestamp_ms: i64,
+    value: f64,
+    trace_id: &'static str,
+    span_id: &'static str,
+    kind: &'static str,
+}
+
+struct ExpectedExemplar {
+    row: usize,
+    trace_id: &'static str,
+    span_id: &'static str,
+    timestamp_ms: i64,
+    value: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn exemplars_include_closed_range_boundaries_and_filter_outside_rows() {
-    let series_labels = labels(&[("__name__", "http_requests_total"), ("job", "api")]);
+    let series_labels = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
     let fp = series_labels.fingerprint();
-    let rows = [
-        (9_999, 1.0, "too-low", "s1", "outside"),
-        (10_000, 2.0, "start", "s2", "inside"),
-        (11_000, 3.0, "end", "s3", "inside"),
-        (11_001, 4.0, "too-high", "s4", "outside"),
-    ]
-    .map(
-        |(timestamp_ms, value, trace_id, span_id, kind)| ExemplarRow {
-            fingerprint: fp,
-            timestamp_ms,
-            value,
-            trace_id: Some(trace_id.to_string()),
-            span_id: Some(span_id.to_string()),
-            labels: vec![("kind".to_string(), kind.to_string())],
-        },
-    );
+    let fixtures = [
+        ExemplarFixture::builder()
+            .timestamp_ms(9_999)
+            .value(1.0)
+            .trace_id("too-low")
+            .span_id("s1")
+            .kind("outside")
+            .build(),
+        ExemplarFixture::builder()
+            .timestamp_ms(10_000)
+            .value(2.0)
+            .trace_id("start")
+            .span_id("s2")
+            .kind("inside")
+            .build(),
+        ExemplarFixture::builder()
+            .timestamp_ms(11_000)
+            .value(3.0)
+            .trace_id("end")
+            .span_id("s3")
+            .kind("inside")
+            .build(),
+        ExemplarFixture::builder()
+            .timestamp_ms(11_001)
+            .value(4.0)
+            .trace_id("too-high")
+            .span_id("s4")
+            .kind("outside")
+            .build(),
+    ];
+    let rows = fixtures.map(|fixture| ExemplarRow {
+        fingerprint: fp,
+        timestamp_ms: fixture.timestamp_ms,
+        value: fixture.value,
+        trace_id: Some(fixture.trace_id.to_string()),
+        span_id: Some(fixture.span_id.to_string()),
+        labels: vec![krabka_blockstore::LabelPair::new(
+            "kind",
+            fixture.kind.to_string(),
+        )],
+    });
     let batch = encode_exemplar_rows(&rows).unwrap();
     let store = manifest_store(ManifestBlock {
         kind: MetricBlockKind::Exemplars,
@@ -33,26 +78,41 @@ pub(crate) async fn exemplars_include_closed_range_boundaries_and_filter_outside
     let exemplars = api_exemplars(&store).await;
 
     check!(exemplars.len() == 2);
-    for (row, trace_id, span_id, ts_ms, value) in [
-        (0_usize, "start", "s2", 10_000_i64, 2.0_f64),
-        (1, "end", "s3", 11_000, 3.0),
-    ] {
+    let expected = [
+        ExpectedExemplar {
+            row: 0,
+            trace_id: "start",
+            span_id: "s2",
+            timestamp_ms: 10_000,
+            value: 2.0,
+        },
+        ExpectedExemplar {
+            row: 1,
+            trace_id: "end",
+            span_id: "s3",
+            timestamp_ms: 11_000,
+            value: 3.0,
+        },
+    ];
+    for expected_index in 0..expected.len() {
+        let case = &expected[expected_index];
+        let row = case.row;
         check!(exemplars[row].series_labels == series_labels, "row {row}");
         check!(
-            exemplars[row].labels.get("trace_id") == Some(trace_id),
+            exemplars[row].labels.get("trace_id") == Some(case.trace_id),
             "row {row}"
         );
         check!(
-            exemplars[row].labels.get("span_id") == Some(span_id),
+            exemplars[row].labels.get("span_id") == Some(case.span_id),
             "row {row}"
         );
         check!(
             exemplars[row].labels.get("kind") == Some("inside"),
             "row {row}"
         );
-        check!(exemplars[row].ts_ms == ts_ms, "row {row}");
+        check!(exemplars[row].ts_ms == case.timestamp_ms, "row {row}");
         check!(
-            exemplars[row].value.to_bits() == value.to_bits(),
+            exemplars[row].value.to_bits() == case.value.to_bits(),
             "row {row}"
         );
     }

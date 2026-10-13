@@ -13,7 +13,11 @@ pub fn write_log_block(
     mut rows: Vec<LogRow>,
 ) -> Result<BlockDescriptor, BlockStoreError> {
     validate_rows(key, &rows)?;
-    rows.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
+    rows.sort_by(|left, right| {
+        left.series_fingerprint
+            .cmp(&right.series_fingerprint)
+            .then_with(|| left.timestamp_ns.cmp(&right.timestamp_ns))
+    });
 
     let path = block_path(root, key);
     if let Some(parent) = path.parent() {

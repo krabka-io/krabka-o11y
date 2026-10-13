@@ -41,3 +41,28 @@
 //!
 //! The library itself is empty on purpose. This module is the crate's
 //! documentation; the tests under `tests/` are its content.
+
+/// One label name and value passed into a signal's labels collection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LabelEntry {
+    pub name: String,
+    pub value: String,
+}
+
+/// One key and value used when building ordered test maps.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MapEntry<K, V> {
+    pub key: K,
+    pub value: V,
+}
+
+/// Collects named map entries into a `BTreeMap`.
+pub fn ordered_map<K: Ord, V>(
+    entries: impl IntoIterator<Item = MapEntry<K, V>>,
+) -> std::collections::BTreeMap<K, V> {
+    let mut ordered = std::collections::BTreeMap::new();
+    for entry in entries {
+        ordered.insert(entry.key, entry.value);
+    }
+    ordered
+}

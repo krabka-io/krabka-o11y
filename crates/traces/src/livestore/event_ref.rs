@@ -7,7 +7,10 @@ pub(crate) fn event_ref(span: &Span, event: &EventRecord) -> krabka_traceql::Eve
         attributes: event
             .attrs
             .iter()
-            .filter_map(|attr| traceql_attr(attr).map(|value| (attr.key.clone(), value)))
+            .filter_map(|attr| {
+                traceql_attr(attr)
+                    .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+            })
             .collect(),
     }
 }

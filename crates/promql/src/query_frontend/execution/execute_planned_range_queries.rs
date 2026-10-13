@@ -8,6 +8,13 @@ use super::{
     RangeQueryCache, RangeQueryExecutor, TenantId, range_cache_key,
 };
 
+/// Results and combined annotations from a planned range-query batch.
+#[derive(Debug)]
+pub(crate) struct AnnotatedRangeQueryResults {
+    pub results: Vec<QueryResult>,
+    pub annotations: Annotations,
+}
+
 struct PromqlRangeAdapter<'a, E> {
     executor: &'a E,
     tenant: &'a TenantId,
@@ -22,7 +29,7 @@ where
     type Request = [FrontendRangeQuery];
     type Query = FrontendRangeQuery;
     type Output = AnnotatedQueryResult;
-    type Response = (Vec<QueryResult>, Annotations);
+    type Response = AnnotatedRangeQueryResults;
     type Error = PromqlError;
 
     fn plan(
@@ -60,14 +67,17 @@ where
         &self,
         _queries: &[FrontendRangeQuery],
         results: Vec<AnnotatedQueryResult>,
-    ) -> Result<(Vec<QueryResult>, Annotations), PromqlError> {
+    ) -> Result<AnnotatedRangeQueryResults, PromqlError> {
         let mut annotations = Annotations::new();
         let mut query_results = Vec::with_capacity(results.len());
         for result in results {
             annotations.extend(&result.annotations);
             query_results.push(result.result);
         }
-        Ok((query_results, annotations))
+        Ok(AnnotatedRangeQueryResults {
+            results: query_results,
+            annotations,
+        })
     }
 }
 
@@ -78,7 +88,7 @@ pub(crate) async fn execute_planned_range_queries<E, C>(
     tenant: &TenantId,
     planned: Vec<FrontendRangeQuery>,
     admission_limits: AdmissionLimits,
-) -> Result<(Vec<QueryResult>, Annotations), PromqlError>
+) -> Result<AnnotatedRangeQueryResults, PromqlError>
 where
     E: RangeQueryExecutor,
     C: RangeQueryCache + ?Sized,

@@ -28,9 +28,9 @@ use parquet::{
     file::{metadata::KeyValue, properties::WriterProperties},
 };
 use storage_fixtures::{
-    PROFILE_INDEX, TRACE_INDEX, block_key, foreign_entry, healthy, later, listed_keys,
-    metrics_manifest, missing_shard, publish, put_block, put_bytes, sidecar_key, store,
-    upper_case_manifest,
+    PROFILE_INDEX, TRACE_INDEX, TenantBlocks, block_key, foreign_entry, healthy, later,
+    listed_keys, metrics_manifest, missing_shard, publish, put_block, put_bytes, sidecar_key,
+    store, upper_case_manifest,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -203,7 +203,16 @@ async fn inject(
             publish(
                 store,
                 signal,
-                &[("t", &both), ("u", &u_blocks)],
+                &[
+                    TenantBlocks {
+                        tenant: "t",
+                        blocks: &both,
+                    },
+                    TenantBlocks {
+                        tenant: "u",
+                        blocks: &u_blocks,
+                    },
+                ],
                 &both.iter().chain(&u_blocks).cloned().collect(),
             )
             .await;
@@ -259,24 +268,28 @@ async fn inject(
 
 // Each fixture block of the logs signal covers record times 10 to 19 ns.
 async fn inject_frontier_fault(store: &Arc<dyn ObjectStore>, fault: Fault) -> Vec<StorageFinding> {
+    struct FrontierFixture {
+        bytes: &'static [u8],
+        kind: StorageFindingKind,
+    }
     let frontier = "index/logs/compaction-frontier.json";
-    let (bytes, kind): (&[u8], _) = match fault {
-        Fault::StaleFrontier => (
-            br#"{"version":1,"compacted_through_ns":0,"partition_offsets":{"0":50}}"#,
-            StorageFindingKind::StaleFrontier,
-        ),
-        Fault::StaleFrontierTime => (
-            br#"{"version":1,"compacted_through_ns":20,"partition_offsets":{"0":9}}"#,
-            StorageFindingKind::StaleFrontier,
-        ),
-        Fault::FrontierWithoutTime => (
-            br#"{"version":1,"partition_offsets":{"0":9}}"#,
-            StorageFindingKind::UnreadableManifest,
-        ),
+    let fixture = match fault {
+        Fault::StaleFrontier => FrontierFixture {
+            bytes: br#"{"version":1,"compacted_through_ns":0,"partition_offsets":{"0":50}}"#,
+            kind: StorageFindingKind::StaleFrontier,
+        },
+        Fault::StaleFrontierTime => FrontierFixture {
+            bytes: br#"{"version":1,"compacted_through_ns":20,"partition_offsets":{"0":9}}"#,
+            kind: StorageFindingKind::StaleFrontier,
+        },
+        Fault::FrontierWithoutTime => FrontierFixture {
+            bytes: br#"{"version":1,"partition_offsets":{"0":9}}"#,
+            kind: StorageFindingKind::UnreadableManifest,
+        },
         _ => unreachable!("{fault:?} is not a frontier fault"),
     };
-    put_bytes(store, frontier, bytes).await;
-    vec![finding(kind, StorageSignal::Logs, None, frontier)]
+    put_bytes(store, frontier, fixture.bytes).await;
+    vec![finding(fixture.kind, StorageSignal::Logs, None, frontier)]
 }
 
 // Faults that an audit must not mistake for orphans. No case expects an
@@ -291,7 +304,7 @@ async fn inject_liveness_fault(
     let manifest = sidecar_key(signal, &block);
     match fault {
         Fault::MissingShard => {
-            let (shard, _) = missing_shard(store).await;
+            let shard = missing_shard(store).await.shard;
             vec![finding(
                 StorageFindingKind::DanglingIndexEntry,
                 signal,
@@ -451,7 +464,12 @@ async fn inject_index_fault(
     }
 }
 
-fn cases() -> Vec<(StorageSignal, Fault)> {
+struct AuditFaultCase {
+    signal: StorageSignal,
+    fault: Fault,
+}
+
+fn cases() -> Vec<AuditFaultCase> {
     let every_signal = [
         Fault::None,
         Fault::MissingBlock,
@@ -464,23 +482,65 @@ fn cases() -> Vec<(StorageSignal, Fault)> {
     ];
     let mut cases: Vec<_> = StorageSignal::ALL
         .into_iter()
-        .flat_map(|signal| every_signal.map(|fault| (signal, fault)))
+        .flat_map(|signal| every_signal.map(|fault| AuditFaultCase { signal, fault }))
         .collect();
     cases.extend([
-        (StorageSignal::Profiles, Fault::OrphanSidecar),
-        (StorageSignal::Profiles, Fault::MissingSidecar),
-        (StorageSignal::Metrics, Fault::CorruptDeleteMarker),
-        (StorageSignal::Metrics, Fault::ForeignErasureRequest),
-        (StorageSignal::Logs, Fault::StaleFrontier),
-        (StorageSignal::Logs, Fault::StaleFrontierTime),
-        (StorageSignal::Logs, Fault::FrontierWithoutTime),
-        (StorageSignal::Logs, Fault::MissingShard),
-        (StorageSignal::Metrics, Fault::UpperCaseManifest),
-        (StorageSignal::Metrics, Fault::TruncatedManifest),
-        (StorageSignal::Metrics, Fault::MisplacedManifest),
-        (StorageSignal::Profiles, Fault::CorruptSymbols),
-        (StorageSignal::Traces, Fault::ForeignIndexEntry),
-        (StorageSignal::Profiles, Fault::ForeignIndexEntry),
+        AuditFaultCase {
+            signal: StorageSignal::Profiles,
+            fault: Fault::OrphanSidecar,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Profiles,
+            fault: Fault::MissingSidecar,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Metrics,
+            fault: Fault::CorruptDeleteMarker,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Metrics,
+            fault: Fault::ForeignErasureRequest,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Logs,
+            fault: Fault::StaleFrontier,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Logs,
+            fault: Fault::StaleFrontierTime,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Logs,
+            fault: Fault::FrontierWithoutTime,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Logs,
+            fault: Fault::MissingShard,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Metrics,
+            fault: Fault::UpperCaseManifest,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Metrics,
+            fault: Fault::TruncatedManifest,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Metrics,
+            fault: Fault::MisplacedManifest,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Profiles,
+            fault: Fault::CorruptSymbols,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Traces,
+            fault: Fault::ForeignIndexEntry,
+        },
+        AuditFaultCase {
+            signal: StorageSignal::Profiles,
+            fault: Fault::ForeignIndexEntry,
+        },
     ]);
     for signal in [
         StorageSignal::Logs,
@@ -488,20 +548,34 @@ fn cases() -> Vec<(StorageSignal, Fault)> {
         StorageSignal::Profiles,
     ] {
         cases.extend([
-            (signal, Fault::CorruptManifest),
-            (signal, Fault::UnsupportedManifest),
-            (signal, Fault::NoIndex),
+            AuditFaultCase {
+                signal,
+                fault: Fault::CorruptManifest,
+            },
+            AuditFaultCase {
+                signal,
+                fault: Fault::UnsupportedManifest,
+            },
+            AuditFaultCase {
+                signal,
+                fault: Fault::NoIndex,
+            },
         ]);
     }
     for signal in [StorageSignal::Traces, StorageSignal::Profiles] {
-        cases.push((signal, Fault::CorruptPayload));
+        cases.push(AuditFaultCase {
+            signal,
+            fault: Fault::CorruptPayload,
+        });
     }
     cases
 }
 
 #[tokio::test]
 async fn each_injected_fault_produces_its_diagnosis() {
-    for (signal, fault) in cases() {
+    for case in cases() {
+        let signal = case.signal;
+        let fault = case.fault;
         let store = store();
         let expected = inject(&store, signal, fault).await;
         let mut options = StorageAuditOptions::new(later());
@@ -548,20 +622,37 @@ async fn a_scoped_audit_reports_only_its_tenant_and_signal() {
     inject(&store, StorageSignal::Metrics, Fault::OrphanBlock).await;
     let orphan = block_key(StorageSignal::Traces, "t", 10, 19);
 
+    struct ScopeCase {
+        signal: Option<StorageSignal>,
+        tenant: Option<&'static str>,
+        expected: Vec<String>,
+    }
     let cases = [
-        (Some(StorageSignal::Traces), Some("t"), vec![orphan.clone()]),
-        (Some(StorageSignal::Traces), Some("u"), Vec::new()),
-        (
-            None,
-            Some("t"),
-            vec![block_key(StorageSignal::Metrics, "t", 10, 19), orphan],
-        ),
-        (Some(StorageSignal::Logs), None, Vec::new()),
+        ScopeCase {
+            signal: Some(StorageSignal::Traces),
+            tenant: Some("t"),
+            expected: vec![orphan.clone()],
+        },
+        ScopeCase {
+            signal: Some(StorageSignal::Traces),
+            tenant: Some("u"),
+            expected: Vec::new(),
+        },
+        ScopeCase {
+            signal: None,
+            tenant: Some("t"),
+            expected: vec![block_key(StorageSignal::Metrics, "t", 10, 19), orphan],
+        },
+        ScopeCase {
+            signal: Some(StorageSignal::Logs),
+            tenant: None,
+            expected: Vec::new(),
+        },
     ];
-    for (signal, tenant, expected) in cases {
+    for case in cases {
         let mut options = StorageAuditOptions::new(later());
-        options.signal = signal;
-        options.tenant = tenant.map(str::to_string);
+        options.signal = case.signal;
+        options.tenant = case.tenant.map(str::to_string);
 
         let report = audit_store(&store, &options).await.unwrap();
 
@@ -570,7 +661,12 @@ async fn a_scoped_audit_reports_only_its_tenant_and_signal() {
             .into_iter()
             .map(|finding| finding.path)
             .collect();
-        check!(paths == expected, "{signal:?} {tenant:?}");
+        check!(
+            paths == case.expected,
+            "{:?} {:?}",
+            case.signal,
+            case.tenant
+        );
     }
 }
 

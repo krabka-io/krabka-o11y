@@ -1,13 +1,22 @@
-use super::{PromqlError, QueryShardReducer, SampleValue, add_compatible_native_histogram};
+use super::{
+    PromqlError, QueryShardReducer, RangeSeriesSample, SampleValue, add_compatible_native_histogram,
+};
 
 pub(crate) fn reduce_duplicate_step_samples(
-    samples: &mut Vec<(i64, SampleValue)>,
+    samples: &mut Vec<RangeSeriesSample>,
     reducer: QueryShardReducer,
 ) -> Result<(), PromqlError> {
-    let mut merged_samples = Vec::<(i64, SampleValue)>::with_capacity(samples.len());
-    for (ts_ms, value) in samples.drain(..) {
+    let mut merged_samples = Vec::<RangeSeriesSample>::with_capacity(samples.len());
+    for sample in samples.drain(..) {
+        let ts_ms = sample.timestamp_ms;
+        let value = sample.value;
         match merged_samples.last_mut() {
-            Some((last_ts, SampleValue::Float(last_value))) if *last_ts == ts_ms => {
+            Some(last)
+                if last.timestamp_ms == ts_ms && matches!(&last.value, SampleValue::Float(_)) =>
+            {
+                let SampleValue::Float(last_value) = &mut last.value else {
+                    unreachable!()
+                };
                 if let SampleValue::Float(value) = value {
                     *last_value = match reducer {
                         QueryShardReducer::First => *last_value,
@@ -17,15 +26,20 @@ pub(crate) fn reduce_duplicate_step_samples(
                     };
                 }
             }
-            Some((last_ts, SampleValue::Histogram(last_value)))
-                if *last_ts == ts_ms && reducer == QueryShardReducer::Sum =>
+            Some(last)
+                if last.timestamp_ms == ts_ms
+                    && reducer == QueryShardReducer::Sum
+                    && matches!(&last.value, SampleValue::Histogram(_)) =>
             {
+                let SampleValue::Histogram(last_value) = &mut last.value else {
+                    unreachable!()
+                };
                 if let SampleValue::Histogram(value) = value {
                     add_compatible_native_histogram(last_value, &value)?;
                 }
             }
-            Some((last_ts, _)) if *last_ts == ts_ms => {}
-            _ => merged_samples.push((ts_ms, value)),
+            Some(last) if last.timestamp_ms == ts_ms => {}
+            _ => merged_samples.push(RangeSeriesSample::new(ts_ms, value)),
         }
     }
     *samples = merged_samples;

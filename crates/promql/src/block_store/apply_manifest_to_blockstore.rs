@@ -33,6 +33,11 @@ mod tests {
 
     use super::*;
 
+    struct ManifestLevelCase {
+        block_key: &'static str,
+        level: BlockLevel,
+    }
+
     fn manifest(block_key: &str, level: BlockLevel) -> CompactionIndexManifest {
         CompactionIndexManifest {
             tenant: "tenant-a".to_string(),
@@ -62,16 +67,26 @@ mod tests {
             url::Url::parse("memory:///").expect("base url"),
         );
 
-        for (block_key, level) in [
-            ("metrics/tenant-a/float/ingested.parquet", BlockLevel(0)),
-            ("metrics/tenant-a/float/compacted/l1.parquet", BlockLevel(1)),
-            ("metrics/tenant-a/float/compacted/l3.parquet", BlockLevel(3)),
+        for case in [
+            ManifestLevelCase {
+                block_key: "metrics/tenant-a/float/ingested.parquet",
+                level: BlockLevel(0),
+            },
+            ManifestLevelCase {
+                block_key: "metrics/tenant-a/float/compacted/l1.parquet",
+                level: BlockLevel(1),
+            },
+            ManifestLevelCase {
+                block_key: "metrics/tenant-a/float/compacted/l3.parquet",
+                level: BlockLevel(3),
+            },
         ] {
-            apply_manifest_to_blockstore(&mut store, &manifest(block_key, level));
+            apply_manifest_to_blockstore(&mut store, &manifest(case.block_key, case.level));
 
             check!(
-                store.index().block_level(block_key) == Some(level),
-                "{block_key}"
+                store.index().block_level(case.block_key) == Some(case.level),
+                "{}",
+                case.block_key
             );
         }
     }

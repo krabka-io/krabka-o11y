@@ -7,7 +7,9 @@ pub(crate) fn parse_tsdb_status_params(
     let Some(raw_query) = raw_query else {
         return Ok(params);
     };
-    for (name, value) in form_urlencoded::parse(raw_query.as_bytes()) {
+    for pair in form_urlencoded::parse(raw_query.as_bytes()) {
+        let name = pair.0;
+        let value = pair.1;
         if name == "limit" {
             params.limit = Some(parse_limit_parameter(&value)?);
         }

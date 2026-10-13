@@ -9,7 +9,11 @@ pub(crate) struct LogIndexShardCatalog {
 impl LogIndexShardCatalog {
     pub(crate) fn new(shard_ranges: &[TimeRange]) -> Self {
         let mut shards = shard_ranges.to_vec();
-        shards.sort_by_key(|range| (range.start_ns, range.end_ns));
+        shards.sort_by(|left, right| {
+            left.start_ns
+                .cmp(&right.start_ns)
+                .then_with(|| left.end_ns.cmp(&right.end_ns))
+        });
         shards.dedup();
 
         Self {

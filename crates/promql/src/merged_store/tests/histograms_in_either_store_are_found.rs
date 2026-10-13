@@ -5,6 +5,12 @@ use krabka_metrics::{NativeHistogram, ResetHint};
 use super::*;
 use crate::PromqlMatcher as LabelMatcher;
 
+struct HistogramAvailabilityCase {
+    cold_has_histogram: bool,
+    hot_has_histogram: bool,
+    expected: bool,
+}
+
 fn histogram(count: f64) -> NativeHistogram {
     NativeHistogram {
         schema: 0,
@@ -29,7 +35,10 @@ fn store(with_histogram: bool) -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "t",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         60_000,
         1.0,
     );
@@ -37,7 +46,10 @@ fn store(with_histogram: bool) -> InMemoryMetricStore {
         for ts_ms in [60_000, 120_000] {
             store.push_histogram(
                 "t",
-                labels(&[("__name__", "latency"), ("job", "api")]),
+                labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "latency"),
+                    crate::test_support::TestLabelPair::new("job", "api"),
+                ]),
                 ts_ms,
                 histogram(2.0),
             );
@@ -55,20 +67,41 @@ pub(crate) async fn histograms_in_either_store_are_found() {
     }];
     // A scan merges the histogram tables of both stores, so the merged store
     // can say "no histograms" only when both stores say it.
-    for (cold, hot, expected) in [
-        (false, false, false),
-        (true, false, true),
-        (false, true, true),
-        (true, true, true),
+    for case in [
+        HistogramAvailabilityCase {
+            cold_has_histogram: false,
+            hot_has_histogram: false,
+            expected: false,
+        },
+        HistogramAvailabilityCase {
+            cold_has_histogram: true,
+            hot_has_histogram: false,
+            expected: true,
+        },
+        HistogramAvailabilityCase {
+            cold_has_histogram: false,
+            hot_has_histogram: true,
+            expected: true,
+        },
+        HistogramAvailabilityCase {
+            cold_has_histogram: true,
+            hot_has_histogram: true,
+            expected: true,
+        },
     ] {
-        let merged = MergedMetricStore::new(store(cold), store(hot));
+        let merged = MergedMetricStore::new(
+            store(case.cold_has_histogram),
+            store(case.hot_has_histogram),
+        );
         check!(
             merged
                 .may_have_histograms("t", &matchers, 0, 200_000)
                 .await
                 .unwrap()
-                == expected,
-            "cold={cold} hot={hot}"
+                == case.expected,
+            "cold={} hot={}",
+            case.cold_has_histogram,
+            case.hot_has_histogram
         );
     }
 
@@ -85,7 +118,7 @@ pub(crate) async fn histograms_in_either_store_are_found() {
     check!(
         result
             == QueryResult::InstantVector(vec![InstantSample {
-                labels: labels(&[("job", "api")]),
+                labels: labels(&[crate::test_support::TestLabelPair::new("job", "api")]),
                 ts_ms: 120_000,
                 value: SampleValue::Float(2.0),
                 drop_name: false,

@@ -1,11 +1,17 @@
 use std::borrow::Borrow;
 
 use super::{
-    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, Labels, MetricQuery, MetricWindow,
-    RangeAggregation, StreamPlan, TimeRange, Value, WalLogRecord,
+    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, Labels, MetricEvaluationWindow,
+    MetricQuery, MetricWindow, RangeAggregation, StreamPlan, Value, WalLogRecord,
     append_matching_hot_metric_record, consume_hot_metric_sample, eval_times,
     format_metric_samples, json_object_to_labels, unix_ns_string_to_loki_seconds,
 };
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct HotSampleKey {
+    pub(crate) labels: Labels,
+    pub(crate) timestamp_key: String,
+}
 
 pub(crate) fn count_loki_metric_result_hot_tail_samples<R: Borrow<WalLogRecord> + Sync>(
     value: &Value,
@@ -13,15 +19,14 @@ pub(crate) fn count_loki_metric_result_hot_tail_samples<R: Borrow<WalLogRecord> 
     query: &MetricQuery,
     hot_tail: &[R],
     frontier: &CompactionFrontier,
-    evaluation: (TimeRange, i64),
+    evaluation: MetricEvaluationWindow,
     delete_filters: &[ActiveLogDeleteFilter],
 ) -> u64 {
     if matches!(query.aggregation, RangeAggregation::AbsentOverTime) {
         return 0;
     }
 
-    let (eval_range, step_ns) = evaluation;
-    let eval_times = eval_times(eval_range, step_ns);
+    let eval_times = eval_times(evaluation.range, evaluation.step_ns);
     let mut hot_samples = BTreeMap::new();
     for record in hot_tail {
         let record: &WalLogRecord = record.borrow();
@@ -40,13 +45,13 @@ pub(crate) fn count_loki_metric_result_hot_tail_samples<R: Borrow<WalLogRecord> 
         .ok();
     }
 
-    let mut hot_counts: BTreeMap<(Labels, String), u64> = BTreeMap::new();
-    for (labels, values) in format_metric_samples(hot_samples, query) {
-        for [timestamp_ns, _] in values {
-            let key = (
-                labels.clone(),
-                unix_ns_string_to_loki_seconds(&timestamp_ns).to_string(),
-            );
+    let mut hot_counts: BTreeMap<HotSampleKey, u64> = BTreeMap::new();
+    for series in format_metric_samples(hot_samples, query) {
+        for [timestamp_ns, _] in series.values {
+            let key = HotSampleKey {
+                labels: series.labels.clone(),
+                timestamp_key: unix_ns_string_to_loki_seconds(&timestamp_ns).to_string(),
+            };
             hot_counts
                 .entry(key)
                 .and_modify(|count| *count = count.saturating_add(1))

@@ -1,14 +1,11 @@
 use krabka_blockstore::ObjectStoreMetrics;
 
 use super::{
-    BlockDescriptor, CompactorRunError, Instant, KafkaWalRecord, ObjectStore, ServiceConfig,
-    ServiceConfigError, ServiceDependencies, ServiceRuntimeError, TenantCompactionIndexCache, Time,
+    super::prepare_compactor_wal_inputs, BlockDescriptor, CompactorRunError, Instant,
+    KafkaWalRecord, ObjectStore, ServiceConfig, ServiceDependencies, ServiceRuntimeError, Time,
     TimeExt, advance_and_persist_compaction_frontier, build_compactor_configured_object_store,
     compact_polled_kafka_wal_records_to_object_store_from_existing_manifest,
-    compactor_delete_requests_for_config, compactor_object_store,
-    compactor_run_error_is_object_store, limits_provider_for_config,
-    load_existing_compaction_frontier,
-    materialize_delete_requests_in_existing_local_manifest_blocks,
+    compactor_object_store, compactor_run_error_is_object_store, limits_provider_for_config,
     materialize_log_deletes_before_compaction, next_compactor_object_store_backoff,
     poll_accumulated_log_compaction_records, sleep, sweep_log_retention_before_compaction,
     validate_compactor_policy,
@@ -41,30 +38,28 @@ pub async fn run_compactor_until_shutdown(
         });
     let configured_store =
         build_compactor_configured_object_store(config, object_store, object_store_metrics).await?;
-    let (store, prefix) = compactor_object_store(config, object_store, configured_store.as_ref())?;
-    let compaction_frontier = dependencies.compaction_frontier.unwrap_or_default();
-    let delete_requests =
-        compactor_delete_requests_for_config(config, dependencies.delete_requests)?;
+    let object_store = compactor_object_store(config, object_store, configured_store.as_ref())?;
+    let store = object_store.store;
+    let prefix = object_store.prefix;
     // The retention window is a per-tenant limit, so the compactor reads the
     // same provider the distributor and the querier read. A role that was
     // handed one uses it; one that was not loads it from its own config, so a
     // compactor never runs on a window nobody configured.
-    let overrides = match dependencies.limits {
+    let overrides = match dependencies.limits.clone() {
         Some(overrides) => overrides,
         None => limits_provider_for_config(config)?,
     };
-    load_existing_compaction_frontier(store, &prefix, &compaction_frontier).await?;
-    materialize_delete_requests_in_existing_local_manifest_blocks(
-        &config.data_root,
-        &delete_requests,
-    )?;
-    let consumer = dependencies
-        .wal_consumer
-        .ok_or(ServiceConfigError::MissingWalConsumer)?;
-    let mut consumer = consumer.lock().await;
-    let mut descriptors = Vec::new();
+    let wal_inputs = prepare_compactor_wal_inputs(config, &dependencies, store, &prefix).await?;
+    let started = wal_inputs.start().await;
+    let compaction_frontier = started.compaction_frontier;
+    let delete_requests = started.delete_requests;
+    let run = started.run;
+    let super::super::CompactorRunState {
+        mut consumer,
+        mut descriptors,
+        mut tenant_indexes,
+    } = run;
     let mut object_store_retry_backoff = config.compactor_object_store_initial_backoff;
-    let mut tenant_indexes = TenantCompactionIndexCache::new();
     // Now, so the first pass of the loop sweeps rather than waiting an
     // interval out before it deletes anything.
     let mut next_retention_sweep = Instant::now();

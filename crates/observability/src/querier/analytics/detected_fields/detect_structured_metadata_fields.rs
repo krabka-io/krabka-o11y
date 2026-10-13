@@ -10,7 +10,12 @@ pub(crate) fn detect_structured_metadata_fields(
     fields: &mut BTreeMap<String, DetectedFieldStats>,
     metadata: &Labels,
 ) {
-    for (name, value) in metadata {
-        add_generated_detected_field(fields, name, value.clone(), field_type_from_str(value));
+    for entry in metadata {
+        add_generated_detected_field(
+            fields,
+            entry.0,
+            entry.1.clone(),
+            field_type_from_str(entry.1),
+        );
     }
 }

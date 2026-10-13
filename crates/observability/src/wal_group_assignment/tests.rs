@@ -1,10 +1,13 @@
 use assert2::{assert, check};
 
 use super::{WalAssignmentChange, WalAssignmentWatch};
-use crate::wal_consumer_metrics::WalConsumerMetrics;
+use crate::wal_consumer_metrics::{WalConsumerMetrics, WalPartitionAssignment};
 
-fn partition(partition: i32) -> (String, i32) {
-    ("wal".to_owned(), partition)
+fn partition(partition: i32) -> WalPartitionAssignment {
+    WalPartitionAssignment {
+        topic: "wal".to_owned(),
+        partition,
+    }
 }
 
 #[test]
@@ -123,14 +126,29 @@ fn each_revocation_of_the_same_partition_counts_again() {
 fn the_watch_separates_partitions_of_different_topics() {
     let metrics = WalConsumerMetrics::unregistered();
     let mut watch = WalAssignmentWatch::new(metrics.clone());
-    watch.observe(&[("wal".to_owned(), 0), ("state".to_owned(), 0)]);
+    watch.observe(&[
+        WalPartitionAssignment {
+            topic: "wal".to_owned(),
+            partition: 0,
+        },
+        WalPartitionAssignment {
+            topic: "state".to_owned(),
+            partition: 0,
+        },
+    ]);
 
-    let change = watch.observe(&[("state".to_owned(), 0)]);
+    let change = watch.observe(&[WalPartitionAssignment {
+        topic: "state".to_owned(),
+        partition: 0,
+    }]);
 
     assert!(
         change
             == WalAssignmentChange {
-                revoked: vec![("wal".to_owned(), 0)],
+                revoked: vec![WalPartitionAssignment {
+                    topic: "wal".to_owned(),
+                    partition: 0
+                }],
                 gained: Vec::new(),
             }
     );

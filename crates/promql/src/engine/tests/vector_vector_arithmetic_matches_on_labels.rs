@@ -5,19 +5,28 @@ pub(crate) async fn vector_vector_arithmetic_matches_on_labels() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "a"), ("x", "1")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "a"),
+            crate::test_support::TestLabelPair::new("x", "1"),
+        ]),
         10_000,
         10.0,
     );
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "b"), ("x", "1")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "b"),
+            crate::test_support::TestLabelPair::new("x", "1"),
+        ]),
         10_000,
         5.0,
     );
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "b"), ("x", "2")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "b"),
+            crate::test_support::TestLabelPair::new("x", "2"),
+        ]),
         10_000,
         99.0,
     );

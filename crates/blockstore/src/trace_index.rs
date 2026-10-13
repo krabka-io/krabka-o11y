@@ -14,8 +14,9 @@ use crate::{
     compaction::{BlockLevel, CompactionCandidate, level_above},
     error::{BlockStoreError, Result},
     index::{
-        ByteReader, IndexShardRange, ShardBlockBounds, dictionary_entry, push_dictionary_id,
-        push_ivarint, push_len, push_string, push_uvarint,
+        IndexShardRange, ShardBlockBounds, decode_shard_header, dictionary_entry,
+        push_dictionary_id, push_len, push_shard_block_prefix, push_string, push_uvarint,
+        read_shard_block_prefix,
     },
     index_snapshot::{
         PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, TenantShardMerge,
@@ -32,6 +33,31 @@ mod tests {
     use super::*;
     use crate::bloom::ShardedTraceBloom;
 
+    struct TraceQueryCase {
+        name: &'static str,
+        trace_id: [u8; 16],
+        min_ts: i64,
+        expected: Vec<String>,
+    }
+
+    struct TagQueryCase {
+        name: &'static str,
+        value: &'static str,
+        expected: Vec<String>,
+    }
+
+    struct TimeQueryCase {
+        name: &'static str,
+        min_ts: i64,
+        max_ts: i64,
+        expected: Vec<String>,
+    }
+
+    struct BloomCase {
+        name: &'static str,
+        bloom: ShardedTraceBloom,
+    }
+
     fn tid(n: u8) -> [u8; 16] {
         let mut t = [0_u8; 16];
         t[0] = n;
@@ -43,7 +69,7 @@ mod tests {
         min: i64,
         max: i64,
         traces: &[u8],
-        tags: &[(&str, &str)],
+        tags: &[crate::labels::LabelPair],
     ) -> TraceBlockStats {
         let mut bloom = ShardedTraceBloom::new(8, 64, 0.01);
         for &n in traces {
@@ -51,12 +77,12 @@ mod tests {
         }
         let mut tag_names = BTreeSet::new();
         let mut tag_values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for (key, value) in tags {
-            tag_names.insert((*key).to_string());
+        for pair in tags {
+            tag_names.insert(pair.name.clone());
             tag_values
-                .entry((*key).to_string())
+                .entry(pair.name.clone())
                 .or_default()
-                .insert((*value).to_string());
+                .insert(pair.value.clone());
         }
         TraceBlockStats {
             object_key: key.to_string(),
@@ -110,22 +136,55 @@ mod tests {
         let mut idx = TraceIndex::new();
         idx.add_trace_block(
             "t",
-            stats("b1", 0, 100, &[1, 2], &[("service.name", "api")]),
+            stats(
+                "b1",
+                0,
+                100,
+                &[1, 2],
+                &[crate::labels::LabelPair::new("service.name", "api")],
+            ),
         );
-        idx.add_trace_block("t", stats("b2", 200, 300, &[3], &[("service.name", "web")]));
+        idx.add_trace_block(
+            "t",
+            stats(
+                "b2",
+                200,
+                300,
+                &[3],
+                &[crate::labels::LabelPair::new("service.name", "web")],
+            ),
+        );
         idx
     }
 
     #[test]
     fn by_id_locate_uses_bloom_and_time_no_global_map() {
         let idx = seed();
-        for (_name, trace_id, min_ts, expected) in [
-            ("first trace", tid(1), 0, vec!["b1".to_string()]),
-            ("second trace", tid(3), 0, vec!["b2".to_string()]),
-            ("outside time window", tid(1), 500, Vec::new()),
+        for case in [
+            TraceQueryCase {
+                name: "first trace",
+                trace_id: tid(1),
+                min_ts: 0,
+                expected: vec!["b1".to_string()],
+            },
+            TraceQueryCase {
+                name: "second trace",
+                trace_id: tid(3),
+                min_ts: 0,
+                expected: vec!["b2".to_string()],
+            },
+            TraceQueryCase {
+                name: "outside time window",
+                trace_id: tid(1),
+                min_ts: 500,
+                expected: Vec::new(),
+            },
         ] {
             assert2::assert!(
-                idx.candidate_blocks_for_trace("t", &trace_id, min_ts, 1_000) == expected
+                idx.candidate_blocks_for_trace("t", &case.trace_id, case.min_ts, 1_000)
+                    == case.expected,
+                "{}",
+                case.name
             );
         }
     }
@@ -133,13 +192,28 @@ mod tests {
     #[test]
     fn tag_pruning_keeps_only_blocks_that_can_contain_the_tag_value() {
         let idx = seed();
-        for (_name, value, expected) in [
-            ("api", "api", vec!["b1".to_string()]),
-            ("web", "web", vec!["b2".to_string()]),
-            ("absent", "nope", Vec::new()),
+        for case in [
+            TagQueryCase {
+                name: "api",
+                value: "api",
+                expected: vec!["b1".to_string()],
+            },
+            TagQueryCase {
+                name: "web",
+                value: "web",
+                expected: vec!["b2".to_string()],
+            },
+            TagQueryCase {
+                name: "absent",
+                value: "nope",
+                expected: Vec::new(),
+            },
         ] {
             assert2::assert!(
-                idx.prune_blocks_by_tag("t", "service.name", Some(value), 0, 1_000) == expected
+                idx.prune_blocks_by_tag("t", "service.name", Some(case.value), 0, 1_000)
+                    == case.expected,
+                "{}",
+                case.name
             );
         }
     }
@@ -170,12 +244,25 @@ mod tests {
         // b1 is [0,100], b2 is [200,300]. A window of [400,500] overlaps
         // neither. With `&&`→`||` the `min_ts <= max_ts` half stays true for
         // both blocks, so the filter would wrongly admit them.
-        for (_name, min_ts, max_ts, expected) in [
-            ("above both blocks", 400, 500, Vec::new()),
-            ("overlaps first block", 50, 150, vec!["b1".to_string()]),
+        for case in [
+            TimeQueryCase {
+                name: "above both blocks",
+                min_ts: 400,
+                max_ts: 500,
+                expected: Vec::new(),
+            },
+            TimeQueryCase {
+                name: "overlaps first block",
+                min_ts: 50,
+                max_ts: 150,
+                expected: vec!["b1".to_string()],
+            },
         ] {
             assert2::assert!(
-                idx.prune_blocks_by_tag("t", "service.name", None, min_ts, max_ts) == expected
+                idx.prune_blocks_by_tag("t", "service.name", None, case.min_ts, case.max_ts)
+                    == case.expected,
+                "{}",
+                case.name
             );
         }
     }
@@ -183,14 +270,46 @@ mod tests {
     #[test]
     fn tag_names_time_filter_needs_both_ends() {
         let mut idx = TraceIndex::new();
-        idx.add_trace_block("t", stats("b1", 0, 100, &[1], &[("a", "x")]));
-        idx.add_trace_block("t", stats("b2", 200, 300, &[2], &[("b", "y")]));
+        idx.add_trace_block(
+            "t",
+            stats(
+                "b1",
+                0,
+                100,
+                &[1],
+                &[crate::labels::LabelPair::new("a", "x")],
+            ),
+        );
+        idx.add_trace_block(
+            "t",
+            stats(
+                "b2",
+                200,
+                300,
+                &[2],
+                &[crate::labels::LabelPair::new("b", "y")],
+            ),
+        );
 
-        for (_name, min_ts, max_ts, expected) in [
-            ("overlaps first block", 50, 150, vec!["a".to_string()]),
-            ("above both blocks", 400, 500, Vec::new()),
+        for case in [
+            TimeQueryCase {
+                name: "overlaps first block",
+                min_ts: 50,
+                max_ts: 150,
+                expected: vec!["a".to_string()],
+            },
+            TimeQueryCase {
+                name: "above both blocks",
+                min_ts: 400,
+                max_ts: 500,
+                expected: Vec::new(),
+            },
         ] {
-            assert2::assert!(idx.tag_names("t", min_ts, max_ts) == expected);
+            assert2::assert!(
+                idx.tag_names("t", case.min_ts, case.max_ts) == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
@@ -199,11 +318,25 @@ mod tests {
         use crate::block_index::BlockIndex;
 
         let idx = seed();
-        for (_name, min_ts, max_ts, expected) in [
-            ("above both blocks", 400, 500, Vec::new()),
-            ("overlaps second block", 250, 350, vec!["b2".to_string()]),
+        for case in [
+            TimeQueryCase {
+                name: "above both blocks",
+                min_ts: 400,
+                max_ts: 500,
+                expected: Vec::new(),
+            },
+            TimeQueryCase {
+                name: "overlaps second block",
+                min_ts: 250,
+                max_ts: 350,
+                expected: vec!["b2".to_string()],
+            },
         ] {
-            assert2::assert!(BlockIndex::candidate_blocks(&idx, "t", min_ts, max_ts) == expected);
+            assert2::assert!(
+                BlockIndex::candidate_blocks(&idx, "t", case.min_ts, case.max_ts) == case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 
@@ -223,25 +356,34 @@ mod tests {
         index: &TraceIndex,
         store: &std::sync::Arc<dyn object_store::ObjectStore>,
     ) -> TraceIndex {
-        index
-            .save_latest_snapshot(store, "index/traces.json")
-            .await
-            .unwrap();
+        save_snapshot(index, store).await;
         TraceIndex::load_latest_snapshot(store, "index/traces.json")
             .await
             .unwrap()
     }
 
+    async fn save_snapshot(
+        index: &TraceIndex,
+        store: &std::sync::Arc<dyn object_store::ObjectStore>,
+    ) {
+        index
+            .save_latest_snapshot(store, "index/traces.json")
+            .await
+            .unwrap();
+    }
+
     /// Publishes [`seed`] to a fresh in-memory store and returns both.
-    async fn published_seed() -> (std::sync::Arc<dyn object_store::ObjectStore>, TraceIndex) {
+    struct PublishedTraceSeed {
+        store: std::sync::Arc<dyn object_store::ObjectStore>,
+        index: TraceIndex,
+    }
+
+    async fn published_seed() -> PublishedTraceSeed {
         let store: std::sync::Arc<dyn object_store::ObjectStore> =
             std::sync::Arc::new(object_store::memory::InMemory::new());
         let index = seed();
-        index
-            .save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
-        (store, index)
+        save_snapshot(&index, &store).await;
+        PublishedTraceSeed { store, index }
     }
 
     /// One ingested block of tenant `t` spanning `[10, 20]`.
@@ -297,7 +439,7 @@ mod tests {
             0,
             300,
             &[1, 2, 3],
-            &[("service.name", "api")],
+            &[crate::labels::LabelPair::new("service.name", "api")],
         );
         let old_keys = vec!["b1".to_string(), "b2".to_string()];
 
@@ -469,18 +611,30 @@ mod tests {
         let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
 
         let mut first = TraceIndex::new();
-        first.add_trace_block("t", stats("b1", 0, 100, &[1], &[("service.name", "api")]));
-        first
-            .save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        first.add_trace_block(
+            "t",
+            stats(
+                "b1",
+                0,
+                100,
+                &[1],
+                &[crate::labels::LabelPair::new("service.name", "api")],
+            ),
+        );
+        save_snapshot(&first, &store).await;
 
         let mut second = TraceIndex::new();
-        second.add_trace_block("t", stats("b2", 200, 300, &[3], &[("service.name", "web")]));
-        second
-            .save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        second.add_trace_block(
+            "t",
+            stats(
+                "b2",
+                200,
+                300,
+                &[3],
+                &[crate::labels::LabelPair::new("service.name", "web")],
+            ),
+        );
+        save_snapshot(&second, &store).await;
 
         let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
             .await
@@ -490,10 +644,7 @@ mod tests {
 
         // Re-saving the same writer's view republishes the same set, rather
         // than duplicating its own blocks.
-        second
-            .save_latest_snapshot(&store, "index/traces.json")
-            .await
-            .unwrap();
+        save_snapshot(&second, &store).await;
         let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
             .await
             .unwrap();
@@ -505,7 +656,10 @@ mod tests {
     /// blocks the compactor just replaced.
     #[tokio::test]
     async fn compaction_removals_are_not_resurrected_by_the_merge() {
-        let (store, mut idx) = published_seed().await;
+        let PublishedTraceSeed {
+            store,
+            index: mut idx,
+        } = published_seed().await;
 
         idx.replace_trace_blocks(
             "t",
@@ -598,34 +752,37 @@ mod tests {
     /// way from the object that caused it.
     #[test]
     fn decoding_a_shard_rejects_a_bloom_no_lookup_could_survive() {
-        for (name, bloom) in [
-            ("no shards at all", ShardedTraceBloom { shards: Vec::new() }),
-            (
-                "a shard of zero width",
-                ShardedTraceBloom {
+        for case in [
+            BloomCase {
+                name: "no shards at all",
+                bloom: ShardedTraceBloom { shards: Vec::new() },
+            },
+            BloomCase {
+                name: "a shard of zero width",
+                bloom: ShardedTraceBloom {
                     shards: vec![BloomShard {
                         bits: Vec::new(),
                         num_bits: 0,
                         k: 1,
                     }],
                 },
-            ),
-            (
-                "a shard whose bits are shorter than its width",
-                ShardedTraceBloom {
+            },
+            BloomCase {
+                name: "a shard whose bits are shorter than its width",
+                bloom: ShardedTraceBloom {
                     shards: vec![BloomShard {
                         bits: vec![0],
                         num_bits: 4_096,
                         k: 1,
                     }],
                 },
-            ),
+            },
         ] {
             let block = TraceBlockStats {
                 object_key: "b1".to_string(),
                 min_ts: 0,
                 max_ts: 100,
-                bloom,
+                bloom: case.bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
                 row_count: 0,
@@ -635,7 +792,7 @@ mod tests {
 
             let got = decode_trace_shard("shard.kbs", &bytes);
 
-            assert2::assert!(got.is_err(), "{name} should be rejected");
+            assert2::assert!(got.is_err(), "{} should be rejected", case.name);
         }
     }
 
@@ -646,24 +803,34 @@ mod tests {
     #[test]
     fn a_shard_payload_round_trips_and_encodes_the_same_records_the_same_way() {
         let blocks = vec![
-            stats("b1", 0, 100, &[1, 2], &[("service.name", "api")]),
+            stats(
+                "b1",
+                0,
+                100,
+                &[1, 2],
+                &[crate::labels::LabelPair::new("service.name", "api")],
+            ),
             stats(
                 "b2",
                 200,
                 300,
                 &[3],
-                &[("service.name", "web"), ("kind", "server")],
+                &[
+                    crate::labels::LabelPair::new("service.name", "web"),
+                    crate::labels::LabelPair::new("kind", "server"),
+                ],
             ),
         ];
 
         let bytes = encode_trace_shard("t", &blocks);
-        let (tenant, decoded) = decode_trace_shard("shard.kbs", &bytes).unwrap();
+        let decoded = decode_trace_shard("shard.kbs", &bytes).unwrap();
 
-        check!(tenant == "t");
         check!(decoded.len() == blocks.len());
-        for (got, want) in decoded.iter().zip(&blocks) {
+        for index in 0..decoded.len() {
+            let got = &decoded[index];
+            let want = &blocks[index];
             check!(got.object_key == want.object_key);
-            check!((got.min_ts, got.max_ts) == (want.min_ts, want.max_ts));
+            check!(got.min_ts == want.min_ts && got.max_ts == want.max_ts);
             check!(got.tag_names == want.tag_names);
             check!(got.tag_values == want.tag_values);
             check!(got.row_count == want.row_count);
@@ -767,7 +934,10 @@ mod tests {
     /// as long as the compactor ran.
     #[tokio::test]
     async fn levels_and_row_counts_survive_a_snapshot_round_trip() {
-        let (store, mut idx) = published_seed().await;
+        let PublishedTraceSeed {
+            store,
+            index: mut idx,
+        } = published_seed().await;
 
         idx.replace_trace_blocks(
             "t",

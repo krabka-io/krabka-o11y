@@ -1,11 +1,11 @@
 use super::{Labels, MatchOp, MetricQuery};
 
 pub(crate) fn absent_metric_labels(query: &MetricQuery) -> Labels {
-    query
-        .stream
-        .matchers
-        .iter()
-        .filter(|matcher| matcher.op == MatchOp::Equal)
-        .map(|matcher| (matcher.name.clone(), matcher.value.clone()))
-        .collect::<Labels>()
+    let mut labels = Labels::new();
+    for matcher in &query.stream.matchers {
+        if matcher.op == MatchOp::Equal {
+            labels.insert(matcher.name.clone(), matcher.value.clone());
+        }
+    }
+    labels
 }

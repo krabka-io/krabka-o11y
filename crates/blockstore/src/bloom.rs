@@ -151,18 +151,21 @@ mod tests {
 
     #[test]
     fn validate_rejects_corrupt_deserialized_blooms() {
-        for (_name, json) in [
-            (
-                "zero bit count",
-                r#"{"shards":[{"bits":[],"num_bits":0,"k":1}]}"#,
-            ),
-            ("no shards", r#"{"shards":[]}"#),
-            (
-                "bit vector shorter than declared count",
-                r#"{"shards":[{"bits":[0],"num_bits":128,"k":1}]}"#,
-            ),
+        struct CorruptBloomCase {
+            json: &'static str,
+        }
+        for case in [
+            CorruptBloomCase {
+                json: r#"{"shards":[{"bits":[],"num_bits":0,"k":1}]}"#,
+            },
+            CorruptBloomCase {
+                json: r#"{"shards":[]}"#,
+            },
+            CorruptBloomCase {
+                json: r#"{"shards":[{"bits":[0],"num_bits":128,"k":1}]}"#,
+            },
         ] {
-            let bloom: ShardedTraceBloom = serde_json::from_str(json).unwrap();
+            let bloom: ShardedTraceBloom = serde_json::from_str(case.json).unwrap();
             assert2::assert!(bloom.validate().is_err());
         }
     }

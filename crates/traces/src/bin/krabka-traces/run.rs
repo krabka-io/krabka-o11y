@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use krabka_observability::{
     CriticalTaskError, RoleReadiness, SupervisedTasks,
-    audit::{AuditService, krabka_product},
+    audit::{AuditService, AuditServiceParts, krabka_product},
 };
 use tokio::net::TcpListener;
 
@@ -54,11 +54,10 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
         // the seven roles take `for_role` views of this one list, so `/ready`
         // stays a single answer and names the role whose gate is holding the
         // process back.
-        let readiness = RoleReadiness::new();
-        if cli.target != Target::All {
-            readiness.track_wal_consumer(metrics.wal_consumer.clone());
-        }
-        readiness.track_object_store(metrics.object_store.clone());
+        let readiness = RoleReadiness::from_metrics(
+            (cli.target != Target::All).then(|| metrics.wal_consumer.clone()),
+            metrics.object_store.clone(),
+        );
         let admin = krabka_telemetry::profiling::spawn_admin_with_config(
             cli.admin_listen_addr,
             krabka_traces::metrics::metrics_router(metrics.registry.clone())
@@ -79,7 +78,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
         // tenant denial. With no `--audit-topic` the handle discards every
         // event and no writer runs.
         let audit_shutdown = CancellationToken::new();
-        let (audit, audit_writer) = AuditService::start(
+        let AuditServiceParts { handle: audit, writer: audit_writer } = AuditService::start(
             &cli.audit,
             krabka_product("krabka-traces", env!("CARGO_PKG_VERSION")),
             Some(&cli.bootstrap),

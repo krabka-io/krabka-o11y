@@ -106,8 +106,8 @@ impl SeriesTracker {
         self.lock()
             .tenants
             .iter()
-            .find(|(name, _)| name.as_str() == tenant)
-            .map_or(0, |(_, tracked)| tracked.series.len())
+            .find(|entry| entry.0.as_str() == tenant)
+            .map_or(0, |entry| entry.1.series.len())
     }
 
     /// Drops every tenant's idle series, and then every tenant left with none.
@@ -129,9 +129,9 @@ impl SeriesTracker {
         while tenants.len() > self.max_tenants {
             let oldest = tenants
                 .iter()
-                .filter(|(name, _)| *name != keep)
-                .min_by_key(|(_, tenant)| tenant.last_seen)
-                .map(|(name, _)| name.clone());
+                .filter(|entry| entry.0 != keep)
+                .min_by_key(|entry| entry.1.last_seen)
+                .map(|entry| entry.0.clone());
             match oldest {
                 Some(name) => {
                     tenants.remove(&name);

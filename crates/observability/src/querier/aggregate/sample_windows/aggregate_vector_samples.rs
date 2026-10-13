@@ -44,28 +44,27 @@ pub(crate) fn aggregate_vector_samples(
 
     let mut states: BTreeMap<Labels, BTreeMap<i64, VectorAggregationState>> = BTreeMap::new();
 
-    for (labels, values) in samples {
-        let grouped_labels = vector_group_labels(&labels, vector_aggregation.grouping.as_ref());
-        for (time, value) in values {
+    for sample_set in samples {
+        let grouped_labels =
+            vector_group_labels(&sample_set.0, vector_aggregation.grouping.as_ref());
+        for sample in sample_set.1 {
+            let time = sample.0;
             states
                 .entry(grouped_labels.clone())
                 .or_default()
                 .entry(time)
                 .or_default()
-                .record(range_sample_value(value, query));
+                .record(range_sample_value(&sample.1, query));
         }
     }
 
-    states
-        .into_iter()
-        .map(|(labels, values)| {
-            (
-                labels,
-                values
-                    .into_iter()
-                    .map(|(time, state)| (time, state.finish(&vector_aggregation.op)))
-                    .collect(),
-            )
-        })
-        .collect()
+    let mut output = BTreeMap::new();
+    for label_states in states {
+        let mut samples = BTreeMap::new();
+        for state in label_states.1 {
+            samples.insert(state.0, state.1.finish(&vector_aggregation.op));
+        }
+        output.insert(label_states.0, samples);
+    }
+    output
 }

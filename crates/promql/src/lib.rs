@@ -56,7 +56,7 @@ pub use http_api::{
 };
 pub use ids::{Offset, PartitionIndex};
 pub use in_memory::{
-    DEFAULT_RETENTION, InMemoryMetricStore, PartitionWatermark, PruneStats, WalHead,
+    DEFAULT_RETENTION, InMemoryMetricStore, PartitionWatermark, PruneStats, WalHead, WalRecordAt,
 };
 pub use merged_store::MergedMetricStore;
 pub use planner::{
@@ -70,16 +70,17 @@ pub use query_frontend::{
     QueryFrontendOptions, QueryShard, RangeQueryCache, RangeQueryExecutor,
     execute_range_query_frontend, merge_range_query_results, plan_range_query,
 };
-pub use range_array::RangeArray;
+pub use range_array::{PairedRangeArrays, RangeArray, RangeWindow};
 pub use result::{
-    AnnotatedQueryResult, Annotations, HistogramQuantileRepair, InstantSample, QueryResult,
-    RangeSeries, SampleValue,
+    AnnotatedQueryResult, Annotations, FloatSample, HistogramQuantileRepair, InstantSample,
+    QueryResult, RangeSeries, RangeSeriesSample, SampleValue,
 };
 pub use ruler::{
     AlertmanagerAlert, AlertmanagerSink, RecordingRuleWalSink, RulerAlertState,
-    RulerAlertStateRecord, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupEvaluationStatus,
-    RulerGroupState, RulerGroupStateRecord, RulerRuleEvaluationStatus, RulerShard, RulerStateSink,
-    RulerWalError, evaluate_and_append_recording_rule, evaluate_and_append_recording_rule_group,
+    RulerAlertStateRecord, RulerEvaluationReport, RulerEvaluationSchedule, RulerEvaluationState,
+    RulerGroupEvaluation, RulerGroupEvaluationStatus, RulerGroupState, RulerGroupStateRecord,
+    RulerRuleEvaluationStatus, RulerShard, RulerSinks, RulerStateSink, RulerWalError,
+    evaluate_and_append_recording_rule, evaluate_and_append_recording_rule_group,
     evaluate_and_dispatch_alerting_rule, evaluate_and_dispatch_alerting_rule_group,
     evaluate_and_dispatch_alerting_rule_with_state, evaluate_and_persist_alerting_rule_group,
     evaluate_and_persist_alerting_rule_with_state, evaluate_and_persist_ruler_rule_group,

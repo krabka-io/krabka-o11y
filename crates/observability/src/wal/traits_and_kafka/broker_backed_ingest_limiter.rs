@@ -86,7 +86,8 @@ impl LogIngestLimiter for BrokerBackedIngestLimiter {
             return Ok(());
         }
 
-        let (rate, bytes) = (rate.bytes_per_sec_f64(), batch.bytes_usize());
+        let rate = rate.bytes_per_sec_f64();
+        let bytes = batch.bytes_usize();
         Err(IngestLimitError::RateLimited {
             tenant: tenant.to_string(),
             reason: format!(

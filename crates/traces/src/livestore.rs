@@ -33,31 +33,20 @@ mod tests {
     use super::{LiveSource as _, LiveStore};
     use crate::{
         span::{
-            AttrValue, EventRecord, KeyValue, LinkRecord, Span,
-            test_span::{api_server_span, string_attr},
+            AttrValue, KeyValue, Span,
+            test_span::{server_span_with_event_and_link, string_attr},
         },
         wal::SpanRecord,
     };
 
     fn span_with_everything() -> Span {
-        Span {
-            name: "GET /users".into(),
-            duration_ns: 500,
-            span_attrs: vec![string_attr("http.method", "GET")],
-            events: vec![EventRecord {
-                time_unix_nano: 1_100,
-                name: "exception".into(),
-                attrs: vec![string_attr("exception.type", "timeout")],
-            }],
-            links: vec![LinkRecord {
-                trace_id: [9; 16],
-                span_id: [8; 8],
-                attrs: vec![string_attr("link.kind", "retry")],
-            }],
-            instrumentation_scope: "otel-rust".into(),
-            instrumentation_version: "1.2.3".into(),
-            ..api_server_span()
-        }
+        server_span_with_event_and_link(
+            "GET /users",
+            500,
+            vec![string_attr("http.method", "GET")],
+            1_100,
+            vec![string_attr("exception.type", "timeout")],
+        )
     }
 
     fn store_with_one_span() -> LiveStore {
@@ -69,12 +58,9 @@ mod tests {
         store
     }
 
-    fn tags_for(store: &LiveStore, scope: Option<TagScope>) -> Vec<(TagScope, Vec<String>)> {
+    fn tags_for(store: &LiveStore, scope: Option<TagScope>) -> Vec<krabka_traceql::ScopedTag> {
         futures::executor::block_on(store.tag_names("t", scope, 0, 10_000))
             .expect("tag names are readable")
-            .into_iter()
-            .map(|scoped| (scoped.scope, scoped.tags))
-            .collect()
     }
 
     /// `tag_values` reads one tag's values across the live spans. Three of its
@@ -106,10 +92,9 @@ mod tests {
             futures::executor::block_on(store.tag_values("t", tag, 0, 10_000))
                 .expect("tag values are readable")
                 .into_iter()
-                .map(|value| (value.type_, value.value))
                 .collect::<Vec<_>>()
         };
-        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+        let pair = |type_: &str, value: &str| krabka_traceql::TypedValue::new(type_, value);
 
         // Each attribute reads its own value, not its neighbour's.
         check!(values("service.name") == vec![pair("string", "api")]);
@@ -160,7 +145,7 @@ mod tests {
             super::collect_span_intrinsic_value(&span, tag, &mut values);
             values.into_iter().collect::<Vec<_>>()
         };
-        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+        let pair = |type_: &str, value: &str| krabka_traceql::TypedValue::new(type_, value);
 
         // A duration carries its own type name rather than "int".
         check!(collect("span:duration") == vec![pair("duration", "500")]);
@@ -198,7 +183,7 @@ mod tests {
 
         // Unfiltered: every scope the span populates, and nothing else.
         let all = tags_for(&store, None);
-        let scopes: Vec<TagScope> = all.iter().map(|(scope, _)| *scope).collect();
+        let scopes: Vec<TagScope> = all.iter().map(|scoped| scoped.scope).collect();
         check!(
             scopes
                 == vec![
@@ -222,25 +207,29 @@ mod tests {
         ] {
             let one = tags_for(&store, Some(scope));
             check!(one.len() == 1, "{scope:?} returned {} groups", one.len());
-            check!(one[0].0 == scope, "{scope:?} returned {:?}", one[0].0);
+            check!(
+                one[0].scope == scope,
+                "{scope:?} returned {:?}",
+                one[0].scope
+            );
         }
 
         // The attribute keys reach the scope they were recorded under, and not
         // the neighbouring one.
         let resource = tags_for(&store, Some(TagScope::Resource));
-        check!(resource[0].1 == vec!["service.name".to_string()]);
+        check!(resource[0].tags == vec!["service.name".to_string()]);
         let span_tags = tags_for(&store, Some(TagScope::Span));
-        check!(span_tags[0].1 == vec!["http.method".to_string()]);
+        check!(span_tags[0].tags == vec!["http.method".to_string()]);
 
         // Event and link scopes carry their fixed intrinsics as well as the
         // attributes found on the records themselves.
         let event = tags_for(&store, Some(TagScope::Event));
-        check!(event[0].1.contains(&"event:name".to_string()));
-        check!(event[0].1.contains(&"event:timeSinceStart".to_string()));
-        check!(event[0].1.contains(&"exception.type".to_string()));
+        check!(event[0].tags.contains(&"event:name".to_string()));
+        check!(event[0].tags.contains(&"event:timeSinceStart".to_string()));
+        check!(event[0].tags.contains(&"exception.type".to_string()));
         let link = tags_for(&store, Some(TagScope::Link));
-        check!(link[0].1.contains(&"link:traceID".to_string()));
-        check!(link[0].1.contains(&"link.kind".to_string()));
+        check!(link[0].tags.contains(&"link:traceID".to_string()));
+        check!(link[0].tags.contains(&"link.kind".to_string()));
 
         // A tenant with nothing in it has no scopes at all, rather than a set
         // of empty ones.

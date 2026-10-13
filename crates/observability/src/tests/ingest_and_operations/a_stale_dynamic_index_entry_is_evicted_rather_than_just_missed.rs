@@ -11,6 +11,12 @@ use super::*;
 /// its TTL, is not reachable against a real clock and is not attempted.
 #[test]
 pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
+    #[derive(Debug, PartialEq)]
+    struct CacheCounts {
+        manifest_entries: usize,
+        shard_indexes: usize,
+    }
+
     let fresh = super::super::prelude::DynamicIndexCache {
         cache_ttl: krabka_units::hours(1),
         shard_cache_ttl: krabka_units::hours(1),
@@ -29,15 +35,13 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
         start_ns: 0,
         end_ns: 10,
     };
-    let held = |cache: &super::super::prelude::DynamicIndexCache| {
-        (
-            cache.entries.lock().expect("the cache lock is held").len(),
-            cache
-                .shard_indexes
-                .lock()
-                .expect("the shard cache lock is held")
-                .len(),
-        )
+    let held = |cache: &super::super::prelude::DynamicIndexCache| CacheCounts {
+        manifest_entries: cache.entries.lock().expect("the cache lock is held").len(),
+        shard_indexes: cache
+            .shard_indexes
+            .lock()
+            .expect("the shard cache lock is held")
+            .len(),
     };
 
     // Within the TTL: found, and still held afterwards.
@@ -46,7 +50,11 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
     check!(fresh.get(&key()).is_some());
     check!(fresh.get_shard_index(&shard_key()).is_some());
     check!(
-        held(&fresh) == (1, 1),
+        held(&fresh)
+            == (CacheCounts {
+                manifest_entries: 1,
+                shard_indexes: 1
+            }),
         "a fresh hit leaves the entry in place"
     );
 
@@ -54,10 +62,24 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
     // ignored -- so a second lookup finds nothing to evict.
     stale.insert(key(), LabelIndex::default(), BlockIndex::default());
     stale.insert_shard_index(shard_key(), LabelIndex::default(), BlockIndex::default());
-    check!(held(&stale) == (1, 1), "inserted");
+    check!(
+        held(&stale)
+            == (CacheCounts {
+                manifest_entries: 1,
+                shard_indexes: 1
+            }),
+        "inserted"
+    );
     check!(stale.get(&key()).is_none());
     check!(stale.get_shard_index(&shard_key()).is_none());
-    check!(held(&stale) == (0, 0), "and evicted on the way past");
+    check!(
+        held(&stale)
+            == (CacheCounts {
+                manifest_entries: 0,
+                shard_indexes: 0
+            }),
+        "and evicted on the way past"
+    );
 
     // A key that was never inserted is a miss without disturbing anything.
     check!(
@@ -69,7 +91,14 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
             )
             .is_none()
     );
-    check!(held(&fresh) == (1, 1), "an absent key evicts nothing");
+    check!(
+        held(&fresh)
+            == (CacheCounts {
+                manifest_entries: 1,
+                shard_indexes: 1
+            }),
+        "an absent key evicts nothing"
+    );
 
     // `clear` drops all three maps at once. It is what a configuration
     // reload calls, so with its body gone the querier keeps answering from
@@ -93,7 +122,14 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
         "the third map is populated too"
     );
     fresh.clear();
-    check!(held(&fresh) == (0, 0), "cleared");
+    check!(
+        held(&fresh)
+            == (CacheCounts {
+                manifest_entries: 0,
+                shard_indexes: 0
+            }),
+        "cleared"
+    );
     check!(
         fresh
             .shard_ranges

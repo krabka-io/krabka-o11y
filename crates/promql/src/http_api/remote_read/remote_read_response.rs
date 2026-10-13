@@ -47,10 +47,10 @@ pub(crate) async fn remote_read_response<S: MetricStore>(
             .await
             .map_err(ApiError::from)?;
         enforce_selected_series_limit(state, tenant, labels.len())?;
-        let mut labels_by_fp = labels
-            .into_iter()
-            .map(|labels| (labels.fingerprint(), labels))
-            .collect::<BTreeMap<SeriesFingerprint, Labels>>();
+        let mut labels_by_fp = BTreeMap::<SeriesFingerprint, Labels>::new();
+        for labels in labels {
+            labels_by_fp.insert(labels.fingerprint(), labels);
+        }
         let scan = state
             .store
             .scan(

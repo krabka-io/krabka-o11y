@@ -1,4 +1,4 @@
-use super::{BitReader, ChunkError, XorState};
+use super::{BitReader, ChunkError, TimestampedFloatSample, XorState};
 
 /// Decodes a Prometheus XOR (Gorilla) float chunk.
 ///
@@ -6,8 +6,10 @@ use super::{BitReader, ChunkError, XorState};
 /// a varint and the first value as 64 raw bits, then the second timestamp as a
 /// uvarint delta, then delta-of-delta timestamps. Each value after the first
 /// is combined by XOR with the previous one.
-pub fn decode_xor_chunk(data: &[u8]) -> Result<Vec<(i64, f64)>, ChunkError> {
-    let (header, body) = data.split_at_checked(2).ok_or(ChunkError::Truncated)?;
+pub fn decode_xor_chunk(data: &[u8]) -> Result<Vec<TimestampedFloatSample>, ChunkError> {
+    let parts = data.split_at_checked(2).ok_or(ChunkError::Truncated)?;
+    let header = parts.0;
+    let body = parts.1;
     let total = u16::from_be_bytes([header[0], header[1]]);
     let mut reader = BitReader::new(body);
     let mut samples = Vec::with_capacity(usize::from(total));
@@ -37,7 +39,10 @@ pub fn decode_xor_chunk(data: &[u8]) -> Result<Vec<(i64, f64)>, ChunkError> {
                     .ok_or(ChunkError::Truncated)?;
             }
         }
-        samples.push((timestamp, value));
+        samples.push(TimestampedFloatSample {
+            timestamp_ms: timestamp,
+            value,
+        });
     }
     Ok(samples)
 }

@@ -1,14 +1,24 @@
 use super::{
     ATTR_PREFIX, EVENT_ATTR_PREFIX, LINK_ATTR_PREFIX, MatchScope, NestedAttrColumn,
-    NestedAttrScope, SpanMatcher,
+    NestedAttrScope, SpanMatcher, nested_attr_column::NestedAttrColumnProjection,
 };
 
-pub(crate) fn nested_attr_columns(matchers: &[SpanMatcher]) -> Vec<(String, NestedAttrColumn<'_>)> {
-    let mut out = Vec::new();
+pub(crate) fn nested_attr_columns(matchers: &[SpanMatcher]) -> Vec<NestedAttrColumnProjection<'_>> {
+    struct NestedAttrSelector {
+        scope: NestedAttrScope,
+        prefix: &'static str,
+    }
+    let mut out: Vec<NestedAttrColumnProjection<'_>> = Vec::new();
     for matcher in matchers {
-        let (scope, prefix) = match matcher.scope {
-            MatchScope::Event => (NestedAttrScope::Event, EVENT_ATTR_PREFIX),
-            MatchScope::Link => (NestedAttrScope::Link, LINK_ATTR_PREFIX),
+        let selector = match matcher.scope {
+            MatchScope::Event => NestedAttrSelector {
+                scope: NestedAttrScope::Event,
+                prefix: EVENT_ATTR_PREFIX,
+            },
+            MatchScope::Link => NestedAttrSelector {
+                scope: NestedAttrScope::Link,
+                prefix: LINK_ATTR_PREFIX,
+            },
             MatchScope::Both
             | MatchScope::Span
             | MatchScope::Resource
@@ -16,17 +26,17 @@ pub(crate) fn nested_attr_columns(matchers: &[SpanMatcher]) -> Vec<(String, Nest
             | MatchScope::Instrumentation
             | MatchScope::Intrinsic => continue,
         };
-        let column = format!("{ATTR_PREFIX}{prefix}{}", matcher.key);
-        if out.iter().any(|(existing, _)| existing == &column) {
+        let column = format!("{ATTR_PREFIX}{}{}", selector.prefix, matcher.key);
+        if out.iter().any(|existing| existing.column == column) {
             continue;
         }
-        out.push((
+        out.push(NestedAttrColumnProjection {
             column,
-            NestedAttrColumn {
-                scope,
+            attribute: NestedAttrColumn {
+                scope: selector.scope,
                 key: &matcher.key,
             },
-        ));
+        });
     }
     out
 }

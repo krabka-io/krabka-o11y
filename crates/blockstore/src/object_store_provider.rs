@@ -10,10 +10,13 @@ use url::Url;
 /// from the host. The URL scheme alone does not name the cloud.
 #[must_use]
 pub fn object_store_cloud(url: &Url) -> &'static str {
-    match ObjectStoreScheme::parse(url) {
-        Ok((ObjectStoreScheme::AmazonS3, _)) => "aws",
-        Ok((ObjectStoreScheme::GoogleCloudStorage, _)) => "gcs",
-        Ok((ObjectStoreScheme::MicrosoftAzure, _)) => "azure",
+    let Ok(parsed) = ObjectStoreScheme::parse(url) else {
+        return "other";
+    };
+    match parsed.0 {
+        ObjectStoreScheme::AmazonS3 => "aws",
+        ObjectStoreScheme::GoogleCloudStorage => "gcs",
+        ObjectStoreScheme::MicrosoftAzure => "azure",
         _ => "other",
     }
 }

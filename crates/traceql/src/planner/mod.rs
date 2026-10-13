@@ -31,10 +31,20 @@ mod tests {
         InMemorySpanStore,
         ast::Value,
         parser::parse,
-        result::{AttrValue, EventRef},
+        result::{AttrValue, Attribute, EventRef, MetricPoint},
         span_columns::{COL_NAME, InputSpan},
         testkit::span::SpanFixture,
     };
+
+    struct QueryExpectedNames {
+        query: &'static str,
+        expected: Vec<&'static str>,
+    }
+
+    struct AggregatePrefixCase {
+        aggregate: Aggregate,
+        prefix: &'static str,
+    }
 
     /// The fixture span, starting `id` nanoseconds after the epoch rather than
     /// a thousand nanoseconds later.
@@ -77,7 +87,7 @@ mod tests {
                 trace: self.trace,
                 name: self.name,
                 duration_nanos: self.duration_nanos,
-                attrs: vec![("svc", AttrValue::Str(self.svc.into()))],
+                attrs: vec![Attribute::new("svc", AttrValue::Str(self.svc.into()))],
                 ..SpanFixture::default()
             })
         }
@@ -96,8 +106,11 @@ mod tests {
     fn prefixed_svc_store(span_names: &[&'static str]) -> InMemorySpanStore {
         let spans = (1..)
             .zip(span_names.iter().copied())
-            .map(|(id, name)| {
-                let (svc, _) = name.split_once('-').expect("span name is `<svc>-<suffix>`");
+            .map(|indexed_name| {
+                let id = indexed_name.0;
+                let name = indexed_name.1;
+                let split_name = name.split_once('-').expect("span name is `<svc>-<suffix>`");
+                let svc = split_name.0;
                 SvcSpan {
                     id,
                     name,
@@ -149,7 +162,9 @@ mod tests {
     // `api_db_spans` plus three 10ns `cache` spans in the same trace.
     fn api_db_cache_store() -> InMemorySpanStore {
         let mut spans = api_db_spans();
-        spans.extend((4..).zip(CACHE_SPAN_NAMES).map(|(id, name)| {
+        spans.extend((4..).zip(CACHE_SPAN_NAMES).map(|indexed_name| {
+            let id = indexed_name.0;
+            let name = indexed_name.1;
             SvcSpan {
                 id,
                 name,
@@ -314,21 +329,27 @@ mod tests {
                     id: 1,
                     name: "equal",
                     duration_nanos: 10,
-                    attrs: vec![("lhs", AttrValue::Int(3)), ("rhs", AttrValue::Int(3))],
+                    attrs: vec![
+                        Attribute::new("lhs", AttrValue::Int(3)),
+                        Attribute::new("rhs", AttrValue::Int(3)),
+                    ],
                     ..SpanFixture::default()
                 }),
                 span_starting_at_id(SpanFixture {
                     id: 2,
                     name: "different",
                     duration_nanos: 20,
-                    attrs: vec![("lhs", AttrValue::Int(4)), ("rhs", AttrValue::Int(3))],
+                    attrs: vec![
+                        Attribute::new("lhs", AttrValue::Int(4)),
+                        Attribute::new("rhs", AttrValue::Int(3)),
+                    ],
                     ..SpanFixture::default()
                 }),
                 span_starting_at_id(SpanFixture {
                     id: 3,
                     name: "missing",
                     duration_nanos: 30,
-                    attrs: vec![("lhs", AttrValue::Int(3))],
+                    attrs: vec![Attribute::new("lhs", AttrValue::Int(3))],
                     ..SpanFixture::default()
                 }),
                 span_starting_at_id(SpanFixture {
@@ -336,32 +357,49 @@ mod tests {
                     name: "wrong-type",
                     duration_nanos: 40,
                     attrs: vec![
-                        ("text", AttrValue::Str("3".into())),
-                        ("rhs", AttrValue::Int(3)),
+                        Attribute::new("text", AttrValue::Str("3".into())),
+                        Attribute::new("rhs", AttrValue::Int(3)),
                     ],
                     ..SpanFixture::default()
                 }),
             ],
         );
-        for (query, expected) in [
-            ("{ .lhs = .rhs }", vec!["equal"]),
-            ("{ .lhs > .rhs }", vec!["different"]),
-            ("{ .lhs != .rhs }", vec!["different"]),
-            ("{ .text = .rhs }", vec![]),
-            ("{ name = \"equal\" } && { .lhs = .rhs }", vec!["equal"]),
-            (
-                "{ .lhs = .rhs || name = \"wrong-type\" }",
-                vec!["equal", "wrong-type"],
-            ),
+        for case in [
+            QueryExpectedNames {
+                query: "{ .lhs = .rhs }",
+                expected: vec!["equal"],
+            },
+            QueryExpectedNames {
+                query: "{ .lhs > .rhs }",
+                expected: vec!["different"],
+            },
+            QueryExpectedNames {
+                query: "{ .lhs != .rhs }",
+                expected: vec!["different"],
+            },
+            QueryExpectedNames {
+                query: "{ .text = .rhs }",
+                expected: vec![],
+            },
+            QueryExpectedNames {
+                query: "{ name = \"equal\" } && { .lhs = .rhs }",
+                expected: vec!["equal"],
+            },
+            QueryExpectedNames {
+                query: "{ .lhs = .rhs || name = \"wrong-type\" }",
+                expected: vec!["equal", "wrong-type"],
+            },
         ] {
-            assert!(names(&planned(query, &store).await.unwrap()) == expected);
+            assert!(names(&planned(case.query, &store).await.unwrap()) == case.expected);
         }
         let engine = crate::TraceqlEngine::new(Arc::new(store), crate::EngineOpts::default());
         let metrics = engine
             .query_range("t", "{ .lhs = .rhs } | count_over_time()", 0, 100, 100)
             .await
             .unwrap();
-        assert!(metrics.series[0].points == vec![(0, 1.0), (100, 0.0)]);
+        assert!(
+            metrics.series[0].points == vec![MetricPoint::new(0, 1.0), MetricPoint::new(100, 0.0)]
+        );
     }
 
     #[test]
@@ -441,17 +479,33 @@ mod tests {
     #[test]
     fn aggregate_sql_helpers_cover_scalar_aggregates() {
         let field = test_field(Scope::Intrinsic(Intrinsic::Duration), "duration");
-        for (aggregate, prefix) in [
-            (Aggregate::Sum(field.clone()), "SUM("),
-            (Aggregate::Avg(field.clone()), "AVG("),
-            (Aggregate::Min(field.clone()), "MIN("),
-            (Aggregate::Max(field), "MAX("),
+        for case in [
+            AggregatePrefixCase {
+                aggregate: Aggregate::Sum(field.clone()),
+                prefix: "SUM(",
+            },
+            AggregatePrefixCase {
+                aggregate: Aggregate::Avg(field.clone()),
+                prefix: "AVG(",
+            },
+            AggregatePrefixCase {
+                aggregate: Aggregate::Min(field.clone()),
+                prefix: "MIN(",
+            },
+            AggregatePrefixCase {
+                aggregate: Aggregate::Max(field),
+                prefix: "MAX(",
+            },
         ] {
-            assert!(aggregate_expr_sql(&aggregate).unwrap().starts_with(prefix));
             assert!(
-                aggregate_rank_expr_sql(&aggregate)
+                aggregate_expr_sql(&case.aggregate)
                     .unwrap()
-                    .starts_with(prefix)
+                    .starts_with(case.prefix)
+            );
+            assert!(
+                aggregate_rank_expr_sql(&case.aggregate)
+                    .unwrap()
+                    .starts_with(case.prefix)
             );
         }
         assert!(aggregate_rank_expr_sql(&Aggregate::CountOverTime).is_err());
@@ -469,14 +523,14 @@ mod tests {
                     id: 1,
                     name: "root",
                     duration_nanos: 50,
-                    attrs: vec![("http.method", AttrValue::Str("GET".into()))],
+                    attrs: vec![Attribute::new("http.method", AttrValue::Str("GET".into()))],
                     ..SpanFixture::default()
                 }),
                 span_starting_at_id(SpanFixture {
                     id: 2,
                     name: "db",
                     duration_nanos: 50,
-                    attrs: vec![("http.method", AttrValue::Str("POST".into()))],
+                    attrs: vec![Attribute::new("http.method", AttrValue::Str("POST".into()))],
                     ..SpanFixture::default()
                 }),
             ],
@@ -625,21 +679,24 @@ mod tests {
                     id: 1,
                     name: "a-only",
                     duration_nanos: 50,
-                    attrs: vec![("a", AttrValue::Int(1))],
+                    attrs: vec![Attribute::new("a", AttrValue::Int(1))],
                     ..SpanFixture::default()
                 }),
                 span_starting_at_id(SpanFixture {
                     id: 2,
                     name: "b-only",
                     duration_nanos: 50,
-                    attrs: vec![("b", AttrValue::Int(2))],
+                    attrs: vec![Attribute::new("b", AttrValue::Int(2))],
                     ..SpanFixture::default()
                 }),
                 span_starting_at_id(SpanFixture {
                     id: 3,
                     name: "both",
                     duration_nanos: 50,
-                    attrs: vec![("a", AttrValue::Int(1)), ("b", AttrValue::Int(2))],
+                    attrs: vec![
+                        Attribute::new("a", AttrValue::Int(1)),
+                        Attribute::new("b", AttrValue::Int(2)),
+                    ],
                     ..SpanFixture::default()
                 }),
             ],
@@ -661,14 +718,14 @@ mod tests {
                     id: 1,
                     name: "one",
                     duration_nanos: 50,
-                    attrs: vec![("name", AttrValue::Str("abc".into()))],
+                    attrs: vec![Attribute::new("name", AttrValue::Str("abc".into()))],
                     ..SpanFixture::default()
                 }),
                 span_starting_at_id(SpanFixture {
                     id: 2,
                     name: "two",
                     duration_nanos: 50,
-                    attrs: vec![("name", AttrValue::Str("xabc".into()))],
+                    attrs: vec![Attribute::new("name", AttrValue::Str("xabc".into()))],
                     ..SpanFixture::default()
                 }),
             ],
@@ -691,7 +748,7 @@ mod tests {
                     trace: 1,
                     name: "a-only",
                     duration_nanos: 50,
-                    attrs: vec![("a", AttrValue::Int(1))],
+                    attrs: vec![Attribute::new("a", AttrValue::Int(1))],
                     ..SpanFixture::default()
                 }),
                 span_starting_at_id(SpanFixture {
@@ -699,7 +756,7 @@ mod tests {
                     trace: 1,
                     name: "b-only",
                     duration_nanos: 50,
-                    attrs: vec![("b", AttrValue::Int(2))],
+                    attrs: vec![Attribute::new("b", AttrValue::Int(2))],
                     ..SpanFixture::default()
                 }),
             ],
@@ -713,7 +770,7 @@ mod tests {
                 trace: 2,
                 name: "other-a",
                 duration_nanos: 50,
-                attrs: vec![("a", AttrValue::Int(1))],
+                attrs: vec![Attribute::new("a", AttrValue::Int(1))],
                 ..SpanFixture::default()
             })],
         );
@@ -743,7 +800,7 @@ mod tests {
                     trace: 9,
                     name: "child-x",
                     duration_nanos: 1,
-                    attrs: vec![("svc", AttrValue::Str("b".into()))],
+                    attrs: vec![Attribute::new("svc", AttrValue::Str("b".into()))],
                 }),
                 span_starting_at_id(SpanFixture {
                     id: 4,
@@ -751,7 +808,7 @@ mod tests {
                     trace: 9,
                     name: "grand-y",
                     duration_nanos: 1,
-                    attrs: vec![("svc", AttrValue::Str("c".into()))],
+                    attrs: vec![Attribute::new("svc", AttrValue::Str("c".into()))],
                 }),
                 span_starting_at_id(SpanFixture {
                     id: 3,
@@ -759,7 +816,7 @@ mod tests {
                     trace: 9,
                     name: "child-z",
                     duration_nanos: 1,
-                    attrs: vec![("svc", AttrValue::Str("b".into()))],
+                    attrs: vec![Attribute::new("svc", AttrValue::Str("b".into()))],
                 }),
             ],
         );
@@ -782,7 +839,7 @@ mod tests {
                     trace: 8,
                     name: "other-child",
                     duration_nanos: 1,
-                    attrs: vec![("svc", AttrValue::Str("d".into()))],
+                    attrs: vec![Attribute::new("svc", AttrValue::Str("d".into()))],
                 }),
             ],
         );
@@ -1317,6 +1374,21 @@ use aggregate_expr_sql::aggregate_expr_sql;
 use aggregate_filter_sql::aggregate_filter_sql;
 use aggregate_filter_sql_query::aggregate_filter_sql_query;
 use aggregate_filter_sql_query_any::aggregate_filter_sql_query_any;
+
+fn aggregate_filter_query_any_sql(
+    spanset_sql: &str,
+    expression: &str,
+    op: ComparisonOp,
+    value: f64,
+) -> Result<String> {
+    let trace = selector::ident(COL_TRACE_ID);
+    let pred = aggregate_filter_sql(expression, op, value)?;
+    Ok(format!(
+        "WITH matched AS ({spanset_sql}), \
+         passing AS (SELECT {trace} FROM matched GROUP BY {trace} HAVING {pred}) \
+         SELECT matched.* FROM matched JOIN passing ON matched.{trace} = passing.{trace}"
+    ))
+}
 use aggregate_projection_field::aggregate_projection_field;
 use aggregate_rank_expr_sql::aggregate_rank_expr_sql;
 use collect_nested_selectors::collect_nested_selectors;

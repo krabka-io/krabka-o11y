@@ -1,14 +1,19 @@
 use std::borrow::Borrow;
 
 use super::{
-    Arc, BTreeMap, LabelIndex, Labels, LokiDirection, LokiStreamEntry, ObjectPath, ObjectStore,
-    ObjectStoreStreamScan, QueryError, QueryHotTail, StreamPlan, StreamScanOptions,
-    append_matching_hot_log_record, append_matching_log_batches, apply_distinct_to_streams,
-    collect_object_store_stream_log_batches, loki_streams_response,
+    Arc, BTreeMap, BlockDescriptor, LabelIndex, Labels, LokiDirection, LokiStreamEntry, ObjectPath,
+    ObjectStore, ObjectStoreStreamScan, QueryError, QueryHotTail, RecordBatch, StreamPlan,
+    StreamScanOptions, append_matching_hot_log_record, append_matching_log_batches,
+    apply_distinct_to_streams, collect_object_store_stream_log_batches, loki_streams_response,
     loki_streams_response_with_warnings, object_store_stream_blocks_in_scan_order,
     sort_loki_stream_values,
 };
 use crate::WalLogRecord;
+
+struct BlockCollectionResult<'a> {
+    block: &'a BlockDescriptor,
+    result: Result<Vec<RecordBatch>, QueryError>,
+}
 
 pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options<
     R: Borrow<WalLogRecord> + Sync,
@@ -80,14 +85,15 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
             async move {
                 let result =
                     collect_object_store_stream_log_batches(store, prefix, block, plan).await;
-                (block, result)
+                BlockCollectionResult { block, result }
             }
         }))
         .await;
 
-        for (block, result) in results {
+        for result in results {
+            let block = result.block;
             scanned_blocks.push(block.clone());
-            let Ok(batches) = result else {
+            let Ok(batches) = result.result else {
                 warnings.push(format!("failed to read block {}", block.key.object_key()));
                 continue;
             };
@@ -103,13 +109,13 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
 
     match options.direction {
         LokiDirection::Forward => {
-            for (labels, mut entries) in hot_streams {
-                streams.entry(labels).or_default().append(&mut entries);
+            for mut entry in hot_streams {
+                streams.entry(entry.0).or_default().append(&mut entry.1);
             }
         }
         LokiDirection::Backward => {
-            for (labels, mut entries) in streams {
-                hot_streams.entry(labels).or_default().append(&mut entries);
+            for mut entry in streams {
+                hot_streams.entry(entry.0).or_default().append(&mut entry.1);
             }
             streams = hot_streams;
         }

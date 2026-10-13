@@ -29,7 +29,7 @@ pub(crate) fn append_matching_hot_log_record(
         return;
     }
 
-    if let Some((stream_labels, entry)) = matching_loki_stream_entry(
+    if let Some(matched) = matching_loki_stream_entry(
         &plan.query,
         &record.labels,
         &record.line,
@@ -37,7 +37,10 @@ pub(crate) fn append_matching_hot_log_record(
         record.timestamp_ns,
         preserve_source_labels,
     ) {
-        streams.entry(stream_labels).or_default().push(entry);
+        streams
+            .entry(matched.labels)
+            .or_default()
+            .push(matched.entry);
     }
 }
 
@@ -49,9 +52,21 @@ mod tests {
 
     use super::*;
 
+    struct QuerySourceLabelCase {
+        query: &'static str,
+        preserve_source_labels: bool,
+        source_labels: Labels,
+    }
+
+    fn app_labels() -> Labels {
+        let mut labels = Labels::new();
+        labels.insert("app".into(), "api".into());
+        labels
+    }
+
     #[test]
     fn ordinary_queries_omit_source_copies_but_distinct_and_tail_keep_them() {
-        let labels = Labels::from([("app".into(), "api".into())]);
+        let labels = app_labels();
         let record = WalLogRecord {
             tenant: "tenant".into(),
             labels: labels.clone(),
@@ -60,15 +75,27 @@ mod tests {
             structured_metadata: Labels::new(),
             position: None,
         };
-        for (query, preserve, source_labels) in [
-            (r#"{app="api"}"#, false, Labels::new()),
-            (r#"{app="api"}"#, true, labels.clone()),
-            (r#"{app="api"} | distinct app"#, false, labels.clone()),
+        for case in [
+            QuerySourceLabelCase {
+                query: r#"{app="api"}"#,
+                preserve_source_labels: false,
+                source_labels: Labels::new(),
+            },
+            QuerySourceLabelCase {
+                query: r#"{app="api"}"#,
+                preserve_source_labels: true,
+                source_labels: labels.clone(),
+            },
+            QuerySourceLabelCase {
+                query: r#"{app="api"} | distinct app"#,
+                preserve_source_labels: false,
+                source_labels: labels.clone(),
+            },
         ] {
             let plan = StreamPlan {
                 tenant: "tenant".into(),
                 time_range: krabka_blockstore::TimeRange::new(0, 100).unwrap(),
-                query: krabka_logql::parse_query(query).unwrap(),
+                query: krabka_logql::parse_query(case.query).unwrap(),
                 fingerprints: BTreeSet::default(),
                 blocks: Vec::new(),
             };
@@ -79,18 +106,19 @@ mod tests {
                 &record,
                 &CompactionFrontier::new(0),
                 &[],
-                preserve,
+                case.preserve_source_labels,
             );
-            let expected = BTreeMap::from([(
-                Labels::from([("app".into(), "api".into())]),
+            let mut expected = BTreeMap::new();
+            expected.insert(
+                app_labels(),
                 vec![LokiStreamEntry {
                     timestamp_ns: "10".into(),
                     line: "line".into(),
-                    source_labels,
+                    source_labels: case.source_labels,
                     structured_metadata: Labels::new(),
                     parsed: Labels::new(),
                 }],
-            )]);
+            );
             assert!(actual == expected);
         }
     }

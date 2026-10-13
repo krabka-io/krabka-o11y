@@ -21,6 +21,7 @@ mod loki_stale_sample_label_set;
 mod normalize_otlp_attribute_name;
 mod normalize_otlp_proto_logs;
 mod normalize_otlp_proto_logs_for_tenant;
+mod otlp_attribute_labels;
 mod otlp_attributes_to_labels;
 mod otlp_log_record_structured_metadata;
 mod otlp_log_steps;
@@ -50,9 +51,7 @@ pub(crate) use normalize_otlp_proto_logs::normalize_otlp_proto_logs;
 pub(crate) use normalize_otlp_proto_logs_for_tenant::normalize_otlp_proto_logs_for_tenant;
 pub(crate) use otlp_attributes_to_labels::otlp_attributes_to_labels;
 pub(crate) use otlp_log_record_structured_metadata::otlp_log_record_structured_metadata;
-pub(crate) use otlp_log_steps::{
-    OtlpLine, OtlpScope, otlp_resource_labels, otlp_scope_metadata, otlp_stream_labels,
-};
+pub(crate) use otlp_log_steps::{OtlpLine, OtlpScope, otlp_resource_labels, otlp_scope_context};
 pub(crate) use otlp_severity_number_to_string::otlp_severity_number_to_string;
 pub(crate) use otlp_timestamp_ns::otlp_timestamp_ns;
 pub(crate) use otlp_value_to_string::otlp_value_to_string;
@@ -64,3 +63,52 @@ pub(crate) use service_name_discovery_labels::SERVICE_NAME_DISCOVERY_LABELS;
 pub(crate) use validate_ingest_timestamp_ns::validate_ingest_timestamp_ns;
 pub(crate) use validate_loki_timestamp_window::validate_loki_timestamp_window;
 pub(crate) use validate_loki_timestamp_window_at::validate_loki_timestamp_window_at;
+
+pub(crate) struct OtlpLabelGroups {
+    pub(crate) labels: Labels,
+    pub(crate) structured_metadata: Labels,
+}
+
+pub(crate) struct OtlpResourceGroups<S> {
+    pub(crate) labels: Labels,
+    pub(crate) structured_metadata: Labels,
+    pub(crate) scopes: Vec<S>,
+}
+
+pub(crate) struct OtlpScopeGroups<L> {
+    pub(crate) labels: Labels,
+    pub(crate) inherited_metadata: Labels,
+    pub(crate) records: Vec<L>,
+}
+
+pub(crate) fn normalize_log_hierarchy<R, S, L>(
+    tenant: &str,
+    resources: impl IntoIterator<Item = R>,
+    limits: &Limits,
+    mut resource: impl FnMut(R, &Limits) -> Result<OtlpResourceGroups<S>, DistributorError>,
+    mut scope: impl FnMut(S, &Labels, &Labels, &Limits) -> Result<OtlpScopeGroups<L>, DistributorError>,
+    mut record: impl FnMut(L, &Labels, &Labels, &str, &Limits) -> Result<WalLogRecord, DistributorError>,
+) -> Result<Vec<WalLogRecord>, DistributorError> {
+    let mut records = Vec::new();
+    for resource_log in resources {
+        let resource_groups = resource(resource_log, limits)?;
+        for scope_log in resource_groups.scopes {
+            let scope_groups = scope(
+                scope_log,
+                &resource_groups.labels,
+                &resource_groups.structured_metadata,
+                limits,
+            )?;
+            for log_record in scope_groups.records {
+                records.push(record(
+                    log_record,
+                    &scope_groups.labels,
+                    &scope_groups.inherited_metadata,
+                    tenant,
+                    limits,
+                )?);
+            }
+        }
+    }
+    Ok(records)
+}

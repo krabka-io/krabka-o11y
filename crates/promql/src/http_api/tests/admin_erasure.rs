@@ -1,5 +1,4 @@
 use krabka_blockstore::{ERASURE_REQUEST_PREFIX, Labels, list_erasure_requests};
-use krabka_observability::server_security::{ClientAuth, ServerSecurityArgs};
 use krabka_query_frontend::{CacheKey, ExecutionOptions, QueryCache};
 use object_store::memory::InMemory;
 
@@ -57,7 +56,10 @@ async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
     let mut metric_store = InMemoryMetricStore::new();
     metric_store.push_float(
         "tenant-a",
-        Labels::from_pairs([("__name__", "requests_total"), ("user", "7")]),
+        Labels::from_pairs([
+            krabka_blockstore::LabelPair::new("__name__", "requests_total"),
+            krabka_blockstore::LabelPair::new("user", "7"),
+        ]),
         1_000,
         1.0,
     );
@@ -97,12 +99,12 @@ async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
     check!(requests[0].selector == "{user=\"7\"}");
     check!(requests[0].matcher_sets.len() == 1);
 
-    let (status, _) = annotated_query_body(
+    let response = annotated_query_body(
         Arc::clone(&state),
         "/api/v1/query_range?query=requests_total&start=1&end=1&step=1",
     )
     .await;
-    check!(status == StatusCode::OK);
+    check!(response.status == StatusCode::OK);
 
     let response = app
         .oneshot(
@@ -157,20 +159,7 @@ async fn delete_series_requires_an_admin_principal() {
         "principals:\n  - name: reader\n    token_sha256: [\"fd66d679ee99eef3efa2ef4127680aea063ca35c6b394cacad365fdeec1203be\"]\n    tenants: [\"tenant-a\"]\n",
     )
     .unwrap();
-    let security = ServerSecurityArgs {
-        server_tls_cert_path: None,
-        server_tls_key_path: None,
-        server_tls_client_ca_path: None,
-        server_tls_client_auth: ClientAuth::NoClientCert,
-        server_tls_handshake_timeout: secs(10),
-        auth_credentials_config: Some(credentials),
-        internal_client_token_path: None,
-        internal_client_tls_cert_path: None,
-        internal_client_tls_key_path: None,
-        internal_client_tls_ca_path: None,
-    }
-    .load()
-    .unwrap();
+    let security = super::server_security_args(credentials).load().unwrap();
     let ErasureFixture {
         state,
         erasure_store,

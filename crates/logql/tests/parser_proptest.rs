@@ -363,7 +363,18 @@ fn shape(expr: &LogqlExpr) -> String {
 
 fn write_shape(out: &mut String, expr: &LogqlExpr) {
     match expr {
-        LogqlExpr::Variants { variants, .. } => nest(out, "variants", variants.iter()),
+        LogqlExpr::Variants { variants, .. } => {
+            out.push_str("variants(");
+            let mut index = 0;
+            while index < variants.len() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                write_shape(out, &variants[index]);
+                index += 1;
+            }
+            out.push(')');
+        }
         LogqlExpr::Stream { .. } => out.push_str("stream"),
         LogqlExpr::Metric { .. } => out.push_str("metric"),
         LogqlExpr::Aggregation { expr, .. } => nest(out, "aggregation", [expr.as_ref()]),
@@ -385,14 +396,16 @@ fn write_shape(out: &mut String, expr: &LogqlExpr) {
     }
 }
 
-fn nest<'a>(out: &mut String, name: &str, children: impl IntoIterator<Item = &'a LogqlExpr>) {
+fn nest<const N: usize>(out: &mut String, name: &str, children: [&LogqlExpr; N]) {
     out.push_str(name);
     out.push('(');
-    for (at, child) in children.into_iter().enumerate() {
+    let mut at = 0;
+    while at < children.len() {
         if at > 0 {
             out.push_str(", ");
         }
-        write_shape(out, child);
+        write_shape(out, children[at]);
+        at += 1;
     }
     out.push(')');
 }

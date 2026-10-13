@@ -8,13 +8,16 @@ pub(crate) async fn limit_ratio_over_bound_emits_capping_warning() {
     for instance in ["0", "1"] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "http_requests"), ("instance", instance)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "http_requests"),
+                crate::test_support::TestLabelPair::new("instance", instance),
+            ]),
             0,
             1.0,
         );
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let (_, annotations) = engine
+    let annotated = engine
         .query_instant_with_annotations(
             &tenant_id("tenant-a"),
             "count(limit_ratio(1.1, http_requests))",
@@ -22,6 +25,7 @@ pub(crate) async fn limit_ratio_over_bound_emits_capping_warning() {
         )
         .await
         .expect("query");
+    let annotations = annotated.annotations;
     assert2::assert!(
         annotations.warnings
             == vec![

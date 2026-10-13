@@ -7,20 +7,26 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn stdvar_over_time_adds_back_each_of_its_compensations() {
     let mut store = InMemoryMetricStore::new();
-    for (index, value) in [1.0_f64, 0.1, 1.0, 1.0].into_iter().enumerate() {
-        let ts_ms = 10_000 + 10_000 * i64::try_from(index).expect("a small index");
+    for sample in [1.0_f64, 0.1, 1.0, 1.0].into_iter().enumerate() {
+        let ts_ms = 10_000 + 10_000 * i64::try_from(sample.0).expect("a small index");
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "v"), ("series", "f")]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "v"),
+                crate::test_support::TestLabelPair::new("series", "f"),
+            ]),
             ts_ms,
-            value,
+            sample.1,
         );
     }
     // The histogram sibling routes the fold through the interpreter kernel's
     // own copy; without it the operator leaf's copy answers instead.
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "v"), ("series", "h")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "v"),
+            crate::test_support::TestLabelPair::new("series", "h"),
+        ]),
         20_000,
         native_histogram(4.0, 10.0),
     );
@@ -33,10 +39,7 @@ pub(crate) async fn stdvar_over_time_adds_back_each_of_its_compensations() {
     else {
         panic!("expected a vector");
     };
-    let float = samples
-        .iter()
-        .find(|sample| sample.labels.get("series") == Some("f"))
-        .expect("a float series in the result");
+    let float = sample_with_label(&samples, "series", "f");
     assert2::assert!(
         float_value(&float.value).to_bits() == 0.151_875_000_000_000_04_f64.to_bits(),
         "got {}",

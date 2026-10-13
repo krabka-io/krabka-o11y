@@ -9,7 +9,7 @@ pub(crate) async fn alerts<S: MetricStore>(
     Extension(principal): Extension<Principal>,
     headers: HeaderMap,
 ) -> Response {
-    let (tenant, rules) = match tenant_ruler_rules(
+    let snapshot = match tenant_ruler_rules(
         &state,
         RequestAuth {
             headers: &headers,
@@ -19,7 +19,7 @@ pub(crate) async fn alerts<S: MetricStore>(
         Ok(tenant_rules) => tenant_rules,
         Err(rejection) => return rejection.into_response(),
     };
-    let alerts = match prometheus_alerts_json(&state, &tenant, rules).await {
+    let alerts = match prometheus_alerts_json(&state, &snapshot.tenant, snapshot.rules).await {
         Ok(alerts) => alerts,
         Err(error) => return ApiError::from(error).into_response(),
     };

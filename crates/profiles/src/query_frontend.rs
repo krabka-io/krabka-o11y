@@ -14,12 +14,22 @@ mod tests {
     fn split_inclusive_range_keeps_adjacent_shards_non_overlapping() {
         let shards = split_inclusive_range(0, 10, millis(4)).unwrap();
 
-        assert!(shards == vec![(0, 3), (4, 7), (8, 10)]);
+        assert!(
+            shards
+                == vec![
+                    crate::query::QueryRange::new(0, 3),
+                    crate::query::QueryRange::new(4, 7),
+                    crate::query::QueryRange::new(8, 10),
+                ]
+        );
     }
 
     #[test]
     fn split_inclusive_range_keeps_small_ranges_single_shard() {
-        assert!(split_inclusive_range(5, 7, millis(10)).unwrap() == vec![(5, 7)]);
+        assert!(
+            split_inclusive_range(5, 7, millis(10)).unwrap()
+                == vec![crate::query::QueryRange::new(5, 7)]
+        );
     }
 
     #[test]

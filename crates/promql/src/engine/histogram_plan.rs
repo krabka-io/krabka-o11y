@@ -1,5 +1,5 @@
 use futures::{FutureExt, future::BoxFuture};
-use promql_parser::parser::{Call, Expr};
+use promql_parser::parser::Call;
 
 #[cfg(feature = "experimental-functions")]
 use super::histogram::apply_histogram_quantiles;
@@ -73,7 +73,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         // handles classic buckets, native histograms, and the mixed-schema warning
         // uniformly, so a native / mixed inner is parity-exact here — no fallback.
         let Some(samples) = self
-            .histogram_fold_inner_vector(tenant, vector_arg, time_ms)
+            .histogram_fold_inner_vector(super::InnerVectorQuery::new(tenant, vector_arg, time_ms))
             .await?
         else {
             return Ok(None);
@@ -129,7 +129,11 @@ impl<S: MetricStore> PromqlEngine<S> {
             quantiles.push(value);
         }
         let Some(samples) = self
-            .histogram_fold_inner_vector(tenant, &call.args.args[0], time_ms)
+            .histogram_fold_inner_vector(super::InnerVectorQuery::new(
+                tenant,
+                &call.args.args[0],
+                time_ms,
+            ))
             .await?
         else {
             return Ok(None);
@@ -164,8 +168,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         let [arg] = call.args.args.as_slice() else {
             return Ok(None);
         };
-        let Some(samples) =
-            with_histogram_stats(self.histogram_fold_inner_vector(tenant, arg, time_ms)).await?
+        let Some(samples) = with_histogram_stats(
+            self.histogram_fold_inner_vector(super::InnerVectorQuery::new(tenant, arg, time_ms)),
+        )
+        .await?
         else {
             return Ok(None);
         };
@@ -209,7 +215,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Ok(None);
         };
         let Some(samples) = self
-            .histogram_fold_inner_vector(tenant, vector_arg, time_ms)
+            .histogram_fold_inner_vector(super::InnerVectorQuery::new(tenant, vector_arg, time_ms))
             .await?
         else {
             return Ok(None);
@@ -243,28 +249,19 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// planner cannot evaluate.
     pub(super) fn histogram_fold_inner_vector<'a>(
         &'a self,
-        tenant: &'a str,
-        value_arg: &'a Expr,
-        time_ms: i64,
+        query: super::InnerVectorQuery<'a>,
     ) -> BoxFuture<'a, Result<Option<Vec<InstantSample>>>> {
-        async move {
-            let mut inner = value_arg;
-            while let Expr::Paren(paren) = inner {
-                inner = &paren.expr;
-            }
-
-            if let Expr::VectorSelector(selector) = inner {
-                let QueryResult::InstantVector(samples) = self
+        self.resolve_inner_vector(query, |engine, tenant, selector, time_ms| {
+            async move {
+                let QueryResult::InstantVector(samples) = engine
                     .eval_instant_selector(tenant, selector, time_ms)
                     .await?
                 else {
                     return Ok(None);
                 };
-                return Ok(Some(samples));
+                Ok(Some(samples))
             }
-
-            self.planned_instant_vector(tenant, inner, time_ms).await
-        }
-        .boxed()
+            .boxed()
+        })
     }
 }

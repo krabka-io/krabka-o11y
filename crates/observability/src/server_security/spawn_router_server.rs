@@ -5,6 +5,11 @@ use tokio::net::TcpListener;
 
 use super::{ServerListener, ServerSecurity, serve_router};
 
+pub struct JoinableRouterServer {
+    pub address: SocketAddr,
+    pub task: tokio::task::JoinHandle<()>,
+}
+
 /// What [`spawn_router_server`] binds and serves.
 pub struct RouterServer<'a, Shutdown> {
     /// The address to bind; port `0` picks a free port.
@@ -21,6 +26,24 @@ pub struct RouterServer<'a, Shutdown> {
     pub server_name: &'static str,
 }
 
+impl<'a, Shutdown> RouterServer<'a, Shutdown> {
+    pub fn new(
+        addr: SocketAddr,
+        router: Router,
+        security: &'a ServerSecurity,
+        shutdown: Shutdown,
+        server_name: &'static str,
+    ) -> Self {
+        Self {
+            addr,
+            router,
+            security,
+            shutdown,
+            server_name,
+        }
+    }
+}
+
 /// Binds `server.addr`, serves `server.router` through [`serve_router`] on a
 /// spawned task until `server.shutdown` resolves, and returns the bound
 /// address.
@@ -32,6 +55,43 @@ pub struct RouterServer<'a, Shutdown> {
 pub async fn spawn_router_server<Shutdown>(
     server: RouterServer<'_, Shutdown>,
 ) -> std::io::Result<SocketAddr>
+where
+    Shutdown: Future<Output = ()> + Send + 'static,
+{
+    let started = spawn_router_server_joinable(server).await?;
+    Ok(started.address)
+}
+
+/// Binds and serves a router until shutdown, naming the supervised listener
+/// in any stop warning.
+pub async fn spawn_router_server_until_shutdown<Shutdown>(
+    addr: SocketAddr,
+    router: Router,
+    security: &ServerSecurity,
+    shutdown: Shutdown,
+    server_name: &'static str,
+) -> std::io::Result<SocketAddr>
+where
+    Shutdown: Future<Output = ()> + Send + 'static,
+{
+    spawn_router_server(RouterServer::new(
+        addr,
+        router,
+        security,
+        shutdown,
+        server_name,
+    ))
+    .await
+}
+
+/// Binds a router and returns its serving task so the caller can join it.
+///
+/// # Errors
+/// Returns an error when the address cannot be bound or the listener address
+/// cannot be read.
+pub async fn spawn_router_server_joinable<Shutdown>(
+    server: RouterServer<'_, Shutdown>,
+) -> std::io::Result<JoinableRouterServer>
 where
     Shutdown: Future<Output = ()> + Send + 'static,
 {
@@ -48,10 +108,13 @@ where
     let serving = serve_router(listener, router, security)
         .with_graceful_shutdown(shutdown)
         .into_future();
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         if let Err(error) = serving.await {
             tracing::warn!(%error, "{server_name} server stopped with error");
         }
     });
-    Ok(bound)
+    Ok(JoinableRouterServer {
+        address: bound,
+        task,
+    })
 }

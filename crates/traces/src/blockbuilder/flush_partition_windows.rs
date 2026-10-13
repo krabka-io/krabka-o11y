@@ -15,10 +15,13 @@ pub async fn flush_partition_windows(
     index: &mut TraceIndex,
     object_store: Arc<dyn ObjectStore>,
     config: &BlockBuilderConfig,
-    windows: BTreeMap<i32, PartitionWindow>,
+    mut windows: BTreeMap<i32, PartitionWindow>,
 ) -> Result<usize, TracesError> {
     let mut blocks_written = 0usize;
-    for (partition, partition_window) in windows {
+    while let Some(partition) = windows.keys().next().copied() {
+        let partition_window = windows
+            .remove(&partition)
+            .expect("the partition key came from this map");
         for tenant in tenants_in_records(&partition_window.records) {
             let metas = build_blocks_with_options(
                 writer,

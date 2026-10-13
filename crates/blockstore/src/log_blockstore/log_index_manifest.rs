@@ -1,5 +1,12 @@
 use super::*;
 
+/// The in-memory label and block indexes decoded from one log manifest.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LogIndexes {
+    pub labels: LabelIndex,
+    pub blocks: BlockIndex,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct LogIndexManifest {
     pub(crate) format_version: u32,
@@ -11,16 +18,14 @@ impl LogIndexManifest {
     pub(crate) fn from_indexes(label_index: &LabelIndex, block_index: &BlockIndex) -> Self {
         let series = label_index
             .series
-            .iter()
-            .flat_map(|(tenant, series)| {
-                series
-                    .iter()
-                    .map(|(fingerprint, labels)| ManifestSeries {
-                        tenant: tenant.clone(),
-                        fingerprint: *fingerprint,
-                        labels: labels.clone(),
-                    })
-                    .collect::<Vec<_>>()
+            .keys()
+            .flat_map(|tenant| {
+                let series = &label_index.series[tenant];
+                series.keys().map(|fingerprint| ManifestSeries {
+                    tenant: tenant.clone(),
+                    fingerprint: *fingerprint,
+                    labels: series[fingerprint].clone(),
+                })
             })
             .collect();
 
@@ -41,10 +46,10 @@ impl LogIndexManifest {
             .get(tenant)
             .into_iter()
             .flat_map(|series| {
-                series.iter().map(|(fingerprint, labels)| ManifestSeries {
+                series.keys().map(|fingerprint| ManifestSeries {
                     tenant: tenant.to_string(),
                     fingerprint: *fingerprint,
-                    labels: labels.clone(),
+                    labels: series[fingerprint].clone(),
                 })
             })
             .collect();
@@ -86,12 +91,12 @@ impl LogIndexManifest {
             .into_iter()
             .flat_map(|series| {
                 series
-                    .iter()
-                    .filter(|(fingerprint, _)| shard_fingerprints.contains(fingerprint))
-                    .map(|(fingerprint, labels)| ManifestSeries {
+                    .keys()
+                    .filter(|fingerprint| shard_fingerprints.contains(*fingerprint))
+                    .map(|fingerprint| ManifestSeries {
                         tenant: tenant.to_string(),
                         fingerprint: *fingerprint,
-                        labels: labels.clone(),
+                        labels: series[fingerprint].clone(),
                     })
             })
             .collect();
@@ -103,21 +108,21 @@ impl LogIndexManifest {
         }
     }
 
-    pub(crate) fn into_indexes(self) -> Result<(LabelIndex, BlockIndex), BlockStoreError> {
+    pub(crate) fn into_indexes(self) -> Result<LogIndexes, BlockStoreError> {
         self.into_indexes_filtered(None)
     }
 
     pub(crate) fn into_indexes_for_tenant(
         self,
         tenant: &str,
-    ) -> Result<(LabelIndex, BlockIndex), BlockStoreError> {
+    ) -> Result<LogIndexes, BlockStoreError> {
         self.into_indexes_filtered(Some(tenant))
     }
 
     pub(crate) fn into_indexes_filtered(
         self,
         tenant: Option<&str>,
-    ) -> Result<(LabelIndex, BlockIndex), BlockStoreError> {
+    ) -> Result<LogIndexes, BlockStoreError> {
         if self.format_version != LOG_INDEX_MANIFEST_VERSION {
             return Err(BlockStoreError::InvalidManifestVersion {
                 actual: self.format_version,
@@ -149,6 +154,9 @@ impl LogIndexManifest {
             block_index.insert(block);
         }
 
-        Ok((label_index, block_index))
+        Ok(LogIndexes {
+            labels: label_index,
+            blocks: block_index,
+        })
     }
 }

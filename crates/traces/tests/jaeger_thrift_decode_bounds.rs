@@ -28,6 +28,11 @@ use krabka_traces::{
 /// runner.
 const DECODE_BUDGET: Duration = Duration::from_secs(20);
 
+struct DecodeWithinResult {
+    result: Result<Vec<Span>, TracesError>,
+    elapsed: Duration,
+}
+
 /// Decode `body` on a thread of its own and give up on it after
 /// [`DECODE_BUDGET`], returning the result and what it took.
 ///
@@ -37,8 +42,10 @@ const DECODE_BUDGET: Duration = Duration::from_secs(20);
 fn decode_within(
     decode: fn(&[u8]) -> Result<Vec<Span>, TracesError>,
     body: Vec<u8>,
-) -> (Result<Vec<Span>, TracesError>, Duration) {
-    let (results, decoded) = mpsc::channel();
+) -> DecodeWithinResult {
+    let channel = mpsc::channel();
+    let results = channel.0;
+    let decoded = channel.1;
     let started = Instant::now();
     thread::Builder::new()
         .name("jaeger-decode".to_owned())
@@ -50,7 +57,10 @@ fn decode_within(
     let Ok(result) = decoded.recv_timeout(DECODE_BUDGET) else {
         panic!("the decode did not return within {DECODE_BUDGET:?}")
     };
-    (result, started.elapsed())
+    DecodeWithinResult {
+        result,
+        elapsed: started.elapsed(),
+    }
 }
 
 /// Eleven bytes off the fuzzer. The list header declares 2^60 boolean
@@ -68,7 +78,7 @@ fn the_compact_datagram_that_declared_a_quintillion_booleans_is_refused() {
         0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x10,
     ];
 
-    let (result, elapsed) = decode_within(decode_jaeger_thrift, body);
+    let DecodeWithinResult { result, elapsed } = decode_within(decode_jaeger_thrift, body);
 
     check!(let Err(TracesError::Decode(_)) = &result);
     check!(
@@ -89,7 +99,7 @@ fn the_binary_body_that_declared_two_billion_stop_elements_is_refused() {
         0x7F, 0xFF, 0xFF, 0xFF,
     ];
 
-    let (result, elapsed) = decode_within(decode_jaeger_binary_thrift, body);
+    let DecodeWithinResult { result, elapsed } = decode_within(decode_jaeger_binary_thrift, body);
 
     check!(let Err(TracesError::Decode(_)) = &result);
     check!(
@@ -110,7 +120,7 @@ fn a_datagram_of_nothing_but_nested_compact_lists_is_refused() {
     // one-element list whose element is another list.
     let body = vec![0x19; 65_535];
 
-    let (result, elapsed) = decode_within(decode_jaeger_thrift, body);
+    let DecodeWithinResult { result, elapsed } = decode_within(decode_jaeger_thrift, body);
 
     check!(let Err(TracesError::Decode(_)) = &result);
     check!(elapsed < DECODE_BUDGET);
@@ -125,7 +135,7 @@ fn a_body_of_nothing_but_nested_binary_lists_is_refused() {
         body.extend_from_slice(&[0x0F, 0x00, 0x00, 0x00, 0x01]);
     }
 
-    let (result, elapsed) = decode_within(decode_jaeger_binary_thrift, body);
+    let DecodeWithinResult { result, elapsed } = decode_within(decode_jaeger_binary_thrift, body);
 
     check!(let Err(TracesError::Decode(_)) = &result);
     check!(elapsed < DECODE_BUDGET);

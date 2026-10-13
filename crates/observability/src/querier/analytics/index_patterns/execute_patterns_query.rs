@@ -22,7 +22,7 @@ pub(crate) async fn execute_patterns_query(
 
     let tenant = authorized_tenant(state, security, headers, TenantErrorSurface::Patterns).await?;
     let time_range = TimeRange::new(params.start, params.end)?;
-    let (state, plan, time_range) = plan_analytics_query(
+    let planned = plan_analytics_query(
         state,
         AnalyticsQuery {
             tenant: &tenant,
@@ -32,6 +32,9 @@ pub(crate) async fn execute_patterns_query(
         },
     )
     .await?;
+    let state = planned.state;
+    let plan = planned.plan;
+    let time_range = planned.time_range;
     let tenant = tenant.as_str();
     let delete_filters = active_log_delete_filters(&state, tenant, time_range)?;
     let read = PlannedRead {
@@ -61,10 +64,10 @@ pub(crate) async fn execute_patterns_query(
 
     let data = patterns
         .into_iter()
-        .map(|(pattern, samples)| {
+        .map(|entry| {
             json!({
-                "pattern": pattern,
-                "samples": samples
+                "pattern": entry.0,
+                "samples": entry.1
                     .into_iter()
                     .map(|(timestamp_ns, count)| json!([timestamp_ns / 1_000_000_000, count]))
                     .collect::<Vec<_>>(),

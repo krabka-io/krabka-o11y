@@ -26,6 +26,6 @@ pub fn decode_clock_readings(
         .readings
         .into_iter()
         .enumerate()
-        .map(|(index, reading)| decode_reading(index, reading))
+        .map(|entry| decode_reading(entry.0, entry.1))
         .collect()
 }

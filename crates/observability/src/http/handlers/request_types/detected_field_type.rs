@@ -10,14 +10,20 @@ pub(crate) enum DetectedFieldType {
 
 impl DetectedFieldType {
     pub(crate) fn merge(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::String, _) | (_, Self::String) => Self::String,
-            (Self::Bytes, Self::Bytes) => Self::Bytes,
-            (Self::Duration, Self::Duration) => Self::Duration,
-            (Self::Float, _) | (_, Self::Float) => Self::Float,
-            (Self::Int, Self::Int) => Self::Int,
-            (Self::Boolean, Self::Boolean) => Self::Boolean,
-            _ => Self::String,
+        if self == Self::String || other == Self::String {
+            Self::String
+        } else if self == Self::Bytes && other == Self::Bytes {
+            Self::Bytes
+        } else if self == Self::Duration && other == Self::Duration {
+            Self::Duration
+        } else if self == Self::Float || other == Self::Float {
+            Self::Float
+        } else if self == Self::Int && other == Self::Int {
+            Self::Int
+        } else if self == Self::Boolean && other == Self::Boolean {
+            Self::Boolean
+        } else {
+            Self::String
         }
     }
 

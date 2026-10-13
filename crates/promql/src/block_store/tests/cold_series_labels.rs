@@ -11,8 +11,15 @@ async fn cold_label_values_survive_the_merged_instant_scan() {
     let base = url::Url::parse("memory:///").unwrap();
     let mut floats = BlockStore::new(Arc::clone(&backing), base.clone());
     let mut histograms = BlockStore::new(backing, base);
-    let up = labels(&[("__name__", "up"), ("job", "api"), ("region", "東京")]);
-    let down = labels(&[("__name__", "down"), ("job", "worker")]);
+    let up = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+        crate::test_support::TestLabelPair::new("region", "東京"),
+    ]);
+    let down = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "down"),
+        crate::test_support::TestLabelPair::new("job", "worker"),
+    ]);
     let fp = up.fingerprint();
     // Index identities can differ from the canonical label fingerprint. The
     // returned labels still deduplicate and resolve by their canonical hash.
@@ -56,7 +63,7 @@ async fn cold_label_values_survive_the_merged_instant_scan() {
         .await
         .unwrap()
         .unwrap();
-    assert2::assert!(scan.samples == vec![(fp, 20, 7.0, None)]);
+    assert2::assert!(scan.samples == vec![float_sample_row(fp, 20, 7.0, None)]);
     assert2::assert!(scan.labels.len() == 1 && scan.labels[&fp].as_ref() == &up);
     let engine = PromqlEngine::new(Arc::clone(&merged), EngineOpts::default());
     for query in [
@@ -89,9 +96,15 @@ async fn cold_label_values_survive_the_merged_instant_scan() {
 
 #[tokio::test]
 async fn instant_cold_read_releases_hot_rows_and_keeps_captured_values() {
-    let (backing, [started, resumed]) = CountingObjectStore::wrap_paused(Arc::new(InMemory::new()));
+    let paused_store = CountingObjectStore::wrap_paused(Arc::new(InMemory::new()));
+    let backing = paused_store.store;
+    let started = paused_store.started;
+    let resumed = paused_store.resumed;
     let mut floats = BlockStore::new(backing, url::Url::parse("memory:///").unwrap());
-    let up = labels(&[("__name__", "up"), ("job", "api")]);
+    let up = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
     let fp = up.fingerprint();
     write_float_block(&mut floats, "cold.parquet", &up, 2_048, 20.0).await;
 
@@ -134,9 +147,10 @@ async fn instant_cold_read_releases_hot_rows_and_keeps_captured_values() {
         .await
         .unwrap()
         .unwrap();
-    assert2::assert!(captured.samples == vec![(fp, 2_048, 20.0, None)]);
-    assert2::assert!(current.samples == vec![(fp, 4_096, 100.0, None)]);
-    let expected_labels = std::collections::BTreeMap::from([(fp, Arc::new(up.into()))]);
+    assert2::assert!(captured.samples == vec![float_sample_row(fp, 2_048, 20.0, None)]);
+    assert2::assert!(current.samples == vec![float_sample_row(fp, 4_096, 100.0, None)]);
+    let mut expected_labels = std::collections::BTreeMap::new();
+    expected_labels.insert(fp, Arc::new(up.into()));
     assert2::assert!(captured.labels == expected_labels);
     assert2::assert!(current.labels == expected_labels);
 }

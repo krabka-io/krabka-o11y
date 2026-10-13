@@ -1,8 +1,8 @@
 use krabka_observability::service_metrics::RequestOutcome;
 
 use super::{
-    AnnotatedQueryResult, Arc, EvaluatedQuery, HeaderMap, InstantQueryParams, IntoResponse,
-    MetricStore, PerStepSampleStats, Principal, PrometheusApiState, QueryRequestTiming, Response,
+    Arc, EvaluatedQuery, HeaderMap, InstantQueryParams, IntoResponse, MetricStore,
+    PerStepSampleStats, Principal, PrometheusApiState, QueryRequestTiming, Response,
     StdDurationExt, StepGrid, authorized_tenant_from_headers, collect_query_sample_stats,
     enforce_query_range_limit, evaluated_query_response, optional_timestamp_ms, query_stats_step,
 };
@@ -41,13 +41,13 @@ pub(crate) async fn query_dispatch<S: MetricStore>(
     // permit wait, and response encoding — that whole-handler span is already
     // covered by `query_duration{route}`.
     let eval_started = std::time::Instant::now();
-    let (outcome, samples) = if stats_requested {
+    let mut evaluated = if stats_requested {
         let per_step = if per_step_stats {
             PerStepSampleStats::Include(StepGrid::instant(time_ms, 1))
         } else {
             PerStepSampleStats::Omit
         };
-        let (outcome, samples) = collect_query_sample_stats(
+        let query = collect_query_sample_stats(
             per_step,
             query_stats_step(
                 time_ms,
@@ -55,32 +55,28 @@ pub(crate) async fn query_dispatch<S: MetricStore>(
             ),
         )
         .await;
-        (outcome, Some(samples))
+        EvaluatedQuery {
+            outcome: query.output,
+            samples: Some(query.stats),
+            preparation,
+            evaluation: std::time::Duration::ZERO,
+        }
     } else {
-        (
-            engine
+        EvaluatedQuery {
+            outcome: engine
                 .query_instant_with_annotations(&tenant, &params.query, time_ms)
                 .await,
-            None,
-        )
+            samples: None,
+            preparation,
+            evaluation: std::time::Duration::ZERO,
+        }
     };
     let evaluation = eval_started.elapsed();
     state.record_eval(
         "instant",
-        RequestOutcome::from_result(&outcome),
+        RequestOutcome::from_result(&evaluated.outcome),
         evaluation.as_time(),
     );
-    evaluated_query_response(
-        EvaluatedQuery {
-            outcome: outcome.map(|(result, annotations)| AnnotatedQueryResult {
-                result,
-                annotations,
-            }),
-            samples,
-            preparation,
-            evaluation,
-        },
-        params.limit,
-        timing,
-    )
+    evaluated.evaluation = evaluation;
+    evaluated_query_response(evaluated, params.limit, timing)
 }

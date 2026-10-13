@@ -9,28 +9,20 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn a_snapshot_never_sees_part_of_a_batch() {
     let head = WalHead::new();
-    let series = lbls(&[("__name__", "up"), ("job", "api")]);
+    let series = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
     head.apply_wal_record(&float_record("t", &series, 1_000, 1.0));
 
     let before = head.snapshot();
 
-    let batch = [
-        (
-            float_record("t", &series, 2_000, 2.0),
-            PartitionIndex(0),
-            Offset(7),
-        ),
-        (
-            float_record("t", &series, 3_000, 3.0),
-            PartitionIndex(0),
-            Offset(8),
-        ),
-    ];
-    head.apply_wal_records_at(
-        batch
-            .iter()
-            .map(|(record, partition, offset)| (record, *partition, *offset)),
-    );
+    let first = float_record("t", &series, 2_000, 2.0);
+    let second = float_record("t", &series, 3_000, 3.0);
+    head.apply_wal_records_at([
+        WalRecordAt::new(&first, PartitionIndex(0), Offset(7)),
+        WalRecordAt::new(&second, PartitionIndex(0), Offset(8)),
+    ]);
 
     let after = head.snapshot();
 

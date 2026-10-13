@@ -1,4 +1,28 @@
+use serde::Deserialize;
+
 use super::{BlockLevel, Labels, MetricsBlockKind, SerdeCompat, WincodeDeserialize};
+
+#[derive(Deserialize)]
+struct MetricsManifestShape {
+    tenant: String,
+    kind: MetricsBlockKind,
+    block_key: String,
+    index_key: String,
+    level: BlockLevel,
+    first_offset: i64,
+    last_offset: i64,
+    row_count: usize,
+    min_ts: i64,
+    max_ts: i64,
+    fingerprints: Vec<u64>,
+    series: Vec<MetricsManifestSeries>,
+}
+
+#[derive(Deserialize)]
+struct MetricsManifestSeries {
+    fingerprint: u64,
+    labels: Labels,
+}
 
 /// What the audit reads from a metrics `.index` manifest, which
 /// `krabka-metrics` persists as `CompactionIndexManifest`.
@@ -14,7 +38,7 @@ impl MetricsIndexManifest {
     ///
     /// The blockstore does not depend on the metrics crate, so the shape is
     /// restated here. The codec is `serde-wincode`, which writes the fields of
-    /// a struct in order and with no names. The tuple below therefore has the
+    /// a struct in order and with no names. This named shape therefore has the
     /// fields of that struct in their order and with their types: `tenant`,
     /// `kind`, `block_key`, `index_key`, `level`, `first_offset`,
     /// `last_offset`, `row_count`, `min_ts`, `max_ts`, `fingerprints`, and
@@ -24,27 +48,12 @@ impl MetricsIndexManifest {
     /// # Errors
     /// Returns the codec error for bytes that are not a whole manifest.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        type Shape = (
-            String,
-            MetricsBlockKind,
-            String,
-            String,
-            BlockLevel,
-            i64,
-            i64,
-            usize,
-            i64,
-            i64,
-            Vec<u64>,
-            Vec<(u64, Labels)>,
-        );
-        let (tenant, _, block_key, index_key, ..) =
-            <SerdeCompat<Shape> as WincodeDeserialize>::deserialize(bytes)
-                .map_err(|error| error.to_string())?;
+        let shape = <SerdeCompat<MetricsManifestShape> as WincodeDeserialize>::deserialize(bytes)
+            .map_err(|error| error.to_string())?;
         Ok(Self {
-            tenant,
-            block_key,
-            index_key,
+            tenant: shape.tenant,
+            block_key: shape.block_key,
+            index_key: shape.index_key,
         })
     }
 

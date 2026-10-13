@@ -4,8 +4,13 @@ use super::{
 };
 
 pub(crate) fn format_label_replace_metric_binary_arithmetic(query: &str) -> Option<String> {
-    let (left_text, operator, right_text) = split_top_level_arithmetic_query(query)?;
-    let (modifiers, right_text) = split_leading_vector_binary_modifiers(right_text);
+    let split = split_top_level_arithmetic_query(query)?;
+    let left_text = split.left;
+    let operator = split.operator;
+    let right_text = split.right;
+    let split_modifiers = split_leading_vector_binary_modifiers(right_text);
+    let modifiers = split_modifiers.modifiers;
+    let right_text = split_modifiers.remainder;
     let operator = format_binary_operator_line(operator, ComparisonResult::Filter, modifiers);
     format_label_replace_metric_binary_expression(left_text.trim(), &operator, right_text.trim())
 }

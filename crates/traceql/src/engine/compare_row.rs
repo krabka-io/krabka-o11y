@@ -1,8 +1,9 @@
 use super::{
-    Array, AsArray, AttrValue, BTreeMap, COL_DURATION, COL_KIND, COL_NAME, COL_ROOT_SERVICE_NAME,
-    COL_STATUS_CODE, COL_STATUS_MESSAGE, DataType, EVENT_ATTR_PREFIX, LINK_ATTR_PREFIX,
-    RESOURCE_ATTR_PREFIX, RecordBatch, Result, UnixNano, Value, block_row_scoped_attrs, i32_value,
-    i64_value, kind_enum_name, push_scoped_attr, row_attrs, status_enum_name, string_value,
+    Array, AsArray, AttrValue, Attribute, BTreeMap, COL_DURATION, COL_KIND, COL_NAME,
+    COL_ROOT_SERVICE_NAME, COL_STATUS_CODE, COL_STATUS_MESSAGE, DataType, EVENT_ATTR_PREFIX,
+    LINK_ATTR_PREFIX, RESOURCE_ATTR_PREFIX, RecordBatch, Result, UnixNano, Value,
+    block_row_scoped_attrs, i32_value, i64_value, kind_enum_name, push_scoped_attr, row_attrs,
+    status_enum_name, string_value,
 };
 
 /// One scanned span row, projected into the values the compare needs.
@@ -14,18 +15,33 @@ pub(crate) struct CompareRow {
     pub(crate) ts: UnixNano,
     /// Fully-scoped attribute key → display value, deduplicated. Example keys:
     /// `span.http.method` and `resource.service.name`.
-    pub(crate) attrs: Vec<(String, String)>,
+    pub(crate) attrs: Vec<DisplayAttribute>,
     /// Raw span or resource attribute key → typed values, with repeated
     /// attributes allowed. The compare uses these values to evaluate the
     /// selection's attribute comparisons.
-    pub(crate) raw_span_attrs: Vec<(String, AttrValue)>,
-    pub(crate) raw_resource_attrs: Vec<(String, AttrValue)>,
+    pub(crate) raw_span_attrs: Vec<Attribute>,
+    pub(crate) raw_resource_attrs: Vec<Attribute>,
     pub(crate) name: Option<String>,
     pub(crate) status_code: Option<i32>,
     pub(crate) status_message: Option<String>,
     pub(crate) kind: Option<i32>,
     pub(crate) duration: Option<i64>,
     pub(crate) columns: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct DisplayAttribute {
+    pub(crate) key: String,
+    pub(crate) value: String,
+}
+
+impl DisplayAttribute {
+    pub(crate) fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
 }
 
 /// Projects one scanned span row into a `CompareRow`.
@@ -38,28 +54,32 @@ pub(crate) struct CompareRow {
 /// where a `__resource.` prefix on the key marks a resource attribute. This
 /// function reports the root-service column as `resource.service.name`.
 pub(crate) fn compare_row(batch: &RecordBatch, row: usize, ts: UnixNano) -> Result<CompareRow> {
-    let mut attrs: Vec<(String, String)> = Vec::new();
-    let mut raw_span_attrs: Vec<(String, AttrValue)> = Vec::new();
-    let mut raw_resource_attrs: Vec<(String, AttrValue)> = Vec::new();
+    let mut attrs: Vec<DisplayAttribute> = Vec::new();
+    let mut raw_span_attrs: Vec<Attribute> = Vec::new();
+    let mut raw_resource_attrs: Vec<Attribute> = Vec::new();
 
     // Promoted `attr.<key>` columns are span-scoped attributes. Event/link
     // attrs stay available to the typed evaluator, but their child scope must
     // not enter the per-span distribution as span attributes.
     let packed_attrs = block_row_scoped_attrs(batch, row)?;
-    for (key, value) in row_attrs(batch, row)? {
+    for attribute in row_attrs(batch, row)? {
+        let key = attribute.key;
+        let value = attribute.value;
         if packed_attrs
             .iter()
-            .any(|(packed_key, _)| packed_key == &key)
+            .any(|packed_attribute| packed_attribute.key == key)
         {
             continue;
         }
         if !key.starts_with(EVENT_ATTR_PREFIX) && !key.starts_with(LINK_ATTR_PREFIX) {
             push_scoped_attr(&mut attrs, "span", &key, &value);
         }
-        raw_span_attrs.push((key, value));
+        raw_span_attrs.push(Attribute::new(key, value));
     }
     // Block attribute-list columns carry the remaining span + resource attrs.
-    for (key, value) in packed_attrs {
+    for attribute in packed_attrs {
+        let key = attribute.key;
+        let value = attribute.value;
         if let Some(stripped) = key.strip_prefix(RESOURCE_ATTR_PREFIX) {
             // The per-span `__resource.service.name` block attr would
             // double-count `resource.service.name`, which the rest of the
@@ -69,12 +89,12 @@ pub(crate) fn compare_row(batch: &RecordBatch, row: usize, ts: UnixNano) -> Resu
                 continue;
             }
             push_scoped_attr(&mut attrs, "resource", stripped, &value);
-            raw_resource_attrs.push((stripped.to_string(), value));
+            raw_resource_attrs.push(Attribute::new(stripped.to_string(), value));
         } else {
             if !key.starts_with(EVENT_ATTR_PREFIX) && !key.starts_with(LINK_ATTR_PREFIX) {
                 push_scoped_attr(&mut attrs, "span", &key, &value);
             }
-            raw_span_attrs.push((key, value));
+            raw_span_attrs.push(Attribute::new(key, value));
         }
     }
     // The root-service-name column is the canonical `resource.service.name`.
@@ -87,7 +107,7 @@ pub(crate) fn compare_row(batch: &RecordBatch, row: usize, ts: UnixNano) -> Resu
             "service.name",
             &AttrValue::Str(service.clone()),
         );
-        raw_resource_attrs.push(("service.name".to_string(), AttrValue::Str(service)));
+        raw_resource_attrs.push(Attribute::new("service.name", AttrValue::Str(service)));
     }
 
     let name = string_value(batch, COL_NAME, row);
@@ -100,17 +120,19 @@ pub(crate) fn compare_row(batch: &RecordBatch, row: usize, ts: UnixNano) -> Resu
     // `name` and `status` distributions): name as-is, status/kind as their
     // TraceQL enum names.
     if let Some(name) = &name {
-        attrs.push(("name".to_string(), name.clone()));
+        attrs.push(DisplayAttribute::new("name", name.clone()));
     }
     if let Some(code) = status_code {
-        attrs.push(("status".to_string(), status_enum_name(code).to_string()));
+        attrs.push(DisplayAttribute::new("status", status_enum_name(code)));
     }
     if let Some(code) = kind {
-        attrs.push(("kind".to_string(), kind_enum_name(code).to_string()));
+        attrs.push(DisplayAttribute::new("kind", kind_enum_name(code)));
     }
 
     let mut columns = BTreeMap::new();
-    for (index, field) in batch.schema().fields().iter().enumerate() {
+    for indexed_field in batch.schema().fields().iter().enumerate() {
+        let index = indexed_field.0;
+        let field = indexed_field.1;
         let array = batch.column(index);
         if array.is_null(row) {
             continue;

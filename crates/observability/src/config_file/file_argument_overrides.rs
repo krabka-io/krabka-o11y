@@ -28,11 +28,15 @@ pub(crate) fn file_argument_overrides(
     };
 
     let mut arguments = Vec::new();
-    for (key, value) in mapping {
-        let key = key.as_str().ok_or_else(|| ConfigFileError::NonStringKey {
-            path: path.to_path_buf(),
-            key: format!("{key:?}"),
-        })?;
+    for entry in mapping {
+        let value = entry.1;
+        let key = entry
+            .0
+            .as_str()
+            .ok_or_else(|| ConfigFileError::NonStringKey {
+                path: path.to_path_buf(),
+                key: format!("{:?}", entry.0),
+            })?;
         let wanted = key.replace('_', "-");
         if wanted == "config.file" || wanted == "config.expand-env" {
             return Err(ConfigFileError::SelfReferentialKey {

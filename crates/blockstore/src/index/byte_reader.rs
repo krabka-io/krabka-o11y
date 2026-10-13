@@ -17,6 +17,19 @@ pub(crate) struct ShardBlockBounds {
     pub(crate) max_ts: i64,
 }
 
+pub(crate) struct ShardBlockPrefix {
+    pub(crate) object_key: String,
+    pub(crate) bounds: ShardBlockBounds,
+    pub(crate) row_count: usize,
+    pub(crate) level: BlockLevel,
+}
+
+pub(crate) struct DecodedShardHeader<'bytes> {
+    pub reader: ByteReader<'bytes>,
+    pub tenant: String,
+    pub dictionary: Vec<String>,
+}
+
 impl<'bytes> ByteReader<'bytes> {
     pub(crate) const fn new(bytes: &'bytes [u8]) -> Self {
         Self { bytes, at: 0 }
@@ -130,4 +143,48 @@ impl<'bytes> ByteReader<'bytes> {
     pub(crate) const fn is_exhausted(&self) -> bool {
         self.at >= self.bytes.len()
     }
+}
+
+pub(crate) fn read_shard_block_prefix(
+    reader: &mut ByteReader<'_>,
+    previous_min: i64,
+) -> Result<ShardBlockPrefix> {
+    Ok(ShardBlockPrefix {
+        object_key: reader.string("a block object key")?,
+        bounds: reader.block_bounds(previous_min)?,
+        row_count: reader.count_unbounded("a block row count")?,
+        level: reader.block_level()?,
+    })
+}
+
+pub(crate) fn decode_shard_header<'bytes>(
+    bytes: &'bytes [u8],
+    magic: &[u8],
+    expected_version: u8,
+    shard_name: &str,
+) -> Result<DecodedShardHeader<'bytes>> {
+    let mut reader = ByteReader::new(bytes);
+    if reader.take(magic.len(), "the magic")? != magic {
+        return Err(BlockStoreError::InvalidBlock(format!(
+            "is not {shard_name}"
+        )));
+    }
+    let version = reader.u8("the format version")?;
+    if version != expected_version {
+        return Err(BlockStoreError::InvalidBlock(format!(
+            "is format version {version}, expected {expected_version}"
+        )));
+    }
+
+    let tenant = reader.string("the tenant name")?;
+    let dictionary_len = reader.count("dictionary entries")?;
+    let mut dictionary = Vec::with_capacity(dictionary_len);
+    for _ in 0..dictionary_len {
+        dictionary.push(reader.string("a dictionary entry")?);
+    }
+    Ok(DecodedShardHeader {
+        reader,
+        tenant,
+        dictionary,
+    })
 }

@@ -119,7 +119,9 @@ impl Model for SnapshotModel {
     }
 
     fn actions(&self, state: &Self::State, actions: &mut Vec<Self::Action>) {
-        for (writer, phase) in state.writers.iter().enumerate() {
+        for entry in state.writers.iter().enumerate() {
+            let writer = entry.0;
+            let phase = entry.1;
             match phase {
                 WriterPhase::Pending => {
                     actions.push(Action::Read(writer));

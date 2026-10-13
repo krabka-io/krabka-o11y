@@ -10,7 +10,10 @@ pub(crate) async fn a_failed_refresh_keeps_serving_the_last_snapshot_until_the_s
     let source = Arc::new(CountingBrokerAccess::answering(Ok(
         AclSet::SecurityDisabled,
     )));
-    let (access, connected, clock) = broker_access_for_test(&source, 8);
+    let fixture = broker_access_for_test(&source, 8);
+    let access = fixture.cache;
+    let connected = fixture.connected;
+    let clock = fixture.clock;
     let authorizer = BrokerBackedQueryAuthorizer { access };
     check!(
         authorizer

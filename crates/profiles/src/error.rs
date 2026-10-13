@@ -105,7 +105,8 @@ impl From<krabka_pprof::ProfileError> for ProfilesError {
 
 impl From<krabka_observability::wal_produce::WalBatchError<ProfilesError>> for ProfilesError {
     fn from(error: krabka_observability::wal_produce::WalBatchError<ProfilesError>) -> Self {
-        let (appended, total) = (error.appended(), error.total());
+        let appended = error.appended();
+        let total = error.total();
         Self::ProduceBatch {
             appended,
             total,

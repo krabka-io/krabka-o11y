@@ -11,10 +11,11 @@ pub(crate) fn count_values_vector_samples(
 ) -> BTreeMap<Labels, BTreeMap<i64, MetricValue>> {
     let mut counted: BTreeMap<Labels, BTreeMap<i64, u64>> = BTreeMap::new();
 
-    for (labels, values) in samples {
-        let grouped_labels = vector_group_labels(&labels, grouping);
-        for (time, value) in values {
-            let value = range_sample_value(value, query);
+    for sample_set in samples {
+        let grouped_labels = vector_group_labels(&sample_set.0, grouping);
+        for sample in sample_set.1 {
+            let time = sample.0;
+            let value = range_sample_value(&sample.1, query);
             let mut output_labels = grouped_labels.clone();
             output_labels.insert(value_label.to_string(), format_metric_value(value));
             *counted
@@ -25,16 +26,13 @@ pub(crate) fn count_values_vector_samples(
         }
     }
 
-    counted
-        .into_iter()
-        .map(|(labels, values)| {
-            (
-                labels,
-                values
-                    .into_iter()
-                    .map(|(time, count)| (time, MetricValue::integer(count)))
-                    .collect(),
-            )
-        })
-        .collect()
+    let mut output = BTreeMap::new();
+    for label_counts in counted {
+        let mut samples = BTreeMap::new();
+        for count in label_counts.1 {
+            samples.insert(count.0, MetricValue::integer(count.1));
+        }
+        output.insert(label_counts.0, samples);
+    }
+    output
 }

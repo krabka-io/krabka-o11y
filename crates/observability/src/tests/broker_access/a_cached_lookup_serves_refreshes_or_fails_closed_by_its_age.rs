@@ -12,66 +12,87 @@ pub(crate) fn a_cached_lookup_serves_refreshes_or_fails_closed_by_its_age() {
     let at = |seconds| start + Duration::from_secs(seconds);
     let value = Arc::new(7_u8);
     let lookup = |fetched: Option<u64>, failed: Option<u64>| CachedLookup {
-        snapshot: fetched.map(|seconds| (Arc::clone(&value), at(seconds))),
-        last_failure: failed.map(|seconds| (at(seconds), "down".to_string())),
+        snapshot: fetched.map(|seconds| CachedSnapshot {
+            value: Arc::clone(&value),
+            fetched_at: at(seconds),
+        }),
+        last_failure: failed.map(|seconds| CachedFailure {
+            failed_at: at(seconds),
+            reason: "down".to_string(),
+        }),
     };
     let serve = || CachedLookupDecision::Serve(Arc::clone(&value));
     let unavailable = || CachedLookupDecision::Unavailable("down".to_string());
 
+    struct CacheLookupCase {
+        name: &'static str,
+        lookup: CachedLookup<u8>,
+        seconds: u64,
+        expected: CachedLookupDecision<u8>,
+    }
     let cases = [
-        (
-            "no snapshot",
-            lookup(None, None),
-            0,
-            CachedLookupDecision::Refresh,
-        ),
-        ("a fresh snapshot", lookup(Some(0), None), 9, serve()),
-        (
-            "a snapshot one TTL old",
-            lookup(Some(0), None),
-            10,
-            CachedLookupDecision::Refresh,
-        ),
-        (
-            "a recent failure over a stale snapshot",
-            lookup(Some(0), Some(30)),
-            35,
-            serve(),
-        ),
-        (
-            "a recent failure at the bound",
-            lookup(Some(0), Some(55)),
-            60,
-            serve(),
-        ),
-        (
-            "a recent failure past the bound",
-            lookup(Some(0), Some(55)),
-            61,
-            unavailable(),
-        ),
-        (
-            "a recent failure with no snapshot",
-            lookup(None, Some(0)),
-            9,
-            unavailable(),
-        ),
-        (
-            "an old failure with no snapshot",
-            lookup(None, Some(0)),
-            10,
-            CachedLookupDecision::Refresh,
-        ),
-        (
-            "an old failure over a stale snapshot",
-            lookup(Some(0), Some(30)),
-            40,
-            CachedLookupDecision::Refresh,
-        ),
+        CacheLookupCase {
+            name: "no snapshot",
+            lookup: lookup(None, None),
+            seconds: 0,
+            expected: CachedLookupDecision::Refresh,
+        },
+        CacheLookupCase {
+            name: "a fresh snapshot",
+            lookup: lookup(Some(0), None),
+            seconds: 9,
+            expected: serve(),
+        },
+        CacheLookupCase {
+            name: "a snapshot one TTL old",
+            lookup: lookup(Some(0), None),
+            seconds: 10,
+            expected: CachedLookupDecision::Refresh,
+        },
+        CacheLookupCase {
+            name: "a recent failure over a stale snapshot",
+            lookup: lookup(Some(0), Some(30)),
+            seconds: 35,
+            expected: serve(),
+        },
+        CacheLookupCase {
+            name: "a recent failure at the bound",
+            lookup: lookup(Some(0), Some(55)),
+            seconds: 60,
+            expected: serve(),
+        },
+        CacheLookupCase {
+            name: "a recent failure past the bound",
+            lookup: lookup(Some(0), Some(55)),
+            seconds: 61,
+            expected: unavailable(),
+        },
+        CacheLookupCase {
+            name: "a recent failure with no snapshot",
+            lookup: lookup(None, Some(0)),
+            seconds: 9,
+            expected: unavailable(),
+        },
+        CacheLookupCase {
+            name: "an old failure with no snapshot",
+            lookup: lookup(None, Some(0)),
+            seconds: 10,
+            expected: CachedLookupDecision::Refresh,
+        },
+        CacheLookupCase {
+            name: "an old failure over a stale snapshot",
+            lookup: lookup(Some(0), Some(30)),
+            seconds: 40,
+            expected: CachedLookupDecision::Refresh,
+        },
     ];
 
-    for (name, lookup, seconds, expected) in cases {
-        check!(lookup.decide(at(seconds), &policy) == expected, "{name}");
+    for case in cases {
+        check!(
+            case.lookup.decide(at(case.seconds), &policy) == case.expected,
+            "{}",
+            case.name
+        );
     }
 
     let mut lookup = lookup(Some(0), None);

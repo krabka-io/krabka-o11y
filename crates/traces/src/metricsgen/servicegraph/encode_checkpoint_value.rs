@@ -11,9 +11,9 @@ pub(crate) fn encode_checkpoint_value(edge: &Edge) -> Vec<u8> {
     put_optional_i64(&mut buf, edge.server_latency_ns);
     buf.put_f64(edge.multiplier);
     buf.put_u32(edge.labels.len().try_into().unwrap_or(u32::MAX));
-    for (name, value) in &edge.labels {
-        put_optional_string(&mut buf, Some(name));
-        put_optional_string(&mut buf, Some(value));
+    for label in &edge.labels {
+        put_optional_string(&mut buf, Some(&label.key));
+        put_optional_string(&mut buf, Some(&label.value));
     }
     buf.to_vec()
 }

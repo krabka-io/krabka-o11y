@@ -26,7 +26,7 @@ mod querier_state;
 mod shared_loki_rules;
 mod shared_prometheus_alert_states;
 
-pub(crate) use cached_dynamic_index::CachedDynamicIndex;
+pub(crate) use cached_dynamic_index::{CachedDynamicIndex, TenantIndexPair};
 pub(crate) use cached_shard_ranges::CachedShardRanges;
 pub(crate) use cold_object_store_state::ColdObjectStoreState;
 pub(crate) use dynamic_index_cache::DynamicIndexCache;

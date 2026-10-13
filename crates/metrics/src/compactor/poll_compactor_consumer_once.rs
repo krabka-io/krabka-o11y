@@ -1,7 +1,7 @@
 use super::{
     BlockWriter, CompactionConsumerCommitMut, CompactionConsumerPoll, CompactionIndexSink,
-    CompactionPollError, CompactionPollResult, ServiceMetrics, Time,
-    compaction_wal_records_from_consumer_records, process_compaction_record_batch_with_consumer,
+    CompactionPollError, CompactionPollResult, ServiceMetrics, Time, poll_compaction_wal_records,
+    process_compaction_record_batch_with_consumer,
 };
 
 /// Polls, compacts, and commits once with a single mutable consumer handle.
@@ -19,24 +19,18 @@ where
     C: CompactionConsumerPoll + CompactionConsumerCommitMut + ?Sized,
     S: CompactionIndexSink + ?Sized,
 {
-    let records = consumer
-        .poll(timeout)
-        .await
-        .inspect_err(|_| metrics.wal_consumer.record_poll_failure())?;
-    metrics.wal_consumer.record_poll(&records);
-    let polled_records = records.len();
-    let wal_records = compaction_wal_records_from_consumer_records(wal_topic, &records)?;
-    let compacted_records = wal_records.len();
+    let polled = poll_compaction_wal_records(consumer, wal_topic, timeout, metrics).await?;
+    let compacted_records = polled.wal_records.len();
     let batch = process_compaction_record_batch_with_consumer(
         block_writer,
         index_sink,
         consumer,
-        &wal_records,
+        &polled.wal_records,
     )
     .await?;
 
     Ok(CompactionPollResult {
-        polled_records,
+        polled_records: polled.polled_records,
         compacted_records,
         batch,
     })

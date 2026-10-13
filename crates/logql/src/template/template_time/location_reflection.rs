@@ -2,7 +2,9 @@
 //! Source: time/zoneinfo.go Location, `FixedZone`, tzset; `zoneinfo_read.go` cache.
 //! Formatter goldens come from the pinned Go probe, never Rust rendering.
 use super::zone::Definition;
-use crate::template::{TemplateHistogramView as R, TemplateRuntimeValue as V};
+use crate::template::{
+    TemplateHistogramField as Field, TemplateHistogramView as R, TemplateRuntimeValue as V,
+};
 
 #[derive(Debug)]
 pub(super) struct Transition {
@@ -10,6 +12,12 @@ pub(super) struct Transition {
     pub(super) index: u8,
     pub(super) standard: bool,
     pub(super) utc: bool,
+}
+
+#[cfg(test)]
+struct FormatGolden {
+    format: &'static str,
+    expected: &'static str,
 }
 #[derive(Debug)]
 pub(super) struct LocationData {
@@ -73,12 +81,18 @@ impl LocationData {
             R::structure(
                 "time.zone",
                 vec![
-                    ("name", R::scalar(V::String(zone.name.clone()))),
-                    ("offset", R::scalar(V::Integer(i64::from(zone.offset)))),
-                    (
-                        "isDST",
-                        R::scalar(V::Json(serde_json::Value::Bool(zone.daylight))),
-                    ),
+                    Field {
+                        name: "name",
+                        value: R::scalar(V::String(zone.name.clone())),
+                    },
+                    Field {
+                        name: "offset",
+                        value: R::scalar(V::Integer(i64::from(zone.offset))),
+                    },
+                    Field {
+                        name: "isDST",
+                        value: R::scalar(V::Json(serde_json::Value::Bool(zone.daylight))),
+                    },
                 ],
             )
         };
@@ -97,13 +111,22 @@ impl LocationData {
                     R::structure(
                         "time.zoneTrans",
                         vec![
-                            ("when", R::scalar(V::Integer64(tx.when))),
-                            ("index", R::scalar(V::Byte(tx.index))),
-                            (
-                                "isstd",
-                                R::scalar(V::Json(serde_json::Value::Bool(tx.standard))),
-                            ),
-                            ("isutc", R::scalar(V::Json(serde_json::Value::Bool(tx.utc)))),
+                            Field {
+                                name: "when",
+                                value: R::scalar(V::Integer64(tx.when)),
+                            },
+                            Field {
+                                name: "index",
+                                value: R::scalar(V::Byte(tx.index)),
+                            },
+                            Field {
+                                name: "isstd",
+                                value: R::scalar(V::Json(serde_json::Value::Bool(tx.standard))),
+                            },
+                            Field {
+                                name: "isutc",
+                                value: R::scalar(V::Json(serde_json::Value::Bool(tx.utc))),
+                            },
                         ],
                     )
                 })
@@ -114,22 +137,40 @@ impl LocationData {
         let object = R::structure(
             "time.Location",
             vec![
-                ("name", R::scalar(V::String(self.name.clone()))),
-                ("zone", zones),
-                ("tx", transitions),
-                ("extend", R::scalar(V::String(self.extend.clone()))),
-                ("cacheStart", R::scalar(V::Integer64(self.cache_start))),
-                ("cacheEnd", R::scalar(V::Integer64(self.cache_end))),
-                (
-                    "cacheZone",
-                    R::Pointer {
+                Field {
+                    name: "name",
+                    value: R::scalar(V::String(self.name.clone())),
+                },
+                Field {
+                    name: "zone",
+                    value: zones,
+                },
+                Field {
+                    name: "tx",
+                    value: transitions,
+                },
+                Field {
+                    name: "extend",
+                    value: R::scalar(V::String(self.extend.clone())),
+                },
+                Field {
+                    name: "cacheStart",
+                    value: R::scalar(V::Integer64(self.cache_start)),
+                },
+                Field {
+                    name: "cacheEnd",
+                    value: R::scalar(V::Integer64(self.cache_end)),
+                },
+                Field {
+                    name: "cacheZone",
+                    value: R::Pointer {
                         name: "time.zone",
                         address: cache.map_or(0, |zone| std::ptr::from_ref(zone) as usize),
                         value: Box::new(
                             cache.map_or_else(|| R::structure("time.zone", Vec::new()), zone_view),
                         ),
                     },
-                ),
+                },
             ],
         );
         R::Pointer {
@@ -167,7 +208,7 @@ mod tests {
             panic!("location fields");
         };
         check!(
-            fields.iter().map(|(name, _)| *name).collect::<Vec<_>>()
+            fields.iter().map(|field| field.name).collect::<Vec<_>>()
                 == [
                     "name",
                     "zone",
@@ -178,7 +219,7 @@ mod tests {
                     "cacheZone"
                 ]
         );
-        let R::Pointer { address, .. } = &fields[6].1 else {
+        let R::Pointer { address, .. } = &fields[6].value else {
             panic!("cache pointer");
         };
         check!(*address == std::ptr::from_ref(&fixed.definitions[0]) as usize);
@@ -193,18 +234,33 @@ mod tests {
     fn source_location_formats_reflect_types_fields_and_real_pointer_identity() {
         use super::super::{Location, TemplateTimeLocation};
         let utc = TemplateTimeLocation(Location::Utc);
-        for (format, expected) in [
-            ("%v", "UTC"),
-            ("%+v", "UTC"),
-            ("%q", "\"UTC\""),
-            ("%T", "*time.Location"),
-            (
-                "%#v",
-                "&time.Location{name:\"UTC\", zone:[]time.zone(nil), tx:[]time.zoneTrans(nil), extend:\"\", cacheStart:0, cacheEnd:0, cacheZone:(*time.zone)(nil)}",
-            ),
-            ("%d", "&{%!d(string=UTC) [] [] %!d(string=) 0 0 0}"),
+        for case in [
+            FormatGolden {
+                format: "%v",
+                expected: "UTC",
+            },
+            FormatGolden {
+                format: "%+v",
+                expected: "UTC",
+            },
+            FormatGolden {
+                format: "%q",
+                expected: "\"UTC\"",
+            },
+            FormatGolden {
+                format: "%T",
+                expected: "*time.Location",
+            },
+            FormatGolden {
+                format: "%#v",
+                expected: "&time.Location{name:\"UTC\", zone:[]time.zone(nil), tx:[]time.zoneTrans(nil), extend:\"\", cacheStart:0, cacheEnd:0, cacheZone:(*time.zone)(nil)}",
+            },
+            FormatGolden {
+                format: "%d",
+                expected: "&{%!d(string=UTC) [] [] %!d(string=) 0 0 0}",
+            },
         ] {
-            check!(printf(format, utc.clone()) == expected);
+            check!(printf(case.format, utc.clone()) == case.expected);
         }
         check!(printf("%p", utc.clone()) == format!("0x{:x}", utc.address()));
         check!(utc.address() != TemplateTimeLocation(Location::Local).address());
@@ -254,7 +310,10 @@ mod tests {
         let a = TemplateTimeLocation(Location::load("America/New_York"));
         let b = TemplateTimeLocation(Location::load("America/New_York"));
         check!(a != b && a.address() != b.address());
-        let (Location::Named(_, a), Location::Named(_, b)) = (&a.0, &b.0) else {
+        let Location::Named(_, a) = &a.0 else {
+            panic!("named zone");
+        };
+        let Location::Named(_, b) = &b.0 else {
             panic!("named zone");
         };
         check!(a.definitions.as_ptr() != b.definitions.as_ptr());
@@ -264,7 +323,13 @@ mod tests {
         let ny = super::super::zone::load("America/New_York").unwrap();
         let loaded = ny.reflection_data(1_780_000_000);
         check!(loaded.cache_start == 1_772_953_200 && loaded.cache_end == 1_793_512_800);
-        check!(ny.lookup(4_102_444_800) == ("EST".into(), -18000));
+        check!(
+            ny.lookup(4_102_444_800)
+                == (super::super::zone::ZoneInfo {
+                    name: "EST".into(),
+                    offset: -18000,
+                })
+        );
         check!(loaded.cache_start == 1_772_953_200 && loaded.cache_end == 1_793_512_800);
         let future = ny.reflection_data(4_102_444_800);
         check!(future.cache_start == 4_102_444_800 && future.cache_end == 4_108_690_800);

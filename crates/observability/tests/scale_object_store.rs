@@ -58,10 +58,10 @@ use datafusion::arrow::{
     record_batch::RecordBatch,
 };
 use krabka_blockstore::{
-    AttrValue, BlockMeta, BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, CycleSpans, Index,
-    LabelMatcher, Labels, MatchOp, ShardedTraceBloom, SpanAttr, SpanKind, SpanNode, SpanRow,
-    StatusCode, SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set, encode_span_rows,
-    read_block, span_block_decl, span_block_schema,
+    BlockMeta, BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, CycleSpans, Index, LabelMatcher,
+    Labels, MatchOp, ShardedTraceBloom, SpanAttr, SpanKind, SpanNode, SpanRow, StatusCode,
+    SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set, encode_span_rows, read_block,
+    span_block_decl, span_block_schema,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt as _, path::Path as ObjectPath};
@@ -162,29 +162,28 @@ fn trace_rows(trace_id: [u8; 16], spans: usize, start_nano: i64) -> Vec<SpanRow>
         .iter()
         .zip(&nested)
         .enumerate()
-        .map(|(index, (node, nset))| SpanRow {
+        .map(|entry| SpanRow {
             trace_id,
-            span_id: node.span_id,
-            parent_span_id: node.parent_span_id,
-            nested_set: *nset,
+            span_id: entry.1.0.span_id,
+            parent_span_id: entry.1.0.parent_span_id,
+            nested_set: *entry.1.1,
             child_count: 0,
-            root_service_name: Some(format!("svc-{}", index % 32)),
+            root_service_name: Some(format!("svc-{}", entry.0 % 32)),
             root_span_name: Some("GET /api".into()),
             trace_start_unix_nano: start_nano,
             trace_duration: nanos(1_000),
-            name: Some(format!("span-{index}")),
+            name: Some(format!("span-{}", entry.0)),
             kind: SpanKind::Server,
-            start_unix_nano: start_nano + i64::try_from(index).expect("a span index fits an i64"),
+            start_unix_nano: start_nano + i64::try_from(entry.0).expect("a span index fits an i64"),
             duration: nanos(10),
             status_code: StatusCode::Ok,
             status_message: None,
             instrumentation_name: Some("tracer".into()),
             instrumentation_version: None,
-            attrs: vec![SpanAttr {
-                key: "service.name".into(),
-                is_array: false,
-                value: AttrValue::Str(vec![format!("svc-{}", index % 32)]),
-            }],
+            attrs: vec![SpanAttr::string(
+                "service.name",
+                format!("svc-{}", index % 32),
+            )],
             events: vec![],
             links: vec![],
         })

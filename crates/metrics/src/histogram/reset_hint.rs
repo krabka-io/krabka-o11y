@@ -1,8 +1,9 @@
 use super::{Deserialize, Serialize};
 
 /// Counter-reset semantics carried with each histogram sample.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResetHint {
+    #[default]
     Unknown,
     Yes,
     No,

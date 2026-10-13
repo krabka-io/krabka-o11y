@@ -33,118 +33,169 @@ pub fn seed(base: i64) -> Value {
     ]})
 }
 
-type LedgerRow = (&'static str, &'static str, &'static str);
-type PositiveCase = (&'static str, &'static str, &'static [LedgerRow]);
+struct LedgerRow {
+    variant: &'static str,
+    app: &'static str,
+    value: &'static str,
+}
+
+struct PositiveCase {
+    id: &'static str,
+    query: &'static str,
+    rows: &'static [LedgerRow],
+}
+
+struct DiscoveryCase {
+    id: &'static str,
+    tenant: &'static str,
+    query: &'static str,
+    rows: &'static [LedgerRow],
+}
+
+macro_rules! ledger_row {
+    ($variant:expr, $app:expr, $value:expr $(,)?) => {
+        LedgerRow {
+            variant: $variant,
+            app: $app,
+            value: $value,
+        }
+    };
+}
+
+macro_rules! positive_case {
+    ($id:expr, $query:expr, $rows:expr $(,)?) => {
+        PositiveCase {
+            id: $id,
+            query: $query,
+            rows: $rows,
+        }
+    };
+}
+
+macro_rules! discovery_case {
+    ($id:expr, $tenant:expr, $query:expr, $rows:expr $(,)?) => {
+        DiscoveryCase {
+            id: $id,
+            tenant: $tenant,
+            query: $query,
+            rows: $rows,
+        }
+    };
+}
 const INSTANT_CASES: &[PositiveCase] = &[
-    (
+    positive_case!(
         "variants/absent-instant-original-synthetic-labels",
         r#"variants(absent_over_time({app="original"}[1m])) of ({app="missing"}[1m])"#,
-        &[("", "original", "1")],
+        &[ledger_row!("", "original", "1")],
     ),
-    (
+    positive_case!(
         "variants/topk-by-ranks-each-app",
         r#"variants(topk by(app)(1,count_over_time({app="ignored"}[1m]))) of ({app=~"api|web"} |= "keep" [1m])"#,
-        &[("0", "api", "3"), ("0", "web", "2")],
+        &[ledger_row!("0", "api", "3"), ledger_row!("0", "web", "2")],
     ),
-    (
+    positive_case!(
         "variants/bottomk-by-ranks-each-app",
         r#"variants(bottomk by(app)(1,count_over_time({app="ignored"}[1m]))) of ({app=~"api|web"} |= "keep" [1m])"#,
-        &[("0", "api", "3"), ("0", "web", "2")],
+        &[ledger_row!("0", "api", "3"), ledger_row!("0", "web", "2")],
     ),
-    (
+    positive_case!(
         "variants/bare-selector-and-prefilter-ignored",
         r#"variants(count_over_time({app="ignored"} |= "absent" [1m]),bytes_over_time({app="ignored"}[1m])) of ({app=~"api|web"} |= "keep" [1m])"#,
         &[
-            ("0", "api", "3"),
-            ("0", "web", "2"),
-            ("1", "api", "18"),
-            ("1", "web", "12"),
+            ledger_row!("0", "api", "3"),
+            ledger_row!("0", "web", "2"),
+            ledger_row!("1", "api", "18"),
+            ledger_row!("1", "web", "12"),
         ],
     ),
-    (
+    positive_case!(
         "variants/vector-retains-own-pipeline",
         r#"variants(sum by (app)(count_over_time({app="ignored"} |= "a" [1m]))) of ({app=~"api|web"} |= "keep" [1m])"#,
-        &[("0", "api", "3")],
+        &[ledger_row!("0", "api", "3")],
     ),
-    (
+    positive_case!(
         "variants/by-retains-variant",
         r#"variants(sum by (app)(count_over_time({app="ignored"}[1m])),sum(count_over_time({app="ignored"}[1m]))) of ({app=~"api|web"} |= "keep" [1m])"#,
-        &[("0", "api", "3"), ("0", "web", "2"), ("1", "", "5")],
+        &[
+            ledger_row!("0", "api", "3"),
+            ledger_row!("0", "web", "2"),
+            ledger_row!("1", "", "5")
+        ],
     ),
-    (
+    positive_case!(
         "variants/without-instant-retains-unlabelled-vector",
         r#"variants(sum without(app,service_name,detected_level,detected_level_extracted)(count_over_time({app="ignored"}[1m]))) of ({app=~"api|web"} |= "keep" [1m])"#,
-        &[("", "", "5")],
+        &[ledger_row!("", "", "5")],
     ),
-    (
+    positive_case!(
         "variants/unwrap-common-parser",
         r#"variants(sum_over_time({app="ignored"} | json | unwrap n | __error__="" [1m])) of ({app="numeric"} | logfmt [1m])"#,
-        &[("0", "numeric", "7")],
+        &[ledger_row!("0", "numeric", "7")],
     ),
-    (
+    positive_case!(
         "variants/missing-common-selector",
         r#"variants(count_over_time({app="api"}[1m])) of ({app="missing"}[1m])"#,
         &[],
     ),
-    (
+    positive_case!(
         "variants/own-window",
         r#"variants(count_over_time({app="ignored"}[5s]),count_over_time({app="ignored"}[1m])) of ({app=~"api|web"} |= "keep" [1m])"#,
-        &[("1", "api", "3"), ("1", "web", "2")],
+        &[ledger_row!("1", "api", "3"), ledger_row!("1", "web", "2")],
     ),
-    (
+    positive_case!(
         "variants/common-window-bounds-reads",
         r#"variants(count_over_time({app="ignored"}[1m])) of ({app=~"api|web"} |= "keep" [5s])"#,
         &[],
     ),
-    (
+    positive_case!(
         "variants/common-offset-bounds-reads",
         r#"variants(count_over_time({app="ignored"}[1m])) of ({app=~"api|web"} |= "keep" [1m] offset 30s)"#,
-        &[("0", "api", "1"), ("0", "web", "1")],
+        &[ledger_row!("0", "api", "1"), ledger_row!("0", "web", "1")],
     ),
-    (
+    positive_case!(
         "variants/own-offset",
         r#"variants(count_over_time({app="ignored"}[1m] offset 20s)) of ({app=~"api|web"} |= "keep" [1m])"#,
-        &[("0", "api", "2"), ("0", "web", "1")],
+        &[ledger_row!("0", "api", "2"), ledger_row!("0", "web", "1")],
     ),
-    (
+    positive_case!(
         "variants/independent-series-budgets",
         r#"variants(count_over_time({app="ignored"}[1m]),count_over_time({app="ignored"}[1m])) of ({app=~"api|web"} |= "keep" [1m])"#,
         &[
-            ("0", "api", "3"),
-            ("0", "web", "2"),
-            ("1", "api", "3"),
-            ("1", "web", "2"),
+            ledger_row!("0", "api", "3"),
+            ledger_row!("0", "web", "2"),
+            ledger_row!("1", "api", "3"),
+            ledger_row!("1", "web", "2"),
         ],
     ),
-    (
+    positive_case!(
         "approx/instant-metric",
         r#"approx_topk(1,sum by(app)(count_over_time({app=~"api|web"} |= "keep" [1m])))"#,
-        &[("", "api", "3")],
+        &[ledger_row!("", "api", "3")],
     ),
-    (
+    positive_case!(
         "approx/instant-unlabelled-sum",
         r#"approx_topk(1,sum(count_over_time({app=~"api|web"} |= "keep" [1m])))"#,
-        &[("", "", "5")],
+        &[ledger_row!("", "", "5")],
     ),
-    (
+    positive_case!(
         "approx/missing-selector",
         r#"approx_topk(1,count_over_time({app="missing"}[1m]))"#,
         &[],
     ),
 ];
 
-fn expected(timestamp: f64, items: &[(&str, &str, &str)]) -> Value {
+fn expected(timestamp: f64, items: &[LedgerRow]) -> Value {
     let mut rows = items
         .iter()
-        .map(|(variant, app, value)| {
+        .map(|row| {
             let mut metric = serde_json::Map::new();
-            if !variant.is_empty() {
-                metric.insert("__variant__".into(), json!(variant));
+            if !row.variant.is_empty() {
+                metric.insert("__variant__".into(), json!(row.variant));
             }
-            if !app.is_empty() {
-                metric.insert("app".into(), json!(app));
+            if !row.app.is_empty() {
+                metric.insert("app".into(), json!(row.app));
             }
-            json!({"metric":metric,"points":[[timestamp,value]]})
+            json!({"metric":metric,"points":[[timestamp,row.value]]})
         })
         .collect::<Vec<_>>();
     rows.sort_by_key(ToString::to_string);
@@ -158,13 +209,13 @@ pub fn cases(base: i64) -> Vec<Case> {
         / 1e9;
     let mut result = INSTANT_CASES
         .iter()
-        .map(|(id, query, rows)| Case {
-            id,
-            query,
+        .map(|case| Case {
+            id: case.id,
+            query: case.query,
             tenant: "experimental",
             range: false,
             expected_status: 200,
-            expected: expected(timestamp, rows),
+            expected: expected(timestamp, case.rows),
         })
         .collect::<Vec<_>>();
     result.push(Case {
@@ -180,43 +231,43 @@ pub fn cases(base: i64) -> Vec<Case> {
         expected_status: 200,
         expected: expected(timestamp, &[]),
     });
-    for (id, tenant, query, rows) in [
-        (
+    for case in [
+        discovery_case!(
             "discovery/disabled-does-not-synthesize-unknown",
             "experimental-discovery-disabled",
             r#"sum(count_over_time({app="discovery"} | detected_level="unknown" [1m]))"#,
             &[][..],
         ),
-        (
+        discovery_case!(
             "discovery/custom-logfmt-field",
             "experimental-discovery-custom",
             r#"sum(count_over_time({app="discovery"} | detected_level="debug" [1m]))"#,
-            &[("", "", "1")][..],
+            &[ledger_row!("", "", "1")][..],
         ),
-        (
+        discovery_case!(
             "discovery/bounded-json-depth",
             "experimental-discovery-custom",
             r#"sum(count_over_time({app="discovery"} | detected_level="info" [1m]))"#,
             &[][..],
         ),
-        (
+        discovery_case!(
             "discovery/unlimited-json-depth",
             "experimental-discovery-deep",
             r#"sum(count_over_time({app="discovery"} | detected_level="info" [1m]))"#,
-            &[("", "", "1")][..],
+            &[ledger_row!("", "", "1")][..],
         ),
     ] {
         result.push(Case {
-            id,
-            query,
-            tenant,
+            id: case.id,
+            query: case.query,
+            tenant: case.tenant,
             range: false,
             expected_status: 200,
-            expected: expected(timestamp, rows),
+            expected: expected(timestamp, case.rows),
         });
     }
     let query = r#"variants(count_over_time({app="ignored"}[1m]),sum(count_over_time({app="ignored"}[1m]))) of ({app=~"api|web"} |= "keep" [1m])"#;
-    let mut range_expected = expected(timestamp, &[("1", "", "5")]);
+    let mut range_expected = expected(timestamp, &[ledger_row!("1", "", "5")]);
     range_expected["samples"][0]["points"]
         .as_array_mut()
         .unwrap()
@@ -230,7 +281,7 @@ pub fn cases(base: i64) -> Vec<Case> {
         expected_status: 200,
         expected: range_expected,
     });
-    let mut one = expected(timestamp, &[("1", "", "5")]);
+    let mut one = expected(timestamp, &[ledger_row!("1", "", "5")]);
     one["warnings"] = json!(["maximum of series (1) reached for variant (0)"]);
     result.push(Case {
         id: "variants/one-series-cap",
@@ -324,9 +375,12 @@ pub fn semantic_samples(value: &Value) -> Value {
 fn federation_cases(timestamp: f64) -> Vec<Case> {
     let by_app = r#"variants(sum by(app)(count_over_time({app="ignored"}[1m]))) of ({app=~"api|web"} |= "keep" [1m])"#;
     let global_budget = r#"variants(count_over_time({app="ignored"}[1m]),sum(count_over_time({app="ignored"}[1m]))) of ({app=~"api|web"} |= "keep" [1m])"#;
-    let mut capped = expected(timestamp, &[("1", "", "10")]);
+    let mut capped = expected(timestamp, &[ledger_row!("1", "", "10")]);
     capped["warnings"] = json!(["maximum of series (1) reached for variant (0)"]);
-    let mut labels = expected(timestamp, &[("0", "", "5"), ("0", "", "5")]);
+    let mut labels = expected(
+        timestamp,
+        &[ledger_row!("0", "", "5"), ledger_row!("0", "", "5")],
+    );
     labels["samples"][0]["metric"]["__tenant_id__"] = json!("experimental");
     labels["samples"][1]["metric"]["__tenant_id__"] = json!("experimental-disabled");
     labels["samples"]
@@ -340,7 +394,10 @@ fn federation_cases(timestamp: f64) -> Vec<Case> {
             tenant: "experimental|experimental-disabled",
             range: false,
             expected_status: 200,
-            expected: expected(timestamp, &[("0", "api", "6"), ("0", "web", "4")]),
+            expected: expected(
+                timestamp,
+                &[ledger_row!("0", "api", "6"), ledger_row!("0", "web", "4")],
+            ),
         },
         Case {
             id: "variants/federated-all-disabled",
@@ -388,7 +445,7 @@ fn federation_cases(timestamp: f64) -> Vec<Case> {
             tenant: "experimental|experimental-one",
             range: false,
             expected_status: 200,
-            expected: expected(timestamp, &[("", "api", "6")]),
+            expected: expected(timestamp, &[ledger_row!("", "api", "6")]),
         },
         Case {
             id: "approx/federated-intersection-gate",

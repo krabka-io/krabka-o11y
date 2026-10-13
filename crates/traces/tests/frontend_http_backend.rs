@@ -135,7 +135,12 @@ async fn http_querier_live_shard_sends_no_scan_params() {
 async fn http_querier_by_id_404_is_empty_partial() {
     let app = Router::new().route(
         "/api/v2/traces/{trace_id}",
-        get(|| async { (axum::http::StatusCode::NOT_FOUND, "trace not found") }),
+        get(|| async {
+            axum::http::Response::builder()
+                .status(axum::http::StatusCode::NOT_FOUND)
+                .body(axum::body::Body::from("trace not found"))
+                .unwrap()
+        }),
     );
     let addr = spawn(app).await;
     let backend = plain_http_querier();

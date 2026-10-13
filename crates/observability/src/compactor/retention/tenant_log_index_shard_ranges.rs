@@ -30,7 +30,11 @@ pub(crate) async fn tenant_log_index_shard_ranges(
     // `TimeRange` is not `Ord`, so the duplicates go after the sort rather
     // than through a set.
     let mut shard_ranges: Vec<TimeRange> = catalogued.into_iter().chain(listed).collect();
-    shard_ranges.sort_by_key(|range| (range.start_ns, range.end_ns));
+    shard_ranges.sort_by(|left, right| {
+        left.start_ns
+            .cmp(&right.start_ns)
+            .then_with(|| left.end_ns.cmp(&right.end_ns))
+    });
     shard_ranges.dedup();
     Ok(shard_ranges)
 }

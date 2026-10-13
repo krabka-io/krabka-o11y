@@ -18,7 +18,7 @@ use assert2::{assert, check};
 use krabka_blockstore::{
     BlockDeletionReport, BlockIndex as _, BlockLevel, BlockMeta, BlockTimestampUnit,
     CompactionPolicy, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels, ObjectStoreMetrics,
-    OrphanSweepStats, ProfileIndex, StorageAuditOptions, StorageSignal, audit_store,
+    OffsetRange, OrphanSweepStats, ProfileIndex, StorageAuditOptions, StorageSignal, audit_store,
 };
 use krabka_pprof::{EngineOpts, FlameEngine};
 use krabka_profiles::{
@@ -67,14 +67,22 @@ fn at(now_ms: i64) -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(u64::try_from(now_ms).expect("a positive epoch"))
 }
 
-fn retention(entries: &[(&str, i64)]) -> OverridesProvider {
+struct TenantRetention {
+    tenant: &'static str,
+    window_secs: i64,
+}
+
+fn retention(entries: &[TenantRetention]) -> OverridesProvider {
     if entries.is_empty() {
         return OverridesProvider::new(Limits::default());
     }
     let tenants: Vec<String> = entries
         .iter()
-        .map(|(tenant, window_secs)| {
-            format!("  {tenant}:\n    compactor_blocks_retention_period_secs: {window_secs}\n")
+        .map(|entry| {
+            format!(
+                "  {}:\n    compactor_blocks_retention_period_secs: {}\n",
+                entry.tenant, entry.window_secs
+            )
         })
         .collect();
     OverridesProvider::from_yaml(&format!("overrides:\n{}", tenants.concat()))
@@ -131,7 +139,7 @@ async fn write_block(
         tenant,
         0,
         std::slice::from_ref(&record),
-        (offset, offset),
+        OffsetRange::new(offset, offset),
         &ObjectStoreMetrics::unregistered(),
     )
     .await
@@ -159,11 +167,17 @@ async fn exists(store: &Arc<dyn ObjectStore>, key: &str) -> bool {
 }
 
 /// Both the block and the symbol database beside it.
-async fn block_objects_exist(store: &Arc<dyn ObjectStore>, key: &str) -> (bool, bool) {
-    (
-        exists(store, key).await,
-        exists(store, &symdb_key(key)).await,
-    )
+#[derive(Debug, PartialEq, Eq)]
+struct BlockObjectStatus {
+    block: bool,
+    symbol_database: bool,
+}
+
+async fn block_objects_exist(store: &Arc<dyn ObjectStore>, key: &str) -> BlockObjectStatus {
+    BlockObjectStatus {
+        block: exists(store, key).await,
+        symbol_database: exists(store, &symdb_key(key)).await,
+    }
 }
 
 fn block_keys(index: &ProfileIndex) -> Vec<String> {
@@ -186,14 +200,22 @@ async fn reload(store: &Arc<dyn ObjectStore>) -> ProfileIndex {
 
 /// One tenant, one block outside its window and one inside it, with the index
 /// already published so the pass has a snapshot to merge against.
-async fn one_expired_and_one_live(
-    store: &Arc<dyn ObjectStore>,
-) -> (ProfileIndex, BlockMeta, BlockMeta) {
+struct ExpirationFixture {
+    index: ProfileIndex,
+    expired: BlockMeta,
+    live: BlockMeta,
+}
+
+async fn one_expired_and_one_live(store: &Arc<dyn ObjectStore>) -> ExpirationFixture {
     let mut index = ProfileIndex::new();
     let expired = write_block(store, &mut index, "t", "ancient", NOW_MS - 5 * HOUR_MS, 0).await;
     let live = write_block(store, &mut index, "t", "recent", NOW_MS - HOUR_MS / 6, 1).await;
     publish(store, &index).await;
-    (index, expired, live)
+    ExpirationFixture {
+        index,
+        expired,
+        live,
+    }
 }
 
 /// A block past its tenant's window loses its index entry, its object and its
@@ -201,8 +223,15 @@ async fn one_expired_and_one_live(
 #[tokio::test]
 async fn an_expired_block_and_its_symbol_database_leave_the_bucket() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (mut index, expired, live) = one_expired_and_one_live(&store).await;
-    let windows = retention(&[("t", 3600)]);
+    let ExpirationFixture {
+        mut index,
+        expired,
+        live,
+    } = one_expired_and_one_live(&store).await;
+    let windows = retention(&[TenantRetention {
+        tenant: "t",
+        window_secs: 3600,
+    }]);
 
     let report = run_lifecycle_pass(
         &store,
@@ -217,8 +246,20 @@ async fn an_expired_block_and_its_symbol_database_leave_the_bucket() {
     check!(report.deletions.sidecars_deleted == 1);
     check!(report.deletions.failures.is_empty());
     check!(block_keys(&index) == vec![live.object_key.clone()]);
-    check!(block_objects_exist(&store, &expired.object_key).await == (false, false));
-    check!(block_objects_exist(&store, &live.object_key).await == (true, true));
+    check!(
+        block_objects_exist(&store, &expired.object_key).await
+            == BlockObjectStatus {
+                block: false,
+                symbol_database: false
+            }
+    );
+    check!(
+        block_objects_exist(&store, &live.object_key).await
+            == BlockObjectStatus {
+                block: true,
+                symbol_database: true
+            }
+    );
 }
 
 /// The expired block must not come back when the pass publishes the snapshot
@@ -227,8 +268,15 @@ async fn an_expired_block_and_its_symbol_database_leave_the_bucket() {
 #[tokio::test]
 async fn an_expired_block_is_not_resurrected_by_the_snapshot_merge() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (mut index, expired, live) = one_expired_and_one_live(&store).await;
-    let windows = retention(&[("t", 3600)]);
+    let ExpirationFixture {
+        mut index,
+        expired,
+        live,
+    } = one_expired_and_one_live(&store).await;
+    let windows = retention(&[TenantRetention {
+        tenant: "t",
+        window_secs: 3600,
+    }]);
 
     run_lifecycle_pass(
         &store,
@@ -258,7 +306,16 @@ async fn two_tenants_are_swept_by_their_own_windows() {
     let long = write_block(&store, &mut index, "long", "b", NOW_MS - 5 * HOUR_MS, 1).await;
     let unlisted = write_block(&store, &mut index, "unlisted", "c", NOW_MS - 5 * HOUR_MS, 2).await;
     publish(&store, &index).await;
-    let windows = retention(&[("short", 3600), ("long", 10 * 3600)]);
+    let windows = retention(&[
+        TenantRetention {
+            tenant: "short",
+            window_secs: 3600,
+        },
+        TenantRetention {
+            tenant: "long",
+            window_secs: 10 * 3600,
+        },
+    ]);
 
     let report = run_lifecycle_pass(
         &store,
@@ -269,10 +326,26 @@ async fn two_tenants_are_swept_by_their_own_windows() {
     .expect("the pass runs");
 
     check!(report.expired == 1);
-    check!(block_objects_exist(&store, &short.object_key).await == (false, false));
-    check!(block_objects_exist(&store, &long.object_key).await == (true, true));
     check!(
-        block_objects_exist(&store, &unlisted.object_key).await == (true, true),
+        block_objects_exist(&store, &short.object_key).await
+            == BlockObjectStatus {
+                block: false,
+                symbol_database: false
+            }
+    );
+    check!(
+        block_objects_exist(&store, &long.object_key).await
+            == BlockObjectStatus {
+                block: true,
+                symbol_database: true
+            }
+    );
+    check!(
+        block_objects_exist(&store, &unlisted.object_key).await
+            == BlockObjectStatus {
+                block: true,
+                symbol_database: true
+            },
         "a tenant with no window configured keeps its blocks forever"
     );
 }
@@ -298,9 +371,27 @@ async fn a_merge_deletes_its_inputs_and_their_symbol_databases() {
 
     assert!(report.compacted.len() == 1);
     let merged = report.compacted[0].object_key.clone();
-    check!(block_objects_exist(&store, &first.object_key).await == (false, false));
-    check!(block_objects_exist(&store, &second.object_key).await == (false, false));
-    check!(block_objects_exist(&store, &merged).await == (true, true));
+    check!(
+        block_objects_exist(&store, &first.object_key).await
+            == BlockObjectStatus {
+                block: false,
+                symbol_database: false
+            }
+    );
+    check!(
+        block_objects_exist(&store, &second.object_key).await
+            == BlockObjectStatus {
+                block: false,
+                symbol_database: false
+            }
+    );
+    check!(
+        block_objects_exist(&store, &merged).await
+            == BlockObjectStatus {
+                block: true,
+                symbol_database: true
+            }
+    );
     check!(block_keys(&index) == vec![merged]);
 
     check_merged_block_answers_alpha_and_bravo(store, index).await;
@@ -393,7 +484,11 @@ async fn the_orphan_sweep_reclaims_only_unreferenced_and_settled_objects() {
     );
     check!(!exists(&store, &orphan).await);
     check!(
-        block_objects_exist(&store, &block.object_key).await == (true, true),
+        block_objects_exist(&store, &block.object_key).await
+            == BlockObjectStatus {
+                block: true,
+                symbol_database: true
+            },
         "the sweep must never take a live block's symbol database"
     );
 }
@@ -466,15 +561,29 @@ async fn a_pass_that_changes_nothing_publishes_no_snapshot() {
 /// sides of one window, so neither answer can be right by accident.
 #[tokio::test]
 async fn the_retention_cutoff_is_counted_in_milliseconds() {
-    for (name, age_ms, want_expired) in [
-        ("half an hour old", HOUR_MS / 2, false),
-        ("two hours old", 2 * HOUR_MS, true),
+    for case in [
+        RetentionCase {
+            name: "half an hour old",
+            age_ms: HOUR_MS / 2,
+            want_expired: false,
+        },
+        RetentionCase {
+            name: "two hours old",
+            age_ms: 2 * HOUR_MS,
+            want_expired: true,
+        },
     ] {
+        let name = case.name;
+        let age_ms = case.age_ms;
+        let want_expired = case.want_expired;
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let mut index = ProfileIndex::new();
         let block = write_block(&store, &mut index, "t", "alpha", NOW_MS - age_ms, 0).await;
         publish(&store, &index).await;
-        let windows = retention(&[("t", 3600)]);
+        let windows = retention(&[TenantRetention {
+            tenant: "t",
+            window_secs: 3600,
+        }]);
 
         let report = run_lifecycle_pass(
             &store,
@@ -485,12 +594,21 @@ async fn the_retention_cutoff_is_counted_in_milliseconds() {
         .expect("the pass runs");
 
         check!((report.expired == 1) == want_expired, "{name}");
-        let want_objects = (!want_expired, !want_expired);
+        let want_objects = BlockObjectStatus {
+            block: !want_expired,
+            symbol_database: !want_expired,
+        };
         check!(
             block_objects_exist(&store, &block.object_key).await == want_objects,
             "{name}"
         );
     }
+}
+
+struct RetentionCase {
+    name: &'static str,
+    age_ms: i64,
+    want_expired: bool,
 }
 
 /// The storage audit restates the symbol database shape, because the block
@@ -500,7 +618,7 @@ async fn the_retention_cutoff_is_counted_in_milliseconds() {
 #[tokio::test]
 async fn the_storage_audit_reads_the_symbol_databases_the_block_builder_writes() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (_index, _expired, _live) = one_expired_and_one_live(&store).await;
+    let _fixture = one_expired_and_one_live(&store).await;
     let mut options = StorageAuditOptions::new(SystemTime::now() + Duration::from_hours(2));
     options.signal = Some(StorageSignal::Profiles);
     options.verify_data = true;
@@ -568,7 +686,10 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
 
     // Compaction, retention and orphan reconciliation: one pass, two hours on,
     // so the orphan is past its one-hour grace.
-    let windows = retention(&[("old", 3600)]);
+    let windows = retention(&[TenantRetention {
+        tenant: "old",
+        window_secs: 3600,
+    }]);
     let report = run_lifecycle_pass(
         &store,
         &mut index,
@@ -599,7 +720,13 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
             }
     );
     for gone in [&first, &second, &old] {
-        check!(block_objects_exist(&store, &gone.object_key).await == (false, false));
+        check!(
+            block_objects_exist(&store, &gone.object_key).await
+                == BlockObjectStatus {
+                    block: false,
+                    symbol_database: false
+                }
+        );
     }
     check!(!exists(&store, &orphan).await);
 

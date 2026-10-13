@@ -1,11 +1,11 @@
 use super::Label;
 
-pub(crate) fn labels_to_proto(labels: &[(String, String)]) -> Vec<Label> {
+pub(crate) fn labels_to_proto(labels: &[krabka_traceql::MetricLabel]) -> Vec<Label> {
     labels
         .iter()
-        .map(|(name, value)| Label {
-            name: name.clone(),
-            value: value.clone(),
+        .map(|label| Label {
+            name: label.key.clone(),
+            value: label.value.clone(),
         })
         .collect()
 }

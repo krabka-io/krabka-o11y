@@ -9,31 +9,26 @@ pub(crate) fn alert_template_variables(
     external_labels: &krabka_blockstore::Labels,
     external_url: &str,
 ) -> BTreeMap<String, TemplateData> {
-    BTreeMap::from([
-        ("value".to_owned(), value),
-        (
-            "labels".to_owned(),
-            TemplateData::ByteLabels(
-                series_labels
-                    .iter()
-                    .map(|(name, value)| (name.clone(), value.as_bytes().to_vec()))
-                    .collect(),
-            ),
-        ),
-        (
-            "externalLabels".to_owned(),
-            TemplateData::ByteLabels(
-                external_labels
-                    .iter()
-                    .map(|(name, value)| (name.clone(), value.as_bytes().to_vec()))
-                    .collect(),
-            ),
-        ),
-        (
-            "externalURL".to_owned(),
-            TemplateData::String(external_url.to_owned()),
-        ),
-    ])
+    let mut variables = BTreeMap::new();
+    variables.insert("value".to_owned(), value);
+    let mut series = BTreeMap::new();
+    for pair in series_labels.iter() {
+        series.insert(pair.name.clone(), pair.value.as_bytes().to_vec());
+    }
+    variables.insert("labels".to_owned(), TemplateData::ByteLabels(series));
+    let mut external = BTreeMap::new();
+    for pair in external_labels.iter() {
+        external.insert(pair.name.to_owned(), pair.value.as_bytes().to_vec());
+    }
+    variables.insert(
+        "externalLabels".to_owned(),
+        TemplateData::ByteLabels(external),
+    );
+    variables.insert(
+        "externalURL".to_owned(),
+        TemplateData::String(external_url.to_owned()),
+    );
+    variables
 }
 
 /// Expands only executed template queries at the rule's evaluation timestamp.
@@ -48,7 +43,9 @@ pub(crate) async fn expand_alert_label_map_async<S: crate::MetricStore>(
     eval_time_ms: i64,
 ) -> BTreeMap<String, crate::PromqlString> {
     let mut expanded = BTreeMap::new();
-    for (name, text) in map {
+    for entry in map {
+        let name = &entry.0;
+        let text = entry.1;
         let result = match LineFormat::new_prometheus(text) {
             Err(error) => Err(error.to_string()),
             Ok(format) => {
@@ -65,7 +62,7 @@ pub(crate) async fn expand_alert_label_map_async<S: crate::MetricStore>(
             }
         };
         expanded.insert(
-            name.clone(),
+            name.to_string(),
             result
                 .unwrap_or_else(|error| format!("<error expanding template: {error}>").into_bytes())
                 .into(),
@@ -114,19 +111,17 @@ pub(crate) fn expand_alert_label_map(
         external_labels,
         external_url,
     );
-    map.iter()
-        .map(|(name, text)| {
-            let expanded = LineFormat::new_prometheus(text)
-                .map_err(|error| error.to_string())
-                .and_then(|format| {
-                    format.render_bytes_with_variables_and_queries(&variables, queries)
-                })
-                .unwrap_or_else(|error| {
-                    format!("<error expanding template: {error}>").into_bytes()
-                });
-            (name.clone(), expanded.into())
-        })
-        .collect()
+    let mut expanded_map = BTreeMap::new();
+    for entry in map {
+        let name = entry.0;
+        let text = entry.1;
+        let expanded = LineFormat::new_prometheus(text)
+            .map_err(|error| error.to_string())
+            .and_then(|format| format.render_bytes_with_variables_and_queries(&variables, queries))
+            .unwrap_or_else(|error| format!("<error expanding template: {error}>").into_bytes());
+        expanded_map.insert(name.clone(), expanded.into());
+    }
+    expanded_map
 }
 
 #[cfg(test)]
@@ -141,32 +136,77 @@ mod tests {
         EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlLabels, test_support::tenant_id,
     };
 
+    struct TemplateEntry {
+        name: &'static str,
+        source: &'static str,
+    }
+
+    struct ExpansionCase {
+        key: &'static str,
+        expected: &'static str,
+    }
+
+    fn template_map(entries: impl IntoIterator<Item = TemplateEntry>) -> BTreeMap<String, String> {
+        let mut map = BTreeMap::new();
+        for entry in entries {
+            map.insert(entry.name.into(), entry.source.into());
+        }
+        map
+    }
+
     #[tokio::test]
     async fn dynamic_and_dependent_queries_resume_only_executed_branches_at_fixed_time() {
         let mut store = InMemoryMetricStore::new();
-        let labels = PromqlLabels::from_pairs([("__name__", "input"), ("job", "api")]);
-        let mut lookup = PromqlLabels::from_pairs([("__name__", "lookup"), ("job", "api")]);
+        let labels = PromqlLabels::from_pairs([
+            krabka_metrics::MetricLabelPair::new("__name__", "input"),
+            krabka_metrics::MetricLabelPair::new("job", "api"),
+        ]);
+        let mut lookup = PromqlLabels::from_pairs([
+            krabka_metrics::MetricLabelPair::new("__name__", "lookup"),
+            krabka_metrics::MetricLabelPair::new("job", "api"),
+        ]);
         lookup.insert("next_query", "nested{job=\"api\"}");
         store.push_float("tenant-a", lookup, 60_000, 7.0);
         store.push_float(
             "tenant-a",
-            PromqlLabels::from_pairs([("__name__", "nested"), ("job", "api")]),
+            PromqlLabels::from_pairs([
+                krabka_metrics::MetricLabelPair::new("__name__", "nested"),
+                krabka_metrics::MetricLabelPair::new("job", "api"),
+            ]),
             60_000,
             9.0,
         );
         store.push_float(
             "tenant-b",
-            PromqlLabels::from_pairs([("__name__", "nested"), ("job", "api")]),
+            PromqlLabels::from_pairs([
+                krabka_metrics::MetricLabelPair::new("__name__", "nested"),
+                krabka_metrics::MetricLabelPair::new("job", "api"),
+            ]),
             60_000,
             999.0,
         );
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-        let map = BTreeMap::from([
-            ("dynamic".into(), r#"{{ query (printf "lookup{job=%q}" $labels.job) | first | value }}"#.into()),
-            ("dependent".into(), r#"{{ if gt (query (printf "lookup{job=%q}" $labels.job) | first | value) 0.0 }}{{ query (query (printf "lookup{job=%q}" $labels.job) | first | label "next_query") | first | value }}{{ else }}wrong{{ end }}"#.into()),
-            ("unexecuted".into(), r#"{{ if false }}{{ query "absent(" }}{{ else }}skipped{{ end }}"#.into()),
-            ("error".into(), r#"{{ query "bad(" | first }}"#.into()),
-            ("clock".into(), "{{ now }}".into()),
+        let map = template_map([
+            TemplateEntry {
+                name: "dynamic",
+                source: r#"{{ query (printf "lookup{job=%q}" $labels.job) | first | value }}"#,
+            },
+            TemplateEntry {
+                name: "dependent",
+                source: r#"{{ if gt (query (printf "lookup{job=%q}" $labels.job) | first | value) 0.0 }}{{ query (query (printf "lookup{job=%q}" $labels.job) | first | label "next_query") | first | value }}{{ else }}wrong{{ end }}"#,
+            },
+            TemplateEntry {
+                name: "unexecuted",
+                source: r#"{{ if false }}{{ query "absent(" }}{{ else }}skipped{{ end }}"#,
+            },
+            TemplateEntry {
+                name: "error",
+                source: r#"{{ query "bad(" | first }}"#,
+            },
+            TemplateEntry {
+                name: "clock",
+                source: "{{ now }}",
+            },
         ]);
         let variables = alert_template_variables(
             krabka_logql::TemplateData::Float(2.0),
@@ -177,16 +217,29 @@ mod tests {
         let expanded =
             expand_alert_label_map_async(&engine, &tenant_id("tenant-a"), &map, &variables, 60_000)
                 .await;
-        for (key, expected) in [
-            ("dynamic", "7"),
-            ("dependent", "9"),
-            ("unexecuted", "skipped"),
-            ("clock", "60"),
+        for case in [
+            ExpansionCase {
+                key: "dynamic",
+                expected: "7",
+            },
+            ExpansionCase {
+                key: "dependent",
+                expected: "9",
+            },
+            ExpansionCase {
+                key: "unexecuted",
+                expected: "skipped",
+            },
+            ExpansionCase {
+                key: "clock",
+                expected: "60",
+            },
         ] {
             assert2::assert!(
-                expanded[key].as_bytes() == expected.as_bytes(),
-                "{key}: {:?}",
-                expanded[key]
+                expanded[case.key].as_bytes() == case.expected.as_bytes(),
+                "{}: {:?}",
+                case.key,
+                expanded[case.key]
             );
         }
         assert2::assert!(
@@ -238,7 +291,9 @@ mod tests {
             ["b", "a"]
                 .into_iter()
                 .map(|job| InstantSample {
-                    labels: PromqlLabels::from_pairs([("job", job)]),
+                    labels: PromqlLabels::from_pairs([krabka_metrics::MetricLabelPair::new(
+                        "job", job,
+                    )]),
                     ts_ms: 60_000,
                     value: SampleValue::Float(1.0),
                     drop_name: false,

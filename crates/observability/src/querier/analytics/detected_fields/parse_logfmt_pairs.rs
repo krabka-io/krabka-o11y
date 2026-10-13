@@ -1,4 +1,10 @@
-pub(crate) fn parse_logfmt_pairs(line: &str) -> Vec<(String, String)> {
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct ParsedLogfmtPair {
+    pub(crate) name: String,
+    pub(crate) value: String,
+}
+
+pub(crate) fn parse_logfmt_pairs(line: &str) -> Vec<ParsedLogfmtPair> {
     let bytes = line.as_bytes();
     let mut pairs = Vec::new();
     let mut index = 0;
@@ -46,7 +52,10 @@ pub(crate) fn parse_logfmt_pairs(line: &str) -> Vec<(String, String)> {
             }
             line[value_start..index].to_string()
         };
-        pairs.push((key.to_string(), value));
+        pairs.push(ParsedLogfmtPair {
+            name: key.to_string(),
+            value,
+        });
     }
     pairs
 }

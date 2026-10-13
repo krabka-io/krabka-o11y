@@ -3,6 +3,12 @@ use std::borrow::Cow;
 use super::{IpMatcher, LineFilterOp, ParseError, Regex, line_matches_pattern};
 
 #[derive(Clone, Debug)]
+struct CompiledRegex {
+    pattern: String,
+    regex: Regex,
+}
+
+#[derive(Clone, Debug)]
 /// A substring, regular-expression, pattern, or IP filter over one log line.
 pub struct LineFilter {
     /// The operation applied to the line.
@@ -10,7 +16,7 @@ pub struct LineFilter {
     /// The original filter pattern.
     pub pattern: String,
     pub(crate) ip_matcher: Option<IpMatcher>,
-    compiled_regex: Option<(String, Regex)>,
+    compiled_regex: Option<CompiledRegex>,
 }
 
 impl LineFilter {
@@ -85,16 +91,19 @@ impl LineFilter {
                 pattern: self.pattern.clone(),
                 source,
             })?;
-            self.compiled_regex = Some((self.pattern.clone(), regex));
+            self.compiled_regex = Some(CompiledRegex {
+                pattern: self.pattern.clone(),
+                regex,
+            });
         }
         Ok(())
     }
 
     pub(crate) fn regex(&self) -> Cow<'_, Regex> {
-        if let Some((pattern, regex)) = &self.compiled_regex
-            && pattern == &self.pattern
+        if let Some(compiled) = &self.compiled_regex
+            && compiled.pattern == self.pattern
         {
-            return Cow::Borrowed(regex);
+            return Cow::Borrowed(&compiled.regex);
         }
         // Public source fields can change after construction. Preserve their
         // current meaning instead of matching with a stale compiled pattern.

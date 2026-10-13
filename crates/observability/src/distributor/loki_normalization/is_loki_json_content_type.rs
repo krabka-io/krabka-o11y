@@ -26,11 +26,13 @@ pub(crate) fn is_loki_json_content_type(headers: &HeaderMap) -> Result<bool, Dis
         if parameter.is_empty() && parameters.peek().is_none() {
             continue;
         }
-        let Some((name, value)) = parameter.split_once('=') else {
+        let Some(parts) = parameter.split_once('=') else {
             return Err(DistributorError::InvalidLokiContentType(
                 content_type.to_string(),
             ));
         };
+        let name = parts.0;
+        let value = parts.1;
         if name.trim().is_empty() || value.trim().is_empty() {
             return Err(DistributorError::InvalidLokiContentType(
                 content_type.to_string(),

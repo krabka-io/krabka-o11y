@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use krabka_blockstore::TenantId;
-use krabka_metrics::{SamplePayload, WalRecord};
+use krabka_metrics::{MetricLabelPair, SamplePayload, WalRecord};
 use krabka_promql::{EngineOpts, MetricStore, PromqlEngine, QueryResult, WalHead};
 
 use crate::{
@@ -16,12 +16,11 @@ async fn production_replay_preserves_queries_offsets_and_decode_rollback() {
     let record = |tenant: &str, timestamp_ms, value, start_timestamp_ms| WalRecord {
         tenant: tenant.into(),
         labels: [
-            ("job", "old"),
-            ("__name__", "up"),
-            ("é", "🦀"),
-            ("job", "api"),
+            MetricLabelPair::new("job", "old".into()),
+            MetricLabelPair::new("__name__", "up".into()),
+            MetricLabelPair::new("é", "🦀".into()),
+            MetricLabelPair::new("job", "api".into()),
         ]
-        .map(|(k, v)| (k.into(), v.into()))
         .into(),
         payload: SamplePayload::Float {
             timestamp_ms,
@@ -119,13 +118,27 @@ async fn production_replay_preserves_queries_offsets_and_decode_rollback() {
             .is_empty()
     );
     let engine = PromqlEngine::new(Arc::new(head), EngineOpts::default());
-    for (tenant, value) in [("tenant-a", 99.0), ("tenant-b", 21.0)] {
+    struct TenantExpectedValue {
+        tenant: &'static str,
+        value: f64,
+    }
+
+    for expected_value in [
+        TenantExpectedValue {
+            tenant: "tenant-a",
+            value: 99.0,
+        },
+        TenantExpectedValue {
+            tenant: "tenant-b",
+            value: 21.0,
+        },
+    ] {
         let expected: QueryResult = serde_json::from_value(serde_json::json!({
-            "InstantVector": [{"labels":{"__name__":"up","job":"api","é":"🦀"},"ts_ms":12_000,"value":{"Float":value}}]
+            "InstantVector": [{"labels":{"__name__":"up","job":"api","é":"🦀"},"ts_ms":12_000,"value":{"Float":expected_value.value}}]
         })).unwrap();
         assert2::assert!(
             engine
-                .query_instant(&TenantId::new(tenant).unwrap(), "up", 12_000)
+                .query_instant(&TenantId::new(expected_value.tenant).unwrap(), "up", 12_000)
                 .await
                 .unwrap()
                 == expected

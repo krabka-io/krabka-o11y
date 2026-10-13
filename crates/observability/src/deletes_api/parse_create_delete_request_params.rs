@@ -1,8 +1,8 @@
 use super::{
-    CreateDeleteRequestParams, HttpQueryError, current_unix_time_ns, decode_form_component,
+    CreateDeleteRequestParams, HttpQueryError, current_unix_time_ns,
     parse_loki_delete_timestamp_query_param, parse_loki_duration_query_param,
-    split_query_param_pairs,
 };
+use crate::http::params::query_parsing::decoded_query_param_pairs;
 
 pub(crate) fn parse_create_delete_request_params(
     raw_query: Option<&str>,
@@ -10,20 +10,18 @@ pub(crate) fn parse_create_delete_request_params(
     let mut query = None;
     let mut start_time = None;
     let mut end_time = None;
-    let Some(raw_query) = raw_query else {
-        return Err(HttpQueryError::MissingQueryParameter("query"));
-    };
-
-    for pair in split_query_param_pairs(raw_query, &["query", "start", "end", "max_interval"]) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = decode_form_component(key)?;
-        let value = decode_form_component(value)?;
-        match key.as_str() {
-            "query" => query = Some(value),
-            "start" => start_time = Some(parse_loki_delete_timestamp_query_param("start", &value)?),
-            "end" => end_time = Some(parse_loki_delete_timestamp_query_param("end", &value)?),
+    for pair in decoded_query_param_pairs(raw_query, &["query", "start", "end", "max_interval"])? {
+        match pair.key.as_str() {
+            "query" => query = Some(pair.value),
+            "start" => {
+                start_time = Some(parse_loki_delete_timestamp_query_param(
+                    "start",
+                    &pair.value,
+                )?)
+            }
+            "end" => end_time = Some(parse_loki_delete_timestamp_query_param("end", &pair.value)?),
             "max_interval" => {
-                parse_loki_duration_query_param("max_interval", &value)?;
+                parse_loki_duration_query_param("max_interval", &pair.value)?;
             }
             _ => {}
         }

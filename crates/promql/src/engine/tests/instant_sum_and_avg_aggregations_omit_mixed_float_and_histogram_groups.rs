@@ -6,9 +6,9 @@ pub(crate) async fn instant_sum_and_avg_aggregations_omit_mixed_float_and_histog
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "mixed_metric"),
-            ("job", "web"),
-            ("instance", "float"),
+            crate::test_support::TestLabelPair::new("__name__", "mixed_metric"),
+            crate::test_support::TestLabelPair::new("job", "web"),
+            crate::test_support::TestLabelPair::new("instance", "float"),
         ]),
         10_000,
         6.0,

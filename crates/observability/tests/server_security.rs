@@ -43,6 +43,9 @@ use tokio::{io::AsyncReadExt as _, net::TcpListener};
 
 #[path = "support/recorded_security_events.rs"]
 mod recorded_security_events;
+#[macro_use]
+#[path = "support/recorded_security_events_impl.rs"]
+mod recorded_security_events_impl;
 #[path = "support/secure_router.rs"]
 mod secure_router;
 #[path = "support/server_security_pki.rs"]
@@ -141,7 +144,12 @@ impl Pki {
 }
 
 /// The principal and peer that one handler saw.
-type Seen = Arc<Mutex<Vec<(Option<Principal>, Option<PeerAddr>)>>>;
+struct SeenRequest {
+    principal: Option<Principal>,
+    peer: Option<PeerAddr>,
+}
+
+type Seen = Arc<Mutex<Vec<SeenRequest>>>;
 
 async fn record(State(seen): State<Seen>, request: Request) -> &'static str {
     let principal = request.extensions().get::<Principal>().cloned();
@@ -151,11 +159,11 @@ async fn record(State(seen): State<Seen>, request: Request) -> &'static str {
         .map(|ConnectInfo(peer)| peer.clone());
     seen.lock()
         .expect("no handler panics while holding the lock")
-        .push((principal, peer));
+        .push(SeenRequest { principal, peer });
     "ok"
 }
 
-fn take(seen: &Seen) -> Vec<(Option<Principal>, Option<PeerAddr>)> {
+fn take(seen: &Seen) -> Vec<SeenRequest> {
     std::mem::take(
         &mut *seen
             .lock()
@@ -187,35 +195,7 @@ async fn serve(security: &ServerSecurity) -> Server {
     Server { addr, seen, stop }
 }
 
-impl SecurityEvents for RecordedEvents {
-    fn authentication_failed(
-        &self,
-        source: Option<SocketAddr>,
-        attempted: Option<AuthMethod>,
-        reason: AuthFailureReason,
-    ) {
-        let source = source.map(|source| source.ip());
-        self.push(format!("failed {source:?} {attempted:?} {reason:?}"));
-    }
-
-    fn authentication_succeeded(
-        &self,
-        source: Option<SocketAddr>,
-        principal: &str,
-        method: AuthMethod,
-    ) {
-        let source = source.map(|source| source.ip());
-        self.push(format!("succeeded {source:?} {principal} {method:?}"));
-    }
-
-    fn tenant_denied(&self, principal: &str, _method: AuthMethod, tenant: &TenantId) {
-        self.push_tenant_denied(principal, tenant);
-    }
-
-    fn admin_denied(&self, principal: &str, _method: AuthMethod) {
-        self.push_admin_denied(principal);
-    }
-}
+impl_recorded_security_events!(|source: Option<SocketAddr>| source.map(|source| source.ip()));
 
 fn credentials_flags(pki: &Pki) -> Vec<String> {
     let yaml = format!(
@@ -270,9 +250,11 @@ async fn an_unconfigured_listener_serves_plain_http_to_an_unauthenticated_princi
     assert!(with_bogus_credential.status() == StatusCode::OK);
     let seen = take(&server.seen);
     assert!(seen.len() == 2);
-    for (principal, peer) in seen {
-        let peer = peer.expect("the router is served with connect info");
-        assert!(principal == Some(Principal::Unauthenticated));
+    for request in seen {
+        let peer = request
+            .peer
+            .expect("the router is served with connect info");
+        assert!(request.principal == Some(Principal::Unauthenticated));
         assert!(
             peer == PeerAddr {
                 socket: SocketAddr::new([127, 0, 0, 1].into(), peer.socket.port()),
@@ -315,7 +297,7 @@ async fn a_tls_listener_serves_a_client_that_trusts_its_ca_and_refuses_plain_htt
     assert!(seen.len() == 1);
     assert!(
         seen[0]
-            .1
+            .peer
             .as_ref()
             .and_then(|peer| peer.client_identity.clone())
             == None
@@ -353,7 +335,7 @@ async fn require_and_verify_client_cert_serves_only_a_certificate_from_the_clien
     let seen = take(&server.seen);
     assert!(seen.len() == 1);
     let identity = seen[0]
-        .1
+        .peer
         .as_ref()
         .and_then(|peer| peer.client_identity.as_deref().cloned());
     assert!(
@@ -390,7 +372,11 @@ async fn request_client_cert_serves_a_client_without_a_certificate_with_no_ident
     assert!(with_certificate.status() == StatusCode::OK);
     let identities: Vec<_> = take(&server.seen)
         .into_iter()
-        .map(|(_, peer)| peer.and_then(|peer| peer.client_identity.as_deref().cloned()))
+        .map(|request| {
+            request
+                .peer
+                .and_then(|peer| peer.client_identity.as_deref().cloned())
+        })
         .collect();
     assert!(
         identities
@@ -534,7 +520,7 @@ async fn each_credential_kind_reaches_the_handler_as_its_principal() {
     assert!(certificate.status() == StatusCode::OK);
     let principals: Vec<_> = take(&server.seen)
         .into_iter()
-        .map(|(principal, _)| principal)
+        .map(|request| request.principal)
         .collect();
     assert!(
         principals
@@ -563,35 +549,43 @@ async fn every_rejected_request_gets_the_same_401_and_one_failure_event() {
     let url = format!("http://{}/whoami", server.addr);
     let client = reqwest::Client::new();
 
+    struct RejectedRequestCase {
+        name: &'static str,
+        request: reqwest::RequestBuilder,
+    }
     let requests = [
-        (
-            "wrong token",
-            client
+        RejectedRequestCase {
+            name: "wrong token",
+            request: client
                 .get(&url)
                 .bearer_auth("grafana-7c1f0e9a4b2d8e6f3a5c7b9d1e0f2a4d"),
-        ),
-        (
-            "wrong basic username",
-            client.get(&url).basic_auth("ops", Some(GRAFANA_TOKEN)),
-        ),
-        ("missing credential", client.get(&url)),
-        (
-            "unknown path",
-            client.get(format!("http://{}/no-such-route", server.addr)),
-        ),
+        },
+        RejectedRequestCase {
+            name: "wrong basic username",
+            request: client.get(&url).basic_auth("ops", Some(GRAFANA_TOKEN)),
+        },
+        RejectedRequestCase {
+            name: "missing credential",
+            request: client.get(&url),
+        },
+        RejectedRequestCase {
+            name: "unknown path",
+            request: client.get(format!("http://{}/no-such-route", server.addr)),
+        },
     ];
-    for (name, request) in requests {
-        let response = request.send().await.expect("the request is answered");
+    for case in requests {
+        let response = case.request.send().await.expect("the request is answered");
         let status = response.status();
         let challenge = response.headers().get(header::WWW_AUTHENTICATE).cloned();
         let body = response.text().await.expect("a body");
-        assert!(status == StatusCode::UNAUTHORIZED, "{name}");
+        assert!(status == StatusCode::UNAUTHORIZED, "{}", case.name);
         assert!(
             challenge.as_ref().map(|value| value.to_str().ok())
                 == Some(Some(r#"Basic realm="krabka", Bearer realm="krabka""#)),
-            "{name}"
+            "{}",
+            case.name
         );
-        assert!(body == "unauthorized\n", "{name}");
+        assert!(body == "unauthorized\n", "{}", case.name);
     }
 
     assert!(take(&server.seen).is_empty());
@@ -632,7 +626,7 @@ async fn ready_and_metrics_skip_authentication_but_post_ready_does_not() {
     assert!(post_ready.expect("answered").status() == StatusCode::UNAUTHORIZED);
     let principals: Vec<_> = take(&server.seen)
         .into_iter()
-        .map(|(principal, _)| principal)
+        .map(|request| request.principal)
         .collect();
     assert!(principals == vec![None, None]);
 }
@@ -707,7 +701,12 @@ impl LogsService for EchoPrincipal {
     }
 }
 
-async fn serve_grpc(security: &ServerSecurity) -> (SocketAddr, CancellationToken) {
+struct GrpcServer {
+    addr: SocketAddr,
+    stop: CancellationToken,
+}
+
+async fn serve_grpc(security: &ServerSecurity) -> GrpcServer {
     let tcp = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
     let listener = ServerListener::bind(tcp, security).expect("the listener binds");
     let addr = listener.local_addr();
@@ -717,7 +716,7 @@ async fn serve_grpc(security: &ServerSecurity) -> (SocketAddr, CancellationToken
         .add_service(LogsServiceServer::new(EchoPrincipal))
         .serve_with_incoming_shutdown(grpc_incoming(listener), stop.clone().cancelled_owned());
     tokio::spawn(server);
-    (addr, stop)
+    GrpcServer { addr, stop }
 }
 
 async fn export(
@@ -746,7 +745,8 @@ async fn export(
 #[tokio::test]
 async fn the_grpc_layer_admits_a_correct_bearer_token_and_refuses_a_wrong_one() {
     let pki = Pki::new();
-    let (addr, _stop) = serve_grpc(&load(&credentials_flags(&pki))).await;
+    let server = serve_grpc(&load(&credentials_flags(&pki))).await;
+    let addr = server.addr;
     let endpoint = || {
         tonic::transport::Endpoint::from_shared(format!("http://{addr}")).expect("a valid endpoint")
     };
@@ -762,7 +762,8 @@ async fn the_grpc_layer_admits_a_correct_bearer_token_and_refuses_a_wrong_one() 
 
 #[tokio::test]
 async fn an_unconfigured_grpc_server_gives_every_request_an_unauthenticated_principal() {
-    let (addr, _stop) = serve_grpc(&load(&[])).await;
+    let server = serve_grpc(&load(&[])).await;
+    let addr = server.addr;
     let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
         .expect("a valid endpoint");
 
@@ -776,7 +777,8 @@ async fn the_grpc_layer_reads_the_verified_client_certificate_over_tls() {
     let pki = Pki::new();
     let mut flags = pki.server_flags("RequireAndVerifyClientCert", "10s");
     flags.extend(credentials_flags(&pki));
-    let (addr, _stop) = serve_grpc(&load(&flags)).await;
+    let server = serve_grpc(&load(&flags)).await;
+    let addr = server.addr;
     let ops_certificate = pki.client("ops", &[]);
     let tls = tonic::transport::ClientTlsConfig::new()
         .ca_certificate(tonic::transport::Certificate::from_pem(pki.authority.pem()))
@@ -849,7 +851,7 @@ async fn the_internal_client_is_served_with_its_identity_and_refused_without_it(
     assert!(refused.is_err());
     let principals: Vec<_> = take(&server.seen)
         .into_iter()
-        .map(|(principal, _)| principal)
+        .map(|request| request.principal)
         .collect();
     assert!(
         principals

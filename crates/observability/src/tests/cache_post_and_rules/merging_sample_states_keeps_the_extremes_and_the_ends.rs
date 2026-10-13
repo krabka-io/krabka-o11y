@@ -20,8 +20,14 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
             max: Some(value(5)),
             ..Default::default()
         },
-        first: Some((10, value(1))),
-        last: Some((10, value(1))),
+        first: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 10,
+            value: value(1),
+        }),
+        last: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 10,
+            value: value(1),
+        }),
         ..Default::default()
     };
     let wide = super::super::prelude::MetricSampleState {
@@ -31,8 +37,14 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
             max: Some(value(9)),
             ..Default::default()
         },
-        first: Some((5, value(2))),
-        last: Some((20, value(3))),
+        first: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 5,
+            value: value(2),
+        }),
+        last: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 20,
+            value: value(3),
+        }),
         ..Default::default()
     };
 
@@ -50,8 +62,22 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
         left.summary.max == Some(value(9)),
         "the larger maximum wins"
     );
-    check!(left.first == Some((5, value(2))), "the earlier first wins");
-    check!(left.last == Some((20, value(3))), "the later last wins");
+    check!(
+        left.first
+            == Some(super::super::prelude::TimestampedMetricValue {
+                timestamp_ns: 5,
+                value: value(2)
+            }),
+        "the earlier first wins"
+    );
+    check!(
+        left.last
+            == Some(super::super::prelude::TimestampedMetricValue {
+                timestamp_ns: 20,
+                value: value(3)
+            }),
+        "the later last wins"
+    );
 
     // Now the other way round, so neither side is simply preferred.
     let mut right = wide;
@@ -65,10 +91,21 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
         "the held maximum survives"
     );
     check!(
-        right.first == Some((5, value(2))),
+        right.first
+            == Some(super::super::prelude::TimestampedMetricValue {
+                timestamp_ns: 5,
+                value: value(2)
+            }),
         "the held first survives"
     );
-    check!(right.last == Some((20, value(3))), "the held last survives");
+    check!(
+        right.last
+            == Some(super::super::prelude::TimestampedMetricValue {
+                timestamp_ns: 20,
+                value: value(3)
+            }),
+        "the held last survives"
+    );
 
     // Matching timestamps on both sides: the value already held stays.
     let mut tied = super::super::prelude::MetricSampleState {
@@ -76,8 +113,14 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
             count: 1,
             ..Default::default()
         },
-        first: Some((10, value(1))),
-        last: Some((10, value(1))),
+        first: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 10,
+            value: value(1),
+        }),
+        last: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 10,
+            value: value(1),
+        }),
         ..Default::default()
     };
     tied.merge(super::super::prelude::MetricSampleState {
@@ -85,16 +128,30 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
             count: 1,
             ..Default::default()
         },
-        first: Some((10, value(7))),
-        last: Some((10, value(7))),
+        first: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 10,
+            value: value(7),
+        }),
+        last: Some(super::super::prelude::TimestampedMetricValue {
+            timestamp_ns: 10,
+            value: value(7),
+        }),
         ..Default::default()
     });
     check!(
-        tied.first == Some((10, value(1))),
+        tied.first
+            == Some(super::super::prelude::TimestampedMetricValue {
+                timestamp_ns: 10,
+                value: value(1)
+            }),
         "a tie keeps the first already held"
     );
     check!(
-        tied.last == Some((10, value(1))),
+        tied.last
+            == Some(super::super::prelude::TimestampedMetricValue {
+                timestamp_ns: 10,
+                value: value(1)
+            }),
         "a tie keeps the last already held"
     );
 }

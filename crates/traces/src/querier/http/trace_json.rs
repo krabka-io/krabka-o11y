@@ -18,12 +18,12 @@ pub(crate) fn trace_json(trace: &TraceSpans, max_trace_spans: usize) -> Value {
         "trace": {
             "resourceSpans": resource_span_groups(trace, returned_spans)
                 .into_iter()
-                .map(|(attrs, spans)| {
+                .map(|group| {
                     json!({
                         "resource": {
-                            "attributes": attrs_json(&attrs),
+                            "attributes": attrs_json(&group.attributes),
                         },
-                        "scopeSpans": scope_spans_json(trace.trace_id, spans),
+                        "scopeSpans": scope_spans_json(trace.trace_id, group.spans),
                     })
                 })
                 .collect::<Vec<_>>(),

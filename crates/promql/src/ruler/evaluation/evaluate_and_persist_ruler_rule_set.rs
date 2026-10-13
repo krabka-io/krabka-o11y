@@ -1,9 +1,11 @@
 use super::{
     AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
-    RulerAlertState, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupStateRecord,
-    RulerStateSink, TenantId,
+    RulerAlertState, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupRef,
+    RulerGroupStateRecord, RulerSinks, RulerStateSink, TenantId,
     evaluate_and_persist_ruler_rule_group::evaluate_and_persist_ruler_rule_group_with_report,
 };
+
+type RulerRuleSet = BTreeMap<String, BTreeMap<String, serde_yaml::Value>>;
 
 /// Evaluates all ruler rule groups for one tenant and persists compactable group state.
 ///
@@ -11,10 +13,10 @@ use super::{
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
 pub async fn evaluate_and_persist_ruler_rule_set<S, W, A, R>(
     engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
+    sinks: RulerSinks<'_, W, A, R>,
     alert_state: &mut RulerAlertState,
     tenant: &TenantId,
-    rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
+    rules: &RulerRuleSet,
     eval_time_ms: i64,
 ) -> Result<RulerGroupEvaluation, PromqlError>
 where
@@ -44,10 +46,10 @@ where
 /// Returns an error when metric input is malformed or a limit is exceeded.
 pub async fn evaluate_and_persist_ruler_rule_set_with_report<S, W, A, R>(
     engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
+    sinks: RulerSinks<'_, W, A, R>,
     alert_state: &mut RulerAlertState,
     tenant: &TenantId,
-    rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
+    rules: &RulerRuleSet,
     eval_time_ms: i64,
 ) -> Result<RulerEvaluationReport, PromqlError>
 where
@@ -56,16 +58,26 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    let (wal_sink, alert_sink, state_sink) = sinks;
+    let wal_sink = sinks.wal;
+    let alert_sink = sinks.alertmanager;
+    let state_sink = sinks.ruler_state;
     let mut total = RulerEvaluationReport::default();
-    for (namespace, namespace_groups) in rules {
-        for (group_name, group) in namespace_groups {
+    for namespace_entry in rules {
+        let namespace = namespace_entry.0;
+        let namespace_groups = namespace_entry.1;
+        for group_entry in namespace_groups {
+            let group_name = group_entry.0;
+            let group = group_entry.1;
             let group_report = evaluate_and_persist_ruler_rule_group_with_report(
                 engine,
-                (wal_sink, alert_sink, state_sink),
+                RulerSinks::new(wal_sink, alert_sink, state_sink),
                 alert_state,
                 tenant,
-                (namespace, group_name, group),
+                RulerGroupRef {
+                    namespace,
+                    group_name,
+                    group,
+                },
                 eval_time_ms,
             )
             .await;

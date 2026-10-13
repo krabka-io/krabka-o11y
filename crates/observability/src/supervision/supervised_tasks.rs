@@ -1,4 +1,4 @@
-use super::{CancellationToken, JoinHandle};
+use super::{CancellationToken, CriticalTaskError, JoinHandle};
 
 /// The background tasks a role cannot serve correct answers without, held by
 /// the role for as long as it serves.
@@ -95,6 +95,17 @@ impl SupervisedTasks {
             self.token.cancel();
             return name;
         }
+    }
+
+    /// Waits for shutdown or a critical task exit, then drains all tasks.
+    pub async fn run_until_shutdown(mut self) -> Result<(), CriticalTaskError> {
+        let token = self.token.clone();
+        let outcome = tokio::select! {
+            () = token.cancelled() => Ok(()),
+            name = self.first_unexpected_exit() => Err(CriticalTaskError(name)),
+        };
+        self.shutdown().await;
+        outcome
     }
 
     /// Cancels the role's token and waits for every supervised task to stop.

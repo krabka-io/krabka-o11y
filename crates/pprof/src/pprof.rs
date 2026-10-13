@@ -65,8 +65,20 @@ mod tests {
         check!(profile.string(1) == Some("cpu"));
         check!(profile.string(-1).is_none());
         check!(profile.string(99).is_none());
-        check!(profile.sample_types() == vec![("cpu".to_string(), "nanoseconds".to_string())]);
-        check!(profile.period_type_strings() == ("wall".to_string(), "milliseconds".to_string()));
+        check!(
+            profile.sample_types()
+                == vec![SampleType {
+                    name: "cpu".to_string(),
+                    unit: "nanoseconds".to_string(),
+                }]
+        );
+        check!(
+            profile.period_type_strings()
+                == SampleType {
+                    name: "wall".to_string(),
+                    unit: "milliseconds".to_string(),
+                }
+        );
         check!(
             profile.samples()
                 == vec![crate::proto::Sample {
@@ -82,4 +94,4 @@ mod tests {
 mod pprof_profile;
 mod profile;
 
-pub use pprof_profile::PprofProfile;
+pub use pprof_profile::{PprofProfile, SampleType};

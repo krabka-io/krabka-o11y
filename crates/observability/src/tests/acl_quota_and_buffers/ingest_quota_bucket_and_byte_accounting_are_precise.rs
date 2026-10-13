@@ -2,15 +2,17 @@ use super::*;
 
 #[test]
 pub(crate) fn ingest_quota_bucket_and_byte_accounting_are_precise() {
+    let mut labels = BTreeMap::new();
+    labels.insert("app".to_string(), "api".to_string());
+    labels.insert("env".to_string(), "prod".to_string());
+    let mut structured_metadata = BTreeMap::new();
+    structured_metadata.insert("trace_id".to_string(), "abc".to_string());
     let record = WalLogRecord {
         tenant: "tenant-a".to_string(),
-        labels: BTreeMap::from([
-            ("app".to_string(), "api".to_string()),
-            ("env".to_string(), "prod".to_string()),
-        ]),
+        labels,
         timestamp_ns: 42,
         line: "hello".to_string(),
-        structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+        structured_metadata,
         position: None,
     };
     let expected_bytes = "tenant-a".len()

@@ -8,8 +8,8 @@ pub struct BlockShape {
     pub lane: String,
     /// The inclusive WAL offset range, when the key names one. A compacted
     /// or rewritten block has none.
-    pub offsets: Option<(i64, i64)>,
+    pub offsets: Option<crate::OffsetRange>,
     /// The inclusive record time range in nanoseconds, when the key names
     /// one. The audit reads it from logs block keys only.
-    pub time_range: Option<(i64, i64)>,
+    pub time_range: Option<crate::log_blockstore::TimeRange>,
 }

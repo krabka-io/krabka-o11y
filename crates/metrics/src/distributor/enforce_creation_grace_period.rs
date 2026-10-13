@@ -9,7 +9,7 @@ pub(crate) fn enforce_creation_grace_period(
     if let Some(timestamp_ms) = series
         .iter()
         .filter_map(sample_timestamp_bounds)
-        .map(|(_, max_timestamp)| max_timestamp)
+        .map(|bounds| bounds.max_ms)
         .max()
         .filter(|timestamp| *timestamp > newest_allowed_ms)
     {

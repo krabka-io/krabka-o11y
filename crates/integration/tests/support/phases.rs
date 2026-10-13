@@ -66,14 +66,25 @@ pub async fn run_signal(kind: SignalKind, ctx: &Context, stores: &Stores) -> Vec
     entries
 }
 
-fn full(ctx: &Context) -> (Duration, Duration) {
-    (ctx.config.warmup, ctx.config.phase)
+struct PhaseDurations {
+    warmup: Duration,
+    measured: Duration,
+}
+
+fn full(ctx: &Context) -> PhaseDurations {
+    PhaseDurations {
+        warmup: ctx.config.warmup,
+        measured: ctx.config.phase,
+    }
 }
 
 /// A load level inside a stepped phase runs for half a phase, so a four-step
 /// search costs two phases, not four.
-fn step(ctx: &Context) -> (Duration, Duration) {
-    (ctx.config.warmup / 2, ctx.config.phase / 2)
+fn step(ctx: &Context) -> PhaseDurations {
+    PhaseDurations {
+        warmup: ctx.config.warmup / 2,
+        measured: ctx.config.phase / 2,
+    }
 }
 
 fn paced(tenant: &'static str, count: u32, series: u32) -> Writers {
@@ -97,14 +108,14 @@ fn readers(ctx: &Context, tenant: &'static str, count: u32) -> Readers {
 
 /// Two paced writers and two readers on one tenant.
 fn steady(ctx: &Context, tenant: &'static str) -> Plan {
-    let (warmup, duration) = full(ctx);
+    let phase = full(ctx);
     Plan {
         writers: vec![paced(tenant, 2, ctx.config.series)],
         readers: vec![readers(ctx, tenant, 2)],
         maintenance: None,
         primary: tenant,
-        warmup,
-        duration,
+        warmup: phase.warmup,
+        duration: phase.measured,
     }
 }
 
@@ -119,7 +130,7 @@ fn during(ctx: &Context, maintenance: Maintenance) -> Plan {
 /// No writes. Every query reloads the index, builds a new engine, and reads
 /// every block the earlier phases wrote.
 fn cold_blocks(ctx: &Context) -> Plan {
-    let (warmup, duration) = full(ctx);
+    let phase = full(ctx);
     Plan {
         writers: Vec::new(),
         readers: vec![Readers {
@@ -131,15 +142,15 @@ fn cold_blocks(ctx: &Context) -> Plan {
         }],
         maintenance: None,
         primary: TENANT,
-        warmup,
-        duration,
+        warmup: phase.warmup,
+        duration: phase.measured,
     }
 }
 
 /// Steps unpaced writers up until a level misses an objective, and reports
 /// the highest level that met them all.
 async fn burst(ctx: &Context) -> Value {
-    let (warmup, duration) = step(ctx);
+    let phase = step(ctx);
     let mut levels = Vec::new();
     for &level in &ctx.config.burst_levels {
         let plan = Plan {
@@ -155,12 +166,12 @@ async fn burst(ctx: &Context) -> Value {
             }],
             maintenance: None,
             primary: TENANT,
-            warmup,
-            duration,
+            warmup: phase.warmup,
+            duration: phase.measured,
         };
         let entry = runner::run(ctx, &plan).await;
         let met = entry["objectives_met"].as_bool().unwrap_or(false);
-        levels.push((level, entry));
+        levels.push(SteppedLevel { level, entry });
         if !met {
             break;
         }
@@ -170,18 +181,21 @@ async fn burst(ctx: &Context) -> Value {
 
 /// Steps the series per batch up, with the steady writers and readers.
 async fn high_cardinality(ctx: &Context) -> Value {
-    let (warmup, duration) = step(ctx);
+    let phase = step(ctx);
     let mut levels = Vec::new();
     for &series in &ctx.config.cardinality_steps {
         let plan = Plan {
             writers: vec![paced(TENANT, 1, series)],
-            warmup,
-            duration,
+            warmup: phase.warmup,
+            duration: phase.measured,
             ..steady(ctx, TENANT)
         };
         let entry = runner::run(ctx, &plan).await;
         let met = entry["objectives_met"].as_bool().unwrap_or(false);
-        levels.push((series, entry));
+        levels.push(SteppedLevel {
+            level: series,
+            entry,
+        });
         if !met {
             break;
         }
@@ -192,40 +206,45 @@ async fn high_cardinality(ctx: &Context) -> Value {
 /// Folds a stepped search into one entry. The top-level numbers are the
 /// highest level that met every objective, or the first level when none did,
 /// and `levels` keeps every step.
-fn stepped(levels: Vec<(u32, Value)>, unit: &str) -> Value {
+struct SteppedLevel {
+    level: u32,
+    entry: Value,
+}
+
+fn stepped(levels: Vec<SteppedLevel>, unit: &str) -> Value {
     let saturated = levels
         .iter()
         .rev()
-        .find(|(_, entry)| entry["objectives_met"].as_bool().unwrap_or(false));
+        .find(|level| level.entry["objectives_met"].as_bool().unwrap_or(false));
     let limited = levels
         .iter()
-        .find(|(_, entry)| !entry["objectives_met"].as_bool().unwrap_or(false))
-        .map(|(level, _)| *level);
+        .find(|level| !level.entry["objectives_met"].as_bool().unwrap_or(false))
+        .map(|level| level.level);
     let mut entry = saturated
         .or(levels.first())
-        .map_or(Value::Null, |(_, entry)| entry.clone());
+        .map_or(Value::Null, |level| level.entry.clone());
     entry["saturation"] = json!({
         "unit": unit,
-        "level": saturated.map(|(level, _)| *level),
-        "accepted_rows_per_sec": saturated.map(|(_, e)| e["ingest"]["accepted_rows_per_sec"].clone()),
+        "level": saturated.map(|level| level.level),
+        "accepted_rows_per_sec": saturated.map(|level| level.entry["ingest"]["accepted_rows_per_sec"].clone()),
         "first_failing_level": limited,
-        "status": match (saturated, limited) {
-            (Some(_), Some(_)) => "saturated",
-            (Some(_), None) => "not_reached",
-            (None, _) => "below_first_level",
+        "status": if saturated.is_some() {
+            if limited.is_some() { "saturated" } else { "not_reached" }
+        } else {
+            "below_first_level"
         },
     });
     entry["levels"] = levels
         .into_iter()
-        .map(|(level, e)| {
+        .map(|step| {
             json!({
-                "level": level,
-                "objectives_met": e["objectives_met"],
-                "error_rate": e["error_rate"],
-                "accepted_rows_per_sec": e["ingest"]["accepted_rows_per_sec"],
-                "write_p99_us": e["ingest"]["latency_us"]["p99"],
-                "query_p99_us": e["query"]["latency_us"]["p99"],
-                "rss_kib": e["rss_kib"],
+                "level": step.level,
+                "objectives_met": step.entry["objectives_met"],
+                "error_rate": step.entry["error_rate"],
+                "accepted_rows_per_sec": step.entry["ingest"]["accepted_rows_per_sec"],
+                "write_p99_us": step.entry["ingest"]["latency_us"]["p99"],
+                "query_p99_us": step.entry["query"]["latency_us"]["p99"],
+                "rss_kib": step.entry["rss_kib"],
                 "object_store": e["object_store"],
             })
         })
@@ -236,7 +255,7 @@ fn stepped(levels: Vec<(u32, Value)>, unit: &str) -> Value {
 /// A quiet tenant at the steady rate beside a noisy one writing unpaced into
 /// its rate limit. The entry's numbers are the quiet tenant's.
 async fn noisy_tenant(ctx: &Context) -> Value {
-    let (warmup, duration) = full(ctx);
+    let phase = full(ctx);
     let rows = ctx.config.noisy_rows_per_sec;
     ctx.signal.limit(NOISY, rows, u64::from(rows));
     let plan = Plan {
@@ -252,8 +271,8 @@ async fn noisy_tenant(ctx: &Context) -> Value {
         readers: vec![readers(ctx, QUIET, 2), readers(ctx, NOISY, 2)],
         maintenance: None,
         primary: QUIET,
-        warmup,
-        duration,
+        warmup: phase.warmup,
+        duration: phase.measured,
     };
     let mut entry = runner::run(ctx, &plan).await;
     entry["noisy_limit_rows_per_sec"] = json!(rows);

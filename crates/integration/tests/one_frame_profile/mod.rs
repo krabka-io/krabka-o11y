@@ -1,6 +1,6 @@
 // The symbol table of a profile whose every sample is one frame.
 
-use krabka_profiles::wal::{WalFunction, WalLocation, WalMapping, WalSymbolSet};
+use krabka_profiles::wal::{WalFunction, WalLine, WalLocation, WalMapping, WalSymbolSet};
 
 // One function named `frame`, at one location, in one unnamed mapping.
 pub fn one_frame_symbols(frame: &str) -> WalSymbolSet {
@@ -15,7 +15,10 @@ pub fn one_frame_symbols(frame: &str) -> WalSymbolSet {
         locations: vec![WalLocation {
             address: 0x1000,
             mapping_id: 0,
-            lines: vec![(0, 10)],
+            lines: vec![WalLine {
+                function_id: 0,
+                line: 10,
+            }],
         }],
         mappings: vec![WalMapping {
             memory_start: 0,

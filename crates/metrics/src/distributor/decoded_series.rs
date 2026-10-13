@@ -1,11 +1,12 @@
 use super::{DecodedSample, DecodedSeries};
 
 pub(crate) fn decoded_series(
-    labels: Vec<(String, String)>,
+    labels: Vec<krabka_blockstore::LabelPair>,
     sample: Option<DecodedSample>,
 ) -> DecodedSeries {
+    let decoded_labels = krabka_blockstore::Labels::from_pairs(labels);
     DecodedSeries {
-        labels: labels.into_iter().collect(),
+        labels: decoded_labels,
         samples: sample.into_iter().collect(),
         histograms: Vec::new(),
         exemplars: Vec::new(),

@@ -7,42 +7,73 @@ pub(super) enum Literal {
     Signed(i64),
     Unsigned(u64),
     Float(u64),
-    Complex(u64, u64),
+    Complex { real_bits: u64, imaginary_bits: u64 },
+}
+
+struct RadixDigits<'a> {
+    radix: u32,
+    digits: &'a str,
+    prefix: bool,
+}
+
+struct MantissaExponent<'a> {
+    mantissa: &'a str,
+    exponent: Option<&'a str>,
+}
+
+struct ComplexComponents {
+    real: f64,
+    imaginary: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IntegerLiteral {
+    negative: bool,
+    magnitude: u64,
 }
 
 pub(super) fn literal(text: &str) -> Option<Literal> {
     if let Some(imaginary) = text.strip_suffix('i') {
-        let split = imaginary
-            .char_indices()
-            .filter(|(index, ch)| {
-                *index > 0
-                    && matches!(ch, '+' | '-')
-                    && !matches!(imaginary.as_bytes()[index - 1], b'e' | b'E' | b'p' | b'P')
-            })
-            .map(|(index, _)| index)
-            .next_back();
-        let (real, imaginary) = if let Some(split) = split {
-            (
-                parse_float(&imaginary[..split])?,
-                parse_float(&imaginary[split..])?,
-            )
+        let mut split = None;
+        for index in (0..imaginary.len()).rev() {
+            let byte = imaginary.as_bytes()[index];
+            if index > 0
+                && matches!(byte, b'+' | b'-')
+                && !matches!(imaginary.as_bytes()[index - 1], b'e' | b'E' | b'p' | b'P')
+            {
+                split = Some(index);
+                break;
+            }
+        }
+        let components = if let Some(split) = split {
+            ComplexComponents {
+                real: parse_float(&imaginary[..split])?,
+                imaginary: parse_float(&imaginary[split..])?,
+            }
         } else {
-            (0.0, parse_float(imaginary)?)
+            ComplexComponents {
+                real: 0.0,
+                imaginary: parse_float(imaginary)?,
+            }
         };
-        return (real.is_finite() && imaginary.is_finite())
-            .then_some(Literal::Complex(real.to_bits(), imaginary.to_bits()));
+        return (components.real.is_finite() && components.imaginary.is_finite()).then_some(
+            Literal::Complex {
+                real_bits: components.real.to_bits(),
+                imaginary_bits: components.imaginary.to_bits(),
+            },
+        );
     }
-    if let Some((negative, magnitude)) = integer(text) {
-        if negative {
-            if magnitude <= 1u64 << 63 {
+    if let Some(integer) = integer(text) {
+        if integer.negative {
+            if integer.magnitude <= 1u64 << 63 {
                 return Some(Literal::Signed(
-                    i64::from_ne_bytes(magnitude.to_ne_bytes()).wrapping_neg(),
+                    i64::from_ne_bytes(integer.magnitude.to_ne_bytes()).wrapping_neg(),
                 ));
             }
-        } else if let Ok(value) = i64::try_from(magnitude) {
+        } else if let Ok(value) = i64::try_from(integer.magnitude) {
             return Some(Literal::Signed(value));
         } else {
-            return Some(Literal::Unsigned(magnitude));
+            return Some(Literal::Unsigned(integer.magnitude));
         }
         return None;
     }
@@ -55,27 +86,49 @@ pub(super) fn literal(text: &str) -> Option<Literal> {
     float.is_finite().then_some(Literal::Float(float.to_bits()))
 }
 
-fn integer(text: &str) -> Option<(bool, u64)> {
+fn integer(text: &str) -> Option<IntegerLiteral> {
     let negative = text.starts_with('-');
     let text = text.strip_prefix(['+', '-']).unwrap_or(text);
-    let (radix, digits, prefix) =
-        if let Some(value) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-            (16, value, true)
-        } else if let Some(value) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
-            (8, value, true)
-        } else if let Some(value) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
-            (2, value, true)
-        } else if text.len() > 1 && text.starts_with('0') {
-            (8, text, false)
-        } else {
-            (10, text, false)
-        };
-    if !underscores(digits, radix, prefix) {
+    let parts = if let Some(value) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        RadixDigits {
+            radix: 16,
+            digits: value,
+            prefix: true,
+        }
+    } else if let Some(value) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+        RadixDigits {
+            radix: 8,
+            digits: value,
+            prefix: true,
+        }
+    } else if let Some(value) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+        RadixDigits {
+            radix: 2,
+            digits: value,
+            prefix: true,
+        }
+    } else if text.len() > 1 && text.starts_with('0') {
+        RadixDigits {
+            radix: 8,
+            digits: text,
+            prefix: false,
+        }
+    } else {
+        RadixDigits {
+            radix: 10,
+            digits: text,
+            prefix: false,
+        }
+    };
+    if !underscores(parts.digits, parts.radix, parts.prefix) {
         return None;
     }
-    u64::from_str_radix(&digits.replace('_', ""), radix)
+    u64::from_str_radix(&parts.digits.replace('_', ""), parts.radix)
         .ok()
-        .map(|value| (negative, value))
+        .map(|magnitude| IntegerLiteral {
+            negative,
+            magnitude,
+        })
 }
 
 /// Parses a binary64 value with Go's `strconv.ParseFloat` syntax and rounding.
@@ -102,27 +155,18 @@ pub fn parse_float(text: &str) -> Option<f64> {
     {
         return hexadecimal(hex, negative).filter(|value| value.is_finite());
     }
-    let (mantissa, exponent) = value
-        .split_once(['e', 'E'])
-        .map_or((value, None), |(mantissa, exponent)| {
-            (mantissa, Some(exponent))
-        });
-    if !underscores(mantissa, 10, false) || mantissa.matches('.').count() > 1 {
+    let parts = split_exponent(value, b"eE");
+    if !underscores(parts.mantissa, 10, false) || parts.mantissa.matches('.').count() > 1 {
         return None;
     }
-    if let Some(exponent) = exponent {
-        let exponent = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
-        if exponent.is_empty()
-            || !underscores(exponent, 10, false)
-            || !exponent.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
-        {
-            return None;
-        }
+    if let Some(exponent) = parts.exponent {
+        parse_exponent(exponent)?;
     }
-    if !mantissa
+    if !parts
+        .mantissa
         .chars()
         .all(|ch| ch.is_ascii_digit() || matches!(ch, '_' | '.'))
-        || !mantissa.chars().any(|ch| ch.is_ascii_digit())
+        || !parts.mantissa.chars().any(|ch| ch.is_ascii_digit())
     {
         return None;
     }
@@ -134,47 +178,46 @@ pub fn parse_float(text: &str) -> Option<f64> {
 
 fn underscores(value: &str, radix: u32, prefix: bool) -> bool {
     let digit = |byte: u8| char::from(byte).is_digit(radix);
-    value.as_bytes().iter().enumerate().all(|(index, byte)| {
-        *byte != b'_'
-            || (value
+    for index in 0..value.len() {
+        if value.as_bytes()[index] == b'_' {
+            let next_is_digit = value
                 .as_bytes()
                 .get(index + 1)
-                .is_some_and(|byte| digit(*byte))
-                && (if index == 0 {
-                    prefix
-                } else {
-                    digit(value.as_bytes()[index - 1])
-                }))
-    })
+                .is_some_and(|byte| digit(*byte));
+            let previous_is_digit = if index == 0 {
+                prefix
+            } else {
+                digit(value.as_bytes()[index - 1])
+            };
+            if !next_is_digit || !previous_is_digit {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn split_exponent<'a>(text: &'a str, markers: &[u8]) -> MantissaExponent<'a> {
+    let separator = text.bytes().position(|byte| markers.contains(&byte));
+    match separator {
+        Some(index) => MantissaExponent {
+            mantissa: &text[..index],
+            exponent: Some(&text[index + 1..]),
+        },
+        None => MantissaExponent {
+            mantissa: text,
+            exponent: None,
+        },
+    }
 }
 
 fn hexadecimal(hex: &str, negative: bool) -> Option<f64> {
-    let (mantissa, exponent) = hex.split_once(['p', 'P'])?;
+    let parts = split_exponent(hex, b"pP");
+    let mantissa = parts.mantissa;
+    let exponent = parse_exponent(parts.exponent?)?;
     if !underscores(mantissa, 16, true) || mantissa.matches('.').count() > 1 {
         return None;
     }
-    let exponent_negative = exponent.starts_with('-');
-    let exponent = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
-    if exponent.is_empty()
-        || !underscores(exponent, 10, false)
-        || !exponent.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
-    {
-        return None;
-    }
-    let exponent = exponent
-        .chars()
-        .filter(|ch| *ch != '_')
-        .fold(0i64, |value, ch| {
-            value
-                .saturating_mul(10)
-                .saturating_add(i64::from(ch.to_digit(10).expect("decimal exponent")))
-                .min(100_000)
-        });
-    let exponent = if exponent_negative {
-        -exponent
-    } else {
-        exponent
-    };
     let mut digits = 0i64;
     let mut point = None;
     let mut leading = 0i64;
@@ -225,6 +268,27 @@ fn hexadecimal(hex: &str, negative: bool) -> Option<f64> {
     };
     Some(f64::from_bits(sign | rounded))
 }
+
+fn parse_exponent(text: &str) -> Option<i64> {
+    let negative = text.starts_with('-');
+    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
+    if digits.is_empty()
+        || !underscores(digits, 10, false)
+        || !digits.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+    {
+        return None;
+    }
+    let magnitude = digits
+        .chars()
+        .filter(|ch| *ch != '_')
+        .fold(0i64, |value, ch| {
+            value
+                .saturating_mul(10)
+                .saturating_add(i64::from(ch.to_digit(10).expect("decimal exponent")))
+                .min(100_000)
+        });
+    Some(if negative { -magnitude } else { magnitude })
+}
 fn round(bits: u64, shift: i64, sticky: bool) -> u64 {
     if shift <= 0 {
         return bits << u32::try_from(-shift).expect("bounded significand shift");
@@ -247,19 +311,28 @@ mod tests {
     use super::*;
     #[test]
     fn hexadecimal_float_rounding_matches_independent_go_bit_patterns() {
-        for (text, bits) in [
-            ("0x1.00000000000008p0", 0x3ff0_0000_0000_0000),
-            ("0x1.00000000000008001p0", 0x3ff0_0000_0000_0001),
-            ("0x1.00000000000018p0", 0x3ff0_0000_0000_0002),
-            ("0x0.0000000000001p-1022", 1),
-            ("0x0.00000000000008p-1022", 0),
-            ("0x0.00000000000008001p-1022", 1),
-            ("0x1.fffffffffffffp1023", 0x7fef_ffff_ffff_ffff),
-            ("-0x0p-100000", 0x8000_0000_0000_0000),
-            ("1_2.3_4e5_6", 0x4bc9_29c7_d37d_0d30),
-        ] {
-            assert2::check!(parse_float(text).unwrap().to_bits() == bits);
-        }
+        assert2::check!(
+            parse_float("0x1.00000000000008p0").unwrap().to_bits() == 0x3ff0_0000_0000_0000
+        );
+        assert2::check!(
+            parse_float("0x1.00000000000008001p0").unwrap().to_bits() == 0x3ff0_0000_0000_0001
+        );
+        assert2::check!(
+            parse_float("0x1.00000000000018p0").unwrap().to_bits() == 0x3ff0_0000_0000_0002
+        );
+        assert2::check!(parse_float("0x0.0000000000001p-1022").unwrap().to_bits() == 1);
+        assert2::check!(parse_float("0x0.00000000000008p-1022").unwrap().to_bits() == 0);
+        assert2::check!(
+            parse_float("0x0.00000000000008001p-1022")
+                .unwrap()
+                .to_bits()
+                == 1
+        );
+        assert2::check!(
+            parse_float("0x1.fffffffffffffp1023").unwrap().to_bits() == 0x7fef_ffff_ffff_ffff
+        );
+        assert2::check!(parse_float("-0x0p-100000").unwrap().to_bits() == 0x8000_0000_0000_0000);
+        assert2::check!(parse_float("1_2.3_4e5_6").unwrap().to_bits() == 0x4bc9_29c7_d37d_0d30);
         for text in [
             "0x1.fffffffffffff8p1023",
             "0x1p+100000",
@@ -286,10 +359,18 @@ mod tests {
         assert2::check!(literal("0755") == Some(Literal::Signed(493)));
         assert2::check!(literal("0x_1.fp2") == Some(Literal::Float(7.75f64.to_bits())));
         assert2::check!(
-            literal("2i") == Some(Literal::Complex(0.0f64.to_bits(), 2.0f64.to_bits()))
+            literal("2i")
+                == Some(Literal::Complex {
+                    real_bits: 0.0f64.to_bits(),
+                    imaginary_bits: 2.0f64.to_bits()
+                })
         );
         assert2::check!(
-            literal("1+2i") == Some(Literal::Complex(1.0f64.to_bits(), 2.0f64.to_bits()))
+            literal("1+2i")
+                == Some(Literal::Complex {
+                    real_bits: 1.0f64.to_bits(),
+                    imaginary_bits: 2.0f64.to_bits()
+                })
         );
         assert2::check!(literal("9223372036854775808") == Some(Literal::Unsigned(1u64 << 63)));
         assert2::check!(literal("18446744073709551615") == Some(Literal::Unsigned(u64::MAX)));

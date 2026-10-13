@@ -32,6 +32,11 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../blockstore/tests/support/compaction_levels.rs"
+    ));
+
     use std::sync::Arc;
 
     use assert2::{assert, check};
@@ -39,6 +44,16 @@ mod tests {
     use krabka_pprof::{EngineOpts, FlameEngine, ProfileStore};
     use krabka_units::{days, hours};
     use object_store::{ObjectStore, memory::InMemory};
+
+    struct TenantSegmentCase {
+        tenant: &'static str,
+        segment: &'static str,
+    }
+    struct WindowCase {
+        name: &'static str,
+        second_min_ts: i64,
+        expected_jobs: usize,
+    }
 
     /// The compacted object key spans the whole job -- the earliest start and
     /// the latest end across every input -- and names the level the output
@@ -79,9 +94,22 @@ mod tests {
     // segment the block-builder writes, and the unescape gives the tenant back.
     #[test]
     fn a_compacted_key_escapes_the_tenant_into_one_segment() {
-        for (tenant, segment) in [("a*b", "a!2Ab"), ("a!b", "a!21b"), ("tenant-a", "tenant-a")] {
+        for case in [
+            TenantSegmentCase {
+                tenant: "a*b",
+                segment: "a!2Ab",
+            },
+            TenantSegmentCase {
+                tenant: "a!b",
+                segment: "a!21b",
+            },
+            TenantSegmentCase {
+                tenant: "tenant-a",
+                segment: "tenant-a",
+            },
+        ] {
             let job = CompactionJob {
-                tenant: tenant.to_string(),
+                tenant: case.tenant.to_string(),
                 input_keys: vec!["a".to_string()],
                 output_level: BlockLevel(1),
                 min_ts: 100,
@@ -89,19 +117,22 @@ mod tests {
                 row_count: 0,
             };
             let key = super::compacted_key(&job);
-            let block_key = crate::blockbuilder::object_key(tenant, 0, 1, 2, 100, 500);
+            let block_key = crate::blockbuilder::object_key(case.tenant, 0, 1, 2, 100, 500);
 
             let path = Path::from(key.as_str());
             let parts: Vec<_> = path.parts().collect();
             check!(parts.len() == 4, "{key}");
-            check!(parts.get(1).map(|part| part.as_ref().to_string()) == Some(segment.to_string()));
             check!(
-                block_key.split('/').nth(1) == Some(segment),
+                parts.get(1).map(|part| part.as_ref().to_string())
+                    == Some(case.segment.to_string())
+            );
+            check!(
+                block_key.split('/').nth(1) == Some(case.segment),
                 "the block-builder writes the same segment"
             );
             check!(
-                krabka_blockstore::unescape_object_path_segment(segment)
-                    == Some(tenant.to_string())
+                krabka_blockstore::unescape_object_path_segment(case.segment)
+                    == Some(case.tenant.to_string())
             );
         }
     }
@@ -286,24 +317,24 @@ mod tests {
             "t",
             0,
             &[
-                (
-                    crate::wal::WalPosition {
+                crate::blockbuilder::PositionedProfileRecord::new(
+                    Some(crate::wal::WalPosition {
                         partition: 0,
                         offset: 0,
                         record_hash: [42; 32],
-                    },
+                    }),
                     rec_a.clone(),
                 ),
-                (
-                    crate::wal::WalPosition {
+                crate::blockbuilder::PositionedProfileRecord::new(
+                    Some(crate::wal::WalPosition {
                         partition: 0,
                         offset: 1,
                         record_hash: [42; 32],
-                    },
+                    }),
                     rec_b.clone(),
                 ),
             ],
-            (0, 1),
+            krabka_blockstore::OffsetRange::new(0, 1),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
@@ -313,15 +344,15 @@ mod tests {
             &store,
             "t",
             0,
-            &[(
-                crate::wal::WalPosition {
+            &[crate::blockbuilder::PositionedProfileRecord::new(
+                Some(crate::wal::WalPosition {
                     partition: 0,
                     offset: 2,
                     record_hash: [42; 32],
-                },
+                }),
                 rec_c.clone(),
             )],
-            (2, 2),
+            krabka_blockstore::OffsetRange::new(2, 2),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
@@ -349,7 +380,7 @@ mod tests {
         let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
         let hot = crate::hot_store::WalTailProfileStore::new();
         hot.append_records_with_positions([
-            (
+            crate::hot_store::PositionedWalRecord::new(
                 rec_a,
                 Some(crate::wal::WalPosition {
                     partition: 0,
@@ -357,7 +388,7 @@ mod tests {
                     record_hash: [42; 32],
                 }),
             ),
-            (
+            crate::hot_store::PositionedWalRecord::new(
                 rec_b,
                 Some(crate::wal::WalPosition {
                     partition: 0,
@@ -365,7 +396,7 @@ mod tests {
                     record_hash: [42; 32],
                 }),
             ),
-            (
+            crate::hot_store::PositionedWalRecord::new(
                 rec_c,
                 Some(crate::wal::WalPosition {
                     partition: 0,
@@ -443,13 +474,15 @@ mod tests {
         let mut index = ProfileIndex::new();
 
         let mut metas = Vec::new();
-        for (idx, rec) in [&rec_a, &rec_b, &rec_c, &rec_d].into_iter().enumerate() {
+        let mut idx = 0;
+        for rec in [&rec_a, &rec_b, &rec_c, &rec_d] {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
             index
                 .add_series("t", labels.fingerprint(), &labels)
                 .unwrap();
             let offset = i64::try_from(idx).unwrap();
-            let bounds = (offset, offset);
+            idx += 1;
+            let bounds = krabka_blockstore::OffsetRange::new(offset, offset);
             let meta = build_block(
                 &store,
                 "t",
@@ -554,11 +587,11 @@ mod tests {
         let map = destination_partitions(1, &sources).unwrap();
         let base = 2_u64 << 32;
         assert!(
-            map == BTreeMap::from([
-                (1_u64 << 32, base),
-                (2_u64 << 32, base | 1),
-                (3_u64 << 32, base | 2),
-            ])
+            map == maplit::btreemap! {
+                1_u64 << 32 => base,
+                2_u64 << 32 => base | 1,
+                3_u64 << 32 => base | 2,
+            }
         );
         let dests: BTreeSet<u64> = map.values().copied().collect();
         assert!(dests.len() == 3);
@@ -585,7 +618,7 @@ mod tests {
         .unwrap();
 
         let remapped =
-            remap_partitions(&batch, &BTreeMap::from([(7_u64, 42_u64)])).expect("remaps");
+            remap_partitions(&batch, &maplit::btreemap! { 7_u64 => 42_u64 }).expect("remaps");
 
         let column = remapped.column(0).as_primitive::<UInt64Type>();
         let values = (0..remapped.num_rows())
@@ -634,26 +667,38 @@ mod tests {
             BlockTimestampUnit::Millis,
         );
 
-        for (name, second_min_ts, want_jobs) in [
-            ("inside one window", 1_000_i64, 1),
-            ("three hours apart", THREE_HOURS_MS, 0),
+        for case in [
+            WindowCase {
+                name: "inside one window",
+                second_min_ts: 1_000_i64,
+                expected_jobs: 1,
+            },
+            WindowCase {
+                name: "three hours apart",
+                second_min_ts: THREE_HOURS_MS,
+                expected_jobs: 0,
+            },
         ] {
             let mut index = ProfileIndex::new();
             index.replace_profile_blocks(
                 "t",
                 &[],
                 &[
-                    (meta("a.parquet", 0, 500, 1), vec![0]),
-                    (
-                        meta("b.parquet", second_min_ts, second_min_ts + 500, 1),
-                        vec![0],
-                    ),
+                    krabka_blockstore::ProfileBlockRegistration {
+                        meta: meta("a.parquet", 0, 500, 1),
+                        partitions: vec![0],
+                    },
+                    krabka_blockstore::ProfileBlockRegistration {
+                        meta: meta("b.parquet", case.second_min_ts, case.second_min_ts + 500, 1),
+                        partitions: vec![0],
+                    },
                 ],
             );
 
             check!(
-                plan_compactions(&index, policy).len() == want_jobs,
-                "{name}"
+                plan_compactions(&index, policy).len() == case.expected_jobs,
+                "{}",
+                case.name
             );
         }
     }
@@ -665,8 +710,14 @@ mod tests {
             "t",
             &[],
             &[
-                (meta("b.parquet", 10, 20, 1), vec![0]),
-                (meta("a.parquet", 0, 5, 1), vec![0]),
+                krabka_blockstore::ProfileBlockRegistration {
+                    meta: meta("b.parquet", 10, 20, 1),
+                    partitions: vec![0],
+                },
+                krabka_blockstore::ProfileBlockRegistration {
+                    meta: meta("a.parquet", 0, 5, 1),
+                    partitions: vec![0],
+                },
             ],
         );
 
@@ -711,12 +762,9 @@ mod tests {
             }
             passes += 1;
             assert!(passes <= 4, "compaction did not converge");
-            levels.push(
-                metas
-                    .iter()
-                    .map(|meta| index.block_level(&meta.object_key))
-                    .collect::<Vec<_>>(),
-            );
+            levels.push(block_levels(&metas, |meta| {
+                index.block_level(&meta.object_key)
+            }));
         }
 
         // Four blocks pair into two at level 1, then into one at level 2,

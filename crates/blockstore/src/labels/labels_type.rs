@@ -1,5 +1,36 @@
 use super::{BTreeMap, Deserialize, Serialize, SeriesFingerprint};
 
+/// A label name and its value.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct LabelPair {
+    pub name: String,
+    pub value: String,
+}
+
+/// A borrowed label name and value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LabelPairRef<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+}
+
+impl LabelPair {
+    #[must_use]
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+}
+
+/// A series fingerprint together with its labels.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SeriesLabels {
+    pub fingerprint: SeriesFingerprint,
+    pub labels: Labels,
+}
+
 /// An ordered set of `name -> value` labels identifying a series.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Labels(pub(crate) BTreeMap<String, String>);
@@ -10,17 +41,25 @@ impl Labels {
         Self(BTreeMap::new())
     }
 
-    /// Builds a label set from an iterator of `(name, value)` pairs.
+    /// Builds a label set from named label pairs.
     #[must_use]
-    pub fn from_pairs<I, K, V>(pairs: I) -> Self
+    pub fn from_pairs<I>(pairs: I) -> Self
     where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
+        I: IntoIterator<Item = LabelPair>,
     {
         let mut labels = Self::new();
-        for (name, value) in pairs {
-            labels.insert(name, value);
+        for pair in pairs {
+            labels.insert(pair.name, pair.value);
+        }
+        labels
+    }
+
+    /// Builds a label set from named label pairs.
+    #[must_use]
+    pub fn from_label_pairs(pairs: impl IntoIterator<Item = LabelPair>) -> Self {
+        let mut labels = Self::new();
+        for pair in pairs {
+            labels.insert(pair.name, pair.value);
         }
         labels
     }
@@ -34,8 +73,8 @@ impl Labels {
         self.0.get(name).map(String::as_str)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
-        self.0.iter()
+    pub fn iter(&self) -> LabelsIter<'_> {
+        LabelsIter(self.0.iter())
     }
 
     #[must_use]
@@ -66,7 +105,9 @@ impl Labels {
         const PRIME: u64 = 0x0000_0100_0000_01b3;
 
         let mut hash = OFFSET;
-        for (name, value) in &self.0 {
+        for entry in &self.0 {
+            let name = &entry.0;
+            let value = &entry.1;
             for byte in (name.len() as u64)
                 .to_le_bytes()
                 .iter()
@@ -83,18 +124,59 @@ impl Labels {
     }
 }
 
-impl FromIterator<(String, String)> for Labels {
-    fn from_iter<I: IntoIterator<Item = (String, String)>>(iter: I) -> Self {
-        Self(iter.into_iter().collect())
+impl FromIterator<LabelPair> for Labels {
+    fn from_iter<I: IntoIterator<Item = LabelPair>>(iter: I) -> Self {
+        let mut labels = Self::new();
+        for pair in iter {
+            labels.insert(pair.name, pair.value);
+        }
+        labels
+    }
+}
+
+/// An iterator over borrowed label pairs.
+pub struct LabelsIter<'a>(std::collections::btree_map::Iter<'a, String, String>);
+
+impl<'a> Iterator for LabelsIter<'a> {
+    type Item = LabelPairRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|entry| LabelPairRef {
+            name: entry.0.as_str(),
+            value: entry.1.as_str(),
+        })
     }
 }
 
 /// Consumes label names and values in sorted name order.
 impl IntoIterator for Labels {
-    type Item = (String, String);
-    type IntoIter = std::collections::btree_map::IntoIter<String, String>;
+    type Item = LabelPair;
+    type IntoIter = LabelsIntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        LabelsIntoIter(self.0.into_iter())
+    }
+}
+
+impl<'a> IntoIterator for &'a Labels {
+    type Item = LabelPairRef<'a>;
+    type IntoIter = LabelsIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// An iterator over owned label pairs.
+pub struct LabelsIntoIter(std::collections::btree_map::IntoIter<String, String>);
+
+impl Iterator for LabelsIntoIter {
+    type Item = LabelPair;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|entry| LabelPair {
+            name: entry.0,
+            value: entry.1,
+        })
     }
 }

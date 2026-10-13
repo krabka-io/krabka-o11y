@@ -20,17 +20,21 @@ pub(crate) fn add_compatible_native_histogram(
     cumulative.zero_count += delta.zero_count;
     cumulative.count += delta.count;
     cumulative.sum += delta.sum;
-    (cumulative.positive_spans, cumulative.positive_counts) = add_spanned_histogram_counts(
+    let positive = add_spanned_histogram_counts(
         &cumulative.positive_spans,
         &cumulative.positive_counts,
         &delta.positive_spans,
         &delta.positive_counts,
     );
-    (cumulative.negative_spans, cumulative.negative_counts) = add_spanned_histogram_counts(
+    let negative = add_spanned_histogram_counts(
         &cumulative.negative_spans,
         &cumulative.negative_counts,
         &delta.negative_spans,
         &delta.negative_counts,
     );
+    cumulative.positive_spans = positive.spans;
+    cumulative.positive_counts = positive.counts;
+    cumulative.negative_spans = negative.spans;
+    cumulative.negative_counts = negative.counts;
     Ok(())
 }

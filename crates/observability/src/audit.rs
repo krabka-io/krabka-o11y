@@ -74,7 +74,9 @@ pub use self::{
     audit_clocks::AuditClocks,
     audit_handle::AuditHandle,
     audit_principal_of::audit_principal_of,
-    audit_service::{AUDIT_CHECKPOINT_EVERY_RECORDS, AUDIT_SPOOL_REPLAY_EVERY, AuditService},
+    audit_service::{
+        AUDIT_CHECKPOINT_EVERY_RECORDS, AUDIT_SPOOL_REPLAY_EVERY, AuditService, AuditServiceParts,
+    },
     authentication::authentication,
     authorization_denied::authorization_denied,
     kafka_topic_audit_sink::{DEFAULT_AUDIT_WRITE_TIMEOUT, KafkaTopicAuditSink},

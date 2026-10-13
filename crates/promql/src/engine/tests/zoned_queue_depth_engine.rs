@@ -17,9 +17,9 @@ pub(crate) fn zoned_queue_depth_engine(
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "queue_depth"),
-                ("instance", entry.instance),
-                ("zone", entry.zone),
+                crate::test_support::TestLabelPair::new("__name__", "queue_depth"),
+                crate::test_support::TestLabelPair::new("instance", entry.instance),
+                crate::test_support::TestLabelPair::new("zone", entry.zone),
             ]),
             10_000,
             entry.depth,

@@ -17,7 +17,6 @@ pub async fn serve_prometheus_router(
     security: &ServerSecurity,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<SocketAddr> {
-    let (bound, _server) =
-        serve_prometheus_router_joinable(addr, router, security, shutdown).await?;
-    Ok(bound)
+    let server = serve_prometheus_router_joinable(addr, router, security, shutdown).await?;
+    Ok(server.addr)
 }

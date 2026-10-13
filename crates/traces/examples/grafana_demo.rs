@@ -49,31 +49,52 @@ fn base_ns() -> i64 {
     i64::try_from(now).unwrap_or(i64::MAX) - 180_000_000_000 // 3 minutes ago
 }
 
+struct SpanIdentity {
+    trace_id: u8,
+    span_id: u8,
+    parent_span_id: Option<u8>,
+}
+
+struct SpanTiming {
+    start_offset_ms: i64,
+    duration_ms: i64,
+}
+
+struct SpanStatus {
+    code: i32,
+    message: &'static str,
+}
+
+struct SpanAttributeInput {
+    key: &'static str,
+    value: AttrValue,
+}
+
 fn span(
     base: i64,
-    identity: (u8, u8, Option<u8>),
+    identity: SpanIdentity,
     name: &str,
     kind: i32,
-    timing_ms: (i64, i64),
-    status: (i32, &str),
-    attrs: Vec<(&str, AttrValue)>,
+    timing_ms: SpanTiming,
+    status: SpanStatus,
+    attrs: Vec<SpanAttributeInput>,
 ) -> InputSpan {
-    let (trace_id, id, parent) = identity;
-    let (start_offset_ms, duration_ms) = timing_ms;
-    let (status, status_message) = status;
     InputSpan {
-        trace_id: [trace_id; 16],
-        span_id: [id; 8],
-        parent_span_id: parent.map(|p| [p; 8]),
+        trace_id: [identity.trace_id; 16],
+        span_id: [identity.span_id; 8],
+        parent_span_id: identity.parent_span_id.map(|p| [p; 8]),
         name: name.to_string(),
         kind,
-        start_unix_nano: base + start_offset_ms * 1_000_000,
-        duration: Time::from_millis(duration_ms),
-        status_code: status,
-        status_message: status_message.to_string(),
+        start_unix_nano: base + timing_ms.start_offset_ms * 1_000_000,
+        duration: Time::from_millis(timing_ms.duration_ms),
+        status_code: status.code,
+        status_message: status.message.to_string(),
         instrumentation_name: "krabka-demo".to_string(),
         instrumentation_version: "1.0.0".to_string(),
-        attrs: attrs.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        attrs: attrs
+            .into_iter()
+            .map(|attribute| krabka_traceql::Attribute::new(attribute.key, attribute.value))
+            .collect(),
         events: Vec::new(),
         links: Vec::new(),
     }
@@ -109,64 +130,150 @@ fn demo_store() -> InMemorySpanStore {
         vec![
             span(
                 base,
-                (0x11, 0x02, None),
+                SpanIdentity {
+                    trace_id: 0x11,
+                    span_id: 0x02,
+                    parent_span_id: None,
+                },
                 "GET /checkout",
                 SERVER,
-                (0, 120),
-                (OK, ""),
+                SpanTiming {
+                    start_offset_ms: 0,
+                    duration_ms: 120,
+                },
+                SpanStatus {
+                    code: OK,
+                    message: "",
+                },
                 vec![
-                    ("http.method", str_attr("GET")),
-                    ("http.target", str_attr("/checkout")),
-                    ("http.status_code", AttrValue::Int(200)),
+                    SpanAttributeInput {
+                        key: "http.method",
+                        value: str_attr("GET"),
+                    },
+                    SpanAttributeInput {
+                        key: "http.target",
+                        value: str_attr("/checkout"),
+                    },
+                    SpanAttributeInput {
+                        key: "http.status_code",
+                        value: AttrValue::Int(200),
+                    },
                 ],
             ),
             span(
                 base,
-                (0x11, 0x03, Some(0x02)),
+                SpanIdentity {
+                    trace_id: 0x11,
+                    span_id: 0x03,
+                    parent_span_id: Some(0x02),
+                },
                 "cart.rpc",
                 CLIENT,
-                (5, 45),
-                (OK, ""),
+                SpanTiming {
+                    start_offset_ms: 5,
+                    duration_ms: 45,
+                },
+                SpanStatus {
+                    code: OK,
+                    message: "",
+                },
                 vec![
-                    ("rpc.system", str_attr("grpc")),
-                    ("peer.service", str_attr("cart-backend")),
+                    SpanAttributeInput {
+                        key: "rpc.system",
+                        value: str_attr("grpc"),
+                    },
+                    SpanAttributeInput {
+                        key: "peer.service",
+                        value: str_attr("cart-backend"),
+                    },
                 ],
             ),
             span(
                 base,
-                (0x11, 0x04, Some(0x03)),
+                SpanIdentity {
+                    trace_id: 0x11,
+                    span_id: 0x04,
+                    parent_span_id: Some(0x03),
+                },
                 "cart.lookup",
                 SERVER,
-                (10, 30),
-                (OK, ""),
+                SpanTiming {
+                    start_offset_ms: 10,
+                    duration_ms: 30,
+                },
+                SpanStatus {
+                    code: OK,
+                    message: "",
+                },
                 vec![
-                    ("db.system", str_attr("postgresql")),
-                    ("db.statement", str_attr("SELECT * FROM cart WHERE user=$1")),
+                    SpanAttributeInput {
+                        key: "db.system",
+                        value: str_attr("postgresql"),
+                    },
+                    SpanAttributeInput {
+                        key: "db.statement",
+                        value: str_attr("SELECT * FROM cart WHERE user=$1"),
+                    },
                 ],
             ),
             span(
                 base,
-                (0x11, 0x05, Some(0x02)),
+                SpanIdentity {
+                    trace_id: 0x11,
+                    span_id: 0x05,
+                    parent_span_id: Some(0x02),
+                },
                 "POST /charge",
                 CLIENT,
-                (55, 70),
-                (ERROR, "payment declined"),
+                SpanTiming {
+                    start_offset_ms: 55,
+                    duration_ms: 70,
+                },
+                SpanStatus {
+                    code: ERROR,
+                    message: "payment declined",
+                },
                 vec![
-                    ("http.method", str_attr("POST")),
-                    ("http.status_code", AttrValue::Int(402)),
-                    ("peer.service", str_attr("payment-svc")),
+                    SpanAttributeInput {
+                        key: "http.method",
+                        value: str_attr("POST"),
+                    },
+                    SpanAttributeInput {
+                        key: "http.status_code",
+                        value: AttrValue::Int(402),
+                    },
+                    SpanAttributeInput {
+                        key: "peer.service",
+                        value: str_attr("payment-svc"),
+                    },
                 ],
             ),
             span(
                 base,
-                (0x11, 0x06, Some(0x05)),
+                SpanIdentity {
+                    trace_id: 0x11,
+                    span_id: 0x06,
+                    parent_span_id: Some(0x05),
+                },
                 "payment.charge",
                 SERVER,
-                (60, 55),
-                (ERROR, "card_declined"),
+                SpanTiming {
+                    start_offset_ms: 60,
+                    duration_ms: 55,
+                },
+                SpanStatus {
+                    code: ERROR,
+                    message: "card_declined",
+                },
                 vec![
-                    ("db.system", str_attr("mysql")),
-                    ("payment.provider", str_attr("stripe")),
+                    SpanAttributeInput {
+                        key: "db.system",
+                        value: str_attr("mysql"),
+                    },
+                    SpanAttributeInput {
+                        key: "payment.provider",
+                        value: str_attr("stripe"),
+                    },
                 ],
             ),
         ],
@@ -180,24 +287,53 @@ fn demo_store() -> InMemorySpanStore {
         vec![
             span(
                 base,
-                (0x22, 0x02, None),
+                SpanIdentity {
+                    trace_id: 0x22,
+                    span_id: 0x02,
+                    parent_span_id: None,
+                },
                 "GET /products",
                 SERVER,
-                (0, 80),
-                (OK, ""),
+                SpanTiming {
+                    start_offset_ms: 0,
+                    duration_ms: 80,
+                },
+                SpanStatus {
+                    code: OK,
+                    message: "",
+                },
                 vec![
-                    ("http.method", str_attr("GET")),
-                    ("http.status_code", AttrValue::Int(200)),
+                    SpanAttributeInput {
+                        key: "http.method",
+                        value: str_attr("GET"),
+                    },
+                    SpanAttributeInput {
+                        key: "http.status_code",
+                        value: AttrValue::Int(200),
+                    },
                 ],
             ),
             span(
                 base,
-                (0x22, 0x03, Some(0x02)),
+                SpanIdentity {
+                    trace_id: 0x22,
+                    span_id: 0x03,
+                    parent_span_id: Some(0x02),
+                },
                 "inventory.list",
                 SERVER,
-                (8, 25),
-                (OK, ""),
-                vec![("db.system", str_attr("postgresql"))],
+                SpanTiming {
+                    start_offset_ms: 8,
+                    duration_ms: 25,
+                },
+                SpanStatus {
+                    code: OK,
+                    message: "",
+                },
+                vec![SpanAttributeInput {
+                    key: "db.system",
+                    value: str_attr("postgresql"),
+                }],
             ),
         ],
     );
@@ -210,24 +346,53 @@ fn demo_store() -> InMemorySpanStore {
         vec![
             span(
                 base,
-                (0x33, 0x02, None),
+                SpanIdentity {
+                    trace_id: 0x33,
+                    span_id: 0x02,
+                    parent_span_id: None,
+                },
                 "GET /checkout",
                 SERVER,
-                (0, 35),
-                (OK, ""),
+                SpanTiming {
+                    start_offset_ms: 0,
+                    duration_ms: 35,
+                },
+                SpanStatus {
+                    code: OK,
+                    message: "",
+                },
                 vec![
-                    ("http.method", str_attr("GET")),
-                    ("http.status_code", AttrValue::Int(200)),
+                    SpanAttributeInput {
+                        key: "http.method",
+                        value: str_attr("GET"),
+                    },
+                    SpanAttributeInput {
+                        key: "http.status_code",
+                        value: AttrValue::Int(200),
+                    },
                 ],
             ),
             span(
                 base,
-                (0x33, 0x03, Some(0x02)),
+                SpanIdentity {
+                    trace_id: 0x33,
+                    span_id: 0x03,
+                    parent_span_id: Some(0x02),
+                },
                 "cart.lookup",
                 SERVER,
-                (4, 15),
-                (OK, ""),
-                vec![("db.system", str_attr("postgresql"))],
+                SpanTiming {
+                    start_offset_ms: 4,
+                    duration_ms: 15,
+                },
+                SpanStatus {
+                    code: OK,
+                    message: "",
+                },
+                vec![SpanAttributeInput {
+                    key: "db.system",
+                    value: str_attr("postgresql"),
+                }],
             ),
         ],
     );
@@ -240,24 +405,53 @@ fn demo_store() -> InMemorySpanStore {
         vec![
             span(
                 base,
-                (0x44, 0x02, None),
+                SpanIdentity {
+                    trace_id: 0x44,
+                    span_id: 0x02,
+                    parent_span_id: None,
+                },
                 "GET /report",
                 SERVER,
-                (0, 450),
-                (OK, ""),
+                SpanTiming {
+                    start_offset_ms: 0,
+                    duration_ms: 450,
+                },
+                SpanStatus {
+                    code: OK,
+                    message: "",
+                },
                 vec![
-                    ("http.method", str_attr("GET")),
-                    ("http.status_code", AttrValue::Int(200)),
+                    SpanAttributeInput {
+                        key: "http.method",
+                        value: str_attr("GET"),
+                    },
+                    SpanAttributeInput {
+                        key: "http.status_code",
+                        value: AttrValue::Int(200),
+                    },
                 ],
             ),
             span(
                 base,
-                (0x44, 0x03, Some(0x02)),
+                SpanIdentity {
+                    trace_id: 0x44,
+                    span_id: 0x03,
+                    parent_span_id: Some(0x02),
+                },
                 "analytics.aggregate",
                 SERVER,
-                (20, 400),
-                (OK, ""),
-                vec![("db.system", str_attr("clickhouse"))],
+                SpanTiming {
+                    start_offset_ms: 20,
+                    duration_ms: 400,
+                },
+                SpanStatus {
+                    code: OK,
+                    message: "",
+                },
+                vec![SpanAttributeInput {
+                    key: "db.system",
+                    value: str_attr("clickhouse"),
+                }],
             ),
         ],
     );
@@ -269,14 +463,30 @@ fn demo_store() -> InMemorySpanStore {
         "POST /login",
         vec![span(
             base,
-            (0x55, 0x02, None),
+            SpanIdentity {
+                trace_id: 0x55,
+                span_id: 0x02,
+                parent_span_id: None,
+            },
             "POST /login",
             SERVER,
-            (0, 60),
-            (ERROR, "invalid credentials"),
+            SpanTiming {
+                start_offset_ms: 0,
+                duration_ms: 60,
+            },
+            SpanStatus {
+                code: ERROR,
+                message: "invalid credentials",
+            },
             vec![
-                ("http.method", str_attr("POST")),
-                ("http.status_code", AttrValue::Int(401)),
+                SpanAttributeInput {
+                    key: "http.method",
+                    value: str_attr("POST"),
+                },
+                SpanAttributeInput {
+                    key: "http.status_code",
+                    value: AttrValue::Int(401),
+                },
             ],
         )],
     );

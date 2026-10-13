@@ -8,6 +8,18 @@ use super::{
     read_tenant_log_index_shard_ranges_from_object_store,
 };
 
+pub struct LogManifestAudit {
+    pub live: LiveBlockSet,
+    pub findings: Vec<StorageFinding>,
+}
+
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct ShardManifestIdentity<'a> {
+    tenant: &'a str,
+    start_ns: i64,
+    end_ns: i64,
+}
+
 /// Reads the logs manifests and each shard's newest generation to find live blocks.
 ///
 /// A block is live when the global manifest, its tenant's manifest, or one
@@ -23,40 +35,57 @@ use super::{
 pub async fn audit_log_manifests(
     store: &dyn ObjectStore,
     inventory: &StorageInventory,
-) -> (LiveBlockSet, Vec<StorageFinding>) {
+) -> LogManifestAudit {
     let root = Path::default();
     let mut live = LiveBlockSet::default();
     let mut findings = Vec::new();
-    let listed_shards: BTreeMap<_, _> = inventory
-        .of_signal(StorageSignal::Logs)
-        .filter_map(
-            |(key, listed)| match (&listed.object.role, listed.object.tenant.as_deref()) {
-                (ObjectRole::LogShardManifest { start_ns, end_ns }, Some(tenant)) => {
-                    Some(((tenant, *start_ns, *end_ns), key))
-                }
-                _ => None,
-            },
-        )
-        .collect();
+    let mut listed_shards: BTreeMap<ShardManifestIdentity<'_>, _> = BTreeMap::new();
+    for entry in inventory.of_signal(StorageSignal::Logs) {
+        if let ObjectRole::LogShardManifest { start_ns, end_ns } = &entry.listed.object.role
+            && let Some(tenant) = entry.listed.object.tenant.as_deref()
+        {
+            listed_shards.insert(
+                ShardManifestIdentity {
+                    tenant,
+                    start_ns: *start_ns,
+                    end_ns: *end_ns,
+                },
+                entry.key,
+            );
+        }
+    }
     let add = |live: &mut LiveBlockSet, blocks: &LogBlockIndex| {
         for block in blocks.blocks() {
             live.live
                 .insert(block.key.object_key(), block.key.tenant.clone());
         }
     };
-    for (key, listed) in inventory.of_signal(StorageSignal::Logs) {
+    for entry in inventory.of_signal(StorageSignal::Logs) {
+        let key = entry.key;
+        let listed = entry.listed;
         let tenant = listed.object.tenant.clone();
-        let read = match (&listed.object.role, tenant.as_deref()) {
-            (ObjectRole::LogGlobalManifest, _) => {
+        let read = match &listed.object.role {
+            ObjectRole::LogGlobalManifest => {
                 read_log_index_manifest_from_object_store(store, &root).await
             }
-            (ObjectRole::LogTenantManifest, Some(tenant)) => {
+            ObjectRole::LogTenantManifest => {
+                let Some(tenant) = tenant.as_deref() else {
+                    continue;
+                };
                 read_tenant_log_index_manifest_from_object_store(store, &root, tenant).await
             }
-            (ObjectRole::LogShardManifest { start_ns, end_ns }, Some(tenant)) => {
+            ObjectRole::LogShardManifest { start_ns, end_ns } => {
+                let Some(tenant) = tenant.as_deref() else {
+                    continue;
+                };
                 // Key order matches snapshot selection. Read once per shard and
                 // report failures against its newest listed generation.
-                if listed_shards.get(&(tenant, *start_ns, *end_ns)) != Some(&key) {
+                let identity = ShardManifestIdentity {
+                    tenant,
+                    start_ns: *start_ns,
+                    end_ns: *end_ns,
+                };
+                if listed_shards.get(&identity) != Some(&key) {
                     continue;
                 }
                 match TimeRange::new(*start_ns, *end_ns) {
@@ -67,7 +96,10 @@ pub async fn audit_log_manifests(
                     Err(error) => Err(error),
                 }
             }
-            (ObjectRole::LogShardCatalog, Some(tenant)) => {
+            ObjectRole::LogShardCatalog => {
+                let Some(tenant) = tenant.as_deref() else {
+                    continue;
+                };
                 match read_tenant_log_index_shard_ranges_from_object_store(store, &root, tenant)
                     .await
                 {
@@ -87,7 +119,7 @@ pub async fn audit_log_manifests(
             _ => continue,
         };
         match read {
-            Ok((_, blocks)) => add(&mut live, &blocks),
+            Ok(indexes) => add(&mut live, &indexes.blocks),
             // Other manifests can be removed after the listing. A missing
             // shard generation leaves its tenant's live blocks unknown.
             Err(LogBlockStoreError::ObjectStore(object_store::Error::NotFound { .. }))
@@ -109,7 +141,7 @@ pub async fn audit_log_manifests(
         }
     }
     findings.extend(unmanifested_tenants(inventory, &mut live));
-    (live, findings)
+    LogManifestAudit { live, findings }
 }
 
 fn unmanifested_tenants(
@@ -118,19 +150,21 @@ fn unmanifested_tenants(
 ) -> Vec<StorageFinding> {
     let mut with_blocks = BTreeSet::new();
     let mut with_manifest = BTreeSet::new();
-    for (_, listed) in inventory.of_signal(StorageSignal::Logs) {
-        match (&listed.object.role, listed.object.tenant.as_deref()) {
-            (ObjectRole::LogGlobalManifest, _) => return Vec::new(),
-            (ObjectRole::Block(_), Some(tenant)) => {
-                with_blocks.insert(tenant);
+    for entry in inventory.of_signal(StorageSignal::Logs) {
+        let listed = entry.listed;
+        match &listed.object.role {
+            ObjectRole::LogGlobalManifest => return Vec::new(),
+            ObjectRole::Block(_) => {
+                if let Some(tenant) = listed.object.tenant.as_deref() {
+                    with_blocks.insert(tenant);
+                }
             }
-            (
-                ObjectRole::LogTenantManifest
-                | ObjectRole::LogShardCatalog
-                | ObjectRole::LogShardManifest { .. },
-                Some(tenant),
-            ) => {
-                with_manifest.insert(tenant);
+            ObjectRole::LogTenantManifest
+            | ObjectRole::LogShardCatalog
+            | ObjectRole::LogShardManifest { .. } => {
+                if let Some(tenant) = listed.object.tenant.as_deref() {
+                    with_manifest.insert(tenant);
+                }
             }
             _ => {}
         }
@@ -152,7 +186,7 @@ fn unmanifested_tenants(
 }
 
 fn missing_shards(
-    listed_shards: &BTreeMap<(&str, i64, i64), &String>,
+    listed_shards: &BTreeMap<ShardManifestIdentity<'_>, &String>,
     tenant: &str,
     catalog: &str,
     ranges: &[TimeRange],
@@ -160,7 +194,13 @@ fn missing_shards(
     let root = Path::default();
     ranges
         .iter()
-        .filter(|range| !listed_shards.contains_key(&(tenant, range.start_ns, range.end_ns)))
+        .filter(|range| {
+            !listed_shards.contains_key(&ShardManifestIdentity {
+                tenant,
+                start_ns: range.start_ns,
+                end_ns: range.end_ns,
+            })
+        })
         .map(|range| log_tenant_index_shard_manifest_object_path(&root, tenant, *range).to_string())
         .collect::<BTreeSet<_>>()
         .into_iter()

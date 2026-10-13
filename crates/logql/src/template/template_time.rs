@@ -19,6 +19,23 @@ pub struct TemplateTime {
     location: Location,
     monotonic: Option<i64>,
 }
+
+pub(crate) struct TemplateTimeReflectionFields {
+    pub wall: u64,
+    pub ext: i64,
+    pub location: Option<usize>,
+}
+
+pub(crate) struct ParsedTemplateTimeFields {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+    pub nanosecond: u32,
+    pub offset: i32,
+}
 #[derive(Clone, Debug)]
 enum Location {
     Utc,
@@ -220,7 +237,7 @@ impl TemplateTime {
             location
         )
     }
-    pub(crate) fn reflection_fields(&self) -> (u64, i64, Option<usize>) {
+    pub(crate) fn reflection_fields(&self) -> TemplateTimeReflectionFields {
         // time.Time without a monotonic reading stores nanoseconds in wall,
         // seconds since January 1 year 1 in ext, and nil for UTC's location.
         let location = match &self.location {
@@ -233,42 +250,42 @@ impl TemplateTime {
         if let Some(monotonic) = self.monotonic {
             let wall_seconds = self.seconds.wrapping_add(2_682_288_000);
             if (0..1i64 << 33).contains(&wall_seconds) {
-                return (
-                    (1u64 << 63)
+                return TemplateTimeReflectionFields {
+                    wall: (1u64 << 63)
                         | u64::try_from(wall_seconds)
                             .expect("monotonic wall seconds are nonnegative")
                             << 30
                         | u64::from(self.nanos),
-                    monotonic,
+                    ext: monotonic,
                     location,
-                );
+                };
             }
         }
-        (
-            u64::from(self.nanos),
-            self.seconds.wrapping_add(62_135_596_800),
+        TemplateTimeReflectionFields {
+            wall: u64::from(self.nanos),
+            ext: self.seconds.wrapping_add(62_135_596_800),
             location,
-        )
+        }
     }
     #[cfg(test)]
-    pub(crate) fn parsed_fields(&self) -> (i32, u32, u32, u32, u32, u32, u32, i32) {
+    pub(crate) fn parsed_fields(&self) -> ParsedTemplateTimeFields {
         let parts = self.parts();
-        (
-            i32::try_from(parts.year).expect("parsed test year fits i32"),
-            parts.month,
-            parts.day,
-            parts.hour,
-            parts.minute,
-            parts.second,
-            self.nanos,
-            self.zone().1,
-        )
+        ParsedTemplateTimeFields {
+            year: i32::try_from(parts.year).expect("parsed test year fits i32"),
+            month: parts.month,
+            day: parts.day,
+            hour: parts.hour,
+            minute: parts.minute,
+            second: parts.second,
+            nanosecond: self.nanos,
+            offset: self.zone().offset,
+        }
     }
     fn parts(&self) -> calendar::Parts {
-        let (_, offset) = self.zone();
-        calendar::parts(self.seconds.wrapping_add(i64::from(offset)))
+        let zone = self.zone();
+        calendar::parts(self.seconds.wrapping_add(i64::from(zone.offset)))
     }
-    fn zone(&self) -> (String, i32) {
+    fn zone(&self) -> zone::ZoneInfo {
         self.location.zone(self.seconds)
     }
 }
@@ -336,15 +353,19 @@ fn local_zone() -> Option<std::sync::Arc<zone::Zone>> {
 
 impl PartialEq for Location {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Utc, Self::Utc) | (Self::Local, Self::Local) => true,
-            (Self::Named(_, left), Self::Named(_, right))
-            | (
-                Self::Fixed { identity: left, .. },
+        match self {
+            Self::Utc => matches!(other, Self::Utc),
+            Self::Local => matches!(other, Self::Local),
+            Self::Named(_, left) => match other {
+                Self::Named(_, right) => std::sync::Arc::ptr_eq(left, right),
+                _ => false,
+            },
+            Self::Fixed { identity: left, .. } => match other {
                 Self::Fixed {
                     identity: right, ..
-                },
-            ) => std::sync::Arc::ptr_eq(left, right),
+                } => std::sync::Arc::ptr_eq(left, right),
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -388,11 +409,23 @@ impl Location {
             }),
         }
     }
-    fn zone(&self, seconds: i64) -> (String, i32) {
+    fn zone(&self, seconds: i64) -> zone::ZoneInfo {
         match self {
-            Self::Utc => ("UTC".into(), 0),
-            Self::Fixed { name, offset, .. } => (name.clone(), *offset),
-            Self::Local => local_zone().map_or(("UTC".into(), 0), |zone| zone.lookup(seconds)),
+            Self::Utc => zone::ZoneInfo {
+                name: "UTC".into(),
+                offset: 0,
+            },
+            Self::Fixed { name, offset, .. } => zone::ZoneInfo {
+                name: name.clone(),
+                offset: *offset,
+            },
+            Self::Local => local_zone().map_or(
+                zone::ZoneInfo {
+                    name: "UTC".into(),
+                    offset: 0,
+                },
+                |zone| zone.lookup(seconds),
+            ),
             Self::Named(zone, _) => zone.lookup(seconds),
         }
     }
@@ -403,6 +436,42 @@ mod tests {
     use assert2::check;
 
     use super::*;
+
+    struct LayoutGolden {
+        layout: &'static str,
+        expected: &'static str,
+    }
+
+    struct ParseGolden {
+        layout: &'static str,
+        zone: &'static str,
+        text: &'static str,
+        expected: &'static str,
+        seconds: i64,
+    }
+
+    struct ZoneParseGolden {
+        zone: &'static str,
+        text: &'static str,
+        expected: &'static str,
+    }
+
+    struct SecondsGolden {
+        seconds: i64,
+        expected: &'static str,
+    }
+
+    struct EpochGolden {
+        input: &'static str,
+        seconds: i64,
+        nanos: i64,
+    }
+
+    struct ExtremeZoneGolden {
+        name: &'static str,
+        seconds: i64,
+        expected: &'static str,
+    }
     #[test]
     fn every_go_layout_token_and_fraction_guard_has_an_independent_golden() {
         let value = TemplateTime::parse(
@@ -411,170 +480,172 @@ mod tests {
             "2024-02-03 13:04:05.12 +01:01:01 ODD",
         )
         .unwrap();
-        for (layout, expected) in [
-            (
-                "January Jan Janitor|Monday Mon Mondayish|MST",
-                "February Feb Janitor|Saturday Sat Saturdayish|ODD",
-            ),
-            (
-                "2006 06 1 01 2 _2 02 __2 002 3 03 15 4 04 5 05 PM pm",
-                "2024 24 2 02 3  3 03  34 034 1 01 13 4 04 5 05 PM pm",
-            ),
-            (
-                "-07 -0700 -07:00 -070000 -07:00:00 Z07 Z0700 Z07:00 Z070000 Z07:00:00",
-                "+01 +0101 +01:01 +010101 +01:01:01 +01 +0101 +01:01 +010101 +01:01:01",
-            ),
-            (
-                "15:04:05.0000000000|15:04:05.999999999|15:04:05,000|15:04:05,999|.0999|.9990",
-                "13:04:05.120000000|13:04:05.12|13:04:05,120|13:04:05,12|.0999|.9990",
-            ),
+        for case in [
+            LayoutGolden {
+                layout: "January Jan Janitor|Monday Mon Mondayish|MST",
+                expected: "February Feb Janitor|Saturday Sat Saturdayish|ODD",
+            },
+            LayoutGolden {
+                layout: "2006 06 1 01 2 _2 02 __2 002 3 03 15 4 04 5 05 PM pm",
+                expected: "2024 24 2 02 3  3 03  34 034 1 01 13 4 04 5 05 PM pm",
+            },
+            LayoutGolden {
+                layout: "-07 -0700 -07:00 -070000 -07:00:00 Z07 Z0700 Z07:00 Z070000 Z07:00:00",
+                expected: "+01 +0101 +01:01 +010101 +01:01:01 +01 +0101 +01:01 +010101 +01:01:01",
+            },
+            LayoutGolden {
+                layout: "15:04:05.0000000000|15:04:05.999999999|15:04:05,000|15:04:05,999|.0999|.9990",
+                expected: "13:04:05.120000000|13:04:05.12|13:04:05,120|13:04:05,12|.0999|.9990",
+            },
         ] {
-            check!(value.format(layout) == expected);
+            check!(value.format(case.layout) == case.expected);
         }
     }
     #[test]
     fn parse_defaults_year_day_fraction_and_zone_definitions_match_go() {
-        for (layout, zone, text, expected, seconds) in [
-            (
-                "06-002 03:04pm",
-                "UTC",
-                "69-060 12:30am",
-                "1969-03-01 00:30:00 +0000 UTC",
-                -26_436_600,
-            ),
-            (
-                "2006-01-02 15:04:05",
-                "UTC",
-                "2024-02-29 9:05:06,123456789123",
-                "2024-02-29 09:05:06.123456789 +0000 UTC",
-                1_709_197_506,
-            ),
-            (
-                "Monday January _2 2006 3:4:5PM",
-                "UTC",
-                "monday february  3 2024 1:4:5PM",
-                "2024-02-03 13:04:05 +0000 UTC",
-                1_706_965_445,
-            ),
-            (
-                "2006 002 01 02",
-                "UTC",
-                "2024 060 02 29",
-                "2024-02-29 00:00:00 +0000 UTC",
-                1_709_164_800,
-            ),
-            (
-                "15:04:05.999",
-                "UTC",
-                "12:34:56",
-                "0000-01-01 12:34:56 +0000 UTC",
-                -62_167_173_904,
-            ),
-            (
-                "15:04:05.000",
-                "UTC",
-                "12:34:56,123",
-                "0000-01-01 12:34:56.123 +0000 UTC",
-                -62_167_173_904,
-            ),
-            (
-                "2006-01-02 -07:00",
-                "UTC",
-                "2024-01-02 +24:00",
-                "2024-01-02 00:00:00 +2400 +2400",
-                1_704_067_200,
-            ),
-            (
-                "2006-01-02 MST",
-                "UTC",
-                "2024-01-02 XYZ",
-                "2024-01-02 00:00:00 +0000 XYZ",
-                1_704_153_600,
-            ),
-            (
-                "2006-01-02 MST",
-                "UTC",
-                "2024-01-02 GMT+2",
-                "2024-01-02 02:00:00 +0200 GMT+2",
-                1_704_153_600,
-            ),
-            (
-                "2006-01-02 15:04:05 MST",
-                "America/New_York",
-                "2024-07-02 12:00:00 EST",
-                "2024-07-02 13:00:00 -0400 EDT",
-                1_719_939_600,
-            ),
-            (
-                "15:04 MST",
-                "America/New_York",
-                "12:00 EST",
-                "0000-01-01 12:03:58 -0456 LMT",
-                -62_167_158_000,
-            ),
-            (
-                "2006-01-02 MST",
-                "Europe/Paris",
-                "2024-01-02 PMT",
-                "2024-01-02 00:50:39 +0100 CET",
-                1_704_153_039,
-            ),
-            (
-                "2006-01-02 MST",
-                "Asia/Kolkata",
-                "2024-01-02 MMT",
-                "2024-01-02 00:08:50 +0530 IST",
-                1_704_134_330,
-            ),
+        for case in [
+            ParseGolden {
+                layout: "06-002 03:04pm",
+                zone: "UTC",
+                text: "69-060 12:30am",
+                expected: "1969-03-01 00:30:00 +0000 UTC",
+                seconds: -26_436_600,
+            },
+            ParseGolden {
+                layout: "2006-01-02 15:04:05",
+                zone: "UTC",
+                text: "2024-02-29 9:05:06,123456789123",
+                expected: "2024-02-29 09:05:06.123456789 +0000 UTC",
+                seconds: 1_709_197_506,
+            },
+            ParseGolden {
+                layout: "Monday January _2 2006 3:4:5PM",
+                zone: "UTC",
+                text: "monday february  3 2024 1:4:5PM",
+                expected: "2024-02-03 13:04:05 +0000 UTC",
+                seconds: 1_706_965_445,
+            },
+            ParseGolden {
+                layout: "2006 002 01 02",
+                zone: "UTC",
+                text: "2024 060 02 29",
+                expected: "2024-02-29 00:00:00 +0000 UTC",
+                seconds: 1_709_164_800,
+            },
+            ParseGolden {
+                layout: "15:04:05.999",
+                zone: "UTC",
+                text: "12:34:56",
+                expected: "0000-01-01 12:34:56 +0000 UTC",
+                seconds: -62_167_173_904,
+            },
+            ParseGolden {
+                layout: "15:04:05.000",
+                zone: "UTC",
+                text: "12:34:56,123",
+                expected: "0000-01-01 12:34:56.123 +0000 UTC",
+                seconds: -62_167_173_904,
+            },
+            ParseGolden {
+                layout: "2006-01-02 -07:00",
+                zone: "UTC",
+                text: "2024-01-02 +24:00",
+                expected: "2024-01-02 00:00:00 +2400 +2400",
+                seconds: 1_704_067_200,
+            },
+            ParseGolden {
+                layout: "2006-01-02 MST",
+                zone: "UTC",
+                text: "2024-01-02 XYZ",
+                expected: "2024-01-02 00:00:00 +0000 XYZ",
+                seconds: 1_704_153_600,
+            },
+            ParseGolden {
+                layout: "2006-01-02 MST",
+                zone: "UTC",
+                text: "2024-01-02 GMT+2",
+                expected: "2024-01-02 02:00:00 +0200 GMT+2",
+                seconds: 1_704_153_600,
+            },
+            ParseGolden {
+                layout: "2006-01-02 15:04:05 MST",
+                zone: "America/New_York",
+                text: "2024-07-02 12:00:00 EST",
+                expected: "2024-07-02 13:00:00 -0400 EDT",
+                seconds: 1_719_939_600,
+            },
+            ParseGolden {
+                layout: "15:04 MST",
+                zone: "America/New_York",
+                text: "12:00 EST",
+                expected: "0000-01-01 12:03:58 -0456 LMT",
+                seconds: -62_167_158_000,
+            },
+            ParseGolden {
+                layout: "2006-01-02 MST",
+                zone: "Europe/Paris",
+                text: "2024-01-02 PMT",
+                expected: "2024-01-02 00:50:39 +0100 CET",
+                seconds: 1_704_153_039,
+            },
+            ParseGolden {
+                layout: "2006-01-02 MST",
+                zone: "Asia/Kolkata",
+                text: "2024-01-02 MMT",
+                expected: "2024-01-02 00:08:50 +0530 IST",
+                seconds: 1_704_134_330,
+            },
         ] {
-            let value = TemplateTime::parse(layout, zone, text).unwrap();
-            check!(value.as_string() == expected);
-            check!(value.unix_seconds() == seconds);
+            let value = TemplateTime::parse(case.layout, case.zone, case.text).unwrap();
+            check!(value.as_string() == case.expected);
+            check!(value.unix_seconds() == case.seconds);
         }
-        for (layout, text) in [
-            ("2006-01-02", "2024-02-30"),
-            ("2006 002 01 02", "2024 060 03 01"),
-            ("2006-01-02", "2023-02-29"),
-            ("2006-01-02", "2024-01-01extra"),
-            ("15:04:05.000", "12:34:56.1"),
-            ("15:04:05", "12:60:00"),
-            ("15:04:05", "25:00:00"),
-            ("2006-01-02 -07:00", "2024-01-02 +25:00"),
-        ] {
-            check!(TemplateTime::parse(layout, "UTC", text).is_none());
-        }
+    }
+
+    #[yare::parameterized(
+        invalid_day = { "2006-01-02", "2024-02-30" },
+        conflicting_day = { "2006 002 01 02", "2024 060 03 01" },
+        non_leap_february = { "2006-01-02", "2023-02-29" },
+        trailing_input = { "2006-01-02", "2024-01-01extra" },
+        partial_fraction = { "15:04:05.000", "12:34:56.1" },
+        invalid_minute = { "15:04:05", "12:60:00" },
+        invalid_hour = { "15:04:05", "25:00:00" },
+        invalid_offset = { "2006-01-02 -07:00", "2024-01-02 +25:00" },
+    )]
+    fn invalid_time_layout_is_rejected(layout: &str, text: &str) {
+        check!(TemplateTime::parse(layout, "UTC", text).is_none());
     }
     #[test]
     fn named_zone_dst_gap_and_overlap_resolution_matches_time_date() {
-        for (zone, text, expected) in [
-            (
-                "America/New_York",
-                "2024-03-10 02:30:00",
-                "2024-03-10 01:30:00 -0500 EST",
-            ),
-            (
-                "America/New_York",
-                "2024-11-03 01:30:00",
-                "2024-11-03 01:30:00 -0400 EDT",
-            ),
-            (
-                "Europe/Berlin",
-                "2024-03-31 02:30:00",
-                "2024-03-31 03:30:00 +0200 CEST",
-            ),
-            (
-                "Europe/Berlin",
-                "2024-10-27 02:30:00",
-                "2024-10-27 02:30:00 +0100 CET",
-            ),
-            (
-                "invalid",
-                "2024-01-02 12:04:05",
-                "2024-01-02 12:04:05 +0000 UTC",
-            ),
+        for case in [
+            ZoneParseGolden {
+                zone: "America/New_York",
+                text: "2024-03-10 02:30:00",
+                expected: "2024-03-10 01:30:00 -0500 EST",
+            },
+            ZoneParseGolden {
+                zone: "America/New_York",
+                text: "2024-11-03 01:30:00",
+                expected: "2024-11-03 01:30:00 -0400 EDT",
+            },
+            ZoneParseGolden {
+                zone: "Europe/Berlin",
+                text: "2024-03-31 02:30:00",
+                expected: "2024-03-31 03:30:00 +0200 CEST",
+            },
+            ZoneParseGolden {
+                zone: "Europe/Berlin",
+                text: "2024-10-27 02:30:00",
+                expected: "2024-10-27 02:30:00 +0100 CET",
+            },
+            ZoneParseGolden {
+                zone: "invalid",
+                text: "2024-01-02 12:04:05",
+                expected: "2024-01-02 12:04:05 +0000 UTC",
+            },
         ] {
-            let value = TemplateTime::parse("2006-01-02 15:04:05", zone, text).unwrap();
-            check!(value.as_string() == expected);
+            let value = TemplateTime::parse("2006-01-02 15:04:05", case.zone, case.text).unwrap();
+            check!(value.as_string() == case.expected);
         }
     }
     #[test]
@@ -584,18 +655,24 @@ mod tests {
         check!(zero.unix_nanos() == -6_795_364_578_871_345_152);
         let year_zero = TemplateTime::parse("15:04:05.000", "UTC", "12:34:56,123").unwrap();
         check!(year_zero.unix_nanos() == -6_826_941_682_748_345_152);
-        for (seconds, expected) in [
-            (i64::MAX, "292277026596-12-04 15:30:07 +0000 UTC"),
-            (i64::MIN, "292277026596-12-04 15:30:08 +0000 UTC"),
+        for case in [
+            SecondsGolden {
+                seconds: i64::MAX,
+                expected: "292277026596-12-04 15:30:07 +0000 UTC",
+            },
+            SecondsGolden {
+                seconds: i64::MIN,
+                expected: "292277026596-12-04 15:30:08 +0000 UTC",
+            },
         ] {
             let value = TemplateTime {
-                seconds,
+                seconds: case.seconds,
                 nanos: 0,
                 location: Location::Utc,
                 monotonic: None,
             };
-            check!(value.as_string() == expected);
-            check!(value.unix_seconds() == seconds);
+            check!(value.as_string() == case.expected);
+            check!(value.unix_seconds() == case.seconds);
         }
         let pre_epoch = TemplateTime::from_unix_nanos(-1);
         check!(pre_epoch.unix_seconds() == -1);
@@ -614,19 +691,31 @@ mod tests {
     }
     #[test]
     fn epoch_string_units_overflow_and_location_identity_match_go() {
-        for (input, seconds, nanos) in [
-            ("9999999999999", -8_446_744_074, -8_446_744_073_710_551_616),
-            (
-                "9999999999999999",
-                -8_446_744_074,
-                -8_446_744_073_709_552_616,
-            ),
-            ("-1234", -106_617_600, -106_617_600_000_000_000),
-            ("+1234", 106_617_600, 106_617_600_000_000_000),
+        for case in [
+            EpochGolden {
+                input: "9999999999999",
+                seconds: -8_446_744_074,
+                nanos: -8_446_744_073_710_551_616,
+            },
+            EpochGolden {
+                input: "9999999999999999",
+                seconds: -8_446_744_074,
+                nanos: -8_446_744_073_709_552_616,
+            },
+            EpochGolden {
+                input: "-1234",
+                seconds: -106_617_600,
+                nanos: -106_617_600_000_000_000,
+            },
+            EpochGolden {
+                input: "+1234",
+                seconds: 106_617_600,
+                nanos: 106_617_600_000_000_000,
+            },
         ] {
-            let value = TemplateTime::from_epoch_string(input).unwrap();
-            check!(value.unix_seconds() == seconds);
-            check!(value.unix_nanos() == nanos);
+            let value = TemplateTime::from_epoch_string(case.input).unwrap();
+            check!(value.unix_seconds() == case.seconds);
+            check!(value.unix_nanos() == case.nanos);
         }
         for input in ["1", "123456", "9999999999999999999", "not a time"] {
             check!(TemplateTime::from_epoch_string(input).is_none());
@@ -636,35 +725,35 @@ mod tests {
         let named = TemplateTime::parse("2006", "Europe/Berlin", "2024").unwrap();
         check!(named == named.clone());
         check!(named != TemplateTime::parse("2006", "Europe/Berlin", "2024").unwrap());
-        for (name, seconds, expected) in [
-            (
-                "America/New_York",
-                i64::MIN,
-                "292277026596-12-04 10:34:06 -0456 LMT",
-            ),
-            (
-                "America/New_York",
-                i64::MAX,
-                "292277026596-12-04 10:30:07 -0500 EST",
-            ),
-            (
-                "Europe/Berlin",
-                i64::MIN,
-                "292277026596-12-04 16:23:36 +0053 LMT",
-            ),
-            (
-                "Europe/Berlin",
-                i64::MAX,
-                "292277026596-12-04 16:30:07 +0100 CET",
-            ),
+        for case in [
+            ExtremeZoneGolden {
+                name: "America/New_York",
+                seconds: i64::MIN,
+                expected: "292277026596-12-04 10:34:06 -0456 LMT",
+            },
+            ExtremeZoneGolden {
+                name: "America/New_York",
+                seconds: i64::MAX,
+                expected: "292277026596-12-04 10:30:07 -0500 EST",
+            },
+            ExtremeZoneGolden {
+                name: "Europe/Berlin",
+                seconds: i64::MIN,
+                expected: "292277026596-12-04 16:23:36 +0053 LMT",
+            },
+            ExtremeZoneGolden {
+                name: "Europe/Berlin",
+                seconds: i64::MAX,
+                expected: "292277026596-12-04 16:30:07 +0100 CET",
+            },
         ] {
             let value = TemplateTime {
-                seconds,
+                seconds: case.seconds,
                 nanos: 0,
-                location: Location::load(name),
+                location: Location::load(case.name),
                 monotonic: None,
             };
-            check!(value.as_string() == expected);
+            check!(value.as_string() == case.expected);
         }
         let now = TemplateTime::now();
         check!(now.as_string().contains(" m=+"));

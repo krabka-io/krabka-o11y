@@ -42,10 +42,10 @@ pub(crate) fn intern_symbols(
                 lines: location
                     .lines
                     .iter()
-                    .map(|(function_id, line)| {
+                    .map(|line| {
                         Ok(LineRec {
-                            function_id: remap_ref(*function_id, &functions),
-                            line: i32::try_from(*line).map_err(|err| {
+                            function_id: remap_ref(line.function_id, &functions),
+                            line: i32::try_from(line.line).map_err(|err| {
                                 ProfilesError::Block(format!("line number does not fit i32: {err}"))
                             })?,
                         })

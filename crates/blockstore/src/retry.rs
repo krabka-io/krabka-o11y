@@ -195,52 +195,69 @@ mod tests {
     /// the answer.
     #[test]
     fn only_an_indeterminate_backend_failure_is_worth_another_attempt() {
-        let cases: Vec<(&str, ObjectStoreError, bool)> = vec![
-            ("a 5xx, a timeout or a reset connection", timeout(), true),
-            ("a 403 on a credential that was revoked", forbidden(), false),
-            (
-                "a 401 that no amount of waiting authenticates",
-                ObjectStoreError::Unauthenticated {
+        struct ClassificationCase {
+            description: &'static str,
+            error: ObjectStoreError,
+            should_retry: bool,
+        }
+        let cases = vec![
+            ClassificationCase {
+                description: "a 5xx, a timeout or a reset connection",
+                error: timeout(),
+                should_retry: true,
+            },
+            ClassificationCase {
+                description: "a 403 on a credential that was revoked",
+                error: forbidden(),
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "a 401 that no amount of waiting authenticates",
+                error: ObjectStoreError::Unauthenticated {
                     path: "blocks/a.parquet".to_string(),
                     source: "401".into(),
                 },
-                false,
-            ),
-            (
-                "a 404, which is this object's answer and not the store's",
-                ObjectStoreError::NotFound {
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "a 404, which is this object's answer and not the store's",
+                error: ObjectStoreError::NotFound {
                     path: "blocks/a.parquet".to_string(),
                     source: "404".into(),
                 },
-                false,
-            ),
-            (
-                "a failed precondition",
-                ObjectStoreError::Precondition {
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "a failed precondition",
+                error: ObjectStoreError::Precondition {
                     path: "blocks/a.parquet".to_string(),
                     source: "412".into(),
                 },
-                false,
-            ),
-            (
-                "an object the store refuses to overwrite",
-                ObjectStoreError::AlreadyExists {
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "an object the store refuses to overwrite",
+                error: ObjectStoreError::AlreadyExists {
                     path: "blocks/a.parquet".to_string(),
                     source: "409".into(),
                 },
-                false,
-            ),
-            (
-                "a configuration key the backend does not have",
-                ObjectStoreError::UnknownConfigurationKey {
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "a configuration key the backend does not have",
+                error: ObjectStoreError::UnknownConfigurationKey {
                     store: "S3",
                     key: "nonsense".to_string(),
                 },
-                false,
-            ),
+                should_retry: false,
+            },
         ];
-        for (what, error, want) in cases {
-            check!(is_transient_object_store_error(&error) == want, "{what}");
+        for case in cases {
+            check!(
+                is_transient_object_store_error(&case.error) == case.should_retry,
+                "{}",
+                case.description
+            );
         }
     }
 
@@ -378,16 +395,28 @@ mod tests {
     /// everything under one label would fail here.
     #[tokio::test]
     async fn every_single_shot_operation_retries_under_its_own_label() {
-        let cases: Vec<(FlakyOperation, ObjectStoreOperation)> = vec![
-            (FlakyOperation::Put, ObjectStoreOperation::Put),
-            (
-                FlakyOperation::ListWithDelimiter,
-                ObjectStoreOperation::ListWithDelimiter,
-            ),
-            (FlakyOperation::Copy, ObjectStoreOperation::Copy),
+        struct OperationCase {
+            flaky: FlakyOperation,
+            metric: ObjectStoreOperation,
+        }
+        let cases = vec![
+            OperationCase {
+                flaky: FlakyOperation::Put,
+                metric: ObjectStoreOperation::Put,
+            },
+            OperationCase {
+                flaky: FlakyOperation::ListWithDelimiter,
+                metric: ObjectStoreOperation::ListWithDelimiter,
+            },
+            OperationCase {
+                flaky: FlakyOperation::Copy,
+                metric: ObjectStoreOperation::Copy,
+            },
         ];
 
-        for (flaky_operation, labelled) in cases {
+        for case in cases {
+            let flaky_operation = case.flaky;
+            let labelled = case.metric;
             let flaky = Arc::new(FlakyObjectStore::failing(flaky_operation, 2, timeout));
             let metrics = ObjectStoreMetrics::unregistered();
             let store = RetryingObjectStore::wrap(

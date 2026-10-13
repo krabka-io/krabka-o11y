@@ -2,8 +2,9 @@
 
 use crate::{
     ast::{
-        Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
-        QueryHints, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value, WithBinding,
+        Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, NumericFilter,
+        Pipeline, Query, QueryHintValue, QueryHints, ScalarExpr, Scope, SpansetExpr, StructuralOp,
+        Value, WithBinding,
     },
     error::{Result, TraceqlError},
     lexer::{Token, lex},
@@ -22,11 +23,21 @@ macro_rules! eat {
     }};
 }
 
+struct ArithmeticOperands {
+    lhs: Value,
+    rhs: Value,
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
 
     use super::*;
+
+    struct QueryExpectation<T> {
+        query: &'static str,
+        expected: T,
+    }
     use crate::ast::*;
 
     #[test]
@@ -137,19 +148,58 @@ mod tests {
         // previously parsed them as `Scope::Both` attributes, so they silently
         // matched nothing (`attr.duration`, `attr.nestedSetParent`, …) and broke
         // every Grafana Tempo/Traces-Drilldown query, which writes them bare.
-        for (query, want) in [
-            ("{ duration > 1s }", Intrinsic::Duration),
-            ("{ name != \"\" }", Intrinsic::Name),
-            ("{ kind = server }", Intrinsic::Kind),
-            ("{ status = error }", Intrinsic::Status),
-            ("{ statusMessage != \"\" }", Intrinsic::StatusMessage),
-            ("{ childCount > 0 }", Intrinsic::ChildCount),
-            ("{ nestedSetLeft > 0 }", Intrinsic::NestedSetLeft),
-            ("{ nestedSetRight > 0 }", Intrinsic::NestedSetRight),
-            ("{ nestedSetParent < 0 }", Intrinsic::NestedSetParent),
-            ("{ rootName != \"\" }", Intrinsic::TraceRootName),
-            ("{ rootServiceName != \"\" }", Intrinsic::TraceRootService),
-            ("{ traceDuration > 1s }", Intrinsic::TraceDuration),
+        for QueryExpectation {
+            query,
+            expected: want,
+        } in [
+            QueryExpectation {
+                query: "{ duration > 1s }",
+                expected: Intrinsic::Duration,
+            },
+            QueryExpectation {
+                query: "{ name != \"\" }",
+                expected: Intrinsic::Name,
+            },
+            QueryExpectation {
+                query: "{ kind = server }",
+                expected: Intrinsic::Kind,
+            },
+            QueryExpectation {
+                query: "{ status = error }",
+                expected: Intrinsic::Status,
+            },
+            QueryExpectation {
+                query: "{ statusMessage != \"\" }",
+                expected: Intrinsic::StatusMessage,
+            },
+            QueryExpectation {
+                query: "{ childCount > 0 }",
+                expected: Intrinsic::ChildCount,
+            },
+            QueryExpectation {
+                query: "{ nestedSetLeft > 0 }",
+                expected: Intrinsic::NestedSetLeft,
+            },
+            QueryExpectation {
+                query: "{ nestedSetRight > 0 }",
+                expected: Intrinsic::NestedSetRight,
+            },
+            QueryExpectation {
+                query: "{ nestedSetParent < 0 }",
+                expected: Intrinsic::NestedSetParent,
+            },
+            QueryExpectation {
+                query: "{ rootName != \"\" }",
+                expected: Intrinsic::TraceRootName,
+            },
+            QueryExpectation {
+                query: "{ rootServiceName != \"\" }",
+                expected: Intrinsic::TraceRootService,
+            },
+            QueryExpectation {
+                query: "{ traceDuration > 1s }",
+                expected: Intrinsic::TraceDuration,
+            },
         ] {
             let lhs = selector_lhs(query);
             assert!(
@@ -267,22 +317,67 @@ mod tests {
 
     #[test]
     fn structural_operators_parse() {
-        for (query, expected) in [
-            ("{ .a = 1 } >> { .b = 2 }", StructuralOp::Descendant),
-            ("{ .a = 1 } << { .b = 2 }", StructuralOp::Ancestor),
-            ("{ .a = 1 } > { .b = 2 }", StructuralOp::Child),
-            ("{ .a = 1 } < { .b = 2 }", StructuralOp::Parent),
-            ("{ .a = 1 } ~ { .b = 2 }", StructuralOp::Sibling),
-            ("{ .a = 1 } !>> { .b = 2 }", StructuralOp::NegDescendant),
-            ("{ .a = 1 } !<< { .b = 2 }", StructuralOp::NegAncestor),
-            ("{ .a = 1 } !> { .b = 2 }", StructuralOp::NegChild),
-            ("{ .a = 1 } !< { .b = 2 }", StructuralOp::NegParent),
-            ("{ .a = 1 } !~ { .b = 2 }", StructuralOp::NegSibling),
-            ("{ .a = 1 } &>> { .b = 2 }", StructuralOp::UnionDescendant),
-            ("{ .a = 1 } &<< { .b = 2 }", StructuralOp::UnionAncestor),
-            ("{ .a = 1 } &> { .b = 2 }", StructuralOp::UnionChild),
-            ("{ .a = 1 } &< { .b = 2 }", StructuralOp::UnionParent),
-            ("{ .a = 1 } &~ { .b = 2 }", StructuralOp::UnionSibling),
+        for QueryExpectation { query, expected } in [
+            QueryExpectation {
+                query: "{ .a = 1 } >> { .b = 2 }",
+                expected: StructuralOp::Descendant,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } << { .b = 2 }",
+                expected: StructuralOp::Ancestor,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } > { .b = 2 }",
+                expected: StructuralOp::Child,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } < { .b = 2 }",
+                expected: StructuralOp::Parent,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } ~ { .b = 2 }",
+                expected: StructuralOp::Sibling,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } !>> { .b = 2 }",
+                expected: StructuralOp::NegDescendant,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } !<< { .b = 2 }",
+                expected: StructuralOp::NegAncestor,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } !> { .b = 2 }",
+                expected: StructuralOp::NegChild,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } !< { .b = 2 }",
+                expected: StructuralOp::NegParent,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } !~ { .b = 2 }",
+                expected: StructuralOp::NegSibling,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } &>> { .b = 2 }",
+                expected: StructuralOp::UnionDescendant,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } &<< { .b = 2 }",
+                expected: StructuralOp::UnionAncestor,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } &> { .b = 2 }",
+                expected: StructuralOp::UnionChild,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } &< { .b = 2 }",
+                expected: StructuralOp::UnionParent,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } &~ { .b = 2 }",
+                expected: StructuralOp::UnionSibling,
+            },
         ] {
             let q = parse(query).unwrap();
             let SpansetExpr::Structural { op, .. } = &q.root else {
@@ -499,7 +594,13 @@ mod tests {
         let q = parse("{ .a = 1 } with (most_recent=true)").unwrap();
         assert!(q.hints.most_recent);
         let unknown = parse("{ .a = 1 } with (unknown=true)").unwrap();
-        assert!(unknown.hints.values == vec![("unknown".into(), Value::Bool(true))]);
+        assert!(
+            unknown.hints.values
+                == vec![QueryHintValue {
+                    name: "unknown".into(),
+                    value: Value::Bool(true),
+                }]
+        );
         assert!(!unknown.hints.most_recent);
     }
 
@@ -564,9 +665,18 @@ mod tests {
 
     #[test]
     fn value_fold_div_and_mod_still_work() {
-        for (query, want) in [
-            ("{ .x = 6 / 2 }", Value::Int(3)),
-            ("{ .x = 7 % 3 }", Value::Int(1)),
+        for QueryExpectation {
+            query,
+            expected: want,
+        } in [
+            QueryExpectation {
+                query: "{ .x = 6 / 2 }",
+                expected: Value::Int(3),
+            },
+            QueryExpectation {
+                query: "{ .x = 7 % 3 }",
+                expected: Value::Int(1),
+            },
         ] {
             assert!(selector_rhs(query) == want, "value mismatch for {query}");
         }
@@ -574,11 +684,23 @@ mod tests {
 
     #[test]
     fn quantile_leading_zero_fraction_preserved() {
-        for (query, expected) in [
-            ("{ .a = 1 } | quantile_over_time(span:duration, .05)", 0.05),
-            ("{ .a = 1 } | quantile_over_time(span:duration, .99)", 0.99),
-            ("{ .a = 1 } | quantile_over_time(span:duration, .5)", 0.5),
-            ("{ .a = 1 } | quantile_over_time(span:duration, .9)", 0.9),
+        for QueryExpectation { query, expected } in [
+            QueryExpectation {
+                query: "{ .a = 1 } | quantile_over_time(span:duration, .05)",
+                expected: 0.05,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } | quantile_over_time(span:duration, .99)",
+                expected: 0.99,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } | quantile_over_time(span:duration, .5)",
+                expected: 0.5,
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } | quantile_over_time(span:duration, .9)",
+                expected: 0.9,
+            },
         ] {
             let q = parse(query).unwrap();
             let [Pipeline::Aggregate(Aggregate::QuantileOverTime { quantiles, .. })] =
@@ -628,10 +750,22 @@ mod tests {
         assert!(
             q.hints.values
                 == vec![
-                    ("most_recent".into(), Value::Int(5)),
-                    ("unused".into(), Value::Str("opaque".into())),
-                    ("sample".into(), Value::Float(0.5)),
-                    ("timeout".into(), Value::Duration(1_000_000_000))
+                    QueryHintValue {
+                        name: "most_recent".into(),
+                        value: Value::Int(5),
+                    },
+                    QueryHintValue {
+                        name: "unused".into(),
+                        value: Value::Str("opaque".into()),
+                    },
+                    QueryHintValue {
+                        name: "sample".into(),
+                        value: Value::Float(0.5),
+                    },
+                    QueryHintValue {
+                        name: "timeout".into(),
+                        value: Value::Duration(1_000_000_000),
+                    }
                 ]
         );
         assert!(parse("{} with(unused=span.name)").is_err());
@@ -697,35 +831,38 @@ mod tests {
 
     #[test]
     fn sum_avg_max_min_aggregates_parse() {
-        for (query, want) in [
-            (
-                "{ .a = 1 } | sum(.x)",
-                Aggregate::Sum(Field {
+        for QueryExpectation {
+            query,
+            expected: want,
+        } in [
+            QueryExpectation {
+                query: "{ .a = 1 } | sum(.x)",
+                expected: Aggregate::Sum(Field {
                     scope: Scope::Both,
                     key: "x".into(),
                 }),
-            ),
-            (
-                "{ .a = 1 } | avg(.x)",
-                Aggregate::Avg(Field {
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } | avg(.x)",
+                expected: Aggregate::Avg(Field {
                     scope: Scope::Both,
                     key: "x".into(),
                 }),
-            ),
-            (
-                "{ .a = 1 } | max(.x)",
-                Aggregate::Max(Field {
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } | max(.x)",
+                expected: Aggregate::Max(Field {
                     scope: Scope::Both,
                     key: "x".into(),
                 }),
-            ),
-            (
-                "{ .a = 1 } | min(.x)",
-                Aggregate::Min(Field {
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } | min(.x)",
+                expected: Aggregate::Min(Field {
                     scope: Scope::Both,
                     key: "x".into(),
                 }),
-            ),
+            },
         ] {
             let q = parse(query).unwrap();
             assert!(
@@ -737,28 +874,31 @@ mod tests {
 
     #[test]
     fn over_time_aggregates_parse() {
-        for (query, want) in [
-            (
-                "{ .a = 1 } | sum_over_time(span:duration)",
-                Aggregate::SumOverTime(Field {
+        for QueryExpectation {
+            query,
+            expected: want,
+        } in [
+            QueryExpectation {
+                query: "{ .a = 1 } | sum_over_time(span:duration)",
+                expected: Aggregate::SumOverTime(Field {
                     scope: Scope::Intrinsic(Intrinsic::Duration),
                     key: "span:duration".into(),
                 }),
-            ),
-            (
-                "{ .a = 1 } | min_over_time(span:duration)",
-                Aggregate::MinOverTime(Field {
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } | min_over_time(span:duration)",
+                expected: Aggregate::MinOverTime(Field {
                     scope: Scope::Intrinsic(Intrinsic::Duration),
                     key: "span:duration".into(),
                 }),
-            ),
-            (
-                "{ .a = 1 } | max_over_time(span:duration)",
-                Aggregate::MaxOverTime(Field {
+            },
+            QueryExpectation {
+                query: "{ .a = 1 } | max_over_time(span:duration)",
+                expected: Aggregate::MaxOverTime(Field {
                     scope: Scope::Intrinsic(Intrinsic::Duration),
                     key: "span:duration".into(),
                 }),
-            ),
+            },
         ] {
             let q = parse(query).unwrap();
             assert!(
@@ -910,12 +1050,30 @@ mod tests {
 
     #[test]
     fn explicit_scope_dot_key_resolves() {
-        for (query, scope) in [
-            ("{ resource.region = \"us\" }", Scope::Resource),
-            ("{ event.foo = 1 }", Scope::Event),
-            ("{ link.foo = 1 }", Scope::Link),
-            ("{ instrumentation.foo = 1 }", Scope::Instrumentation),
-            ("{ parent.foo = 1 }", Scope::Parent),
+        for QueryExpectation {
+            query,
+            expected: scope,
+        } in [
+            QueryExpectation {
+                query: "{ resource.region = \"us\" }",
+                expected: Scope::Resource,
+            },
+            QueryExpectation {
+                query: "{ event.foo = 1 }",
+                expected: Scope::Event,
+            },
+            QueryExpectation {
+                query: "{ link.foo = 1 }",
+                expected: Scope::Link,
+            },
+            QueryExpectation {
+                query: "{ instrumentation.foo = 1 }",
+                expected: Scope::Instrumentation,
+            },
+            QueryExpectation {
+                query: "{ parent.foo = 1 }",
+                expected: Scope::Parent,
+            },
         ] {
             let lhs = selector_lhs(query);
             assert!(lhs.scope == scope, "scope mismatch for {query}");
@@ -930,16 +1088,31 @@ mod tests {
 
     #[test]
     fn intrinsic_keys_preserve_scoped_names_and_canonical_id_aliases() {
-        for (query, expected) in [
-            ("{} | count_over_time() by(name)", "name"),
-            ("{} | count_over_time() by(span:name)", "span:name"),
-            ("{} | count_over_time() by(duration)", "duration"),
-            (
-                "{} | count_over_time() by(trace:duration)",
-                "trace:duration",
-            ),
-            ("{} | count_over_time() by(span:parentId)", "span:parentID"),
-            ("{} | count_over_time() by(link:spanId)", "link:spanID"),
+        for QueryExpectation { query, expected } in [
+            QueryExpectation {
+                query: "{} | count_over_time() by(name)",
+                expected: "name",
+            },
+            QueryExpectation {
+                query: "{} | count_over_time() by(span:name)",
+                expected: "span:name",
+            },
+            QueryExpectation {
+                query: "{} | count_over_time() by(duration)",
+                expected: "duration",
+            },
+            QueryExpectation {
+                query: "{} | count_over_time() by(trace:duration)",
+                expected: "trace:duration",
+            },
+            QueryExpectation {
+                query: "{} | count_over_time() by(span:parentId)",
+                expected: "span:parentID",
+            },
+            QueryExpectation {
+                query: "{} | count_over_time() by(link:spanId)",
+                expected: "link:spanID",
+            },
         ] {
             let query = parse(query).unwrap();
             let Pipeline::By(fields) = &query.pipeline[1] else {
@@ -1049,24 +1222,54 @@ mod tests {
 
     #[test]
     fn trace_and_event_intrinsics_resolve() {
-        for (query, intrinsic) in [
-            ("{ trace:rootName = \"x\" }", Intrinsic::TraceRootName),
-            ("{ trace:rootService = \"x\" }", Intrinsic::TraceRootService),
-            ("{ trace:id = \"x\" }", Intrinsic::TraceId),
-            ("{ event:name = \"x\" }", Intrinsic::EventName),
-            (
-                "{ event:timeSinceStart > 5ms }",
-                Intrinsic::EventTimeSinceStart,
-            ),
-            ("{ link:traceID = \"x\" }", Intrinsic::LinkTraceId),
-            ("{ link:spanID = \"x\" }", Intrinsic::LinkSpanId),
-            (
-                "{ instrumentation:version = \"x\" }",
-                Intrinsic::InstrumentationVersion,
-            ),
-            ("{ span:nestedSetLeft > 0 }", Intrinsic::NestedSetLeft),
-            ("{ span:nestedSetRight > 0 }", Intrinsic::NestedSetRight),
-            ("{ span:parentId = \"x\" }", Intrinsic::ParentId),
+        for QueryExpectation {
+            query,
+            expected: intrinsic,
+        } in [
+            QueryExpectation {
+                query: "{ trace:rootName = \"x\" }",
+                expected: Intrinsic::TraceRootName,
+            },
+            QueryExpectation {
+                query: "{ trace:rootService = \"x\" }",
+                expected: Intrinsic::TraceRootService,
+            },
+            QueryExpectation {
+                query: "{ trace:id = \"x\" }",
+                expected: Intrinsic::TraceId,
+            },
+            QueryExpectation {
+                query: "{ event:name = \"x\" }",
+                expected: Intrinsic::EventName,
+            },
+            QueryExpectation {
+                query: "{ event:timeSinceStart > 5ms }",
+                expected: Intrinsic::EventTimeSinceStart,
+            },
+            QueryExpectation {
+                query: "{ link:traceID = \"x\" }",
+                expected: Intrinsic::LinkTraceId,
+            },
+            QueryExpectation {
+                query: "{ link:spanID = \"x\" }",
+                expected: Intrinsic::LinkSpanId,
+            },
+            QueryExpectation {
+                query: "{ instrumentation:version = \"x\" }",
+                expected: Intrinsic::InstrumentationVersion,
+            },
+            QueryExpectation {
+                query: "{ span:nestedSetLeft > 0 }",
+                expected: Intrinsic::NestedSetLeft,
+            },
+            QueryExpectation {
+                query: "{ span:nestedSetRight > 0 }",
+                expected: Intrinsic::NestedSetRight,
+            },
+            QueryExpectation {
+                query: "{ span:parentId = \"x\" }",
+                expected: Intrinsic::ParentId,
+            },
         ] {
             let lhs = selector_lhs(query);
             assert!(
@@ -1080,14 +1283,35 @@ mod tests {
 
     #[test]
     fn primary_values_cover_all_literal_kinds() {
-        for (query, want) in [
-            ("{ .a = \"s\" }", Value::Str("s".into())),
-            ("{ .a = 42 }", Value::Int(42)),
-            ("{ .a = 1.5 }", Value::Float(1.5)),
-            ("{ .a = true }", Value::Bool(true)),
-            ("{ .a = nil }", Value::Nil),
+        for QueryExpectation {
+            query,
+            expected: want,
+        } in [
+            QueryExpectation {
+                query: "{ .a = \"s\" }",
+                expected: Value::Str("s".into()),
+            },
+            QueryExpectation {
+                query: "{ .a = 42 }",
+                expected: Value::Int(42),
+            },
+            QueryExpectation {
+                query: "{ .a = 1.5 }",
+                expected: Value::Float(1.5),
+            },
+            QueryExpectation {
+                query: "{ .a = true }",
+                expected: Value::Bool(true),
+            },
+            QueryExpectation {
+                query: "{ .a = nil }",
+                expected: Value::Nil,
+            },
             // bare identifier on a non-duration field folds to a string value.
-            ("{ .a = ident }", Value::Str("ident".into())),
+            QueryExpectation {
+                query: "{ .a = ident }",
+                expected: Value::Str("ident".into()),
+            },
         ] {
             assert!(selector_rhs(query) == want, "value mismatch for {query}");
         }
@@ -1126,21 +1350,66 @@ mod tests {
 
     #[test]
     fn mixed_int_float_arithmetic_promotes_to_float() {
-        for (query, want) in [
-            ("{ .a = 1 + 2.0 }", 3.0),
-            ("{ .a = 2.0 + 1 }", 3.0),
-            ("{ .a = 5 - 1.5 }", 3.5),
-            ("{ .a = 5.5 - 1 }", 4.5),
-            ("{ .a = 2 * 1.5 }", 3.0),
-            ("{ .a = 1.5 * 2 }", 3.0),
-            ("{ .a = 3 / 1.5 }", 2.0),
-            ("{ .a = 3.0 / 2 }", 1.5),
-            ("{ .a = 1.0 + 2.0 }", 3.0),
-            ("{ .a = 6.0 / 2.0 }", 3.0),
-            ("{ .a = 1.0 - 0.5 }", 0.5),
-            ("{ .a = 2.0 * 2.0 }", 4.0),
-            ("{ .a = 2.0 * 3.0 }", 6.0),
-            ("{ .a = 5 / 2 }", 2.5),
+        for QueryExpectation {
+            query,
+            expected: want,
+        } in [
+            QueryExpectation {
+                query: "{ .a = 1 + 2.0 }",
+                expected: 3.0,
+            },
+            QueryExpectation {
+                query: "{ .a = 2.0 + 1 }",
+                expected: 3.0,
+            },
+            QueryExpectation {
+                query: "{ .a = 5 - 1.5 }",
+                expected: 3.5,
+            },
+            QueryExpectation {
+                query: "{ .a = 5.5 - 1 }",
+                expected: 4.5,
+            },
+            QueryExpectation {
+                query: "{ .a = 2 * 1.5 }",
+                expected: 3.0,
+            },
+            QueryExpectation {
+                query: "{ .a = 1.5 * 2 }",
+                expected: 3.0,
+            },
+            QueryExpectation {
+                query: "{ .a = 3 / 1.5 }",
+                expected: 2.0,
+            },
+            QueryExpectation {
+                query: "{ .a = 3.0 / 2 }",
+                expected: 1.5,
+            },
+            QueryExpectation {
+                query: "{ .a = 1.0 + 2.0 }",
+                expected: 3.0,
+            },
+            QueryExpectation {
+                query: "{ .a = 6.0 / 2.0 }",
+                expected: 3.0,
+            },
+            QueryExpectation {
+                query: "{ .a = 1.0 - 0.5 }",
+                expected: 0.5,
+            },
+            QueryExpectation {
+                query: "{ .a = 2.0 * 2.0 }",
+                expected: 4.0,
+            },
+            QueryExpectation {
+                query: "{ .a = 2.0 * 3.0 }",
+                expected: 6.0,
+            },
+            QueryExpectation {
+                query: "{ .a = 5 / 2 }",
+                expected: 2.5,
+            },
         ] {
             assert!(
                 selector_rhs(query) == Value::Float(want),
@@ -1258,13 +1527,34 @@ mod tests {
 
     #[test]
     fn duration_units_all_resolve() {
-        for (query, want_ns) in [
-            ("{ span:duration = 5ns }", 5),
-            ("{ span:duration = 5us }", 5_000),
-            ("{ span:duration = 5ms }", 5_000_000),
-            ("{ span:duration = 5s }", 5_000_000_000),
-            ("{ span:duration = 2m }", 120_000_000_000),
-            ("{ span:duration = 1h }", 3_600_000_000_000),
+        for QueryExpectation {
+            query,
+            expected: want_ns,
+        } in [
+            QueryExpectation {
+                query: "{ span:duration = 5ns }",
+                expected: 5,
+            },
+            QueryExpectation {
+                query: "{ span:duration = 5us }",
+                expected: 5_000,
+            },
+            QueryExpectation {
+                query: "{ span:duration = 5ms }",
+                expected: 5_000_000,
+            },
+            QueryExpectation {
+                query: "{ span:duration = 5s }",
+                expected: 5_000_000_000,
+            },
+            QueryExpectation {
+                query: "{ span:duration = 2m }",
+                expected: 120_000_000_000,
+            },
+            QueryExpectation {
+                query: "{ span:duration = 1h }",
+                expected: 3_600_000_000_000,
+            },
         ] {
             assert!(
                 selector_rhs(query) == Value::Duration(want_ns),
@@ -1310,15 +1600,39 @@ mod tests {
 
     #[test]
     fn all_comparison_operators_parse() {
-        for (query, expected) in [
-            ("{ .a < 5 }", ComparisonOp::Lt),
-            ("{ .a <= 5 }", ComparisonOp::Lte),
-            ("{ .a > 5 }", ComparisonOp::Gt),
-            ("{ .a >= 5 }", ComparisonOp::Gte),
-            ("{ .a != 5 }", ComparisonOp::Neq),
-            ("{ .a =~ \"x\" }", ComparisonOp::Re),
-            ("{ .a !~ \"x\" }", ComparisonOp::Nre),
-            ("{ .a = 5 }", ComparisonOp::Eq),
+        for QueryExpectation { query, expected } in [
+            QueryExpectation {
+                query: "{ .a < 5 }",
+                expected: ComparisonOp::Lt,
+            },
+            QueryExpectation {
+                query: "{ .a <= 5 }",
+                expected: ComparisonOp::Lte,
+            },
+            QueryExpectation {
+                query: "{ .a > 5 }",
+                expected: ComparisonOp::Gt,
+            },
+            QueryExpectation {
+                query: "{ .a >= 5 }",
+                expected: ComparisonOp::Gte,
+            },
+            QueryExpectation {
+                query: "{ .a != 5 }",
+                expected: ComparisonOp::Neq,
+            },
+            QueryExpectation {
+                query: "{ .a =~ \"x\" }",
+                expected: ComparisonOp::Re,
+            },
+            QueryExpectation {
+                query: "{ .a !~ \"x\" }",
+                expected: ComparisonOp::Nre,
+            },
+            QueryExpectation {
+                query: "{ .a = 5 }",
+                expected: ComparisonOp::Eq,
+            },
         ] {
             let q = parse(query).unwrap();
             let SpansetExpr::Selector(fe) = &q.root else {

@@ -3,6 +3,21 @@ use super::{
     VectorScalarExpressionParser, parse_scalar_sample, scalar_literal_len,
 };
 
+struct ParsedResultDestination {
+    result: ScalarVectorExpressionResult,
+    destination_label: String,
+}
+
+struct ComparisonOperatorCase {
+    text: &'static str,
+    operator: ScalarComparisonOp,
+}
+
+struct SetOperatorCase {
+    text: &'static str,
+    operator: ScalarSetOp,
+}
+
 impl<'a> VectorScalarExpressionParser<'a> {
     pub(crate) fn new(input: &'a str) -> Self {
         Self {
@@ -86,11 +101,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
     }
 
     pub(crate) fn parse_label_replace_result(&mut self) -> Option<ScalarVectorExpressionResult> {
-        self.consume_keyword("label_replace");
-        self.consume('(').then_some(())?;
-        let result = self.parse_result()?;
-        self.consume(',').then_some(())?;
-        let destination_label = self.parse_string_literal()?;
+        let parsed = self.parse_result_and_destination_label("label_replace")?;
         self.consume(',').then_some(())?;
         let replacement = self.parse_string_literal()?;
         self.consume(',').then_some(())?;
@@ -99,7 +110,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         let pattern = self.parse_string_literal()?;
         self.consume(')').then_some(())?;
 
-        let ScalarVectorExpressionResult::Vector { sample, mut metric } = result else {
+        let ScalarVectorExpressionResult::Vector { sample, mut metric } = parsed.result else {
             return None;
         };
         let regex = Regex::new(&pattern).ok()?;
@@ -107,18 +118,14 @@ impl<'a> VectorScalarExpressionParser<'a> {
         if let Some(captures) = regex.captures(source_value) {
             let mut destination_value = String::new();
             captures.expand(&replacement, &mut destination_value);
-            metric.insert(destination_label, destination_value);
+            metric.insert(parsed.destination_label, destination_value);
         }
 
         Some(ScalarVectorExpressionResult::Vector { sample, metric })
     }
 
     pub(crate) fn parse_label_join_result(&mut self) -> Option<ScalarVectorExpressionResult> {
-        self.consume_keyword("label_join");
-        self.consume('(').then_some(())?;
-        let result = self.parse_result()?;
-        self.consume(',').then_some(())?;
-        let destination_label = self.parse_string_literal()?;
+        let parsed = self.parse_result_and_destination_label("label_join")?;
         self.consume(',').then_some(())?;
         let separator = self.parse_string_literal()?;
         self.consume(',').then_some(())?;
@@ -128,7 +135,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
         self.consume(')').then_some(())?;
 
-        let ScalarVectorExpressionResult::Vector { sample, mut metric } = result else {
+        let ScalarVectorExpressionResult::Vector { sample, mut metric } = parsed.result else {
             return None;
         };
         let joined = source_labels
@@ -136,9 +143,24 @@ impl<'a> VectorScalarExpressionParser<'a> {
             .map(|label| metric.get(label).map_or("", String::as_str))
             .collect::<Vec<_>>()
             .join(&separator);
-        metric.insert(destination_label, joined);
+        metric.insert(parsed.destination_label, joined);
 
         Some(ScalarVectorExpressionResult::Vector { sample, metric })
+    }
+
+    fn parse_result_and_destination_label(
+        &mut self,
+        function_name: &str,
+    ) -> Option<ParsedResultDestination> {
+        self.consume_keyword(function_name);
+        self.consume('(').then_some(())?;
+        let result = self.parse_result()?;
+        self.consume(',').then_some(())?;
+        let destination_label = self.parse_string_literal()?;
+        Some(ParsedResultDestination {
+            result,
+            destination_label,
+        })
     }
 
     pub(crate) fn parse_expression(&mut self) -> Option<ScalarSample> {
@@ -243,31 +265,58 @@ impl<'a> VectorScalarExpressionParser<'a> {
     }
 
     pub(crate) fn parse_comparison_operator(&mut self) -> Option<ScalarComparisonOp> {
-        for (operator, op) in [
-            (">=", ScalarComparisonOp::GreaterOrEqual),
-            ("<=", ScalarComparisonOp::LessOrEqual),
-            ("==", ScalarComparisonOp::Equal),
-            ("!=", ScalarComparisonOp::NotEqual),
-            (">", ScalarComparisonOp::Greater),
-            ("<", ScalarComparisonOp::Less),
+        for case in [
+            ComparisonOperatorCase {
+                text: ">=",
+                operator: ScalarComparisonOp::GreaterOrEqual,
+            },
+            ComparisonOperatorCase {
+                text: "<=",
+                operator: ScalarComparisonOp::LessOrEqual,
+            },
+            ComparisonOperatorCase {
+                text: "==",
+                operator: ScalarComparisonOp::Equal,
+            },
+            ComparisonOperatorCase {
+                text: "!=",
+                operator: ScalarComparisonOp::NotEqual,
+            },
+            ComparisonOperatorCase {
+                text: ">",
+                operator: ScalarComparisonOp::Greater,
+            },
+            ComparisonOperatorCase {
+                text: "<",
+                operator: ScalarComparisonOp::Less,
+            },
         ] {
-            if self.input[self.position..].starts_with(operator) {
-                self.position += operator.len();
-                return Some(op);
+            if self.input[self.position..].starts_with(case.text) {
+                self.position += case.text.len();
+                return Some(case.operator);
             }
         }
         None
     }
 
     pub(crate) fn parse_set_operator(&mut self) -> Option<ScalarSetOp> {
-        for (operator, op) in [
-            ("unless", ScalarSetOp::Unless),
-            ("and", ScalarSetOp::And),
-            ("or", ScalarSetOp::Or),
+        for case in [
+            SetOperatorCase {
+                text: "unless",
+                operator: ScalarSetOp::Unless,
+            },
+            SetOperatorCase {
+                text: "and",
+                operator: ScalarSetOp::And,
+            },
+            SetOperatorCase {
+                text: "or",
+                operator: ScalarSetOp::Or,
+            },
         ] {
-            if self.input[self.position..].starts_with(operator) {
-                self.position += operator.len();
-                return Some(op);
+            if self.input[self.position..].starts_with(case.text) {
+                self.position += case.text.len();
+                return Some(case.operator);
             }
         }
         None

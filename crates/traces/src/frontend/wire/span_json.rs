@@ -24,9 +24,9 @@ impl From<&SpanRef> for SpanJson {
             attributes: s
                 .attributes
                 .iter()
-                .map(|(k, v)| KeyValueJson {
-                    key: k.clone(),
-                    value: AnyValueJson::from(v),
+                .map(|attribute| KeyValueJson {
+                    key: attribute.key.clone(),
+                    value: AnyValueJson::from(&attribute.value),
                 })
                 .collect(),
         }

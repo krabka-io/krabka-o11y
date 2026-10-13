@@ -10,20 +10,24 @@ pub(crate) fn parse_duration_nanos(s: &str) -> Result<i64> {
     while !rest.is_empty() {
         let number_len = rest
             .char_indices()
-            .take_while(|(_, ch)| ch.is_ascii_digit() || *ch == '.')
-            .map(|(idx, ch)| idx + ch.len_utf8())
+            .take_while(|entry| entry.1.is_ascii_digit() || entry.1 == '.')
+            .map(|entry| entry.0 + entry.1.len_utf8())
             .last()
             .ok_or_else(|| TraceqlError::Parse(format!("expected duration number in {s:?}")))?;
-        let (number, tail) = rest.split_at(number_len);
+        let number_and_tail = rest.split_at(number_len);
+        let number = number_and_tail.0;
+        let tail = number_and_tail.1;
         let unit_len = tail
             .char_indices()
-            .take_while(|(_, ch)| ch.is_ascii_alphabetic() || *ch == 'µ')
-            .map(|(idx, ch)| idx + ch.len_utf8())
+            .take_while(|entry| entry.1.is_ascii_alphabetic() || entry.1 == 'µ')
+            .map(|entry| entry.0 + entry.1.len_utf8())
             .last()
             .ok_or_else(|| {
                 TraceqlError::Parse(format!("missing duration unit after {number:?}"))
             })?;
-        let (unit, next) = tail.split_at(unit_len);
+        let unit_and_next = tail.split_at(unit_len);
+        let unit = unit_and_next.0;
+        let next = unit_and_next.1;
         let multiplier = match unit {
             "ns" => 1_i128,
             "us" | "µs" => 1_000,

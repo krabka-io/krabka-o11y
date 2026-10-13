@@ -44,7 +44,7 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let role = async {
         // With no `--audit-topic` this spawns nothing and reaches no broker.
         let audit_stop = CancellationToken::new();
-        let (audit, audit_writer) = AuditService::start(
+        let audit_parts = AuditService::start(
             &cli.audit,
             krabka_product("krabka-metrics", env!("CARGO_PKG_VERSION")),
             Some(&cli.bootstrap),
@@ -53,6 +53,8 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?
         .into_parts();
+        let audit = audit_parts.handle;
+        let audit_writer = audit_parts.writer;
         let mut audit_tasks = SupervisedTasks::new(audit_stop);
         if let Some(writer) = audit_writer {
             audit_tasks.adopt("audit writer", writer);

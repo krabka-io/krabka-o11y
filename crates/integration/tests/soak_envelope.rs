@@ -59,7 +59,9 @@ async fn operating_envelope() {
 
     let mut entries = Vec::new();
     for kind in SignalKind::ALL {
-        let (stores, meters) = StoreMeters::wrap(&minio.store, &format!("soak/{}", kind.name()));
+        let metered = StoreMeters::wrap(&minio.store, &format!("soak/{}", kind.name()));
+        let stores = metered.stores;
+        let meters = metered.meters;
         let ctx = phases::context(kind, &stores, meters, &config).await;
         entries.extend(phases::run_signal(kind, &ctx, &stores).await);
     }

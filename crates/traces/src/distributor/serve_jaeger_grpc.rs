@@ -1,7 +1,7 @@
 use tonic::service::Routes;
 
 use super::{
-    CollectorServiceServer, GrpcReceiver, JaegerGrpcService, ReceiverEndpoint, SocketAddr,
+    CollectorServiceServer, GrpcReceiver, JaegerGrpcService, ReceiverEndpoint, RunningServer,
     serve_grpc_receiver,
 };
 
@@ -20,9 +20,7 @@ use super::{
 ///
 /// # Errors
 /// Returns an error when the listener cannot be bound.
-pub async fn serve_jaeger_grpc(
-    endpoint: ReceiverEndpoint<'_>,
-) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+pub async fn serve_jaeger_grpc(endpoint: ReceiverEndpoint<'_>) -> std::io::Result<RunningServer> {
     serve_grpc_receiver(
         endpoint,
         GrpcReceiver {

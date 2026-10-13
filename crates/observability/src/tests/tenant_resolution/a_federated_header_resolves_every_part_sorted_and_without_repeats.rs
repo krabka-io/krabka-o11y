@@ -1,10 +1,10 @@
 use super::*;
 
-type RowForTest = (
-    &'static str,
-    Option<&'static [u8]>,
-    Result<Vec<TenantId>, TenantRequestError>,
-);
+struct RowForTest {
+    name: &'static str,
+    value: Option<&'static [u8]>,
+    expected: Result<Vec<TenantId>, TenantRequestError>,
+}
 
 /// Every row is a header value the pinned Loki 3.5.1 image, with
 /// `querier.multi_tenant_queries_enabled` on, was sent on a range query. A
@@ -28,26 +28,70 @@ pub(crate) fn a_federated_header_resolves_every_part_sorted_and_without_repeats(
     let missing = Err(TenantRequestError::Resolve(TenantResolveError::Missing));
 
     let cases: [RowForTest; 11] = [
-        ("one tenant", Some(b"tenant-a"), tenants(&["tenant-a"])),
-        ("absent", None, missing.clone()),
-        ("empty", Some(b""), missing.clone()),
-        ("two tenants", Some(b"b|a"), tenants(&["a", "b"])),
-        ("a repeat", Some(b"b|a|b"), tenants(&["a", "b"])),
-        ("an empty middle part", Some(b"a||b"), tenants(&["a", "b"])),
-        ("a trailing empty part", Some(b"a|"), tenants(&["a"])),
-        ("an invalid part", Some(b"a|b/c"), unsupported("b/c", '/')),
-        ("a padded part", Some(b"a | b"), unsupported("a ", ' ')),
-        (
-            "a dot dot part",
-            Some(b"a|.."),
-            Err(TenantRequestError::Resolve(TenantResolveError::Invalid(
+        RowForTest {
+            name: "one tenant",
+            value: Some(b"tenant-a"),
+            expected: tenants(&["tenant-a"]),
+        },
+        RowForTest {
+            name: "absent",
+            value: None,
+            expected: missing.clone(),
+        },
+        RowForTest {
+            name: "empty",
+            value: Some(b""),
+            expected: missing.clone(),
+        },
+        RowForTest {
+            name: "two tenants",
+            value: Some(b"b|a"),
+            expected: tenants(&["a", "b"]),
+        },
+        RowForTest {
+            name: "a repeat",
+            value: Some(b"b|a|b"),
+            expected: tenants(&["a", "b"]),
+        },
+        RowForTest {
+            name: "an empty middle part",
+            value: Some(b"a||b"),
+            expected: tenants(&["a", "b"]),
+        },
+        RowForTest {
+            name: "a trailing empty part",
+            value: Some(b"a|"),
+            expected: tenants(&["a"]),
+        },
+        RowForTest {
+            name: "an invalid part",
+            value: Some(b"a|b/c"),
+            expected: unsupported("b/c", '/'),
+        },
+        RowForTest {
+            name: "a padded part",
+            value: Some(b"a | b"),
+            expected: unsupported("a ", ' '),
+        },
+        RowForTest {
+            name: "a dot dot part",
+            value: Some(b"a|.."),
+            expected: Err(TenantRequestError::Resolve(TenantResolveError::Invalid(
                 TenantIdError::RelativePathSegment,
             ))),
-        ),
-        ("only a separator", Some(b"|"), missing),
+        },
+        RowForTest {
+            name: "only a separator",
+            value: Some(b"|"),
+            expected: missing,
+        },
     ];
 
-    for (name, value, expected) in cases {
-        check!(resolve_federated_tenants(value) == expected, "{name}");
+    for case in cases {
+        check!(
+            resolve_federated_tenants(case.value) == case.expected,
+            "{}",
+            case.name
+        );
     }
 }

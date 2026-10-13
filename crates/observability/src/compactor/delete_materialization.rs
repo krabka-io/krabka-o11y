@@ -24,6 +24,7 @@ mod compaction_commit_error;
 mod compaction_error;
 mod compaction_offset_committer;
 mod insert_descriptor_labels;
+mod keep_log_rows_not_deleted;
 mod log_compaction_index_output;
 mod materialize_delete_requests_in_existing_local_manifest_blocks;
 mod materialize_delete_requests_in_existing_object_store_blocks;
@@ -41,6 +42,7 @@ pub use compaction_commit_error::CompactionCommitError;
 pub use compaction_error::CompactionError;
 pub use compaction_offset_committer::CompactionOffsetCommitter;
 pub(crate) use insert_descriptor_labels::insert_descriptor_labels;
+pub(crate) use keep_log_rows_not_deleted::keep_log_rows_not_deleted;
 pub(crate) use log_compaction_index_output::LogCompactionIndexOutput;
 #[cfg_attr(test, mutants::skip)]
 pub(crate) use materialize_delete_requests_in_existing_local_manifest_blocks::materialize_delete_requests_in_existing_local_manifest_blocks;
@@ -48,7 +50,7 @@ pub(crate) use materialize_delete_requests_in_existing_object_store_blocks::mate
 #[cfg_attr(test, mutants::skip)]
 pub(crate) use materialize_delete_requests_in_object_store_block_index::materialize_delete_requests_in_object_store_block_index;
 pub(crate) use poll_accumulated_log_compaction_records::poll_accumulated_log_compaction_records;
-pub(crate) use tenant_compaction_index_cache::TenantCompactionIndexCache;
+pub(crate) use tenant_compaction_index_cache::{TenantCompactionIndexCache, TenantLogIndexes};
 pub(crate) use wal_compaction_chunks::wal_compaction_chunks;
 pub(crate) use wal_record_time_range::wal_record_time_range;
 pub(crate) use write_tenant_compaction_indexes_to_object_store::write_tenant_compaction_indexes_to_object_store;

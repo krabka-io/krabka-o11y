@@ -15,7 +15,7 @@ pub(crate) async fn execute_index_volume_query(
     let params = parse_volume_params(raw_query)?;
     let tenant = authorized_tenant(state, security, headers, TenantErrorSurface::Read).await?;
     let time_range = TimeRange::new(params.start, params.end)?;
-    let (state, plan, _) = plan_analytics_query(
+    let planned = plan_analytics_query(
         state,
         AnalyticsQuery {
             tenant: &tenant,
@@ -25,6 +25,8 @@ pub(crate) async fn execute_index_volume_query(
         },
     )
     .await?;
+    let state = planned.state;
+    let plan = planned.plan;
     let tenant = tenant.as_str();
     let volumes = index_volume_samples(&state, tenant, &plan, &params);
     let mut response = match kind {

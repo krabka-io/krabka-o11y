@@ -12,6 +12,11 @@ use super::{
 /// store that never reports a conflict into a loud error instead of a hang.
 const MAX_SNAPSHOT_WRITE_ATTEMPTS: usize = 64;
 
+struct PublicationAttempt {
+    len: usize,
+    result: std::result::Result<object_store::PutResult, object_store::Error>,
+}
+
 /// Folds a writer's index into the newest published manifest and swaps the
 /// result in as the next generation.
 ///
@@ -61,7 +66,7 @@ where
                     PutOptions::from(PutMode::Create),
                 )
                 .await;
-            Ok::<_, BlockStoreError>((len, put))
+            Ok::<_, BlockStoreError>(PublicationAttempt { len, result: put })
         })
         .await
         .map_err(|_| {
@@ -69,11 +74,10 @@ where
                 "index snapshot `{key}` publication exceeded {SHARD_PAYLOAD_PUBLISH_TIMEOUT:?}"
             ))
         })??;
-        let (len, put) = publication;
-        match put {
+        match publication.result {
             Ok(_) => {
                 tracing::Span::current().record("attempts", attempt);
-                tracing::Span::current().record("len", len);
+                tracing::Span::current().record("len", publication.len);
                 prune_old_index_snapshots(store, key, retain.into_value()).await?;
                 if generation.is_multiple_of(SNAPSHOT_SWEEP_INTERVAL) {
                     sweep_orphan_shard_payloads(

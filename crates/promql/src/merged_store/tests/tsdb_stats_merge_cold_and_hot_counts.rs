@@ -6,19 +6,28 @@ pub(crate) async fn tsdb_stats_merge_cold_and_hot_counts() {
     let mut hot = InMemoryMetricStore::new();
     cold.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         10_000,
         1.0,
     );
     cold.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         20_000,
         2.0,
     );
     hot.push_float(
         "tenant-a",
-        labels(&[("__name__", "errors_total"), ("job", "worker")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "errors_total"),
+            crate::test_support::TestLabelPair::new("job", "worker"),
+        ]),
         30_000,
         3.0,
     );

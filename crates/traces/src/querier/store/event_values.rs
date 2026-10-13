@@ -1,5 +1,5 @@
 use super::{
-    Array, EventRef, RecordBatch, SCOL_EVENTS, StructArray, Time, TimeExt, TraceqlError,
+    Array, Attribute, EventRef, RecordBatch, SCOL_EVENTS, StructArray, Time, TimeExt, TraceqlError,
     nested_string_attrs, optional_list_column, string_array_value, struct_int64_field,
     struct_list_field, struct_string_field,
 };
@@ -54,7 +54,7 @@ pub(crate) fn event_values(batch: &RecordBatch, row: usize) -> Result<Vec<EventR
 pub(super) fn nested_typed_attrs(
     structs: &StructArray,
     row: usize,
-) -> Result<Option<Vec<(String, super::AttrValue)>>, TraceqlError> {
+) -> Result<Option<Vec<Attribute>>, TraceqlError> {
     let Some(payload) = structs.column_by_name("attr_typed") else {
         return Ok(None);
     };
@@ -75,7 +75,10 @@ pub(super) fn nested_typed_attrs(
                 use super::AttrValue;
                 let values = match attr.value {
                     BlockValue::Unsupported(value) => {
-                        return vec![(attr.key, super::AttrValue::Unsupported(value))];
+                        return vec![Attribute::new(
+                            attr.key,
+                            super::AttrValue::Unsupported(value),
+                        )];
                     }
                     BlockValue::Str(values) => {
                         values.into_iter().map(AttrValue::Str).collect::<Vec<_>>()
@@ -87,11 +90,11 @@ pub(super) fn nested_typed_attrs(
                     BlockValue::Bool(values) => values.into_iter().map(AttrValue::Bool).collect(),
                 };
                 if attr.is_array {
-                    vec![(attr.key, AttrValue::Array(values))]
+                    vec![Attribute::new(attr.key, AttrValue::Array(values))]
                 } else {
                     values
                         .into_iter()
-                        .map(|value| (attr.key.clone(), value))
+                        .map(|value| Attribute::new(attr.key.clone(), value))
                         .collect()
                 }
             })

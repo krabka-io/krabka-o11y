@@ -54,17 +54,20 @@ mod tests {
 
     /// A probe with a canned verdict per address, and no address at all for
     /// one it was never told about.
-    struct StubProbe(Vec<(String, QuerierHealth)>);
+    struct StubProbe(Vec<QuerierMember>);
 
     #[async_trait]
     impl ReadinessProbe for StubProbe {
         async fn probe(&self, addr: &str) -> QuerierHealth {
-            self.0.iter().find(|(a, _)| a == addr).map_or_else(
-                || QuerierHealth::Unreachable {
-                    error: "no stub".to_string(),
-                },
-                |(_, health)| health.clone(),
-            )
+            self.0
+                .iter()
+                .find(|member| member.addr == addr)
+                .map_or_else(
+                    || QuerierHealth::Unreachable {
+                        error: "no stub".to_string(),
+                    },
+                    |member| member.health.clone(),
+                )
         }
     }
 
@@ -130,13 +133,16 @@ mod tests {
         // Loopback resolves to itself, so the endpoint and the member address
         // agree and the stub can be keyed on it.
         let probe = StubProbe(vec![
-            ("127.0.0.1:1".to_string(), QuerierHealth::Ready),
-            (
-                "127.0.0.1:2".to_string(),
-                QuerierHealth::NotReady {
+            QuerierMember {
+                addr: "127.0.0.1:1".to_string(),
+                health: QuerierHealth::Ready,
+            },
+            QuerierMember {
+                addr: "127.0.0.1:2".to_string(),
+                health: QuerierHealth::NotReady {
                     pending: "live-store".to_string(),
                 },
-            ),
+            },
         ]);
         let members = refresh_membership(
             &["127.0.0.1:1".to_string(), "127.0.0.1:2".to_string()],

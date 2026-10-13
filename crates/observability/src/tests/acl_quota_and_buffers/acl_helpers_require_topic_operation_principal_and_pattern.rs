@@ -1,4 +1,10 @@
-use super::*;
+use super::{super::prelude::AclEntry, *};
+
+struct TopicMatchCase<'a> {
+    entry: &'a AclEntry,
+    topic: &'a str,
+    expected: bool,
+}
 
 #[test]
 pub(crate) fn acl_helpers_require_topic_operation_principal_and_pattern() {
@@ -27,15 +33,28 @@ pub(crate) fn acl_helpers_require_topic_operation_principal_and_pattern() {
         PermissionType::Deny,
     );
 
-    for (entry, topic, want) in [
-        (&allow_write, "__krabka_observability_logs_wal", true),
-        (&allow_read, "__krabka_observability_logs_wal", true),
-        (&allow_read, "other-topic", false),
+    for case in [
+        TopicMatchCase {
+            entry: &allow_write,
+            topic: "__krabka_observability_logs_wal",
+            expected: true,
+        },
+        TopicMatchCase {
+            entry: &allow_read,
+            topic: "__krabka_observability_logs_wal",
+            expected: true,
+        },
+        TopicMatchCase {
+            entry: &allow_read,
+            topic: "other-topic",
+            expected: false,
+        },
     ] {
         check!(
-            matches_acl_topic_pattern(entry, topic) == want,
-            "pattern={} topic={topic}",
-            entry.resource_name
+            matches_acl_topic_pattern(case.entry, case.topic) == case.expected,
+            "pattern={} topic={}",
+            case.entry.resource_name,
+            case.topic
         );
     }
     // A literal "*" resource name matches any topic. Neither entry in the

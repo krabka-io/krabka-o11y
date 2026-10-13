@@ -1,5 +1,11 @@
 use super::*;
 
+fn app_label_map(app: &str) -> BTreeMap<String, String> {
+    let mut labels = BTreeMap::new();
+    labels.insert("app".into(), app.into());
+    labels
+}
+
 /// The shard catalog gains a compacted range once, and only once. Losing
 /// the push leaves a shard nobody can find; losing the containment test
 /// lists it twice, and the querier then reads the same shard twice.
@@ -10,7 +16,7 @@ pub(crate) async fn the_shard_catalog_lists_each_compacted_range_exactly_once() 
     let tenant = "tenant-a";
     let range = TimeRange::new(300, 399).unwrap();
     let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series(tenant, BTreeMap::from([("app".into(), "api".into())]));
+    let api = labels_index.insert_series(tenant, app_label_map("api"));
     let descriptor = BlockDescriptor::new(
         BlockKey::new(tenant, 0, 30, 39, range),
         BTreeSet::from([api]),

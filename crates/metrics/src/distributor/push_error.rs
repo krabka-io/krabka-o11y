@@ -86,6 +86,8 @@ impl IntoResponse for PushError {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         };
-        (status, self.to_string()).into_response()
+        let mut response = self.to_string().into_response();
+        *response.status_mut() = status;
+        response
     }
 }

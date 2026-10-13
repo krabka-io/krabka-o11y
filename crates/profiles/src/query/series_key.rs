@@ -1,1 +1,1 @@
-pub(crate) type SeriesKey = Vec<(String, String)>;
+pub(crate) type SeriesKey = Vec<krabka_pprof::ProfileLabel>;

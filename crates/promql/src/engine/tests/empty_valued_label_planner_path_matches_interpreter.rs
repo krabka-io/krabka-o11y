@@ -1,5 +1,20 @@
 use super::*;
 
+struct SamplePoint {
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct SeriesFixture {
+    labels: crate::PromqlLabels,
+    samples: Vec<SamplePoint>,
+}
+
+struct RangeQueryBounds {
+    start_ms: i64,
+    end_ms: i64,
+}
+
 /// Differential parity for a label that is present with an empty value.
 ///
 /// A series with `__unit__=""` has the label present and the value empty. That
@@ -23,22 +38,80 @@ pub(crate) async fn empty_valued_label_planner_path_matches_interpreter() {
     //   - job=c: `__unit__` ABSENT
     // The fingerprints of a (present-empty) and c (absent) differ, so both
     // must survive selection as distinct series.
-    for (lbls, samples) in [
-        (
-            labels(&[("__name__", "m"), ("job", "a"), ("__unit__", "")]),
-            vec![(0_i64, 1.0), (60_000, 2.0), (120_000, 3.0)],
-        ),
-        (
-            labels(&[("__name__", "m"), ("job", "b"), ("__unit__", "s")]),
-            vec![(0, 10.0), (60_000, 20.0), (120_000, 30.0)],
-        ),
-        (
-            labels(&[("__name__", "m"), ("job", "c")]),
-            vec![(0, 100.0), (60_000, 200.0), (120_000, 300.0)],
-        ),
+    for fixture in [
+        SeriesFixture {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "a"),
+                crate::test_support::TestLabelPair::new("__unit__", ""),
+            ])
+            .into(),
+            samples: vec![
+                SamplePoint {
+                    timestamp_ms: 0,
+                    value: 1.0,
+                },
+                SamplePoint {
+                    timestamp_ms: 60_000,
+                    value: 2.0,
+                },
+                SamplePoint {
+                    timestamp_ms: 120_000,
+                    value: 3.0,
+                },
+            ],
+        },
+        SeriesFixture {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "b"),
+                crate::test_support::TestLabelPair::new("__unit__", "s"),
+            ])
+            .into(),
+            samples: vec![
+                SamplePoint {
+                    timestamp_ms: 0,
+                    value: 10.0,
+                },
+                SamplePoint {
+                    timestamp_ms: 60_000,
+                    value: 20.0,
+                },
+                SamplePoint {
+                    timestamp_ms: 120_000,
+                    value: 30.0,
+                },
+            ],
+        },
+        SeriesFixture {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "c"),
+            ])
+            .into(),
+            samples: vec![
+                SamplePoint {
+                    timestamp_ms: 0,
+                    value: 100.0,
+                },
+                SamplePoint {
+                    timestamp_ms: 60_000,
+                    value: 200.0,
+                },
+                SamplePoint {
+                    timestamp_ms: 120_000,
+                    value: 300.0,
+                },
+            ],
+        },
     ] {
-        for (ts, value) in samples {
-            store.push_float("t", lbls.clone(), ts, value);
+        for sample in fixture.samples {
+            store.push_float(
+                "t",
+                fixture.labels.clone(),
+                sample.timestamp_ms,
+                sample.value,
+            );
         }
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
@@ -97,10 +170,19 @@ pub(crate) async fn empty_valued_label_planner_path_matches_interpreter() {
     // also route through the operator leaf and keep the present-empty (a),
     // non-empty (b), and absent (c) series DISTINCT — three separate result
     // series, the present-empty/absent pair not collapsed.
-    let (start, end, step) = (0_i64, 120_000_i64, millis(60_000));
+    let bounds = RangeQueryBounds {
+        start_ms: 0,
+        end_ms: 120_000,
+    };
     let query = "rate(m[2m])";
     let QueryResult::RangeMatrix(mut series) = engine
-        .query_range(&tenant_id("t"), query, start, end, step)
+        .query_range(
+            &tenant_id("t"),
+            query,
+            bounds.start_ms,
+            bounds.end_ms,
+            millis(60_000),
+        )
         .await
         .unwrap()
     else {

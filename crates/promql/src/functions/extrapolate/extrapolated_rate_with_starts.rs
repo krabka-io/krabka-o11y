@@ -25,7 +25,9 @@ pub(crate) fn extrapolated_rate_with_starts(
 
     let mut result = values[n - 1] - values[0];
     if is_counter {
-        for (index, pair) in values.windows(2).enumerate() {
+        for sample in values.windows(2).enumerate() {
+            let index = sample.0;
+            let pair = sample.1;
             let previous_start = starts.get(&timestamps[index]).copied().unwrap_or(0);
             let start = starts.get(&timestamps[index + 1]).copied().unwrap_or(0);
             if pair[1] < pair[0]

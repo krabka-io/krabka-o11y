@@ -1,6 +1,13 @@
 #[cfg(feature = "experimental-functions")]
 use super::*;
 
+#[cfg(feature = "experimental-functions")]
+#[derive(bon::Builder)]
+struct ParamAggregateSeries {
+    instance: &'static str,
+    value: f64,
+}
+
 /// Differential parity for the experimental `limitk` and `limit_ratio` aggregations.
 ///
 /// These are param aggregations, and the test covers the `InvalidRatioWarning`
@@ -13,12 +20,33 @@ pub(crate) async fn experimental_param_aggregate_planner_path_matches_interprete
     use crate::{DurationExprContext, parse_promql_with_duration_context};
 
     let mut store = InMemoryMetricStore::new();
-    for (instance, value) in [("a", 1.0), ("b", 2.0), ("c", 3.0), ("d", 4.0)] {
+    for series in [
+        ParamAggregateSeries::builder()
+            .instance("a")
+            .value(1.0)
+            .build(),
+        ParamAggregateSeries::builder()
+            .instance("b")
+            .value(2.0)
+            .build(),
+        ParamAggregateSeries::builder()
+            .instance("c")
+            .value(3.0)
+            .build(),
+        ParamAggregateSeries::builder()
+            .instance("d")
+            .value(4.0)
+            .build(),
+    ] {
         store.push_float(
             "t",
-            labels(&[("__name__", "m"), ("job", "api"), ("instance", instance)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", series.instance),
+            ]),
             120_000,
-            value,
+            series.value,
         );
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
@@ -39,13 +67,12 @@ pub(crate) async fn experimental_param_aggregate_planner_path_matches_interprete
     let time_ms = 120_000_i64;
 
     for &query in queries {
-        let ((via_operators, operator_annotations), (via_interpreter, interpreter_annotations)) =
-            annotated_planned_and_interpreted(&engine, query, time_ms).await;
-        let via_operators = sort_instant_result(via_operators);
-        let via_interpreter = sort_instant_result(via_interpreter);
+        let parity = annotated_planned_and_interpreted(&engine, query, time_ms).await;
+        let via_operators = sort_instant_result(parity.via_operators.result);
+        let via_interpreter = sort_instant_result(parity.via_interpreter.result);
 
         assert2::assert!(query_results_match(&via_interpreter, &via_operators));
-        assert2::assert!(operator_annotations == interpreter_annotations);
+        assert2::assert!(parity.via_operators.annotations == parity.via_interpreter.annotations);
     }
 
     // Pin that an out-of-range ratio actually emits the warning (so the

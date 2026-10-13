@@ -1,5 +1,10 @@
 use super::*;
 
+struct StructuredMetadataCase {
+    timestamp_ns: i64,
+    trace_id: &'static str,
+}
+
 /// Structured metadata reaches the pipeline as fields, which is how a filter
 /// such as `| trace_id="abc"` matches on it, and Loki's default encoding leaves
 /// it there: the metadata is folded into the stream's label map, so two rows
@@ -19,16 +24,25 @@ pub(crate) fn structured_metadata_splits_a_stream_unless_the_request_categorizes
     } = ApiSeriesPlan::new("{app=\"api\"}");
 
     let mut streams = BTreeMap::new();
-    for (timestamp_ns, trace_id) in [(10_i64, "abc"), (20, "def")] {
+    for case in [
+        StructuredMetadataCase {
+            timestamp_ns: 10,
+            trace_id: "abc",
+        },
+        StructuredMetadataCase {
+            timestamp_ns: 20,
+            trace_id: "def",
+        },
+    ] {
         let mut structured_metadata = Labels::default();
-        structured_metadata.insert("trace_id".to_string(), trace_id.to_string());
+        structured_metadata.insert("trace_id".to_string(), case.trace_id.to_string());
         append_matching_log_row(
             &mut streams,
             &plan,
             &label_index,
             QueryRow {
                 fingerprint: api,
-                timestamp_ns,
+                timestamp_ns: case.timestamp_ns,
                 line: "api error",
                 structured_metadata: &structured_metadata,
             },

@@ -88,9 +88,12 @@ impl BlockStoreError {
     /// The block this error is about and the backend error behind it, when the
     /// error is about one block.
     #[must_use]
-    pub fn unreadable_block(&self) -> Option<(&str, &BlockReadFailure)> {
+    pub fn unreadable_block(&self) -> Option<UnreadableBlock<'_>> {
         match self {
-            Self::BlockUnreadable { object_key, source } => Some((object_key, source)),
+            Self::BlockUnreadable { object_key, source } => Some(UnreadableBlock {
+                object_key,
+                failure: source,
+            }),
             _ => None,
         }
     }
@@ -104,20 +107,28 @@ impl BlockStoreError {
     /// [`BlockReadFailure::skip_reason`].
     #[must_use]
     pub fn skipped_block(&self) -> Option<SkippedBlock> {
-        let (object_key, failure) = self.unreadable_block()?;
+        let unreadable = self.unreadable_block()?;
         Some(SkippedBlock {
-            object_key: object_key.to_string(),
-            reason: failure.skip_reason()?,
-            detail: failure.to_string(),
+            object_key: unreadable.object_key.to_string(),
+            reason: unreadable.failure.skip_reason()?,
+            detail: unreadable.failure.to_string(),
         })
     }
 
     /// Whether this error says one named block is absent from the store.
     #[must_use]
     pub fn is_block_missing(&self) -> bool {
-        self.unreadable_block()
-            .is_some_and(|(_, failure)| failure.skip_reason() == Some(BlockSkipReason::Missing))
+        self.unreadable_block().is_some_and(|unreadable| {
+            unreadable.failure.skip_reason() == Some(BlockSkipReason::Missing)
+        })
     }
+}
+
+/// The block key and read failure carried by a block specific error.
+#[derive(Clone, Copy, Debug)]
+pub struct UnreadableBlock<'a> {
+    pub object_key: &'a str,
+    pub failure: &'a BlockReadFailure,
 }
 
 impl From<object_store::Error> for BlockStoreError {

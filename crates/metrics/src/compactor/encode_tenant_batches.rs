@@ -2,6 +2,7 @@ use super::{
     HistogramCodecError, TenantBatches, TenantCompactionRows, encode_clock_reading_rows,
     encode_exemplar_rows, encode_float_samples, encode_metadata_rows, encode_native_histograms,
 };
+use crate::FloatSampleRow;
 
 /// Encodes one tenant's sorted rows into Arrow batches for the block writer.
 /// # Errors
@@ -15,13 +16,11 @@ pub fn encode_tenant_batches(
         let tuples = rows
             .float_rows
             .iter()
-            .map(|row| {
-                (
-                    row.fingerprint,
-                    row.timestamp_ms,
-                    row.value,
-                    row.start_timestamp_ms,
-                )
+            .map(|row| FloatSampleRow {
+                fingerprint: row.fingerprint,
+                timestamp_ms: row.timestamp_ms,
+                value: row.value,
+                start_timestamp_ms: row.start_timestamp_ms,
             })
             .collect::<Vec<_>>();
         Some(encode_float_samples(&tuples)?)
@@ -33,7 +32,7 @@ pub fn encode_tenant_batches(
         let tuples = rows
             .histogram_rows
             .iter()
-            .map(|row| (row.fingerprint, row.timestamp_ms, row.hist.clone()))
+            .map(|row| row.clone())
             .collect::<Vec<_>>();
         Some(encode_native_histograms(&tuples)?)
     };

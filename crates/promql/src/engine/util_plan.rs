@@ -1,3 +1,4 @@
+use krabka_blockstore::SeriesFingerprint;
 use krabka_units::prelude::*;
 use promql_parser::parser::{Call, Expr};
 
@@ -9,12 +10,23 @@ use super::{
     scalar::{CalendarFn, calendar_fn_from_function_name},
     selector::timestamp_seconds,
 };
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct RowSampleKey {
+    fingerprint: SeriesFingerprint,
+    timestamp_ms: i64,
+}
 use crate::{
     PromqlError, PromqlLabels as Labels,
     error::Result,
     result::{InstantSample, QueryResult, SampleValue},
     store::MetricStore,
 };
+
+struct PlannedLoneVectorArg<'call> {
+    expression: &'call Expr,
+    samples: Vec<InstantSample>,
+}
 
 impl<S: MetricStore> PromqlEngine<S> {
     /// Plans the float utility functions onto the operator path.
@@ -110,11 +122,20 @@ impl<S: MetricStore> PromqlEngine<S> {
             .await?;
         let mut starts = std::collections::BTreeMap::new();
         for row in rows {
-            starts.insert((row.fp, row.ts_ms), row.start_timestamp_ms.unwrap_or(0));
+            starts.insert(
+                RowSampleKey {
+                    fingerprint: row.fp,
+                    timestamp_ms: row.ts_ms,
+                },
+                row.start_timestamp_ms.unwrap_or(0),
+            );
         }
         for row in histograms {
             starts.insert(
-                (row.fp, row.ts_ms),
+                RowSampleKey {
+                    fingerprint: row.fp,
+                    timestamp_ms: row.ts_ms,
+                },
                 row.hist.start_timestamp_ms.unwrap_or(0),
             );
         }
@@ -128,7 +149,10 @@ impl<S: MetricStore> PromqlEngine<S> {
             samples
                 .into_iter()
                 .filter_map(|sample| {
-                    let start = starts.get(&(sample.labels.fingerprint(), sample.ts_ms))?;
+                    let start = starts.get(&RowSampleKey {
+                        fingerprint: sample.labels.fingerprint(),
+                        timestamp_ms: sample.ts_ms,
+                    })?;
                     Some(InstantSample {
                         labels: labels_without_metric_name(&sample.labels),
                         ts_ms: time_ms,
@@ -156,7 +180,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         let [arg] = call.args.args.as_slice() else {
             return Ok(None);
         };
-        let Some(samples) = self.label_ops_inner_vector(tenant, arg, time_ms).await? else {
+        let Some(samples) = self
+            .label_ops_inner_vector(super::InnerVectorQuery::new(tenant, arg, time_ms))
+            .await?
+        else {
             return Ok(None);
         };
         // `funcTimestamp` reads only the sample's timestamp, so it keeps a
@@ -200,7 +227,10 @@ impl<S: MetricStore> PromqlEngine<S> {
             }
             return Ok(None);
         };
-        let Some(samples) = self.label_ops_inner_vector(tenant, arg, time_ms).await? else {
+        let Some(samples) = self
+            .label_ops_inner_vector(super::InnerVectorQuery::new(tenant, arg, time_ms))
+            .await?
+        else {
             return Ok(None);
         };
         let out = kind.apply_to_samples(samples, time_ms);
@@ -216,7 +246,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         tenant: &str,
         call: &'call Call,
         time_ms: i64,
-    ) -> Result<Option<(&'call Expr, Vec<InstantSample>)>> {
+    ) -> Result<Option<PlannedLoneVectorArg<'call>>> {
         let [arg] = call.args.args.as_slice() else {
             return Ok(None);
         };
@@ -228,7 +258,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         else {
             return Ok(None);
         };
-        Ok(Some((arg, samples)))
+        Ok(Some(PlannedLoneVectorArg {
+            expression: arg,
+            samples,
+        }))
     }
 
     /// Plans `scalar(v)`.
@@ -244,9 +277,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
-        let Some((_, samples)) = self.plan_lone_vector_arg(tenant, call, time_ms).await? else {
+        let Some(planned_arg) = self.plan_lone_vector_arg(tenant, call, time_ms).await? else {
             return Ok(None);
         };
+        let samples = planned_arg.samples;
         // `funcScalar` counts only the float samples: a vector of one float and
         // any number of histograms still yields that float, and only a count of
         // floats other than one yields NaN.
@@ -254,9 +288,12 @@ impl<S: MetricStore> PromqlEngine<S> {
             SampleValue::Float(value) => Some(value),
             SampleValue::Histogram(_) => None,
         });
-        let value = match (floats.next(), floats.next()) {
-            (Some(value), None) => value,
-            _ => f64::NAN,
+        let first = floats.next();
+        let second = floats.next();
+        let value = if second.is_none() {
+            first.unwrap_or(f64::NAN)
+        } else {
+            f64::NAN
         };
         Ok(Some(PlannedInstant::PrecomputedScalar {
             ts_ms: time_ms,
@@ -305,18 +342,17 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
-        let Some((arg, samples)) = self.plan_lone_vector_arg(tenant, call, time_ms).await? else {
+        let Some(planned_arg) = self.plan_lone_vector_arg(tenant, call, time_ms).await? else {
             return Ok(None);
         };
+        let arg = planned_arg.expression;
+        let samples = planned_arg.samples;
         if !samples.is_empty() {
             return Ok(Some(PlannedInstant::Precomputed(Vec::new())));
         }
-        Ok(Some(PlannedInstant::Precomputed(vec![InstantSample {
-            labels: absent_labels(arg)?,
-            ts_ms: time_ms,
-            value: SampleValue::Float(1.0),
-            drop_name: false,
-        }])))
+        Ok(Some(PlannedInstant::Precomputed(vec![absent_sample(
+            arg, time_ms,
+        )?])))
     }
 
     /// Plans `absent_over_time(v[range])`.
@@ -376,12 +412,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         {
             return Ok(Some(PlannedInstant::Precomputed(Vec::new())));
         }
-        Ok(Some(PlannedInstant::Precomputed(vec![InstantSample {
-            labels: absent_labels(arg)?,
-            ts_ms: time_ms,
-            value: SampleValue::Float(1.0),
-            drop_name: false,
-        }])))
+        Ok(Some(PlannedInstant::Precomputed(vec![absent_sample(
+            arg, time_ms,
+        )?])))
     }
 
     /// Evaluates `absent_over_time(v[range])` for the shapes the fast planner path declines.
@@ -417,11 +450,15 @@ impl<S: MetricStore> PromqlEngine<S> {
         {
             return Ok(Vec::new());
         }
-        Ok(vec![InstantSample {
-            labels: absent_labels(arg)?,
-            ts_ms: time_ms,
-            value: SampleValue::Float(1.0),
-            drop_name: false,
-        }])
+        Ok(vec![absent_sample(arg, time_ms)?])
     }
+}
+
+fn absent_sample(arg: &Expr, time_ms: i64) -> Result<InstantSample> {
+    Ok(InstantSample {
+        labels: absent_labels(arg)?,
+        ts_ms: time_ms,
+        value: SampleValue::Float(1.0),
+        drop_name: false,
+    })
 }

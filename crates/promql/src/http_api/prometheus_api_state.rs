@@ -12,6 +12,21 @@ use crate::{
     metrics::RuleEvaluationOutcome,
 };
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RulerRuleStatusKey {
+    tenant: String,
+    namespace: String,
+    group: String,
+    rule_index: usize,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RulerGroupStatusKey {
+    tenant: String,
+    namespace: String,
+    group: String,
+}
+
 /// Shared state for the Prometheus HTTP query API.
 pub struct PrometheusApiState<S: MetricStore> {
     pub(crate) engine: PromqlEngine<S>,
@@ -22,10 +37,9 @@ pub struct PrometheusApiState<S: MetricStore> {
     ruler_evaluation_alerts: RwLock<crate::RulerAlertState>,
     pub(crate) ruler_group_state: RwLock<RulerGroupState>,
     pub(crate) ruler_evaluation_time_ms: RwLock<i64>,
-    pub(crate) ruler_rule_status:
-        RwLock<BTreeMap<(String, String, String, usize), RulerRuleEvaluationStatus>>,
+    pub(crate) ruler_rule_status: RwLock<BTreeMap<RulerRuleStatusKey, RulerRuleEvaluationStatus>>,
     pub(crate) ruler_group_status:
-        RwLock<BTreeMap<(String, String, String), RulerGroupEvaluationStatus>>,
+        RwLock<BTreeMap<RulerGroupStatusKey, RulerGroupEvaluationStatus>>,
     pub(crate) alertmanager_configs: RwLock<BTreeMap<TenantId, String>>,
     pub(crate) alertmanager_alerts: RwLock<BTreeMap<TenantId, Vec<serde_json::Value>>>,
     pub(crate) alertmanager_silences:
@@ -244,9 +258,12 @@ impl<S: MetricStore> PrometheusApiState<S> {
         // Zero is "no series cap" at both levels, so the lower non-zero cap wins.
         let tenant_series =
             usize::try_from(tenant_limits.max_fetched_series_per_query).unwrap_or(usize::MAX);
-        opts.max_fetched_series = match (opts.max_fetched_series, tenant_series) {
-            (0, cap) | (cap, 0) => cap,
-            (process, tenant) => process.min(tenant),
+        opts.max_fetched_series = if opts.max_fetched_series == 0 {
+            tenant_series
+        } else if tenant_series == 0 {
+            opts.max_fetched_series
+        } else {
+            opts.max_fetched_series.min(tenant_series)
         };
         PromqlEngine::new(Arc::clone(&self.store), opts)
     }
@@ -303,7 +320,7 @@ impl<S: MetricStore> PrometheusApiState<S> {
 
     /// Returns the recovered scheduling and alert state used by the next evaluation pass.
     #[must_use]
-    pub fn ruler_evaluation_state(&self) -> (crate::RulerAlertState, RulerGroupState) {
+    pub fn ruler_evaluation_state(&self) -> crate::RulerEvaluationState {
         let alerts = self
             .ruler_evaluation_alerts
             .read()
@@ -312,7 +329,10 @@ impl<S: MetricStore> PrometheusApiState<S> {
             .ruler_group_state
             .read()
             .map_or_else(|_| RulerGroupState::default(), |state| state.clone());
-        (alerts, groups)
+        crate::RulerEvaluationState {
+            alert_state: alerts,
+            group_state: groups,
+        }
     }
 
     /// Sets the timestamp for the ruler evaluations that the HTTP API renders.
@@ -355,12 +375,12 @@ impl<S: MetricStore> PrometheusApiState<S> {
                     });
                 }
                 statuses.insert(
-                    (
-                        status.tenant.clone(),
-                        status.namespace.clone(),
-                        status.group.clone(),
-                        status.rule_index,
-                    ),
+                    RulerRuleStatusKey {
+                        tenant: status.tenant.clone(),
+                        namespace: status.namespace.clone(),
+                        group: status.group.clone(),
+                        rule_index: status.rule_index,
+                    },
                     status.clone(),
                 );
             }
@@ -371,11 +391,11 @@ impl<S: MetricStore> PrometheusApiState<S> {
                     metrics.record_ruler_group(status.evaluation_time_seconds);
                 }
                 statuses.insert(
-                    (
-                        status.tenant.clone(),
-                        status.namespace.clone(),
-                        status.group.clone(),
-                    ),
+                    RulerGroupStatusKey {
+                        tenant: status.tenant.clone(),
+                        namespace: status.namespace.clone(),
+                        group: status.group.clone(),
+                    },
                     status.clone(),
                 );
             }
@@ -391,12 +411,12 @@ impl<S: MetricStore> PrometheusApiState<S> {
     ) -> Option<RulerRuleEvaluationStatus> {
         self.ruler_rule_status.read().ok().and_then(|statuses| {
             statuses
-                .get(&(
-                    tenant.to_string(),
-                    namespace.into(),
-                    group.into(),
+                .get(&RulerRuleStatusKey {
+                    tenant: tenant.to_string(),
+                    namespace: namespace.into(),
+                    group: group.into(),
                     rule_index,
-                ))
+                })
                 .cloned()
         })
     }
@@ -409,7 +429,11 @@ impl<S: MetricStore> PrometheusApiState<S> {
     ) -> Option<RulerGroupEvaluationStatus> {
         self.ruler_group_status.read().ok().and_then(|statuses| {
             statuses
-                .get(&(tenant.to_string(), namespace.into(), group.into()))
+                .get(&RulerGroupStatusKey {
+                    tenant: tenant.to_string(),
+                    namespace: namespace.into(),
+                    group: group.into(),
+                })
                 .cloned()
         })
     }

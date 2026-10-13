@@ -23,6 +23,7 @@ pub mod metrics;
 pub mod query;
 pub mod query_frontend;
 pub mod recording;
+mod server_task;
 pub mod symbolizer;
 mod tenant_from_headers;
 #[cfg(test)]
@@ -36,6 +37,7 @@ pub use ids::{
     DefaultMs, EndMs, ExternalPartition, LocalPartition, MaxValue, MinValue, NowMs, StartMs,
 };
 pub use limits::{LimitError, Limits, OverridesError, OverridesProvider};
+pub use server_task::ServerTask;
 pub use wal::{
     PROFILES_WAL_TOPIC, ProfileRecord, WalFunction, WalLocation, WalMapping, WalSample,
     WalSymbolSet, partition_key,
@@ -54,29 +56,54 @@ mod tests {
 
     use super::*;
 
+    struct StatusCodeCase {
+        error: ProfilesError,
+        expected: u16,
+    }
+
+    struct TenantResolutionCase {
+        name: &'static str,
+        headers: HeaderMap,
+        anonymous: Result<TenantId, TenantResolveError>,
+        fallback: Result<TenantId, TenantResolveError>,
+        required: Result<TenantId, TenantResolveError>,
+    }
+
     #[test]
     fn status_codes_map() {
-        for (err, want) in [
-            (ProfilesError::UnsupportedFormat("x".into()), 415),
-            (ProfilesError::Decode("x".into()), 400),
-            (ProfilesError::Unprocessable("x".into()), 422),
-            (ProfilesError::Tenant(TenantResolveError::Missing), 400),
-            (
-                ProfilesError::TenantDenied(TenantDenied {
+        for case in [
+            StatusCodeCase {
+                error: ProfilesError::UnsupportedFormat("x".into()),
+                expected: 415,
+            },
+            StatusCodeCase {
+                error: ProfilesError::Decode("x".into()),
+                expected: 400,
+            },
+            StatusCodeCase {
+                error: ProfilesError::Unprocessable("x".into()),
+                expected: 422,
+            },
+            StatusCodeCase {
+                error: ProfilesError::Tenant(TenantResolveError::Missing),
+                expected: 400,
+            },
+            StatusCodeCase {
+                error: ProfilesError::TenantDenied(TenantDenied {
                     principal: "grafana".into(),
                     tenant: TenantId::new("tenant-b").unwrap(),
                 }),
-                403,
-            ),
-            (
-                ProfilesError::from(LimitError::MaxSeries {
+                expected: 403,
+            },
+            StatusCodeCase {
+                error: ProfilesError::from(LimitError::MaxSeries {
                     limit: 1,
                     observed: 2,
                 }),
-                429,
-            ),
+                expected: 429,
+            },
         ] {
-            check!(err.status_code() == want);
+            check!(case.error.status_code() == case.expected);
         }
     }
 
@@ -102,56 +129,59 @@ mod tests {
         };
         let single = TenantPolicy::Fallback(TenantId::new("single").unwrap());
         let cases = [
-            (
-                "absent",
-                HeaderMap::new(),
-                named("anonymous"),
-                named("single"),
-                Err(TenantResolveError::Missing),
-            ),
-            (
-                "empty",
-                header(b""),
-                named("anonymous"),
-                named("single"),
-                Err(TenantResolveError::Missing),
-            ),
-            (
-                "named",
-                header(b"tenant-a"),
-                named("tenant-a"),
-                named("tenant-a"),
-                named("tenant-a"),
-            ),
-            (
-                "separator",
-                header(b"a/b"),
-                unsupported("a/b", '/'),
-                unsupported("a/b", '/'),
-                unsupported("a/b", '/'),
-            ),
-            (
-                "not UTF-8",
-                header(b"a\xff"),
+            TenantResolutionCase {
+                name: "absent",
+                headers: HeaderMap::new(),
+                anonymous: named("anonymous"),
+                fallback: named("single"),
+                required: Err(TenantResolveError::Missing),
+            },
+            TenantResolutionCase {
+                name: "empty",
+                headers: header(b""),
+                anonymous: named("anonymous"),
+                fallback: named("single"),
+                required: Err(TenantResolveError::Missing),
+            },
+            TenantResolutionCase {
+                name: "named",
+                headers: header(b"tenant-a"),
+                anonymous: named("tenant-a"),
+                fallback: named("tenant-a"),
+                required: named("tenant-a"),
+            },
+            TenantResolutionCase {
+                name: "separator",
+                headers: header(b"a/b"),
+                anonymous: unsupported("a/b", '/'),
+                fallback: unsupported("a/b", '/'),
+                required: unsupported("a/b", '/'),
+            },
+            TenantResolutionCase {
+                name: "not UTF-8",
+                headers: header(b"a\xff"),
                 // dskit names the raw byte `0xFF` as a code point, which is `ÿ`.
-                unsupported("a\u{fffd}", '\u{ff}'),
-                unsupported("a\u{fffd}", '\u{ff}'),
-                unsupported("a\u{fffd}", '\u{ff}'),
-            ),
+                anonymous: unsupported("a\u{fffd}", '\u{ff}'),
+                fallback: unsupported("a\u{fffd}", '\u{ff}'),
+                required: unsupported("a\u{fffd}", '\u{ff}'),
+            },
         ];
 
-        for (name, headers, anonymous, fallen_back, required) in cases {
+        for case in cases {
             check!(
-                tenant_from_headers(&headers, &TenantPolicy::anonymous()) == anonymous,
-                "{name}"
+                tenant_from_headers(&case.headers, &TenantPolicy::anonymous()) == case.anonymous,
+                "{}",
+                case.name
             );
             check!(
-                tenant_from_headers(&headers, &single) == fallen_back,
-                "{name}"
+                tenant_from_headers(&case.headers, &single) == case.fallback,
+                "{}",
+                case.name
             );
             check!(
-                tenant_from_headers(&headers, &TenantPolicy::Required) == required,
-                "{name}"
+                tenant_from_headers(&case.headers, &TenantPolicy::Required) == case.required,
+                "{}",
+                case.name
             );
         }
     }

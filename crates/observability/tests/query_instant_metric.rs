@@ -13,6 +13,11 @@ use support::{
     json_body, loki_forwarded_fixture as fixture, parquet_batch, text_body,
 };
 
+struct ColumnNameCase {
+    index: usize,
+    name: &'static str,
+}
+
 #[tokio::test]
 async fn query_endpoint_returns_metric_query_as_loki_vector_json() {
     FixtureVector {
@@ -71,8 +76,21 @@ async fn query_endpoint_returns_vector_metrics_as_parquet_when_requested() {
     .await;
 
     assert!(batch.num_rows() == 1);
-    for (index, name) in [(0, "timestamp"), (1, "labels"), (2, "value")] {
-        check!(batch.schema().field(index).name() == name);
+    for case in [
+        ColumnNameCase {
+            index: 0,
+            name: "timestamp",
+        },
+        ColumnNameCase {
+            index: 1,
+            name: "labels",
+        },
+        ColumnNameCase {
+            index: 2,
+            name: "value",
+        },
+    ] {
+        check!(batch.schema().field(case.index).name() == case.name);
     }
     let timestamps = batch
         .column(0)

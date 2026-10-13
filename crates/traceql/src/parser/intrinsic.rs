@@ -1,30 +1,51 @@
 use super::{Intrinsic, Result, TraceqlError};
 
 pub(crate) fn intrinsic(scope: &str, key: &str) -> Result<Intrinsic> {
-    match (scope, key) {
-        ("span", "name") => Ok(Intrinsic::Name),
-        ("span", "duration") => Ok(Intrinsic::Duration),
-        ("span", "kind") => Ok(Intrinsic::Kind),
-        ("span", "status") => Ok(Intrinsic::Status),
-        ("span", "statusMessage") => Ok(Intrinsic::StatusMessage),
-        ("span", "id") => Ok(Intrinsic::Id),
-        ("span", "parentID" | "parentId") => Ok(Intrinsic::ParentId),
-        ("span", "childCount") => Ok(Intrinsic::ChildCount),
-        ("trace", "duration") => Ok(Intrinsic::TraceDuration),
-        ("trace", "rootName") => Ok(Intrinsic::TraceRootName),
-        ("trace", "rootService") => Ok(Intrinsic::TraceRootService),
-        ("trace", "id") => Ok(Intrinsic::TraceId),
-        ("event", "name") => Ok(Intrinsic::EventName),
-        ("event", "timeSinceStart") => Ok(Intrinsic::EventTimeSinceStart),
-        ("link", "traceID" | "traceId") => Ok(Intrinsic::LinkTraceId),
-        ("link", "spanID" | "spanId") => Ok(Intrinsic::LinkSpanId),
-        ("instrumentation", "name") => Ok(Intrinsic::InstrumentationName),
-        ("instrumentation", "version") => Ok(Intrinsic::InstrumentationVersion),
-        ("span", "nestedSetLeft") => Ok(Intrinsic::NestedSetLeft),
-        ("span", "nestedSetRight") => Ok(Intrinsic::NestedSetRight),
-        ("span", "nestedSetParent") => Ok(Intrinsic::NestedSetParent),
+    match scope {
+        "span" => match key {
+            "name" => Ok(Intrinsic::Name),
+            "duration" => Ok(Intrinsic::Duration),
+            "kind" => Ok(Intrinsic::Kind),
+            "status" => Ok(Intrinsic::Status),
+            "statusMessage" => Ok(Intrinsic::StatusMessage),
+            "id" => Ok(Intrinsic::Id),
+            "parentID" | "parentId" => Ok(Intrinsic::ParentId),
+            "childCount" => Ok(Intrinsic::ChildCount),
+            "nestedSetLeft" => Ok(Intrinsic::NestedSetLeft),
+            "nestedSetRight" => Ok(Intrinsic::NestedSetRight),
+            "nestedSetParent" => Ok(Intrinsic::NestedSetParent),
+            _ => return unknown_intrinsic(scope, key),
+        },
+        "trace" => match key {
+            "duration" => Ok(Intrinsic::TraceDuration),
+            "rootName" => Ok(Intrinsic::TraceRootName),
+            "rootService" => Ok(Intrinsic::TraceRootService),
+            "id" => Ok(Intrinsic::TraceId),
+            _ => return unknown_intrinsic(scope, key),
+        },
+        "event" => match key {
+            "name" => Ok(Intrinsic::EventName),
+            "timeSinceStart" => Ok(Intrinsic::EventTimeSinceStart),
+            _ => return unknown_intrinsic(scope, key),
+        },
+        "link" => match key {
+            "traceID" | "traceId" => Ok(Intrinsic::LinkTraceId),
+            "spanID" | "spanId" => Ok(Intrinsic::LinkSpanId),
+            _ => return unknown_intrinsic(scope, key),
+        },
+        "instrumentation" => match key {
+            "name" => Ok(Intrinsic::InstrumentationName),
+            "version" => Ok(Intrinsic::InstrumentationVersion),
+            _ => return unknown_intrinsic(scope, key),
+        },
         _ => Err(TraceqlError::Parse(format!(
             "unknown intrinsic {scope}:{key}"
         ))),
     }
+}
+
+fn unknown_intrinsic(scope: &str, key: &str) -> Result<Intrinsic> {
+    Err(TraceqlError::Parse(format!(
+        "unknown intrinsic {scope}:{key}"
+    )))
 }

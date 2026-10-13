@@ -36,6 +36,10 @@ pub use self::service_metrics::{
 
 #[cfg(test)]
 mod tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/support/shared_registry_assertion.rs"
+    ));
     use assert2::{assert, check};
     use krabka_blockstore::ObjectStoreOperation;
     use krabka_observability::service_metrics::{RequestOutcome, encode_registry};
@@ -89,31 +93,22 @@ mod tests {
         m.ingest.wal_append_failures.inc();
         m.record_ingest_series("tenant-a", 5);
         m.record_blocks_compacted(3);
-        // The shared bundles must land in this signal's registry.
-        m.wal_consumer.record_partition_assigned("__wal", 2);
-        m.wal_produce.record_batch_failure(1, 3);
-        m.compaction.record_output(4);
-        m.object_store.record_retry(ObjectStoreOperation::Get);
-
-        let buf = encode_registry(&m.registry).await.unwrap();
-        for needle in [
-            "krabka_metrics_ingest_requests_total",
-            "krabka_metrics_ingest_bytes_total",
-            "krabka_metrics_ingest_items_total",
-            "krabka_metrics_ingest_duration_seconds",
-            "krabka_metrics_wal_append_failures_total",
-            "krabka_metrics_ingest_series_total",
-            "krabka_metrics_blocks_compacted_total",
-            "krabka_metrics_wal_consumer_partition_owned{topic=\"__wal\",partition=\"2\"} 1",
-            "krabka_metrics_wal_partial_batch_appends_total 1",
-            "krabka_metrics_compaction_blocks_total 4",
-            "krabka_metrics_objstore_operation_retries_total{operation=\"get\"} 1",
-            "status=\"ok\"",
-            "status=\"error\"",
-            "tenant=\"tenant-a\"",
-        ] {
-            assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
-        }
+        assert_shared_registry_metrics!(
+            &m,
+            "krabka_metrics",
+            [
+                "krabka_metrics_ingest_requests_total",
+                "krabka_metrics_ingest_bytes_total",
+                "krabka_metrics_ingest_items_total",
+                "krabka_metrics_ingest_duration_seconds",
+                "krabka_metrics_wal_append_failures_total",
+                "krabka_metrics_ingest_series_total",
+                "krabka_metrics_blocks_compacted_total",
+                "status=\"ok\"",
+                "status=\"error\"",
+                "tenant=\"tenant-a\"",
+            ]
+        );
     }
 
     #[test]

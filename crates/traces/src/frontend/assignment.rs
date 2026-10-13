@@ -73,7 +73,7 @@ mod tests {
         let moved = before
             .iter()
             .zip(&after)
-            .filter(|(b, a)| b.querier != a.querier)
+            .filter(|pair| pair.0.querier != pair.1.querier)
             .count();
         let owned_by_c = before.iter().filter(|a| a.querier == "c:1").count();
         check!(owned_by_c > 0, "c owned some of the 64 blocks");

@@ -1,10 +1,15 @@
 use super::{RangeSeries, SampleValue, Time, TimeExt};
 
+pub(crate) struct RangeSample<'a> {
+    pub timestamp_ms: i64,
+    pub value: &'a SampleValue,
+}
+
 pub(crate) fn range_samples(
     series: &RangeSeries,
     range_end_ms: i64,
     range: Time,
-) -> impl Iterator<Item = (i64, &SampleValue)> {
+) -> impl Iterator<Item = RangeSample<'_>> {
     let range_start_ms = range_end_ms.saturating_sub(range.millis_i64());
     series
         .samples
@@ -17,6 +22,11 @@ pub(crate) fn range_samples(
         // It stays as the function's stated contract: four construction sites
         // feed `RangeEval`, and a fifth should not be able to widen a window
         // by forgetting to trim.
-        .filter(move |(timestamp, _)| *timestamp > range_start_ms && *timestamp <= range_end_ms)
-        .map(|(timestamp, value)| (*timestamp, value))
+        .filter(move |sample| {
+            sample.timestamp_ms > range_start_ms && sample.timestamp_ms <= range_end_ms
+        })
+        .map(|sample| RangeSample {
+            timestamp_ms: sample.timestamp_ms,
+            value: &sample.value,
+        })
 }

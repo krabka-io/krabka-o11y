@@ -64,26 +64,38 @@ const CONNECT_DEADLINE: Duration = Duration::from_mins(1);
 /// A metric query reaches the same slot before any range-vector evaluation
 /// runs, so it wedges on exactly the same lock as a stream query and is worth
 /// asking separately.
-const QUERIES: &[(&str, &str)] = &[
-    ("stream", r#"{app="api",env="prod"}"#),
-    ("metric", r#"count_over_time({app="api",env="prod"} [2s])"#),
+struct QueryCase {
+    kind: &'static str,
+    query: &'static str,
+}
+
+const QUERIES: &[QueryCase] = &[
+    QueryCase {
+        kind: "stream",
+        query: r#"{app="api",env="prod"}"#,
+    },
+    QueryCase {
+        kind: "metric",
+        query: r#"count_over_time({app="api",env="prod"} [2s])"#,
+    },
 ];
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_querier_serves_queries_after_its_authorizer_connects() {
     let stack = Box::pin(Stack::boot()).await;
 
-    for (kind, query) in QUERIES {
+    for case in QUERIES {
         let deadline = Instant::now() + CONNECT_DEADLINE;
         let mut last = None;
         let mut served = false;
         while Instant::now() < deadline {
-            let status = stack.query_status(query).await;
+            let status = stack.query_status(case.query).await;
             // `None` is the regression: the request never came back at all.
             assert!(
                 status.is_some(),
-                "the {kind} query never returned within {REQUEST_TIMEOUT:?}: the querier's \
-                 authorizer slot is wedged"
+                "the {} query never returned within {REQUEST_TIMEOUT:?}: the querier's \
+                 authorizer slot is wedged",
+                case.kind
             );
             last = status;
             if status == Some(StatusCode::OK) {
@@ -94,7 +106,8 @@ async fn the_querier_serves_queries_after_its_authorizer_connects() {
         }
         check!(
             served,
-            "the {kind} query was never served; last status {last:?}"
+            "the {} query was never served; last status {last:?}",
+            case.kind
         );
     }
 

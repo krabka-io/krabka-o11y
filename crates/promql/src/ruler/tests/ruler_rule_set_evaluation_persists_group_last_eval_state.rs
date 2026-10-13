@@ -19,7 +19,7 @@ rules:
 
     let evaluation = super::super::evaluate_and_persist_ruler_rule_set(
         &engine,
-        (&wal_sink, &alert_sink, &state_sink),
+        super::super::RulerSinks::new(&wal_sink, &alert_sink, &state_sink),
         &mut alert_state,
         &tenant_id("tenant-a"),
         &rules,

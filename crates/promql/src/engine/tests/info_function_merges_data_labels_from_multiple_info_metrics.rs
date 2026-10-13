@@ -4,16 +4,16 @@ use super::*;
 pub(crate) async fn info_function_merges_data_labels_from_multiple_info_metrics() {
     let engine = info_metrics_engine(vec![
         labels(&[
-            ("__name__", "target_info"),
-            ("job", "api"),
-            ("instance", "a"),
-            ("cluster", "prod"),
+            crate::test_support::TestLabelPair::new("__name__", "target_info"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
+            crate::test_support::TestLabelPair::new("cluster", "prod"),
         ]),
         labels(&[
-            ("__name__", "build_info"),
-            ("job", "api"),
-            ("instance", "a"),
-            ("version", "1.2.3"),
+            crate::test_support::TestLabelPair::new("__name__", "build_info"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
+            crate::test_support::TestLabelPair::new("version", "1.2.3"),
         ]),
     ]);
     let samples = instant_vector(

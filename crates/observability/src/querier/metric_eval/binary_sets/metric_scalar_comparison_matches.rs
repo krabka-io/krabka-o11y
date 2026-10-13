@@ -1,7 +1,9 @@
 use super::{ComparisonOp, Ordering, ScalarOperands};
 
 pub(crate) fn metric_scalar_comparison_matches(operands: ScalarOperands, op: ComparisonOp) -> bool {
-    let (left, right) = operands.left_and_right();
+    let pair = operands.left_and_right();
+    let left = pair.left;
+    let right = pair.right;
     let ordering = left.cmp_value(right);
     match op {
         ComparisonOp::Equal => ordering == Ordering::Equal,

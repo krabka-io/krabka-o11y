@@ -12,18 +12,50 @@ use super::{
     histogram::native_histogram_detect_reset,
     histogram_stats_enabled,
     planner_support::validate_extended_selector_modifier,
-    range_functions::{align_subquery_start, instant_smoothed_boundary_value},
+    range_functions::{HistogramSample, align_subquery_start, instant_smoothed_boundary_value},
     row_cache::{FloatRow, HistogramRow},
     selector::{apply_selector_time_modifier, label_matcher_sets, selector_duration},
 };
 use crate::{
-    PromqlError, PromqlLabels as Labels,
+    PromqlError, PromqlLabels as Labels, RangeSeriesSample,
     error::Result,
     extension::is_stale_nan,
     planner::{ExtendedSelectorExpr, ExtendedSelectorModifier, TimedValue},
     result::{InstantSample, QueryResult, RangeSeries, SampleValue},
     store::MetricStore,
 };
+
+pub(super) struct LatestSample<T> {
+    pub timestamp_ms: i64,
+    pub value: T,
+}
+
+pub(super) fn retain_latest_by_fingerprint<T: Clone>(
+    latest: &mut BTreeMap<SeriesFingerprint, LatestSample<T>>,
+    fingerprint: SeriesFingerprint,
+    timestamp_ms: i64,
+    value: T,
+    start_ms: i64,
+    end_ms: i64,
+) {
+    if timestamp_ms <= start_ms || timestamp_ms > end_ms {
+        return;
+    }
+    latest
+        .entry(fingerprint)
+        .and_modify(|current| {
+            if timestamp_ms > current.timestamp_ms {
+                *current = LatestSample {
+                    timestamp_ms,
+                    value: value.clone(),
+                };
+            }
+        })
+        .or_insert(LatestSample {
+            timestamp_ms,
+            value,
+        });
+}
 
 impl<S: MetricStore> PromqlEngine<S> {
     /// The start of the lookback window that ends at `eval_time_ms`.
@@ -91,44 +123,41 @@ impl<S: MetricStore> PromqlEngine<S> {
             )
             .await?;
 
-        let mut latest_by_fp: BTreeMap<SeriesFingerprint, (i64, SampleValue)> = BTreeMap::new();
+        let mut latest_by_fp: BTreeMap<SeriesFingerprint, LatestSample<SampleValue>> =
+            BTreeMap::new();
         for row in rows {
-            if row.ts_ms <= start_ms || row.ts_ms > eval_time_ms {
-                continue;
-            }
-            latest_by_fp
-                .entry(row.fp)
-                .and_modify(|latest| {
-                    if row.ts_ms > latest.0 {
-                        *latest = (row.ts_ms, SampleValue::Float(row.value));
-                    }
-                })
-                .or_insert((row.ts_ms, SampleValue::Float(row.value)));
+            retain_latest_by_fingerprint(
+                &mut latest_by_fp,
+                row.fp,
+                row.ts_ms,
+                SampleValue::Float(row.value),
+                start_ms,
+                eval_time_ms,
+            );
         }
         for row in hist_rows {
-            if row.ts_ms <= start_ms || row.ts_ms > eval_time_ms {
-                continue;
-            }
-            latest_by_fp
-                .entry(row.fp)
-                .and_modify(|latest| {
-                    if row.ts_ms > latest.0 {
-                        *latest = (row.ts_ms, SampleValue::Histogram(row.hist.clone()));
-                    }
-                })
-                .or_insert((row.ts_ms, SampleValue::Histogram(row.hist)));
+            retain_latest_by_fingerprint(
+                &mut latest_by_fp,
+                row.fp,
+                row.ts_ms,
+                SampleValue::Histogram(row.hist),
+                start_ms,
+                eval_time_ms,
+            );
         }
 
         let samples = latest_by_fp
             .into_iter()
-            .filter_map(|(fp, (ts_ms, value))| {
-                if matches!(&value, SampleValue::Float(value) if is_stale_nan(*value)) {
+            .filter_map(|entry| {
+                let fp = entry.0;
+                let sample = entry.1;
+                if matches!(&sample.value, SampleValue::Float(value) if is_stale_nan(*value)) {
                     return None;
                 }
                 labels_by_fp.get(&fp).map(|labels| InstantSample {
                     labels: (**labels).clone(),
-                    ts_ms,
-                    value,
+                    ts_ms: sample.timestamp_ms,
+                    value: sample.value,
                     drop_name: false,
                 })
             })
@@ -162,13 +191,16 @@ impl<S: MetricStore> PromqlEngine<S> {
                 },
             )
             .await?;
-        let mut rows_by_fp: BTreeMap<SeriesFingerprint, Vec<(i64, SampleValue)>> = BTreeMap::new();
+        let mut rows_by_fp: BTreeMap<SeriesFingerprint, Vec<RangeSeriesSample>> = BTreeMap::new();
         for row in rows {
             if row.ts_ms > scan_start_ms && row.ts_ms <= scan_end_ms && !is_stale_nan(row.value) {
                 rows_by_fp
                     .entry(row.fp)
                     .or_default()
-                    .push((row.ts_ms, SampleValue::Float(row.value)));
+                    .push(RangeSeriesSample::new(
+                        row.ts_ms,
+                        SampleValue::Float(row.value),
+                    ));
             }
         }
         for row in hist_rows {
@@ -176,21 +208,26 @@ impl<S: MetricStore> PromqlEngine<S> {
                 rows_by_fp
                     .entry(row.fp)
                     .or_default()
-                    .push((row.ts_ms, SampleValue::Histogram(row.hist)));
+                    .push(RangeSeriesSample::new(
+                        row.ts_ms,
+                        SampleValue::Histogram(row.hist),
+                    ));
             }
         }
         let samples = rows_by_fp
             .into_iter()
-            .filter_map(|(fp, mut rows)| {
+            .filter_map(|entry| {
+                let fp = entry.0;
+                let mut rows = entry.1;
                 let labels = labels_by_fp.get(&fp)?;
                 let metric = labels.get("__name__").unwrap_or("");
-                rows.sort_by_key(|(timestamp, _)| *timestamp);
+                rows.sort_by_key(|sample| sample.timestamp_ms);
                 let floats = rows
                     .iter()
-                    .any(|(_, value)| matches!(value, SampleValue::Float(_)));
+                    .any(|sample| matches!(&sample.value, SampleValue::Float(_)));
                 let histograms = rows
                     .iter()
-                    .any(|(_, value)| matches!(value, SampleValue::Histogram(_)));
+                    .any(|sample| matches!(&sample.value, SampleValue::Histogram(_)));
                 if floats && histograms {
                     super::annotations::emit_warning(
                         super::annotations::mixed_floats_histograms_warning(metric),
@@ -200,11 +237,11 @@ impl<S: MetricStore> PromqlEngine<S> {
                 let value = if floats {
                     let timestamps = rows
                         .iter()
-                        .map(|(timestamp, _)| *timestamp)
+                        .map(|sample| sample.timestamp_ms)
                         .collect::<Vec<_>>();
                     let values = rows
                         .iter()
-                        .map(|(_, value)| match value {
+                        .map(|sample| match &sample.value {
                             SampleValue::Float(value) => *value,
                             SampleValue::Histogram(_) => unreachable!("float-only"),
                         })
@@ -217,20 +254,23 @@ impl<S: MetricStore> PromqlEngine<S> {
                 } else {
                     let points = rows
                         .into_iter()
-                        .map(|(timestamp, value)| match value {
-                            SampleValue::Histogram(histogram) => (timestamp, histogram),
+                        .map(|sample| match sample.value {
+                            SampleValue::Histogram(histogram) => HistogramSample {
+                                timestamp_ms: sample.timestamp_ms,
+                                histogram,
+                            },
                             SampleValue::Float(_) => unreachable!("histogram-only"),
                         })
                         .collect::<Vec<_>>();
-                    let index = points.partition_point(|(timestamp, _)| *timestamp < eval_time_ms);
+                    let index = points.partition_point(|point| point.timestamp_ms < eval_time_ms);
                     let histogram = if points
                         .get(index)
-                        .is_some_and(|(timestamp, _)| *timestamp == eval_time_ms)
+                        .is_some_and(|point| point.timestamp_ms == eval_time_ms)
                     {
-                        points[index].1.clone()
+                        points[index].histogram.clone()
                     } else if index > 0 && index < points.len() {
-                        let counter = points[index - 1].1.reset_hint != ResetHint::Gauge
-                            || points[index].1.reset_hint != ResetHint::Gauge;
+                        let counter = points[index - 1].histogram.reset_hint != ResetHint::Gauge
+                            || points[index].histogram.reset_hint != ResetHint::Gauge;
                         super::range_functions::interpolate_histogram(
                             &points[index - 1],
                             &points[index],
@@ -239,7 +279,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                             metric,
                         )?
                     } else if index > 0 {
-                        let mut previous = points[index - 1].1.clone();
+                        let mut previous = points[index - 1].histogram.clone();
                         previous.reset_hint = ResetHint::Unknown;
                         previous
                     } else {
@@ -341,22 +381,18 @@ impl<S: MetricStore> PromqlEngine<S> {
         let mut starts_by_fp = BTreeMap::new();
         let mut samples_by_fp: BTreeMap<SeriesFingerprint, BTreeMap<i64, SampleValue>> =
             BTreeMap::new();
-        for (fp, mut samples) in float_samples_by_fp {
+        for entry in float_samples_by_fp {
+            let fp = entry.0;
+            let mut samples = entry.1;
             samples.sort_unstable_by_key(|sample| sample.ts_ms);
-            starts_by_fp.insert(
-                fp,
-                samples
-                    .iter()
-                    .filter_map(|sample| {
-                        sample.start_timestamp_ms.map(|start| (sample.ts_ms, start))
-                    })
-                    .collect(),
-            );
-            samples_by_fp.entry(fp).or_default().extend(
-                samples
-                    .into_iter()
-                    .map(|sample| (sample.ts_ms, SampleValue::Float(sample.value))),
-            );
+            let starts = starts_by_fp.entry(fp).or_insert_with(BTreeMap::new);
+            let by_timestamp = samples_by_fp.entry(fp).or_insert_with(BTreeMap::new);
+            for sample in samples {
+                if let Some(start) = sample.start_timestamp_ms {
+                    starts.insert(sample.ts_ms, start);
+                }
+                by_timestamp.insert(sample.ts_ms, SampleValue::Float(sample.value));
+            }
         }
         for row in hist_rows {
             if row.ts_ms <= scan_start_ms || row.ts_ms > scan_end_ms {
@@ -375,7 +411,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         }
 
         let mut out = Vec::new();
-        for (fp, samples) in samples_by_fp {
+        for entry in samples_by_fp {
+            let fp = entry.0;
+            let samples = entry.1;
             let Some(labels) = labels_by_fp.get(&fp) else {
                 continue;
             };
@@ -383,7 +421,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                 drop_name: false,
                 start_timestamps_ms: starts_by_fp.remove(&fp).unwrap_or_default(),
                 labels: (**labels).clone(),
-                samples: samples.into_iter().collect(),
+                samples: samples
+                    .into_iter()
+                    .map(|entry| crate::RangeSeriesSample::new(entry.0, entry.1))
+                    .collect(),
             });
         }
         Ok(out)
@@ -527,7 +568,11 @@ fn recompute_histogram_stats(rows: &mut [HistogramRow]) {
     if !histogram_stats_enabled() {
         return;
     }
-    rows.sort_unstable_by_key(|row| (row.fp, row.ts_ms));
+    rows.sort_unstable_by(|left, right| {
+        left.fp
+            .cmp(&right.fp)
+            .then_with(|| left.ts_ms.cmp(&right.ts_ms))
+    });
     let mut previous = BTreeMap::<SeriesFingerprint, NativeHistogram>::new();
     for row in rows {
         if row.hist.reset_hint != ResetHint::Gauge {

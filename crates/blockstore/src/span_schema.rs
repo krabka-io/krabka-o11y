@@ -12,35 +12,68 @@ mod tests {
 
     use super::*;
 
+    struct ColumnCase {
+        name: &'static str,
+        column: &'static str,
+    }
+
+    struct IdentityColumnCase {
+        name: &'static str,
+        want: DataType,
+    }
+
     #[test]
     fn identity_columns_are_fixed_size_binary() {
         let s = span_block_schema();
-        for (name, want) in [
-            (SCOL_TRACE_ID, DataType::FixedSizeBinary(16)),
-            (SCOL_SPAN_ID, DataType::FixedSizeBinary(8)),
-            (SCOL_PARENT_SPAN_ID, DataType::FixedSizeBinary(8)),
+        for case in [
+            IdentityColumnCase {
+                name: SCOL_TRACE_ID,
+                want: DataType::FixedSizeBinary(16),
+            },
+            IdentityColumnCase {
+                name: SCOL_SPAN_ID,
+                want: DataType::FixedSizeBinary(8),
+            },
+            IdentityColumnCase {
+                name: SCOL_PARENT_SPAN_ID,
+                want: DataType::FixedSizeBinary(8),
+            },
         ] {
-            assert2::assert!(s.column_with_name(name).unwrap().1.data_type() == &want);
+            assert2::assert!(s.column_with_name(case.name).unwrap().1.data_type() == &case.want);
         }
     }
 
     #[test]
     fn nested_set_columns_are_int32() {
         let s = span_block_schema();
-        for (_name, column) in [
-            ("nested-set left", SCOL_NESTED_SET_LEFT),
-            ("nested-set right", SCOL_NESTED_SET_RIGHT),
-            ("parent id", SCOL_PARENT_ID),
-            ("child count", SCOL_CHILD_COUNT),
+        for case in [
+            ColumnCase {
+                name: "nested-set left",
+                column: SCOL_NESTED_SET_LEFT,
+            },
+            ColumnCase {
+                name: "nested-set right",
+                column: SCOL_NESTED_SET_RIGHT,
+            },
+            ColumnCase {
+                name: "parent id",
+                column: SCOL_PARENT_ID,
+            },
+            ColumnCase {
+                name: "child count",
+                column: SCOL_CHILD_COUNT,
+            },
         ] {
-            assert2::assert!(s.column_with_name(column).unwrap().1.data_type() == &DataType::Int32);
+            assert2::assert!(
+                s.column_with_name(case.column).unwrap().1.data_type() == &DataType::Int32
+            );
         }
     }
 
     #[test]
     fn generic_attr_value_is_list_of_utf8() {
         let s = span_block_schema();
-        let (_, f) = s.column_with_name(SCOL_ATTR_VALUE).unwrap();
+        let f = s.column_with_name(SCOL_ATTR_VALUE).unwrap().1;
         match f.data_type() {
             DataType::List(inner) => match inner.data_type() {
                 DataType::List(scalar) => assert2::assert!(scalar.data_type() == &DataType::Utf8),
@@ -53,8 +86,17 @@ mod tests {
     #[test]
     fn events_and_links_are_list_of_struct() {
         let s = span_block_schema();
-        for (_name, column) in [("events", SCOL_EVENTS), ("links", SCOL_LINKS)] {
-            let (_, f) = s.column_with_name(column).unwrap();
+        for case in [
+            ColumnCase {
+                name: "events",
+                column: SCOL_EVENTS,
+            },
+            ColumnCase {
+                name: "links",
+                column: SCOL_LINKS,
+            },
+        ] {
+            let f = s.column_with_name(case.column).unwrap().1;
             match f.data_type() {
                 DataType::List(inner) => {
                     assert2::assert!(matches!(inner.data_type(), DataType::Struct(_)));
@@ -66,21 +108,17 @@ mod tests {
 
     #[test]
     fn kind_and_status_enums_round_trip_i32() {
-        for (_name, kind) in [
-            ("unspecified", SpanKind::Unspecified),
-            ("internal", SpanKind::Internal),
-            ("server", SpanKind::Server),
-            ("client", SpanKind::Client),
-            ("producer", SpanKind::Producer),
-            ("consumer", SpanKind::Consumer),
+        for kind in [
+            SpanKind::Unspecified,
+            SpanKind::Internal,
+            SpanKind::Server,
+            SpanKind::Client,
+            SpanKind::Producer,
+            SpanKind::Consumer,
         ] {
             assert2::assert!(SpanKind::from_i32(kind.as_i32()) == kind);
         }
-        for (_name, status) in [
-            ("unset", StatusCode::Unset),
-            ("ok", StatusCode::Ok),
-            ("error", StatusCode::Error),
-        ] {
+        for status in [StatusCode::Unset, StatusCode::Ok, StatusCode::Error] {
             assert2::assert!(StatusCode::from_i32(status.as_i32()) == status);
         }
     }
@@ -140,6 +178,14 @@ mod span_block_schema;
 mod span_block_schema_with_promoted_attrs;
 mod span_kind;
 mod status_code;
+
+fn nested_attribute_fields() -> Vec<Field> {
+    vec![
+        Field::new(SCOL_ATTR_KEYS, list_of("item", DataType::Utf8, true), true),
+        Field::new(SCOL_ATTR_VALUE, list_list_of(DataType::Utf8), true),
+        Field::new("attr_typed", DataType::Utf8, true),
+    ]
+}
 
 use event_struct::event_struct;
 use link_struct::link_struct;

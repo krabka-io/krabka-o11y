@@ -13,11 +13,18 @@ pub(crate) fn is_shard_payload_location(key: &str, location: &str) -> bool {
         return false;
     };
     let mut parts = rest.trim_start_matches('/').split('/');
-    let (Some(tenant), Some(span), Some(file), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
+    let Some(tenant) = parts.next() else {
         return false;
     };
+    let Some(span) = parts.next() else {
+        return false;
+    };
+    let Some(file) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
     let is_tenant_segment = tenant
         .strip_prefix("tenant=")
         .is_some_and(|tenant| unescape_object_path_segment(tenant).is_some());
@@ -33,11 +40,14 @@ pub(crate) fn is_shard_payload_location(key: &str, location: &str) -> bool {
     };
     // Both bounds are fixed-width, so the separator sits at a known offset and
     // there is no need to guess which `-` divides them.
-    let Some((start, end)) = span.split_once('-') else {
+    let Some(separator) = span.find('-') else {
         return false;
     };
-    matches!(
-        (parse_shard_bound_key(start), parse_shard_bound_key(end)),
-        (Some(start), Some(end)) if start <= end
-    )
+    let Some(start) = parse_shard_bound_key(&span[..separator]) else {
+        return false;
+    };
+    let Some(end) = parse_shard_bound_key(&span[separator + 1..]) else {
+        return false;
+    };
+    start <= end
 }

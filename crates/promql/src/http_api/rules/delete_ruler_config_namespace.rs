@@ -4,7 +4,7 @@ use super::{
     ApiError, Arc, ConnectInfo, Extension, HeaderMap, IntoResponse, MetricStore,
     OPERATION_RULE_NAMESPACE_DELETE, Path, PeerAddr, Principal, PrometheusApiState,
     RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT, Response, State, StatusCode, accepted_response,
-    authorized_tenant_from_headers, record_ruler_config_change, resource,
+    authorized_tenant_from_headers, record_ruler_config_change, resource, response_with_status,
 };
 
 pub(crate) async fn delete_ruler_config_namespace<S: MetricStore>(
@@ -24,7 +24,7 @@ pub(crate) async fn delete_ruler_config_namespace<S: MetricStore>(
                 .get_mut(&tenant)
                 .and_then(|namespaces| namespaces.remove(&namespace));
             if removed.is_none() {
-                (StatusCode::NOT_FOUND, "group namespace does not exist\n").into_response()
+                response_with_status(StatusCode::NOT_FOUND, "group namespace does not exist\n")
             } else {
                 if rules.get(&tenant).is_some_and(BTreeMap::is_empty) {
                     rules.remove(&tenant);
@@ -37,11 +37,10 @@ pub(crate) async fn delete_ruler_config_namespace<S: MetricStore>(
     if response.status().is_success()
         && let Err(error) = state.persist_ruler_config(&tenant).await
     {
-        response = (
+        response = response_with_status(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to persist ruler config: {error}\n"),
-        )
-            .into_response();
+        );
     }
     record_ruler_config_change(
         &state.audit,

@@ -9,33 +9,33 @@ pub(crate) struct IpRange {
 
 impl IpRange {
     pub(crate) fn single(addr: IpAddr) -> Self {
-        let (family, value) = ip_to_value(addr);
+        let parsed = ip_to_value(addr);
         Self {
-            family,
-            start: value,
-            end: value,
+            family: parsed.family,
+            start: parsed.value,
+            end: parsed.value,
         }
     }
 
     pub(crate) fn range(start: IpAddr, end: IpAddr) -> Result<Self, ParseError> {
-        let (start_family, start) = ip_to_value(start);
-        let (end_family, end) = ip_to_value(end);
-        if start_family != end_family || start > end {
+        let start = ip_to_value(start);
+        let end = ip_to_value(end);
+        if start.family != end.family || start.value > end.value {
             return Err(ParseError::Syntax {
                 message: "invalid ip range".to_string(),
                 position: 0,
             });
         }
         Ok(Self {
-            family: start_family,
-            start,
-            end,
+            family: start.family,
+            start: start.value,
+            end: end.value,
         })
     }
 
     pub(crate) fn cidr(base: IpAddr, prefix: u8) -> Result<Self, ParseError> {
-        let (family, value) = ip_to_value(base);
-        let bits = family.bits();
+        let parsed = ip_to_value(base);
+        let bits = parsed.family.bits();
         if prefix > bits {
             return Err(ParseError::Syntax {
                 message: "invalid ip CIDR prefix".to_string(),
@@ -47,15 +47,19 @@ impl IpRange {
             0
         } else {
             (!0_u128) << u32::from(host_bits)
-        } & family.mask();
-        let start = value & mask;
-        let host_mask = !mask & family.mask();
+        } & parsed.family.mask();
+        let start = parsed.value & mask;
+        let host_mask = !mask & parsed.family.mask();
         let end = start.saturating_add(host_mask);
-        Ok(Self { family, start, end })
+        Ok(Self {
+            family: parsed.family,
+            start,
+            end,
+        })
     }
 
     pub(crate) fn contains(&self, addr: IpAddr) -> bool {
-        let (family, value) = ip_to_value(addr);
-        family == self.family && value >= self.start && value <= self.end
+        let parsed = ip_to_value(addr);
+        parsed.family == self.family && parsed.value >= self.start && parsed.value <= self.end
     }
 }

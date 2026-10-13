@@ -2,10 +2,9 @@ use super::*;
 
 #[test]
 pub(crate) fn loki_label_and_level_helpers_pin_boundaries() {
-    let rendered_labels = BTreeMap::from([
-        ("app".to_string(), "api".to_string()),
-        ("env".to_string(), "prod".to_string()),
-    ]);
+    let mut rendered_labels = BTreeMap::new();
+    rendered_labels.insert("app".to_string(), "api".to_string());
+    rendered_labels.insert("env".to_string(), "prod".to_string());
     assert_eq!(
         loki_label_set(&rendered_labels),
         r#"{app="api",env="prod"}"#
@@ -53,7 +52,8 @@ pub(crate) fn loki_label_and_level_helpers_pin_boundaries() {
     // handling swallows it before the name check is reached.
     check!(loki_proto_label_parse_error("{app=bad-value}").is_none());
 
-    let stream = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let mut stream = BTreeMap::new();
+    stream.insert("app".to_string(), "api".to_string());
     let mut detected = BTreeMap::new();
     discover_detected_level_label(
         &stream,
@@ -62,9 +62,12 @@ pub(crate) fn loki_label_and_level_helpers_pin_boundaries() {
         &Limits::default(),
     );
     check!(detected.get("detected_level").map(String::as_str) == Some("error"));
-    check!(stream == BTreeMap::from([("app".to_string(), "api".to_string())]));
+    let mut expected_stream = BTreeMap::new();
+    expected_stream.insert("app".to_string(), "api".to_string());
+    check!(stream == expected_stream);
     for held in ["level", "severity", "severity_text"] {
-        let labels = BTreeMap::from([(held.to_string(), "custom".to_string())]);
+        let mut labels = BTreeMap::new();
+        labels.insert(held.to_string(), "custom".to_string());
         let mut metadata = BTreeMap::new();
         discover_detected_level_label(
             &labels,

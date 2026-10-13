@@ -10,6 +10,32 @@ pub enum AttrValue {
     Unsupported(String),
 }
 
+/// One named attribute and its typed value.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Attribute {
+    pub key: String,
+    pub value: AttrValue,
+}
+
+impl Attribute {
+    #[must_use]
+    pub fn new(key: impl Into<String>, value: AttrValue) -> Self {
+        Self {
+            key: key.into(),
+            value,
+        }
+    }
+}
+
+pub(crate) fn normalized_attr_value(value: &AttrValue) -> Option<&AttrValue> {
+    match value {
+        AttrValue::Unsupported(_) => None,
+        AttrValue::Array(values) if values.is_empty() => None,
+        AttrValue::Array(values) if values.len() == 1 => values.first(),
+        value => Some(value),
+    }
+}
+
 impl AttrValue {
     /// The Arrow type of the column that holds this value.
     ///

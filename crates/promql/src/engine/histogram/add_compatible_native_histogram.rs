@@ -22,11 +22,12 @@ pub(crate) fn add_compatible_native_histogram(
     } else {
         add_exponential_histogram(left, right);
     }
-    left.start_timestamp_ms = match (left.start_timestamp_ms, right.start_timestamp_ms) {
-        (Some(left), Some(right)) => Some(left.min(right)),
-        (Some(left), None) => Some(left),
-        (None, Some(right)) => Some(right),
-        (None, None) => None,
+    left.start_timestamp_ms = match left.start_timestamp_ms {
+        Some(left_start) => match right.start_timestamp_ms {
+            Some(right_start) => Some(left_start.min(right_start)),
+            None => Some(left_start),
+        },
+        None => right.start_timestamp_ms,
     };
     Ok(())
 }

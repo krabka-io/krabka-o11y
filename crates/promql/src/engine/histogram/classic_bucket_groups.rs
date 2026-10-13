@@ -6,7 +6,13 @@ use super::{
 
 /// Classic `<metric>_bucket{le}` buckets, grouped by the labelset key without
 /// `__name__` and `le`.
-pub(super) type ClassicBucketGroups = BTreeMap<String, (Labels, Vec<ClassicBucket>)>;
+pub(super) type ClassicBucketGroups = BTreeMap<String, ClassicBucketGroup>;
+
+/// The labels and bucket rows belonging to one classic histogram series.
+pub(super) struct ClassicBucketGroup {
+    pub(super) labels: Labels,
+    pub(super) buckets: Vec<ClassicBucket>,
+}
 
 /// Adds a classic float bucket row to its group and records its metric name.
 ///
@@ -30,8 +36,11 @@ pub(super) fn group_classic_bucket_sample(
     record_metric_name(metric_names, &key, &sample.labels);
     groups
         .entry(key)
-        .or_insert_with(|| (labels, Vec::new()))
-        .1
+        .or_insert_with(|| ClassicBucketGroup {
+            labels,
+            buckets: Vec::new(),
+        })
+        .buckets
         .push(ClassicBucket { upper_bound, count });
     Ok(())
 }

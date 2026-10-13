@@ -25,14 +25,37 @@ use opentelemetry_proto::tonic::{
 use prost::Message as _;
 
 use crate::{
-    BucketSpan, Limits, NativeHistogram, ResetHint,
-    wire::{DecodedExemplar, DecodedMetadata, DecodedSample, DecodedSeries},
+    BucketSpan, Limits, NativeHistogram, ResetHint, SpannedHistogramCounts,
+    wire::{
+        DecodedExemplar, DecodedHistogramSample, DecodedMetadata, DecodedSample, DecodedSeries,
+    },
 };
 
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
     use krabka_blockstore::Labels;
+
+    use crate::SpannedHistogramCounts;
+
+    struct OffsetName {
+        offset: u64,
+        name: &'static str,
+    }
+
+    struct UnitCase {
+        metric_name: &'static str,
+        unit: &'static str,
+        expected_name: &'static str,
+    }
+
+    struct SampleValueCase<'a> {
+        case: &'static str,
+        series: &'a [crate::wire::DecodedSeries],
+        name: &'static str,
+        le: Option<&'static str>,
+        expected: f64,
+    }
     use opentelemetry_proto::tonic::{
         common::v1::{AnyValue, InstrumentationScope, KeyValue, any_value},
         metrics::v1::{
@@ -44,6 +67,26 @@ mod tests {
         },
         resource::v1::Resource,
     };
+
+    #[derive(Clone, Copy, Debug)]
+    struct BucketInput {
+        index: i32,
+        count: f64,
+    }
+
+    const fn bucket(index: i32, count: f64) -> BucketInput {
+        BucketInput { index, count }
+    }
+
+    #[derive(Clone, Copy)]
+    struct LabelInput<'a> {
+        name: &'a str,
+        value: &'a str,
+    }
+
+    const fn label<'a>(name: &'a str, value: &'a str) -> LabelInput<'a> {
+        LabelInput { name, value }
+    }
 
     use crate::wire::DecodedExemplar;
 
@@ -101,7 +144,20 @@ mod tests {
         let start = std::time::Instant::now();
         let mut accumulator = super::DeltaAccumulator::default();
 
-        for (offset, name) in [(0, "a"), (1, "b"), (2, "c")] {
+        for OffsetName { offset, name } in [
+            OffsetName {
+                offset: 0,
+                name: "a",
+            },
+            OffsetName {
+                offset: 1,
+                name: "b",
+            },
+            OffsetName {
+                offset: 2,
+                name: "c",
+            },
+        ] {
             accumulator.seen_at(start + std::time::Duration::from_secs(offset));
             accumulator.accumulate_sum(&series(name), 0, 1.0);
         }
@@ -542,42 +598,54 @@ mod tests {
     /// are all distinct, and none of which is zero or one.
     #[test]
     fn compacting_histogram_buckets_encodes_each_span_relative_to_the_last() {
-        let compact = |buckets: &[(i32, f64)]| {
-            super::compact_spanned_histogram_counts(buckets.iter().copied().collect())
+        let compact = |buckets: &[BucketInput]| {
+            super::compact_spanned_histogram_counts(buckets.iter().fold(
+                std::collections::BTreeMap::new(),
+                |mut buckets, bucket| {
+                    buckets.insert(bucket.index, bucket.count);
+                    buckets
+                },
+            ))
         };
         let span = |offset, length| BucketSpan { offset, length };
+        let expected = |spans, counts| SpannedHistogramCounts { spans, counts };
 
         // Buckets 1-2, then 5, then 9-10. Offsets are 1, 2 and 3 counting
         // from each previous span's end; lengths are 2, 1 and 2.
         check!(
-            compact(&[(1, 5.0), (2, 6.0), (5, 7.0), (9, 8.0), (10, 9.0)])
-                == (
-                    vec![span(1, 2), span(2, 1), span(3, 2)],
-                    vec![5.0, 6.0, 7.0, 8.0, 9.0],
-                )
+            compact(&[
+                bucket(1, 5.0),
+                bucket(2, 6.0),
+                bucket(5, 7.0),
+                bucket(9, 8.0),
+                bucket(10, 9.0)
+            ]) == expected(
+                vec![span(1, 2), span(2, 1), span(3, 2)],
+                vec![5.0, 6.0, 7.0, 8.0, 9.0],
+            )
         );
 
         // Empty buckets are dropped before spanning, so a zero in the middle
         // splits one span into two rather than being carried as a count.
         check!(
-            compact(&[(1, 5.0), (2, 0.0), (3, 6.0)])
-                == (vec![span(1, 1), span(1, 1)], vec![5.0, 6.0])
+            compact(&[bucket(1, 5.0), bucket(2, 0.0), bucket(3, 6.0)])
+                == expected(vec![span(1, 1), span(1, 1)], vec![5.0, 6.0])
         );
 
         // A single bucket at zero is offset zero, length one -- the identity
         // case, which is why the fixture above avoids those values.
-        check!(compact(&[(0, 5.0)]) == (vec![span(0, 1)], vec![5.0]));
+        check!(compact(&[bucket(0, 5.0)]) == expected(vec![span(0, 1)], vec![5.0]));
 
         // Negative indices are below the zero bucket and offset accordingly.
-        check!(compact(&[(-2, 5.0)]) == (vec![span(-2, 1)], vec![5.0]));
+        check!(compact(&[bucket(-2, 5.0)]) == expected(vec![span(-2, 1)], vec![5.0]));
         check!(
-            compact(&[(-2, 5.0), (-1, 6.0), (2, 7.0)])
-                == (vec![span(-2, 2), span(2, 1)], vec![5.0, 6.0, 7.0])
+            compact(&[bucket(-2, 5.0), bucket(-1, 6.0), bucket(2, 7.0)])
+                == expected(vec![span(-2, 2), span(2, 1)], vec![5.0, 6.0, 7.0])
         );
 
         // Nothing to encode: no buckets, and buckets that are all empty.
-        check!(compact(&[]) == (Vec::new(), Vec::new()));
-        check!(compact(&[(1, 0.0), (2, 0.0)]) == (Vec::new(), Vec::new()));
+        check!(compact(&[]) == expected(Vec::new(), Vec::new()));
+        check!(compact(&[bucket(1, 0.0), bucket(2, 0.0)]) == expected(Vec::new(), Vec::new()));
     }
 
     /// `strip_ucum_annotations` drops the `{...}` annotations UCUM allows on a
@@ -984,8 +1052,13 @@ mod tests {
         crate::histogram::BucketSpan { offset, length }
     }
 
-    fn bucket_map(pairs: &[(i32, f64)]) -> std::collections::BTreeMap<i32, f64> {
-        pairs.iter().copied().collect()
+    fn bucket_map(inputs: &[BucketInput]) -> std::collections::BTreeMap<i32, f64> {
+        inputs
+            .iter()
+            .fold(std::collections::BTreeMap::new(), |mut buckets, bucket| {
+                buckets.insert(bucket.index, bucket.count);
+                buckets
+            })
     }
 
     /// Sparse histogram buckets are stored as spans of consecutive indexes.
@@ -995,46 +1068,62 @@ mod tests {
     #[test]
     fn bucket_spans_encode_gaps_as_deltas_from_the_previous_span() {
         let compact = super::compact_spanned_histogram_counts;
+        let expected = |spans, counts| SpannedHistogramCounts { spans, counts };
 
         // One run starting at zero.
-        check!(compact(bucket_map(&[(0, 1.0), (1, 2.0)])) == (vec![span(0, 2)], vec![1.0, 2.0]));
+        check!(
+            compact(bucket_map(&[bucket(0, 1.0), bucket(1, 2.0)]))
+                == expected(vec![span(0, 2)], vec![1.0, 2.0])
+        );
 
         // One run starting away from zero: the first offset is absolute.
-        check!(compact(bucket_map(&[(5, 1.0)])) == (vec![span(5, 1)], vec![1.0]));
+        check!(compact(bucket_map(&[bucket(5, 1.0)])) == expected(vec![span(5, 1)], vec![1.0]));
 
         // Two runs. The second offset is measured from the end of the first,
         // so it is 1 rather than 3.
         check!(
-            compact(bucket_map(&[(0, 1.0), (1, 2.0), (3, 4.0)]))
-                == (vec![span(0, 2), span(1, 1)], vec![1.0, 2.0, 4.0])
+            compact(bucket_map(&[
+                bucket(0, 1.0),
+                bucket(1, 2.0),
+                bucket(3, 4.0)
+            ])) == expected(vec![span(0, 2), span(1, 1)], vec![1.0, 2.0, 4.0])
         );
 
         // Three runs. Only from the second gap onwards is the previous span's
         // end non-zero, so this is the first case where subtracting it and
         // adding it give different answers.
         check!(
-            compact(bucket_map(&[(0, 1.0), (2, 2.0), (4, 3.0)]))
-                == (
-                    vec![span(0, 1), span(1, 1), span(1, 1)],
-                    vec![1.0, 2.0, 3.0]
-                )
+            compact(bucket_map(&[
+                bucket(0, 1.0),
+                bucket(2, 2.0),
+                bucket(4, 3.0)
+            ])) == expected(
+                vec![span(0, 1), span(1, 1), span(1, 1)],
+                vec![1.0, 2.0, 3.0]
+            )
         );
 
         // Negative indexes are ordinary indexes.
-        check!(compact(bucket_map(&[(-2, 1.0), (-1, 2.0)])) == (vec![span(-2, 2)], vec![1.0, 2.0]));
+        check!(
+            compact(bucket_map(&[bucket(-2, 1.0), bucket(-1, 2.0)]))
+                == expected(vec![span(-2, 2)], vec![1.0, 2.0])
+        );
 
         // Empty buckets are dropped, which is what creates the gap here.
         check!(
-            compact(bucket_map(&[(0, 1.0), (1, 0.0), (2, 3.0)]))
-                == (vec![span(0, 1), span(1, 1)], vec![1.0, 3.0])
+            compact(bucket_map(&[
+                bucket(0, 1.0),
+                bucket(1, 0.0),
+                bucket(2, 3.0)
+            ])) == expected(vec![span(0, 1), span(1, 1)], vec![1.0, 3.0])
         );
 
         check!(
-            compact(bucket_map(&[])) == (vec![], vec![]),
+            compact(bucket_map(&[])) == expected(vec![], vec![]),
             "no buckets, no spans"
         );
         check!(
-            compact(bucket_map(&[(0, 0.0)])) == (vec![], vec![]),
+            compact(bucket_map(&[bucket(0, 0.0)])) == expected(vec![], vec![]),
             "only empty buckets is the same as none"
         );
     }
@@ -1058,22 +1147,27 @@ mod tests {
             bucket_counts: vec![1, 0, 0, 0, 2, 0, 0, 3],
         };
 
-        let (spans, counts) =
-            super::downscaled_spans(Some(&buckets), 0, -1).expect("downscale succeeds");
+        let compacted = super::downscaled_spans(Some(&buckets), 0, -1).expect("downscale succeeds");
 
         // The three populated source buckets merge onto indexes 1, 3 and 4,
         // and decoding the spans has to land back on exactly those.
-        let decoded = super::spanned_histogram_counts(&spans, &counts);
+        let decoded = super::spanned_histogram_counts(&compacted.spans, &compacted.counts);
         check!(
-            decoded == bucket_map(&[(1, 1.0), (3, 2.0), (4, 3.0)]),
-            "spans {spans:?} counts {counts:?} decoded to {decoded:?}"
+            decoded == bucket_map(&[bucket(1, 1.0), bucket(3, 2.0), bucket(4, 3.0)]),
+            "spans {:?} counts {:?} decoded to {decoded:?}",
+            compacted.spans,
+            compacted.counts
         );
 
         // The second run begins one index after the first ended, so its
         // offset is 1. Encoded as an absolute index it would be 3, and the
         // decoder would place its counts at 5 and 6 instead.
-        check!(spans == vec![span(1, 1), span(1, 2)], "got {spans:?}");
-        check!(counts == vec![1.0, 2.0, 3.0], "got {counts:?}");
+        check!(
+            compacted.spans == vec![span(1, 1), span(1, 2)],
+            "got {:?}",
+            compacted.spans
+        );
+        check!(compacted.counts == vec![1.0, 2.0, 3.0]);
     }
 
     /// Decoding spans back into buckets has to undo the delta encoding, so
@@ -1083,17 +1177,26 @@ mod tests {
     fn bucket_spans_survive_a_round_trip() {
         for pairs in [
             vec![],
-            vec![(0, 1.0)],
-            vec![(5, 1.0)],
-            vec![(-3, 1.0)],
-            vec![(0, 1.0), (1, 2.0)],
-            vec![(0, 1.0), (1, 2.0), (3, 4.0)],
-            vec![(-2, 1.0), (-1, 2.0), (4, 3.0), (9, 5.0)],
+            vec![bucket(0, 1.0)],
+            vec![bucket(5, 1.0)],
+            vec![bucket(-3, 1.0)],
+            vec![bucket(0, 1.0), bucket(1, 2.0)],
+            vec![bucket(0, 1.0), bucket(1, 2.0), bucket(3, 4.0)],
+            vec![
+                bucket(-2, 1.0),
+                bucket(-1, 2.0),
+                bucket(4, 3.0),
+                bucket(9, 5.0),
+            ],
         ] {
             let original = bucket_map(&pairs);
-            let (spans, counts) = super::compact_spanned_histogram_counts(original.clone());
-            let decoded = super::spanned_histogram_counts(&spans, &counts);
-            check!(decoded == original, "round trip of {pairs:?} via {spans:?}");
+            let compact = super::compact_spanned_histogram_counts(original.clone());
+            let decoded = super::spanned_histogram_counts(&compact.spans, &compact.counts);
+            check!(
+                decoded == original,
+                "round trip of {pairs:?} via {:?}",
+                compact.spans
+            );
         }
     }
 
@@ -1103,11 +1206,11 @@ mod tests {
     #[test]
     fn decoding_stops_when_the_counts_run_out() {
         let decoded = super::spanned_histogram_counts(&[span(0, 4)], &[1.0, 2.0]);
-        check!(decoded == bucket_map(&[(0, 1.0), (1, 2.0)]));
+        check!(decoded == bucket_map(&[bucket(0, 1.0), bucket(1, 2.0)]));
 
         let decoded = super::spanned_histogram_counts(&[span(0, 2), span(3, 2)], &[1.0, 2.0, 3.0]);
         check!(
-            decoded == bucket_map(&[(0, 1.0), (1, 2.0), (5, 3.0)]),
+            decoded == bucket_map(&[bucket(0, 1.0), bucket(1, 2.0), bucket(5, 3.0)]),
             "the second span still starts where its offset says"
         );
 
@@ -1127,37 +1230,38 @@ mod tests {
     /// unit: seven of these were uncovered.
     #[test]
     fn every_otlp_unit_maps_to_its_prometheus_suffix() {
-        for (unit, want) in [
-            ("d", "days"),
-            ("h", "hours"),
-            ("min", "minutes"),
-            ("s", "seconds"),
-            ("ms", "milliseconds"),
-            ("us", "microseconds"),
-            ("ns", "nanoseconds"),
-            ("m", "meters"),
-            ("By", "bytes"),
-            ("KiBy", "kibibytes"),
-            ("MiBy", "mebibytes"),
-            ("GiBy", "gibibytes"),
-            ("TiBy", "tebibytes"),
-            ("kBy", "kilobytes"),
-            ("MBy", "megabytes"),
-            ("GBy", "gigabytes"),
-            ("TBy", "terabytes"),
-            ("bit", "bits"),
-            ("V", "volts"),
-            ("A", "amperes"),
-            ("J", "joules"),
-            ("W", "watts"),
-            ("g", "grams"),
-            ("Cel", "celsius"),
-            ("Hz", "hertz"),
-            ("%", "percent"),
+        for unit in [
+            label("d", "days"),
+            label("h", "hours"),
+            label("min", "minutes"),
+            label("s", "seconds"),
+            label("ms", "milliseconds"),
+            label("us", "microseconds"),
+            label("ns", "nanoseconds"),
+            label("m", "meters"),
+            label("By", "bytes"),
+            label("KiBy", "kibibytes"),
+            label("MiBy", "mebibytes"),
+            label("GiBy", "gibibytes"),
+            label("TiBy", "tebibytes"),
+            label("kBy", "kilobytes"),
+            label("MBy", "megabytes"),
+            label("GBy", "gigabytes"),
+            label("TBy", "terabytes"),
+            label("bit", "bits"),
+            label("V", "volts"),
+            label("A", "amperes"),
+            label("J", "joules"),
+            label("W", "watts"),
+            label("g", "grams"),
+            label("Cel", "celsius"),
+            label("Hz", "hertz"),
+            label("%", "percent"),
         ] {
             assert2::check!(
-                super::prometheus_base_unit_suffix(unit) == Some(want),
-                "unit {unit:?}"
+                super::prometheus_base_unit_suffix(unit.name) == Some(unit.value),
+                "unit {:?}",
+                unit.name
             );
         }
 
@@ -1250,10 +1354,10 @@ mod tests {
         }
     }
 
-    fn labels(pairs: &[(&str, &str)]) -> Labels {
+    fn labels(inputs: &[LabelInput<'_>]) -> Labels {
         let mut labels = Labels::new();
-        for (name, value) in pairs {
-            labels.insert((*name).to_string(), (*value).to_string());
+        for input in inputs {
+            labels.insert(input.name.to_string(), input.value.to_string());
         }
         labels
     }
@@ -1291,8 +1395,8 @@ mod tests {
             series
                 == vec![DecodedSeries {
                     labels: labels(&[
-                        ("__name__", "system_cpu_utilization"),
-                        ("host_name", "api-1")
+                        label("__name__", "system_cpu_utilization"),
+                        label("host_name", "api-1")
                     ]),
                     samples: vec![DecodedSample {
                         timestamp_ms: 1,
@@ -1495,7 +1599,7 @@ mod tests {
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
 
         assert!(series[0].labels.get("__name__") == Some("http_server_requests_total"));
-        assert!(series[0].samples == vec![(2, 7.0)]);
+        assert!(series[0].samples == vec![DecodedSample::new(2, 7.0)]);
     }
 
     #[test]
@@ -1572,24 +1676,96 @@ mod tests {
 
     #[test]
     fn default_translation_converts_common_ucum_units_to_prometheus_suffixes() {
-        for (metric_name, unit, expected_name) in [
-            ("process.uptime", "min", "process_uptime_minutes"),
-            ("process.uptime", "h", "process_uptime_hours"),
-            ("process.uptime", "d", "process_uptime_days"),
-            ("cache.size", "KiBy", "cache_size_kibibytes"),
-            ("cache.size", "MiBy", "cache_size_mebibytes"),
-            ("cache.size", "GiBy", "cache_size_gibibytes"),
-            ("cache.size", "TiBy", "cache_size_tebibytes"),
-            ("cache.size", "kBy", "cache_size_kilobytes"),
-            ("cache.size", "MBy", "cache_size_megabytes"),
-            ("cache.size", "GBy", "cache_size_gigabytes"),
-            ("cache.size", "TBy", "cache_size_terabytes"),
-            ("sensor.reading", "V", "sensor_reading_volts"),
-            ("sensor.reading", "A", "sensor_reading_amperes"),
-            ("sensor.reading", "J", "sensor_reading_joules"),
-            ("sensor.reading", "W", "sensor_reading_watts"),
-            ("sensor.reading", "g", "sensor_reading_grams"),
-            ("cache.write", "MiBy/s", "cache_write_mebibytes_per_second"),
+        for UnitCase {
+            metric_name,
+            unit,
+            expected_name,
+        } in [
+            UnitCase {
+                metric_name: "process.uptime",
+                unit: "min",
+                expected_name: "process_uptime_minutes",
+            },
+            UnitCase {
+                metric_name: "process.uptime",
+                unit: "h",
+                expected_name: "process_uptime_hours",
+            },
+            UnitCase {
+                metric_name: "process.uptime",
+                unit: "d",
+                expected_name: "process_uptime_days",
+            },
+            UnitCase {
+                metric_name: "cache.size",
+                unit: "KiBy",
+                expected_name: "cache_size_kibibytes",
+            },
+            UnitCase {
+                metric_name: "cache.size",
+                unit: "MiBy",
+                expected_name: "cache_size_mebibytes",
+            },
+            UnitCase {
+                metric_name: "cache.size",
+                unit: "GiBy",
+                expected_name: "cache_size_gibibytes",
+            },
+            UnitCase {
+                metric_name: "cache.size",
+                unit: "TiBy",
+                expected_name: "cache_size_tebibytes",
+            },
+            UnitCase {
+                metric_name: "cache.size",
+                unit: "kBy",
+                expected_name: "cache_size_kilobytes",
+            },
+            UnitCase {
+                metric_name: "cache.size",
+                unit: "MBy",
+                expected_name: "cache_size_megabytes",
+            },
+            UnitCase {
+                metric_name: "cache.size",
+                unit: "GBy",
+                expected_name: "cache_size_gigabytes",
+            },
+            UnitCase {
+                metric_name: "cache.size",
+                unit: "TBy",
+                expected_name: "cache_size_terabytes",
+            },
+            UnitCase {
+                metric_name: "sensor.reading",
+                unit: "V",
+                expected_name: "sensor_reading_volts",
+            },
+            UnitCase {
+                metric_name: "sensor.reading",
+                unit: "A",
+                expected_name: "sensor_reading_amperes",
+            },
+            UnitCase {
+                metric_name: "sensor.reading",
+                unit: "J",
+                expected_name: "sensor_reading_joules",
+            },
+            UnitCase {
+                metric_name: "sensor.reading",
+                unit: "W",
+                expected_name: "sensor_reading_watts",
+            },
+            UnitCase {
+                metric_name: "sensor.reading",
+                unit: "g",
+                expected_name: "sensor_reading_grams",
+            },
+            UnitCase {
+                metric_name: "cache.write",
+                unit: "MiBy/s",
+                expected_name: "cache_write_mebibytes_per_second",
+            },
         ] {
             let data = metrics_data(Metric {
                 name: metric_name.into(),
@@ -1629,8 +1805,8 @@ mod tests {
 
         let [first_series, second_series] = decode_with_one_accumulator([&first, &second]);
 
-        assert!(first_series[0].samples == vec![(2, 7.0)]);
-        assert!(second_series[0].samples == vec![(3, 12.0)]);
+        assert!(first_series[0].samples == vec![DecodedSample::new(2, 7.0)]);
+        assert!(second_series[0].samples == vec![DecodedSample::new(3, 12.0)]);
     }
 
     #[test]
@@ -1662,8 +1838,10 @@ mod tests {
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
 
-        let expected_labels =
-            labels(&[("__name__", "http_server_requests_total"), ("route", "/v1")]);
+        let expected_labels = labels(&[
+            label("__name__", "http_server_requests_total"),
+            label("route", "/v1"),
+        ]);
         let expected_metadata = Some(DecodedMetadata {
             metric_family_name: "http_server_requests_total".into(),
             metric_type: "counter".into(),
@@ -1782,64 +1960,71 @@ mod tests {
         let [first_series, second_series] = decode_with_one_accumulator([&first, &second]);
 
         let cases = [
-            (
-                "first payload",
-                &first_series,
-                "rpc_server_duration_bucket",
-                Some("0.5"),
-                1.0,
-            ),
-            (
-                "first payload",
-                &first_series,
-                "rpc_server_duration_bucket",
-                Some("+Inf"),
-                5.0,
-            ),
-            (
-                "first payload",
-                &first_series,
-                "rpc_server_duration_count",
-                None,
-                5.0,
-            ),
-            (
-                "first payload",
-                &first_series,
-                "rpc_server_duration_sum",
-                None,
-                7.0,
-            ),
-            (
-                "second payload",
-                &second_series,
-                "rpc_server_duration_bucket",
-                Some("0.5"),
-                3.0,
-            ),
-            (
-                "second payload",
-                &second_series,
-                "rpc_server_duration_bucket",
-                Some("+Inf"),
-                8.0,
-            ),
-            (
-                "second payload",
-                &second_series,
-                "rpc_server_duration_count",
-                None,
-                8.0,
-            ),
-            (
-                "second payload",
-                &second_series,
-                "rpc_server_duration_sum",
-                None,
-                11.0,
-            ),
+            SampleValueCase {
+                case: "first payload",
+                series: &first_series,
+                name: "rpc_server_duration_bucket",
+                le: Some("0.5"),
+                expected: 1.0,
+            },
+            SampleValueCase {
+                case: "first payload",
+                series: &first_series,
+                name: "rpc_server_duration_bucket",
+                le: Some("+Inf"),
+                expected: 5.0,
+            },
+            SampleValueCase {
+                case: "first payload",
+                series: &first_series,
+                name: "rpc_server_duration_count",
+                le: None,
+                expected: 5.0,
+            },
+            SampleValueCase {
+                case: "first payload",
+                series: &first_series,
+                name: "rpc_server_duration_sum",
+                le: None,
+                expected: 7.0,
+            },
+            SampleValueCase {
+                case: "second payload",
+                series: &second_series,
+                name: "rpc_server_duration_bucket",
+                le: Some("0.5"),
+                expected: 3.0,
+            },
+            SampleValueCase {
+                case: "second payload",
+                series: &second_series,
+                name: "rpc_server_duration_bucket",
+                le: Some("+Inf"),
+                expected: 8.0,
+            },
+            SampleValueCase {
+                case: "second payload",
+                series: &second_series,
+                name: "rpc_server_duration_count",
+                le: None,
+                expected: 8.0,
+            },
+            SampleValueCase {
+                case: "second payload",
+                series: &second_series,
+                name: "rpc_server_duration_sum",
+                le: None,
+                expected: 11.0,
+            },
         ];
-        for (case, series, name, le, expected) in cases {
+        for SampleValueCase {
+            case,
+            series,
+            name,
+            le,
+            expected,
+        } in cases
+        {
             assert!(
                 sample_value(series, name, le) == Some(expected),
                 "case: {case} name={name} le={le:?}"
@@ -1878,14 +2063,14 @@ mod tests {
         assert!(
             target.labels
                 == labels(&[
-                    ("__name__", "target_info"),
-                    ("service_instance_id", "checkout-7"),
-                    ("service_name", "checkout"),
-                    ("service_namespace", "shop"),
-                    ("telemetry_sdk_language", "rust")
+                    label("__name__", "target_info"),
+                    label("service_instance_id", "checkout-7"),
+                    label("service_name", "checkout"),
+                    label("service_namespace", "shop"),
+                    label("telemetry_sdk_language", "rust")
                 ])
         );
-        assert!(target.samples == vec![(1, 1.0)]);
+        assert!(target.samples == vec![DecodedSample::new(1, 1.0)]);
 
         let metric = series
             .iter()
@@ -1972,15 +2157,15 @@ mod tests {
         check!(
             metric.labels
                 == labels(&[
-                    ("__name__", "http_server_active_requests"),
-                    ("otel_scope_library_language", "rust"),
-                    ("otel_scope_name", "io.opentelemetry.http"),
-                    (
+                    label("__name__", "http_server_active_requests"),
+                    label("otel_scope_library_language", "rust"),
+                    label("otel_scope_name", "io.opentelemetry.http"),
+                    label(
                         "otel_scope_schema_url",
-                        "https://opentelemetry.io/schemas/1.24.0"
+                        "https://opentelemetry.io/schemas/1.24.0",
                     ),
-                    ("otel_scope_version", "1.2.3"),
-                    ("job", "checkout"),
+                    label("otel_scope_version", "1.2.3"),
+                    label("job", "checkout"),
                 ])
         );
 
@@ -2030,9 +2215,9 @@ mod tests {
                 == vec![
                     DecodedSeries {
                         labels: labels(&[
-                            ("__name__", "rpc_server_duration"),
-                            ("quantile", "0.5"),
-                            ("route", "/v1")
+                            label("__name__", "rpc_server_duration"),
+                            label("quantile", "0.5"),
+                            label("route", "/v1")
                         ]),
                         samples: vec![DecodedSample {
                             timestamp_ms: 4,
@@ -2045,9 +2230,9 @@ mod tests {
                     },
                     DecodedSeries {
                         labels: labels(&[
-                            ("__name__", "rpc_server_duration"),
-                            ("quantile", "0.9"),
-                            ("route", "/v1")
+                            label("__name__", "rpc_server_duration"),
+                            label("quantile", "0.9"),
+                            label("route", "/v1")
                         ]),
                         samples: vec![DecodedSample {
                             timestamp_ms: 4,
@@ -2060,8 +2245,8 @@ mod tests {
                     },
                     DecodedSeries {
                         labels: labels(&[
-                            ("__name__", "rpc_server_duration_count"),
-                            ("route", "/v1")
+                            label("__name__", "rpc_server_duration_count"),
+                            label("route", "/v1")
                         ]),
                         samples: vec![DecodedSample {
                             timestamp_ms: 4,
@@ -2074,8 +2259,8 @@ mod tests {
                     },
                     DecodedSeries {
                         labels: labels(&[
-                            ("__name__", "rpc_server_duration_sum"),
-                            ("route", "/v1")
+                            label("__name__", "rpc_server_duration_sum"),
+                            label("route", "/v1")
                         ]),
                         samples: vec![DecodedSample {
                             timestamp_ms: 4,
@@ -2115,8 +2300,9 @@ mod tests {
         check!(series.len() == 1);
         check!(series[0].labels.get("__name__") == Some("rpc_server_duration"));
         check!(series[0].histograms.len() == 1);
-        let (timestamp_ms, hist) = &series[0].histograms[0];
-        check!(*timestamp_ms == 3);
+        let hist_sample = &series[0].histograms[0];
+        check!(hist_sample.timestamp_ms == 3);
+        let hist = &hist_sample.histogram;
         check!(hist.schema == 3);
         check!((hist.count - 6.0).abs() < f64::EPSILON);
         check!((hist.sum - 12.0).abs() < f64::EPSILON);
@@ -2246,13 +2432,13 @@ mod tests {
 
         let [first_series, second_series] = decode_with_one_accumulator([&first, &second]);
 
-        let first_hist = &first_series[0].histograms[0].1;
+        let first_hist = &first_series[0].histograms[0].histogram;
         check!((first_hist.count - 4.0).abs() < f64::EPSILON);
         check!((first_hist.sum - 6.0).abs() < f64::EPSILON);
         check!((first_hist.zero_count - 1.0).abs() < f64::EPSILON);
         check!(first_hist.positive_counts == vec![2.0, 1.0]);
 
-        let second_hist = &second_series[0].histograms[0].1;
+        let second_hist = &second_series[0].histograms[0].histogram;
         check!((second_hist.count - 7.0).abs() < f64::EPSILON);
         check!((second_hist.sum - 11.0).abs() < f64::EPSILON);
         check!((second_hist.zero_count - 3.0).abs() < f64::EPSILON);
@@ -2289,7 +2475,7 @@ mod tests {
 
         let [_, second_series] = decode_with_one_accumulator([&first, &second]);
 
-        let second_hist = &second_series[0].histograms[0].1;
+        let second_hist = &second_series[0].histograms[0].histogram;
         check!((second_hist.count - 5.0).abs() < f64::EPSILON);
         check!((second_hist.sum - 8.0).abs() < f64::EPSILON);
         check!(
@@ -2319,7 +2505,7 @@ mod tests {
         );
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
-        let hist = &series[0].histograms[0].1;
+        let hist = &series[0].histograms[0].histogram;
 
         assert!(hist.positive_spans[0].offset == 1);
         assert!(hist.negative_spans[0].offset == 4);
@@ -2399,6 +2585,7 @@ mod exponential_histogram_series;
 mod exponential_histogram_to_native;
 mod gauge_series;
 mod histogram_family;
+mod histogram_points;
 mod histogram_scope;
 mod histogram_series;
 mod insert_attributes;
@@ -2486,7 +2673,9 @@ use prometheus_unit_suffix::prometheus_unit_suffix;
 use promoted_resource_attributes::promoted_resource_attributes;
 use reject_far_future_points::reject_far_future_points;
 use resource_metrics_timestamp_ms::resource_metrics_timestamp_ms;
-use scalar_point_series::{ExtraLabel, PointFamily, ScalarPointSeries, ScalarSeries};
+use scalar_point_series::{
+    ExtraLabel, PointFamily, ScalarPointSeries, ScalarSeries, append_count_and_sum,
+};
 use scalar_series::scalar_series;
 use scope_attributes::scope_attributes;
 use spanned_histogram_counts::spanned_histogram_counts;

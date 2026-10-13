@@ -1,5 +1,10 @@
 use super::*;
 
+struct EqualBoundaryCase {
+    deadline: &'static str,
+    timeout: &'static str,
+}
+
 #[test]
 pub(crate) fn distributor_policy_rejects_zero_and_invalid_bounds() {
     for argument in [
@@ -47,26 +52,28 @@ pub(crate) fn distributor_policy_rejects_zero_and_invalid_bounds() {
     // Equal is not "exceeds". Both cases above are rejections, so the
     // comparisons could have refused a timeout that merely *matches* its
     // deadline and nothing would have noticed.
-    for (deadline, timeout) in [
-        (
-            "--wal-connect-startup-deadline=1s",
-            "--wal-connect-attempt-timeout=1s",
-        ),
-        (
-            "--wal-connect-initial-backoff=1s",
-            "--wal-connect-max-backoff=1s",
-        ),
+    for case in [
+        EqualBoundaryCase {
+            deadline: "--wal-connect-startup-deadline=1s",
+            timeout: "--wal-connect-attempt-timeout=1s",
+        },
+        EqualBoundaryCase {
+            deadline: "--wal-connect-initial-backoff=1s",
+            timeout: "--wal-connect-max-backoff=1s",
+        },
     ] {
         let at_the_limit = ServiceConfig::parse_from([
             "krabka-observability",
             "--target",
             "distributor",
-            deadline,
-            timeout,
+            case.deadline,
+            case.timeout,
         ]);
         check!(
             validate_distributor_policy(&at_the_limit).is_ok(),
-            "{deadline} with {timeout}"
+            "{} with {}",
+            case.deadline,
+            case.timeout
         );
     }
 }

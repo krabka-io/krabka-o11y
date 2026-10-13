@@ -6,10 +6,26 @@ use arrow::array::{
 
 use super::{AttrValue, EVENT_ATTR_PREFIX, EventRef, InputSpan, LINK_ATTR_PREFIX, LinkRef};
 
+pub(crate) struct SpanEventLink<'a> {
+    pub(crate) span: &'a InputSpan,
+    pub(crate) event: Option<&'a EventRef>,
+    pub(crate) link: Option<&'a LinkRef>,
+}
+
+pub(crate) struct RawAttributeSelection {
+    pub(crate) all_events: bool,
+    pub(crate) all_links: bool,
+}
+
+pub(crate) struct AttributeArray {
+    pub(crate) name: &'static str,
+    pub(crate) array: ArrayRef,
+}
+
 pub(crate) fn raw_attribute_columns(
-    spans: &[(&InputSpan, Option<&EventRef>, Option<&LinkRef>)],
-    first_values: (bool, bool),
-) -> Vec<(&'static str, ArrayRef)> {
+    spans: &[SpanEventLink<'_>],
+    selection: RawAttributeSelection,
+) -> Vec<AttributeArray> {
     let mut keys = ListBuilder::new(StringBuilder::new());
     let mut unsupported = ListBuilder::new(StringBuilder::new());
     let mut is_array = ListBuilder::new(BooleanBuilder::new());
@@ -17,52 +33,68 @@ pub(crate) fn raw_attribute_columns(
     let mut ints = ListBuilder::new(ListBuilder::new(Int64Builder::new()));
     let mut floats = ListBuilder::new(ListBuilder::new(Float64Builder::new()));
     let mut bools = ListBuilder::new(ListBuilder::new(BooleanBuilder::new()));
-    for (span, event, link) in spans {
-        let events = if first_values.0 {
-            span.events.iter().collect::<Vec<_>>()
+    for item in spans {
+        let events = if selection.all_events {
+            item.span.events.iter().collect::<Vec<_>>()
         } else {
-            event.iter().copied().collect()
+            item.event.iter().copied().collect()
         };
-        let links = if first_values.1 {
-            span.links.iter().collect::<Vec<_>>()
+        let links = if selection.all_links {
+            item.span.links.iter().collect::<Vec<_>>()
         } else {
-            link.iter().copied().collect()
+            item.link.iter().copied().collect()
         };
         let mut event_attrs = std::collections::BTreeMap::<String, Vec<&AttrValue>>::new();
         for event in events {
             let mut this_event = std::collections::BTreeMap::<String, Vec<&AttrValue>>::new();
-            for (key, value) in &event.attributes {
-                this_event.entry(key.clone()).or_default().push(value);
+            for attribute in &event.attributes {
+                this_event
+                    .entry(attribute.key.clone())
+                    .or_default()
+                    .push(&attribute.value);
             }
-            for (key, values) in this_event {
-                event_attrs.entry(key).or_insert(values);
+            for entry in this_event {
+                event_attrs.entry(entry.0).or_insert(entry.1);
             }
         }
         let mut link_attrs = std::collections::BTreeMap::<String, Vec<&AttrValue>>::new();
         for link in links {
             let mut this_link = std::collections::BTreeMap::<String, Vec<&AttrValue>>::new();
-            for (key, value) in &link.attributes {
-                this_link.entry(key.clone()).or_default().push(value);
+            for attribute in &link.attributes {
+                this_link
+                    .entry(attribute.key.clone())
+                    .or_default()
+                    .push(&attribute.value);
             }
-            for (key, values) in this_link {
-                link_attrs.entry(key).or_insert(values);
+            for entry in this_link {
+                link_attrs.entry(entry.0).or_insert(entry.1);
             }
         }
-        let attrs = span
+        let attrs = item
+            .span
             .attrs
             .iter()
-            .map(|(key, value)| (key.clone(), value))
-            .chain(event_attrs.into_iter().flat_map(|(key, values)| {
-                values
-                    .into_iter()
-                    .map(move |value| (format!("{EVENT_ATTR_PREFIX}{key}"), value))
+            .map(|attribute| RawAttribute {
+                key: attribute.key.clone(),
+                value: &attribute.value,
+            })
+            .chain(event_attrs.into_iter().flat_map(|entry| {
+                let key = entry.0;
+                entry.1.into_iter().map(move |value| RawAttribute {
+                    key: format!("{EVENT_ATTR_PREFIX}{key}"),
+                    value,
+                })
             }))
-            .chain(link_attrs.into_iter().flat_map(|(key, values)| {
-                values
-                    .into_iter()
-                    .map(move |value| (format!("{LINK_ATTR_PREFIX}{key}"), value))
+            .chain(link_attrs.into_iter().flat_map(|entry| {
+                let key = entry.0;
+                entry.1.into_iter().map(move |value| RawAttribute {
+                    key: format!("{LINK_ATTR_PREFIX}{key}"),
+                    value,
+                })
             }));
-        for (key, value) in attrs {
+        for attribute in attrs {
+            let key = attribute.key;
+            let value = attribute.value;
             keys.values().append_value(&key);
             unsupported
                 .values()
@@ -106,12 +138,38 @@ pub(crate) fn raw_attribute_columns(
         bools.append(true);
     }
     vec![
-        ("attr_keys", Arc::new(keys.finish())),
-        ("attr_is_array", Arc::new(is_array.finish())),
-        ("attr_value_unsupported", Arc::new(unsupported.finish())),
-        ("attr_value", Arc::new(strings.finish())),
-        ("attr_value_int", Arc::new(ints.finish())),
-        ("attr_value_double", Arc::new(floats.finish())),
-        ("attr_value_bool", Arc::new(bools.finish())),
+        AttributeArray {
+            name: "attr_keys",
+            array: Arc::new(keys.finish()),
+        },
+        AttributeArray {
+            name: "attr_is_array",
+            array: Arc::new(is_array.finish()),
+        },
+        AttributeArray {
+            name: "attr_value_unsupported",
+            array: Arc::new(unsupported.finish()),
+        },
+        AttributeArray {
+            name: "attr_value",
+            array: Arc::new(strings.finish()),
+        },
+        AttributeArray {
+            name: "attr_value_int",
+            array: Arc::new(ints.finish()),
+        },
+        AttributeArray {
+            name: "attr_value_double",
+            array: Arc::new(floats.finish()),
+        },
+        AttributeArray {
+            name: "attr_value_bool",
+            array: Arc::new(bools.finish()),
+        },
     ]
+}
+
+struct RawAttribute<'a> {
+    key: String,
+    value: &'a AttrValue,
 }

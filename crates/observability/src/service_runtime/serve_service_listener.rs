@@ -2,7 +2,8 @@ use super::{
     CancellationToken, CriticalTaskError, ObjectStore, Role, ServerListener, ServiceConfig,
     ServiceDependencies, ServiceRuntimeError, SupervisedTasks, TcpListener,
     build_service_router_with_shutdown, serve_all_service_listener,
-    serve_compactor_service_listener, serve_router, shutdown_signal, start_runtime_security,
+    serve_compactor_service_listener, serve_router, shutdown_signal,
+    start_audited_runtime_security,
 };
 
 /// Serves a role on `listener` until it is asked to stop or one of its
@@ -62,11 +63,10 @@ pub async fn serve_service_listener(
         .await;
     }
 
-    let security = Box::pin(start_runtime_security(&config, &dependencies)).await?;
-    // Cancelled on every way out of this function, so an early error does not
-    // leave the audit writer waiting for a stop that never comes.
-    let _audit_stop = security.audit_stop.clone().drop_guard();
-    let dependencies = dependencies.with_audit(security.audit.clone());
+    let audited = Box::pin(start_audited_runtime_security(&config, dependencies)).await?;
+    let security = audited.security;
+    let _audit_stop = audited.stop_guard;
+    let dependencies = audited.dependencies;
     let token = CancellationToken::new();
     let token_sig = token.clone();
     // Not supervised: this task is meant to finish, and finishing is how it
@@ -76,17 +76,17 @@ pub async fn serve_service_listener(
         token_sig.cancel();
     });
     let token_srv = token.clone();
-    let (app, background_tasks) =
+    let service_router =
         build_service_router_with_shutdown(&config, dependencies, object_store, token.clone())
             .await?;
     let listener = ServerListener::bind(listener, &security.server)?;
-    let server = serve_router(listener, app, &security.server)
+    let server = serve_router(listener, service_router.router, &security.server)
         .with_graceful_shutdown(async move { token_srv.cancelled().await })
         .into_future();
     tokio::pin!(server);
     let mut tasks = SupervisedTasks::new(token);
-    for (name, handle) in background_tasks {
-        tasks.adopt(name, handle);
+    for task in service_router.background_tasks {
+        tasks.adopt(task.name, task.handle);
     }
     if let Some(writer) = security.audit_writer {
         tasks.adopt("audit writer", writer);

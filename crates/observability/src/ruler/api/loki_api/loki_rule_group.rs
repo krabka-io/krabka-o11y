@@ -1,6 +1,6 @@
 use super::{
-    HttpQueryError, Path, QuerierState, RequestSecurity, Response, RulerTenant, State, StatusCode,
-    loki_yaml_response, text_response,
+    HttpQueryError, LokiRuleGroupPath, Path, QuerierState, RequestSecurity, Response, RulerTenant,
+    State, StatusCode, loki_yaml_response, text_response,
 };
 
 pub(crate) async fn loki_rule_group(
@@ -8,7 +8,7 @@ pub(crate) async fn loki_rule_group(
     // Extracted ahead of the path, so a request without a principal is
     // refused first; `RulerTenant` reads the principal again.
     _security: RequestSecurity,
-    Path((namespace, group_name)): Path<(String, String)>,
+    Path(path): Path<LokiRuleGroupPath>,
     RulerTenant(tenant): RulerTenant,
 ) -> Result<Response, HttpQueryError> {
     let rules = state
@@ -18,14 +18,14 @@ pub(crate) async fn loki_rule_group(
         .expect("Loki rule store lock poisoned");
     let Some(groups) = rules
         .get(tenant.as_str())
-        .and_then(|namespaces| namespaces.get(&namespace))
+        .and_then(|namespaces| namespaces.get(&path.namespace))
     else {
         return Ok(text_response(
             StatusCode::BAD_REQUEST,
             "GetRuleGroup unsupported in rule local store\n",
         ));
     };
-    let Some(group) = groups.get(&group_name) else {
+    let Some(group) = groups.get(&path.group_name) else {
         return Ok(text_response(
             StatusCode::NOT_FOUND,
             "group does not exist\n",

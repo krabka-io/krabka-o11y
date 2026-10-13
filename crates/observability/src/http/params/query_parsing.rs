@@ -8,6 +8,17 @@ use crate::{
     decode_query_pair, parse_decimal_seconds_timestamp, parse_usize_query_param, start_or_since,
 };
 
+pub(crate) fn decoded_query_param_pairs(
+    raw_query: Option<&str>,
+    known_keys: &[&str],
+) -> Result<Vec<DecodedQueryPair>, HttpQueryError> {
+    let raw_query = raw_query.ok_or(HttpQueryError::MissingQueryParameter("query"))?;
+    split_query_param_pairs(raw_query, known_keys)
+        .into_iter()
+        .map(|pair| decode_query_pair(&pair))
+        .collect()
+}
+
 mod parse_detected_fields_params;
 mod parse_detected_labels_params;
 mod parse_loki_duration_query_param;

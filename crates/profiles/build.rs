@@ -132,13 +132,13 @@ fn compact_profile_deserializer(source: &str) -> Result<String, Box<dyn std::err
         .ok_or("generated Profile deserializer is missing")?;
     let mut depth = 0_usize;
     let mut end = None;
-    for (offset, byte) in source[start..].bytes().enumerate() {
-        match byte {
+    for source_byte in source[start..].bytes().enumerate() {
+        match source_byte.1 {
             b'{' => depth += 1,
             b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    end = Some(start + offset + 1);
+                    end = Some(start + source_byte.0 + 1);
                     break;
                 }
             }

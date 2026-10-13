@@ -79,7 +79,7 @@ async fn metrics_generator_end_to_end_red_and_service_graph() {
         s.name == "traces_spanmetrics_calls_total"
             && s.labels
                 .iter()
-                .any(|(k, v)| k == "span_name" && v == "GET /checkout")
+                .any(|label| label.key == "span_name" && label.value == "GET /checkout")
     });
     assert2::assert!(calls.is_some());
 
@@ -92,7 +92,7 @@ async fn metrics_generator_end_to_end_red_and_service_graph() {
         latency
             .exemplars
             .iter()
-            .any(|e| e.labels.iter().any(|(k, _)| k == "trace_id"))
+            .any(|e| e.labels.iter().any(|label| label.key == "trace_id"))
     );
 
     let edge = payload
@@ -103,12 +103,12 @@ async fn metrics_generator_end_to_end_red_and_service_graph() {
     check!(
         edge.labels
             .iter()
-            .any(|(k, v)| k == "client" && v == "frontend")
+            .any(|label| label.key == "client" && label.value == "frontend")
     );
     check!(
         edge.labels
             .iter()
-            .any(|(k, v)| k == "server" && v == "checkout")
+            .any(|label| label.key == "server" && label.value == "checkout")
     );
     check!(source.commits() == 1);
 }

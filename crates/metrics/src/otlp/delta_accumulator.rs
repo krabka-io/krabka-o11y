@@ -22,6 +22,11 @@ pub struct DeltaAccumulator {
     next_prune: Instant,
 }
 
+struct OldestStream {
+    key: DeltaKey,
+    last_seen: Instant,
+}
+
 impl Default for DeltaAccumulator {
     fn default() -> Self {
         let now = Instant::now();
@@ -87,28 +92,34 @@ impl DeltaAccumulator {
             let oldest_sum = self
                 .sums
                 .iter()
-                .min_by_key(|(_, state)| state.last_seen)
-                .map(|(key, state)| (key.clone(), state.last_seen));
+                .min_by_key(|entry| entry.1.last_seen)
+                .map(|entry| OldestStream {
+                    key: entry.0.clone(),
+                    last_seen: entry.1.last_seen,
+                });
             let oldest_histogram = self
                 .histograms
                 .iter()
-                .min_by_key(|(_, state)| state.last_seen)
-                .map(|(key, state)| (key.clone(), state.last_seen));
-            match (oldest_sum, oldest_histogram) {
-                (Some((sum_key, sum_seen)), Some((histogram_key, histogram_seen))) => {
-                    if sum_seen <= histogram_seen {
-                        self.sums.remove(&sum_key);
-                    } else {
-                        self.histograms.remove(&histogram_key);
+                .min_by_key(|entry| entry.1.last_seen)
+                .map(|entry| OldestStream {
+                    key: entry.0.clone(),
+                    last_seen: entry.1.last_seen,
+                });
+            match oldest_sum {
+                Some(sum) => match oldest_histogram {
+                    Some(histogram) if histogram.last_seen < sum.last_seen => {
+                        self.histograms.remove(&histogram.key);
                     }
-                }
-                (Some((key, _)), None) => {
-                    self.sums.remove(&key);
-                }
-                (None, Some((key, _))) => {
-                    self.histograms.remove(&key);
-                }
-                (None, None) => break,
+                    Some(_) | None => {
+                        self.sums.remove(&sum.key);
+                    }
+                },
+                None => match oldest_histogram {
+                    Some(histogram) => {
+                        self.histograms.remove(&histogram.key);
+                    }
+                    None => break,
+                },
             }
         }
     }

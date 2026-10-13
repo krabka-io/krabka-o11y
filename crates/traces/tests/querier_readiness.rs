@@ -34,7 +34,12 @@ async fn serve_querier(readiness: RoleReadiness) -> std::net::SocketAddr {
     addr
 }
 
-async fn get_text(addr: std::net::SocketAddr, path: &str) -> (reqwest::StatusCode, String) {
+struct HttpTextResponse {
+    status: reqwest::StatusCode,
+    body: String,
+}
+
+async fn get_text(addr: std::net::SocketAddr, path: &str) -> HttpTextResponse {
     let resp = reqwest::Client::new()
         .get(format!("http://{addr}{path}"))
         .timeout(Duration::from_secs(5))
@@ -42,7 +47,10 @@ async fn get_text(addr: std::net::SocketAddr, path: &str) -> (reqwest::StatusCod
         .await
         .unwrap();
     let status = resp.status();
-    (status, resp.text().await.unwrap_or_default())
+    HttpTextResponse {
+        status,
+        body: resp.text().await.unwrap_or_default(),
+    }
 }
 
 /// One row: which of the querier's gates are met, and what the two ends then
@@ -101,7 +109,10 @@ async fn a_querier_reports_its_gates_and_the_frontend_probe_reads_them_back() {
 
         for path in ["/ready", "/status"] {
             check!(
-                get_text(addr, path).await == (case.status, case.body.to_string()),
+                {
+                    let HttpTextResponse { status, body } = get_text(addr, path).await;
+                    status == case.status && body == case.body
+                },
                 "{path} with {:?} met",
                 case.met
             );

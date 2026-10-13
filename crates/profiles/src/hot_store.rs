@@ -30,7 +30,10 @@ mod tests {
     use krabka_pprof::{EngineOpts, FlameEngine, PCOL_TRACE_ID, ProfileStore, SeriesAgg};
     use krabka_units::{Time, convert::TimeExt as _, secs};
 
-    use crate::wal::{ProfileRecord, WalFunction, WalLocation, WalSample, WalSymbolSet};
+    use crate::{
+        hot_store::PositionedWalRecord,
+        wal::{ProfileRecord, WalFunction, WalLocation, WalSample, WalSymbolSet},
+    };
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 
@@ -45,9 +48,9 @@ mod tests {
         ProfileRecord {
             tenant: "tenant-a".to_string(),
             labels: vec![
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("service_name".to_string(), "api".to_string()),
-                ("__profile_type__".to_string(), PT.to_string()),
+                krabka_blockstore::LabelPair::new("__name__", "process_cpu"),
+                krabka_blockstore::LabelPair::new("service_name", "api"),
+                krabka_blockstore::LabelPair::new("__profile_type__", PT),
             ],
             profile_type: PT.to_string(),
             samples: vec![WalSample {
@@ -68,7 +71,10 @@ mod tests {
                 locations: vec![WalLocation {
                     address: 0x40,
                     mapping_id: 0,
-                    lines: vec![(0, 11)],
+                    lines: vec![crate::wal::WalLine {
+                        function_id: 0,
+                        line: 11,
+                    }],
                 }],
                 mappings: vec![],
             },
@@ -127,18 +133,18 @@ mod tests {
         let mut late = record();
         late.tenant = "tenant-b".to_string();
         late.labels = vec![
-            ("__name__".to_string(), "process_cpu".to_string()),
-            ("region".to_string(), "eu".to_string()),
-            ("__profile_type__".to_string(), PT.to_string()),
+            krabka_blockstore::LabelPair::new("__name__", "process_cpu"),
+            krabka_blockstore::LabelPair::new("region", "eu"),
+            krabka_blockstore::LabelPair::new("__profile_type__", PT),
         ];
         late.samples[0].timestamp_ns = 9_000_000_000;
         store.append_record(late).unwrap();
 
         // Milliseconds, and wide enough to cover both records.
-        let (all_start, all_end) = (0_i64, 10_000_i64);
+        let query_range = krabka_pprof::MillisRange::new(0, 10_000);
 
         let names = store
-            .label_names("tenant-a", &[], all_start, all_end)
+            .label_names("tenant-a", &[], query_range.start_ms, query_range.end_ms)
             .await
             .unwrap();
         check!(
@@ -151,7 +157,7 @@ mod tests {
         );
 
         let names = store
-            .label_names("tenant-b", &[], all_start, all_end)
+            .label_names("tenant-b", &[], query_range.start_ms, query_range.end_ms)
             .await
             .unwrap();
         check!(names.contains(&"region".to_string()), "got: {names:?}");
@@ -161,19 +167,25 @@ mod tests {
         );
 
         let values = store
-            .label_values("tenant-a", "service_name", &[], all_start, all_end)
+            .label_values(
+                "tenant-a",
+                "service_name",
+                &[],
+                query_range.start_ms,
+                query_range.end_ms,
+            )
             .await
             .unwrap();
         check!(values == vec!["api".to_string()], "got: {values:?}");
 
         let types = store
-            .profile_types("tenant-a", all_start, all_end)
+            .profile_types("tenant-a", query_range.start_ms, query_range.end_ms)
             .await
             .unwrap();
         check!(!types.is_empty(), "tenant-a has a profile type");
         check!(
             store
-                .profile_types("tenant-c", all_start, all_end)
+                .profile_types("tenant-c", query_range.start_ms, query_range.end_ms)
                 .await
                 .unwrap()
                 == Vec::<String>::new(),
@@ -181,7 +193,13 @@ mod tests {
         );
 
         let series = store
-            .series("tenant-a", &[], &[], all_start, all_end)
+            .series(
+                "tenant-a",
+                &[],
+                &[],
+                query_range.start_ms,
+                query_range.end_ms,
+            )
             .await
             .unwrap();
         check!(series.len() == 1, "got: {series:?}");
@@ -238,17 +256,23 @@ mod tests {
 
         let series = engine
             .select_series(
-                ("tenant-a", PT, r#"{service_name="api"}"#),
+                krabka_pprof::ProfileSelection::new("tenant-a", PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
-                (0, i64::MAX),
+                krabka_pprof::MillisRange::new(0, i64::MAX),
             )
             .await
             .unwrap();
 
         assert!(series.len() == 1);
-        assert!(series[0].points == vec![(1_700_000, 9.0)]);
+        assert!(
+            series[0].points
+                == vec![krabka_pprof::SamplePoint {
+                    timestamp_ms: 1_700_000,
+                    value: 9.0,
+                }]
+        );
     }
 
     #[tokio::test]
@@ -345,17 +369,17 @@ mod tests {
         });
         store
             .append_records_with_positions([
-                (record_at(1, 1_000_000), Some(partition_zero_position(0))),
-                (record_at(2, 2_000_000), Some(partition_zero_position(1))),
-                (record_at(4, 3_000_000), Some(partition_zero_position(2))),
+                PositionedWalRecord::new(record_at(1, 1_000_000), Some(partition_zero_position(0))),
+                PositionedWalRecord::new(record_at(2, 2_000_000), Some(partition_zero_position(1))),
+                PositionedWalRecord::new(record_at(4, 3_000_000), Some(partition_zero_position(2))),
             ])
             .unwrap();
         // A rebuild must keep the source positions, otherwise the persisted
         // copies of surviving records are counted again during handoff.
         let cold = super::WalTailProfileStore::new();
         cold.append_records_with_positions([
-            (record_at(2, 2_000_000), Some(partition_zero_position(1))),
-            (record_at(4, 3_000_000), Some(partition_zero_position(2))),
+            PositionedWalRecord::new(record_at(2, 2_000_000), Some(partition_zero_position(1))),
+            PositionedWalRecord::new(record_at(4, 3_000_000), Some(partition_zero_position(2))),
         ])
         .unwrap();
         let union = krabka_pprof::UnionProfileStore::new(Arc::new(store), Arc::new(cold));
@@ -468,7 +492,6 @@ mod run_wal_tail;
 mod run_wal_tail_with_topic;
 mod wal_tail_config;
 mod wal_tail_profile_store;
-
 use apply_record::apply_record;
 use default_max_age::DEFAULT_MAX_AGE;
 use default_max_records::DEFAULT_MAX_RECORDS;
@@ -479,4 +502,5 @@ pub use retention_config::RetentionConfig;
 pub use run_wal_tail::run_wal_tail;
 pub use run_wal_tail_with_topic::run_wal_tail_with_topic;
 pub use wal_tail_config::WalTailConfig;
+pub(crate) use wal_tail_profile_store::PositionedWalRecord;
 pub use wal_tail_profile_store::WalTailProfileStore;

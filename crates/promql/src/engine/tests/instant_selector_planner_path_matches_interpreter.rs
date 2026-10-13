@@ -1,5 +1,17 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct SelectorSample {
+    labels: Labels,
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct SelectorCase {
+    query: &'static str,
+    timestamp_ms: i64,
+}
+
 #[tokio::test]
 pub(crate) async fn instant_selector_planner_path_matches_interpreter() {
     use promql_parser::parser::Expr;
@@ -14,51 +26,136 @@ pub(crate) async fn instant_selector_planner_path_matches_interpreter() {
     // on both paths).
     let mut store = InMemoryMetricStore::new();
     let stale_bits = stale_nan();
-    for (lbls, ts, value) in [
-        (labels(&[("__name__", "up"), ("job", "api")]), 0_i64, 1.0),
-        (labels(&[("__name__", "up"), ("job", "api")]), 60_000, 2.0),
-        (labels(&[("__name__", "up"), ("job", "api")]), 120_000, 3.0),
-        (labels(&[("__name__", "up"), ("job", "db")]), 60_000, 9.0),
-        (
-            labels(&[("__name__", "up"), ("job", "db")]),
-            120_000,
-            stale_bits,
-        ),
+    for sample in [
+        SelectorSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]))
+            .timestamp_ms(0)
+            .value(1.0)
+            .build(),
+        SelectorSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]))
+            .timestamp_ms(60_000)
+            .value(2.0)
+            .build(),
+        SelectorSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]))
+            .timestamp_ms(120_000)
+            .value(3.0)
+            .build(),
+        SelectorSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "db"),
+            ]))
+            .timestamp_ms(60_000)
+            .value(9.0)
+            .build(),
+        SelectorSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "db"),
+            ]))
+            .timestamp_ms(120_000)
+            .value(stale_bits)
+            .build(),
         // Genuine NaN as the latest in-window sample: kept as a NaN value.
-        (labels(&[("__name__", "up"), ("job", "nan")]), 60_000, 5.0),
-        (
-            labels(&[("__name__", "up"), ("job", "nan")]),
-            120_000,
-            f64::NAN,
-        ),
-        (
-            labels(&[("__name__", "down"), ("job", "api")]),
-            120_000,
-            7.0,
-        ),
-        (labels(&[("__name__", "lonely")]), 120_000, 42.0),
+        SelectorSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "nan"),
+            ]))
+            .timestamp_ms(60_000)
+            .value(5.0)
+            .build(),
+        SelectorSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "nan"),
+            ]))
+            .timestamp_ms(120_000)
+            .value(f64::NAN)
+            .build(),
+        SelectorSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "down"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]))
+            .timestamp_ms(120_000)
+            .value(7.0)
+            .build(),
+        SelectorSample::builder()
+            .labels(labels(&[crate::test_support::TestLabelPair::new(
+                "__name__", "lonely",
+            )]))
+            .timestamp_ms(120_000)
+            .value(42.0)
+            .build(),
     ] {
-        store.push_float("t", lbls, ts, value);
+        store.push_float("t", sample.labels, sample.timestamp_ms, sample.value);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let selectors = [
-        ("up", 120_000_i64),
-        ("up{job=\"api\"}", 120_000),
-        ("up{job=~\"a.*\"}", 120_000),
-        ("up{job!=\"api\"}", 120_000),
-        ("{__name__=~\".+\"}", 120_000),
-        ("up offset 1m", 120_000),
-        ("up @ 60", 120_000),
-        ("up{job=\"missing\"}", 120_000),
-        ("lonely", 120_000),
+        SelectorCase {
+            query: "up",
+            timestamp_ms: 120_000,
+        },
+        SelectorCase {
+            query: "up{job=\"api\"}",
+            timestamp_ms: 120_000,
+        },
+        SelectorCase {
+            query: "up{job=~\"a.*\"}",
+            timestamp_ms: 120_000,
+        },
+        SelectorCase {
+            query: "up{job!=\"api\"}",
+            timestamp_ms: 120_000,
+        },
+        SelectorCase {
+            query: "{__name__=~\".+\"}",
+            timestamp_ms: 120_000,
+        },
+        SelectorCase {
+            query: "up offset 1m",
+            timestamp_ms: 120_000,
+        },
+        SelectorCase {
+            query: "up @ 60",
+            timestamp_ms: 120_000,
+        },
+        SelectorCase {
+            query: "up{job=\"missing\"}",
+            timestamp_ms: 120_000,
+        },
+        SelectorCase {
+            query: "lonely",
+            timestamp_ms: 120_000,
+        },
         // Genuine NaN must be kept (NaN value) on both paths.
-        ("up{job=\"nan\"}", 120_000),
+        SelectorCase {
+            query: "up{job=\"nan\"}",
+            timestamp_ms: 120_000,
+        },
         // Stale-NaN marker must be dropped (empty result) on both paths.
-        ("up{job=\"db\"}", 120_000),
+        SelectorCase {
+            query: "up{job=\"db\"}",
+            timestamp_ms: 120_000,
+        },
     ];
 
-    for (query, time_ms) in selectors {
+    for case in selectors {
+        let query = case.query;
+        let time_ms = case.timestamp_ms;
         let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
             .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
         let Expr::VectorSelector(selector) = expr else {

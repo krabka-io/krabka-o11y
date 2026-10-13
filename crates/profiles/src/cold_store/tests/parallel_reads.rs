@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use krabka_blockstore::OffsetRange;
 use object_store::throttle::{ThrottleConfig, ThrottledStore};
 
 use super::*;
@@ -36,14 +37,15 @@ async fn many_cold_blocks_keep_their_symbols_and_fail_as_a_whole_if_one_is_missi
         .add_series("t", labels.fingerprint(), &labels)
         .unwrap();
     let mut keys = Vec::new();
-    for (offset, record) in records.iter().enumerate() {
-        let offset = i64::try_from(offset).unwrap();
+    for record_entry in records.iter().enumerate() {
+        let offset = i64::try_from(record_entry.0).unwrap();
+        let record = record_entry.1;
         let meta = build_block(
             &store,
             "t",
             0,
             std::slice::from_ref(record),
-            (offset, offset),
+            OffsetRange::new(offset, offset),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await

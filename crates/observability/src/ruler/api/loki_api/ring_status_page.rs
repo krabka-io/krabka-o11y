@@ -1,4 +1,4 @@
-use super::{IntoResponse, Response, StatusCode};
+use super::{Response, StatusCode};
 
 /// The ring status page, describing the one process that serves this role.
 ///
@@ -9,11 +9,12 @@ use super::{IntoResponse, Response, StatusCode};
 /// checked. `state` comes from the caller's readiness, so a process that is
 /// still starting reads `JOINING` here and 503 at `/ready`.
 pub(crate) fn ring_status_page(instance: &str, state: &str) -> Response {
-    (
-        StatusCode::OK,
-        [("content-type", "text/html; charset=utf-8")],
-        format!(
-            "<!doctype html><html><head><title>Ring Status</title></head>\
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/html; charset=utf-8")
+        .body(
+            format!(
+                "<!doctype html><html><head><title>Ring Status</title></head>\
          <body><h1>Ring Status</h1>\
          <p>Krabka runs no hash ring. This process serves the role by itself, \
          so the row below is the process answering this request and not a \
@@ -22,7 +23,8 @@ pub(crate) fn ring_status_page(instance: &str, state: &str) -> Response {
          <table><thead><tr><th>Instance</th><th>State</th></tr></thead>\
          <tbody><tr><td>{instance}</td><td>{state}</td></tr></tbody>\
          </table></body></html>"
-        ),
-    )
-        .into_response()
+            )
+            .into(),
+        )
+        .expect("ring status page headers are valid")
 }

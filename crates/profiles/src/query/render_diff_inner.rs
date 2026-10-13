@@ -1,8 +1,8 @@
 use super::{
     Arc, DefaultMs, Extension, HeaderMap, IntoResponse, Json, NowMs, Principal, ProfileStore,
-    QuerierState, RawQuery, Response, authorized_http_tenant, flamebearer_diff_json,
-    parse_render_query, profile_error_response, query_param_i64, query_param_render_time,
-    unix_now_ms,
+    QuerierState, QueryParameter, RawQuery, Response, authorized_http_tenant,
+    flamebearer_diff_json, parse_render_query, parse_render_query::ParsedRenderQuery,
+    profile_error_response, query_param_i64, query_param_render_time, unix_now_ms,
 };
 
 pub(crate) async fn render_diff_inner<S>(
@@ -20,20 +20,30 @@ where
     };
     let params = url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
         .into_owned()
+        .map(|pair| QueryParameter {
+            key: pair.0,
+            value: pair.1,
+        })
         .collect::<Vec<_>>();
     let left_query = params
         .iter()
-        .find(|(name, _)| name == "leftQuery" || name == "query")
-        .map_or("", |(_, value)| value.as_str());
+        .find(|parameter| parameter.key == "leftQuery" || parameter.key == "query")
+        .map_or("", |parameter| parameter.value.as_str());
     let right_query = params
         .iter()
-        .find(|(name, _)| name == "rightQuery")
-        .map_or(left_query, |(_, value)| value.as_str());
-    let (left_type, left_selector) = match parse_render_query(left_query) {
+        .find(|parameter| parameter.key == "rightQuery")
+        .map_or(left_query, |parameter| parameter.value.as_str());
+    let ParsedRenderQuery {
+        profile_type: left_type,
+        selector: left_selector,
+    } = match parse_render_query(left_query) {
         Ok(parsed) => parsed,
         Err(err) => return profile_error_response(err),
     };
-    let (right_type, right_selector) = match parse_render_query(right_query) {
+    let ParsedRenderQuery {
+        profile_type: right_type,
+        selector: right_selector,
+    } = match parse_render_query(right_query) {
         Ok(parsed) => parsed,
         Err(err) => return profile_error_response(err),
     };
@@ -75,9 +85,14 @@ where
     match state
         .engine
         .diff(
-            tenant.as_str(),
-            (&left_type, &left_selector, left_start, left_end),
-            (&right_type, &right_selector, right_start, right_end),
+            krabka_pprof::DiffQuery::new(
+                krabka_pprof::ProfileSelection::new(tenant.as_str(), &left_type, &left_selector),
+                krabka_pprof::MillisRange::new(left_start, left_end),
+            ),
+            krabka_pprof::DiffQuery::new(
+                krabka_pprof::ProfileSelection::new(tenant.as_str(), &right_type, &right_selector),
+                krabka_pprof::MillisRange::new(right_start, right_end),
+            ),
             state.effective_max_nodes(&tenant, query_param_i64(&params, "maxNodes").unwrap_or(0)),
         )
         .await

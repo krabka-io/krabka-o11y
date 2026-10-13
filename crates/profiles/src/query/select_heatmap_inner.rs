@@ -1,9 +1,8 @@
 use super::{
     Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, EndMs, Extension, HeaderMap,
     HeatmapExemplarRequest, HeatmapSlotsMillis, Principal, ProfileStore, QuerierState,
-    SpanHeatmapRequest, StartMs, TimeExt, authorize_tenant, connect_error, heatmap_from_points,
-    heatmap_time_buckets, limit, pb, step_from_secs, tenant_connect_error,
-    tenant_denied_connect_error, tenant_from_headers,
+    SpanHeatmapRequest, StartMs, TimeExt, connect_error, heatmap_from_points, heatmap_time_buckets,
+    limit, pb, step_from_secs,
 };
 
 pub(crate) async fn select_heatmap_inner<S>(
@@ -15,9 +14,7 @@ pub(crate) async fn select_heatmap_inner<S>(
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
     let req = req.0;
     state
         .validate_query_range(&tenant, req.start, req.end)
@@ -90,7 +87,7 @@ where
             .await
     }
     .map_err(connect_error)?;
-    if heatmaps.iter().all(|(_, points)| points.is_empty()) {
+    if heatmaps.iter().all(|group| group.points.is_empty()) {
         return Ok(ConnectResponse::new(
             pb::querier::v1::SelectHeatmapResponse::default(),
         ));
@@ -129,7 +126,10 @@ where
             let labels = series
                 .labels
                 .iter()
-                .map(|label| (label.name.clone(), label.value.clone()))
+                .map(|label| krabka_pprof::ProfileLabel {
+                    name: label.name.clone(),
+                    value: label.value.clone(),
+                })
                 .collect::<Vec<_>>();
             let exemplar_slots = span_exemplars.get(&labels);
             if let Some(exemplar_slots) = exemplar_slots {

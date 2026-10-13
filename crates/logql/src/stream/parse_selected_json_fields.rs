@@ -34,7 +34,9 @@ impl JsonParserConfig {
                 .extractions()
                 .iter()
                 .enumerate()
-                .filter_map(|(index, extraction)| {
+                .filter_map(|indexed_extraction| {
+                    let index = indexed_extraction.0;
+                    let extraction = indexed_extraction.1;
                     let matched = extraction.evaluate(value)?;
                     matched.value.map(|matched_json| SelectedField {
                         position: matched.position,
@@ -56,12 +58,14 @@ impl JsonParserConfig {
             claimed: vec![false; self.extractions().len()],
             error_details: None,
         };
-        let targets = self
-            .extractions()
-            .iter()
-            .enumerate()
-            .map(|(index, extraction)| (index, extraction.path.parts.as_slice()))
-            .collect();
+        let mut targets = Vec::with_capacity(self.extractions().len());
+        for index in 0..self.extractions().len() {
+            let extraction = &self.extractions()[index];
+            targets.push(JsonSelectionTarget {
+                extraction_index: index,
+                remaining_path: extraction.path.parts.as_slice(),
+            });
+        }
         let mut parser = serde_json::Deserializer::from_str(line);
         let _ = SelectedValue {
             selection: &mut selection,
@@ -73,18 +77,18 @@ impl JsonParserConfig {
             insert_raw_parsed_field(fields, "__error__", "JSONParserErr".into());
             insert_raw_parsed_field(fields, "__error_details__", details);
         }
-        let selected = selection
-            .values
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, selected_text)| {
-                selected_text.map(|(position, extracted_text)| SelectedField {
-                    position,
+        let mut selected = Vec::new();
+        let mut index = 0;
+        for selected_text in selection.values {
+            if let Some(selected_text) = selected_text {
+                selected.push(SelectedField {
+                    position: selected_text.position,
                     extraction: index,
-                    extracted_text,
-                })
-            })
-            .collect();
+                    extracted_text: selected_text.extracted_text,
+                });
+            }
+            index += 1;
+        }
         SelectedFields(selected).insert_into(fields, self, &has_existing);
     }
 }
@@ -95,6 +99,17 @@ struct SelectedField<P> {
     /// The index of the extraction in the parser config.
     extraction: usize,
     extracted_text: String,
+}
+
+#[derive(Clone)]
+struct SelectedJsonText {
+    position: usize,
+    extracted_text: String,
+}
+
+struct JsonSelectionTarget<'p> {
+    extraction_index: usize,
+    remaining_path: &'p [JsonPathPart],
 }
 
 /// The values a JSON parser selected from one line.
@@ -110,7 +125,11 @@ impl<P: Ord + Copy> SelectedFields<P> {
         has_existing: &impl Fn(&str) -> bool,
     ) {
         let Self(mut selected) = self;
-        selected.sort_by_key(|field| (field.position, field.extraction));
+        selected.sort_by(|left, right| {
+            left.position
+                .cmp(&right.position)
+                .then_with(|| left.extraction.cmp(&right.extraction))
+        });
         for field in selected {
             fields.insert(
                 config.extractions()[field.extraction].destination().into(),
@@ -127,14 +146,14 @@ impl<P: Ord + Copy> SelectedFields<P> {
 
 struct Selection<'a> {
     config: &'a JsonParserConfig,
-    values: Vec<Option<(usize, String)>>,
+    values: Vec<Option<SelectedJsonText>>,
     claimed: Vec<bool>,
     error_details: Option<String>,
 }
 
 struct SelectedValue<'a, 'p> {
     selection: &'a mut Selection<'p>,
-    targets: Vec<(usize, &'p [JsonPathPart])>,
+    targets: Vec<JsonSelectionTarget<'p>>,
     array_element: bool,
 }
 
@@ -146,7 +165,12 @@ impl<'de> DeserializeSeed<'de> for SelectedValue<'_, '_> {
             IgnoredAny::deserialize(parser)?;
             return Ok(());
         }
-        if self.array_element || self.targets.iter().any(|(_, parts)| parts.is_empty()) {
+        if self.array_element
+            || self
+                .targets
+                .iter()
+                .any(|target| target.remaining_path.is_empty())
+        {
             let value = match <&RawValue>::deserialize(parser) {
                 Ok(value) => value,
                 Err(error) => {
@@ -159,21 +183,20 @@ impl<'de> DeserializeSeed<'de> for SelectedValue<'_, '_> {
                 }
             };
             let array_position = value.get().as_ptr() as usize;
-            for (index, parts) in self.targets {
-                let result = self.selection.config.extractions()[index]
-                    .evaluate_remaining(value, parts.len());
+            for target in self.targets {
+                let result = self.selection.config.extractions()[target.extraction_index]
+                    .evaluate_remaining(value, target.remaining_path.len());
                 if let Some(value) = result {
-                    self.selection.claimed[index] = true;
-                    self.selection.values[index] = value.value.map(|matched| {
-                        (
-                            if self.array_element {
+                    self.selection.claimed[target.extraction_index] = true;
+                    self.selection.values[target.extraction_index] =
+                        value.value.map(|matched| SelectedJsonText {
+                            position: if self.array_element {
                                 array_position
                             } else {
                                 value.position
                             },
-                            selected_json_value_to_string(matched),
-                        )
-                    });
+                            extracted_text: selected_json_value_to_string(matched),
+                        });
                 }
             }
             return Ok(());
@@ -213,14 +236,18 @@ impl<'de> Visitor<'de> for SelectedValue<'_, '_> {
             let targets = self
                 .targets
                 .iter()
-                .filter_map(|(index, parts)| {
-                    if self.selection.claimed[*index] {
+                .filter_map(|target| {
+                    if self.selection.claimed[target.extraction_index] {
                         return None;
                     }
-                    let (JsonPathPart::Field(name), rest) = parts.split_first()? else {
+                    let JsonPathPart::Field(name) = target.remaining_path.first()? else {
                         return None;
                     };
-                    (name == &key).then_some((*index, rest))
+                    let rest = &target.remaining_path[1..];
+                    (name == &key).then_some(JsonSelectionTarget {
+                        extraction_index: target.extraction_index,
+                        remaining_path: rest,
+                    })
                 })
                 .collect();
             map.next_value_seed(SelectedValue {
@@ -241,17 +268,24 @@ impl<'de> Visitor<'de> for SelectedValue<'_, '_> {
             let targets = self
                 .targets
                 .iter()
-                .filter_map(|(index, parts)| {
-                    if self.selection.claimed[*index] {
+                .filter_map(|target| {
+                    if self.selection.claimed[target.extraction_index] {
                         return None;
                     }
-                    let (JsonPathPart::Index(want), rest) = parts.split_first()? else {
+                    let JsonPathPart::Index(want) = target.remaining_path.first()? else {
                         return None;
                     };
-                    (*want == position).then_some((*index, rest))
+                    let rest = &target.remaining_path[1..];
+                    (*want == position).then_some(JsonSelectionTarget {
+                        extraction_index: target.extraction_index,
+                        remaining_path: rest,
+                    })
                 })
                 .collect::<Vec<_>>();
-            let indices = targets.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+            let indices = targets
+                .iter()
+                .map(|target| target.extraction_index)
+                .collect::<Vec<_>>();
             if sequence
                 .next_element_seed(SelectedValue {
                     selection: self.selection,
@@ -277,33 +311,72 @@ impl<'de> Visitor<'de> for SelectedValue<'_, '_> {
 mod tests {
     use assert2::check;
 
-    use crate::{Labels, parse_query};
+    use crate::{
+        Labels, parse_query,
+        test_support::{LabelPair, labels as labels_from_pairs},
+    };
+
+    struct RepeatedDestinationCase {
+        extractions: &'static str,
+        line: &'static str,
+        expected: &'static str,
+    }
+
+    impl RepeatedDestinationCase {
+        fn new(extractions: &'static str, line: &'static str, expected: &'static str) -> Self {
+            Self {
+                extractions,
+                line,
+                expected,
+            }
+        }
+    }
+
+    struct SelectedJsonValueCase {
+        expression: &'static str,
+        line: &'static str,
+        expected: &'static str,
+    }
+
+    struct SelectedJsonFieldsCase {
+        line: &'static str,
+        expected: Labels,
+    }
+
+    fn evaluate_selected_json(
+        extractions: &str,
+        labels: &Labels,
+        line: &str,
+    ) -> crate::stream::PipelineEvaluation {
+        let query = parse_query(&format!("{{app=\"api\"}} | json {extractions}")).unwrap();
+        query
+            .evaluate_with_fields(labels, line, &Labels::new())
+            .unwrap()
+    }
 
     // Loki3.7.7 parser.go JSONExpressionParser/grafana jsonparser023329977675 EachKey.
     // Expected lexemes/duplicates were captured with the pinned Go parser.
     #[test]
     fn selected_json_preserves_numeric_and_container_text_with_first_complete_paths() {
-        let labels = Labels::from([("app".into(), "api".into())]);
+        let labels = labels_from_pairs(&[LabelPair::new("app", "api")]);
         let query = parse_query(r#"{app="api"} | json exponent="n", fixed="fixed", big="big", array="arr", object="obj", selected="obj.n", indexed="arr[0].n""#).unwrap();
         let line = r#"{"n":1e3,"fixed":1.00,"big":184467440737095516160,"arr":[ 1, "a\n", { "x": 2 } ],"obj":{ "x" : 1.00 },"obj":{"n":2.00}}"#;
         let result = query
             .evaluate_with_fields(&labels, line, &Labels::new())
             .unwrap();
+        check!(result.line == line);
         check!(
-            (result.line.as_str(), result.fields)
-                == (
-                    line,
-                    Labels::from([
-                        ("app".into(), "api".into()),
-                        ("exponent".into(), "1e3".into()),
-                        ("fixed".into(), "1.00".into()),
-                        ("big".into(), "184467440737095516160".into()),
-                        ("array".into(), "[ 1, \"a\n\", { \"x\": 2 } ]".into()),
-                        ("object".into(), r#"{ "x" : 1.00 }"#.into()),
-                        ("selected".into(), "2.00".into()),
-                        ("indexed".into(), String::new()),
-                    ])
-                )
+            result.fields
+                == labels_from_pairs(&[
+                    LabelPair::new("app", "api"),
+                    LabelPair::new("exponent", "1e3"),
+                    LabelPair::new("fixed", "1.00"),
+                    LabelPair::new("big", "184467440737095516160"),
+                    LabelPair::new("array", "[ 1, \"a\n\", { \"x\": 2 } ]"),
+                    LabelPair::new("object", r#"{ "x" : 1.00 }"#),
+                    LabelPair::new("selected", "2.00"),
+                    LabelPair::new("indexed", ""),
+                ])
         );
         let query =
             parse_query(r#"{app="api"} | json object="obj.n", indexed="arr[0].n", first="value""#)
@@ -311,63 +384,70 @@ mod tests {
         let result = query.evaluate_with_fields(&labels, r#"{"obj":{},"obj":{"n":1e3},"arr":[{}],"arr":[{"n":2}],"value":"first","value":"last"}"#, &Labels::new()).unwrap();
         check!(
             result.fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("object".into(), "1e3".into()),
-                    ("indexed".into(), String::new()),
-                    ("first".into(), "first".into()),
+                == labels_from_pairs(&[
+                    LabelPair::new("app", "api"),
+                    LabelPair::new("object", "1e3"),
+                    LabelPair::new("indexed", ""),
+                    LabelPair::new("first", "first"),
                 ])
         );
     }
 
     #[test]
     fn repeated_destinations_follow_source_object_and_array_callback_order() {
-        let labels = Labels::from([("app".into(), "api".into())]);
-        for (extractions, line, expected) in [
-            (r#"value="b", value="a""#, r#"{"a":1,"b":2}"#, "2"),
-            (r#"value="a", value="b""#, r#"{"a":1,"b":2}"#, "2"),
-            (r#"value="b", value="a""#, r#"{"b":2,"a":1}"#, "1"),
-            (r#"value="obj.n", value="obj""#, r#"{"obj":{"n":1}}"#, "1"),
-            (r#"value="obj", value="obj.n""#, r#"{"obj":{"n":1}}"#, "1"),
-            (
+        let labels = labels_from_pairs(&[LabelPair::new("app", "api")]);
+        for case in [
+            RepeatedDestinationCase::new(r#"value="b", value="a""#, r#"{"a":1,"b":2}"#, "2"),
+            RepeatedDestinationCase::new(r#"value="a", value="b""#, r#"{"a":1,"b":2}"#, "2"),
+            RepeatedDestinationCase::new(r#"value="b", value="a""#, r#"{"b":2,"a":1}"#, "1"),
+            RepeatedDestinationCase::new(
+                r#"value="obj.n", value="obj""#,
+                r#"{"obj":{"n":1}}"#,
+                "1",
+            ),
+            RepeatedDestinationCase::new(
+                r#"value="obj", value="obj.n""#,
+                r#"{"obj":{"n":1}}"#,
+                "1",
+            ),
+            RepeatedDestinationCase::new(
                 r#"value="arr[0].n", value="arr[0]""#,
                 r#"{"arr":[{"n":1}]}"#,
                 r#"{"n":1}"#,
             ),
-            (
+            RepeatedDestinationCase::new(
                 r#"value="arr[0]", value="arr[0].n""#,
                 r#"{"arr":[{"n":1}]}"#,
                 "1",
             ),
-            (r#"value="missing", value="a""#, r#"{"a":1}"#, "1"),
-            (r#"value="a", value="a""#, r#"{"a":1,"a":2}"#, "1"),
-            (
+            RepeatedDestinationCase::new(r#"value="missing", value="a""#, r#"{"a":1}"#, "1"),
+            RepeatedDestinationCase::new(r#"value="a", value="a""#, r#"{"a":1,"a":2}"#, "1"),
+            RepeatedDestinationCase::new(
                 r#"value="arr[0].obj.n""#,
                 r#"{"arr":[{"obj":{},"obj":{"n":1}}]}"#,
                 "1",
             ),
         ] {
-            let query = parse_query(&format!("{{app=\"api\"}} | json {extractions}")).unwrap();
-            let result = query
-                .evaluate_with_fields(&labels, line, &Labels::new())
-                .unwrap();
+            let result = evaluate_selected_json(case.extractions, &labels, case.line);
             check!(
                 result.fields
-                    == Labels::from([
-                        ("app".into(), "api".into()),
-                        ("value".into(), expected.into()),
+                    == labels_from_pairs(&[
+                        LabelPair::new("app", "api"),
+                        LabelPair::new("value", case.expected),
                     ])
             );
             // The streaming selector must preserve the same callback ordering
             // when the outer closing brace is absent after all selected values.
-            let result = query
-                .evaluate_with_fields(&labels, line.strip_suffix('}').unwrap(), &Labels::new())
-                .unwrap();
+            let result = evaluate_selected_json(
+                case.extractions,
+                &labels,
+                case.line.strip_suffix('}').unwrap(),
+            );
             check!(
                 result.fields
-                    == Labels::from([
-                        ("app".into(), "api".into()),
-                        ("value".into(), expected.into()),
+                    == labels_from_pairs(&[
+                        LabelPair::new("app", "api"),
+                        LabelPair::new("value", case.expected),
                     ])
             );
         }
@@ -377,52 +457,56 @@ mod tests {
     fn selected_missing_fields_distinguish_empty_stream_and_metadata_labels() {
         let query = parse_query(r#"{app="api"} | json token="missing" | unpack"#).unwrap();
         let line = r#"{"token":"packed","_entry":"body"}"#;
-        let base = Labels::from([
-            ("app".into(), "api".into()),
-            ("token".into(), String::new()),
-        ]);
+        let base = labels_from_pairs(&[LabelPair::new("app", "api"), LabelPair::new("token", "")]);
         let result = query
             .evaluate_with_fields(&base, line, &Labels::new())
             .unwrap();
-        check!((result.line, result.fields) == ("body".into(), base));
-        let base = Labels::from([("app".into(), "api".into())]);
-        let metadata = Labels::from([("token".into(), String::new())]);
+        check!(result.line == "body");
+        check!(result.fields == base);
+        let base = labels_from_pairs(&[LabelPair::new("app", "api")]);
+        let metadata = labels_from_pairs(&[LabelPair::new("token", "")]);
         let result = query.evaluate_with_fields(&base, line, &metadata).unwrap();
+        check!(result.line == "body");
         check!(
-            (result.line, result.fields)
-                == (
-                    "body".into(),
-                    Labels::from([
-                        ("app".into(), "api".into()),
-                        ("token".into(), String::new()),
-                        ("token_extracted".into(), "packed".into()),
-                    ])
-                )
+            result.fields
+                == labels_from_pairs(&[
+                    LabelPair::new("app", "api"),
+                    LabelPair::new("token", ""),
+                    LabelPair::new("token_extracted", "packed"),
+                ])
         );
     }
 
     #[test]
     fn selected_json_retains_matched_values_before_malformed_unrequested_tails() {
-        let labels = Labels::from([("app".into(), "api".into())]);
-        for (expression, line, expected) in [
-            (
-                "app",
-                r#"{"app":{"name":"great \"loki\""}"#,
-                r#"{"name":"great \"loki\""}"#,
-            ),
-            ("app.name", r#"{"app":{"name":"yes""#, "yes"),
-            ("app", r#"{"app":"first",BROKEN}"#, "first"),
+        let labels = labels_from_pairs(&[LabelPair::new("app", "api")]);
+        for case in [
+            SelectedJsonValueCase {
+                expression: "app",
+                line: r#"{"app":{"name":"great \"loki\""}"#,
+                expected: r#"{"name":"great \"loki\""}"#,
+            },
+            SelectedJsonValueCase {
+                expression: "app.name",
+                line: r#"{"app":{"name":"yes""#,
+                expected: "yes",
+            },
+            SelectedJsonValueCase {
+                expression: "app",
+                line: r#"{"app":"first",BROKEN}"#,
+                expected: "first",
+            },
         ] {
-            let query =
-                parse_query(&format!("{{app=\"api\"}} | json chosen=\"{expression}\"")).unwrap();
-            let result = query
-                .evaluate_with_fields(&labels, line, &Labels::new())
-                .unwrap();
+            let result = evaluate_selected_json(
+                &format!("chosen=\"{}\"", case.expression),
+                &labels,
+                case.line,
+            );
             check!(
                 result.fields
-                    == Labels::from([
-                        ("app".into(), "api".into()),
-                        ("chosen".into(), expected.into()),
+                    == labels_from_pairs(&[
+                        LabelPair::new("app", "api"),
+                        LabelPair::new("chosen", case.expected),
                     ])
             );
         }
@@ -430,19 +514,19 @@ mod tests {
 
     #[test]
     fn selected_json_missing_null_errors_and_metadata_keep_distinct_categories() {
-        let labels = Labels::from([("app".into(), "api".into())]);
-        let metadata = Labels::from([("token".into(), "metadata".into())]);
+        let labels = labels_from_pairs(&[LabelPair::new("app", "api")]);
+        let metadata = labels_from_pairs(&[LabelPair::new("token", "metadata")]);
         let query = parse_query(r#"{app="api"} | json token="v", absent="missing""#).unwrap();
         let result = query
             .evaluate_with_fields(&labels, r#"{"v":null}"#, &metadata)
             .unwrap();
         check!(
             result.fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "metadata".into()),
-                    ("token_extracted".into(), String::new()),
-                    ("absent".into(), String::new()),
+                == labels_from_pairs(&[
+                    LabelPair::new("app", "api"),
+                    LabelPair::new("token", "metadata"),
+                    LabelPair::new("token_extracted", ""),
+                    LabelPair::new("absent", ""),
                 ])
         );
         let result = query
@@ -450,41 +534,44 @@ mod tests {
             .unwrap();
         check!(
             result.fields
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("token".into(), "metadata".into()),
-                    ("absent".into(), String::new()),
+                == labels_from_pairs(&[
+                    LabelPair::new("app", "api"),
+                    LabelPair::new("token", "metadata"),
+                    LabelPair::new("absent", ""),
                 ])
         );
         let query = parse_query(r#"{app="api"} | json chosen="v""#).unwrap();
-        for (line, expected) in [
-            ("", labels.clone()),
-            (
-                "1",
-                Labels::from([
-                    ("app".into(), "api".into()),
-                    ("__error__".into(), "JSONParserErr".into()),
+        for case in [
+            SelectedJsonFieldsCase {
+                line: "",
+                expected: labels.clone(),
+            },
+            SelectedJsonFieldsCase {
+                line: "1",
+                expected: labels_from_pairs(&[
+                    LabelPair::new("app", "api"),
+                    LabelPair::new("__error__", "JSONParserErr"),
                 ]),
-            ),
-            (
-                r#"{"v":"unterminated}"#,
-                Labels::from([
-                    ("app".into(), "api".into()),
-                    ("chosen".into(), String::new()),
-                    ("__error__".into(), "JSONParserErr".into()),
-                    (
-                        "__error_details__".into(),
-                        "Value is string, but can't find closing '\"' symbol".into(),
+            },
+            SelectedJsonFieldsCase {
+                line: r#"{"v":"unterminated}"#,
+                expected: labels_from_pairs(&[
+                    LabelPair::new("app", "api"),
+                    LabelPair::new("chosen", ""),
+                    LabelPair::new("__error__", "JSONParserErr"),
+                    LabelPair::new(
+                        "__error_details__",
+                        "Value is string, but can't find closing '\"' symbol",
                     ),
                 ]),
-            ),
+            },
         ] {
             check!(
                 query
-                    .evaluate_with_fields(&labels, line, &Labels::new())
+                    .evaluate_with_fields(&labels, case.line, &Labels::new())
                     .unwrap()
                     .fields
-                    == expected
+                    == case.expected
             );
         }
     }

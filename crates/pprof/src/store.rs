@@ -85,7 +85,7 @@ mod tests {
             _label_names: &[String],
             _start_ms: i64,
             _end_ms: i64,
-        ) -> Result<Vec<Vec<(String, String)>>, crate::ProfileError> {
+        ) -> Result<Vec<Vec<crate::ProfileLabel>>, crate::ProfileError> {
             Ok(vec![])
         }
 
@@ -122,7 +122,7 @@ mod profile_scan;
 mod profile_stats;
 mod profile_store;
 
-pub use profile_query_stats::{ProfileQueryScope, ProfileQueryStats};
+pub use profile_query_stats::{ProfileInstanceKey, ProfileQueryScope, ProfileQueryStats};
 pub use profile_scan::ProfileScan;
 pub use profile_stats::ProfileStats;
 pub use profile_store::ProfileStore;

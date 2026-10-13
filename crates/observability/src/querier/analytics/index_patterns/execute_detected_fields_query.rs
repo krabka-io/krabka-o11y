@@ -15,7 +15,9 @@ pub(crate) async fn execute_detected_fields_query(
     let fields = fields
         .into_iter()
         .take(limit)
-        .map(|(label, stats)| {
+        .map(|field_entry| {
+            let label = field_entry.0;
+            let stats = field_entry.1;
             let ty = stats.ty.as_loki_str();
             let cardinality = stats.values.len();
             // Loki names the JSON path a `json`-parsed field was read from, so

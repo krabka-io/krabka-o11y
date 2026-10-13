@@ -1,19 +1,25 @@
-use super::{InstrumentationGroups, SpanRef, instrumentation_attributes};
+use super::{
+    InstrumentationGroup, InstrumentationGroups, InstrumentationKey, SpanRef,
+    instrumentation_attributes,
+};
 
 /// Group spans by their instrumentation scope's name, version, and
 /// attributes, in the order each scope first appears.
 pub(crate) fn group_by_instrumentation(input_spans: Vec<&SpanRef>) -> InstrumentationGroups<'_> {
     let mut groups: InstrumentationGroups<'_> = Vec::new();
     for span in input_spans {
-        let key = (
-            span.instrumentation_name.clone(),
-            span.instrumentation_version.clone(),
-            instrumentation_attributes(span),
-        );
-        if let Some((_, spans)) = groups.iter_mut().find(|(existing, _)| existing == &key) {
-            spans.push(span);
+        let key = InstrumentationKey {
+            name: span.instrumentation_name.clone(),
+            version: span.instrumentation_version.clone(),
+            attributes: instrumentation_attributes(span),
+        };
+        if let Some(group) = groups.iter_mut().find(|group| group.key == key) {
+            group.spans.push(span);
         } else {
-            groups.push((key, vec![span]));
+            groups.push(InstrumentationGroup {
+                key,
+                spans: vec![span],
+            });
         }
     }
     groups

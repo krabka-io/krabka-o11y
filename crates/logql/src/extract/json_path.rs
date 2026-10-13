@@ -32,17 +32,21 @@ impl JsonPath {
         value: &'a serde_json::value::RawValue,
         parts: &[JsonPathPart],
     ) -> Option<JsonPathMatch<'a>> {
-        let Some((part, rest)) = parts.split_first() else {
+        let Some(first_part) = parts.split_first() else {
             return Some(JsonPathMatch {
                 value: Some(value),
                 position: value.get().as_ptr() as usize,
             });
         };
+        let part = first_part.0;
+        let rest = first_part.1;
         match part {
             JsonPathPart::Field(name) => {
                 let entries = super::parse_json_object_entries(value.get()).ok()?;
-                let mut entries = entries.into_iter().filter(|(key, _)| key == name);
-                entries.find_map(|(_, child)| Self::evaluate_parts(child, rest))
+                let mut entries = entries
+                    .into_iter()
+                    .filter(|entry| entry.key.as_str() == name.as_str());
+                entries.find_map(|entry| Self::evaluate_parts(entry.value, rest))
             }
             JsonPathPart::Index(index) => {
                 let values: Vec<&serde_json::value::RawValue> =

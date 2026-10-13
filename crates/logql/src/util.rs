@@ -7,9 +7,19 @@ mod tests {
     use krabka_units::{ByteSize, convert::ByteSizeExt};
 
     use super::{
-        QuotedChar, format_decimal_ratio, is_ident_start, parse_bytes_literal,
-        parse_prometheus_duration_literal, prometheus_duration_unit,
+        PrometheusDurationUnit, QuotedChar, format_decimal_ratio, is_ident_start,
+        parse_bytes_literal, parse_prometheus_duration_literal, prometheus_duration_unit,
     };
+
+    struct DurationUnitCase {
+        unit: &'static str,
+        expected: PrometheusDurationUnit,
+    }
+
+    struct ByteLiteralCase {
+        literal: &'static str,
+        expected: f64,
+    }
 
     #[test]
     fn ident_start_accepts_logql_identifier_prefixes() {
@@ -23,23 +33,82 @@ mod tests {
     #[test]
     fn duration_units_cover_every_supported_unit() {
         let units = [
-            ("y", (0, 0x001, 31_536_000_000_000_000)),
-            ("w", (1, 0x002, 604_800_000_000_000)),
-            ("d", (2, 0x004, 86_400_000_000_000)),
-            ("h", (3, 0x008, 3_600_000_000_000)),
-            ("m", (4, 0x010, 60_000_000_000)),
-            ("s", (5, 0x020, 1_000_000_000)),
-            ("ms", (6, 0x040, 1_000_000)),
-            ("us", (7, 0x080, 1_000)),
-            ("ns", (8, 0x100, 1)),
+            DurationUnitCase {
+                unit: "y",
+                expected: PrometheusDurationUnit {
+                    rank: 0,
+                    bit: 0x001,
+                    nanoseconds: 31_536_000_000_000_000,
+                },
+            },
+            DurationUnitCase {
+                unit: "w",
+                expected: PrometheusDurationUnit {
+                    rank: 1,
+                    bit: 0x002,
+                    nanoseconds: 604_800_000_000_000,
+                },
+            },
+            DurationUnitCase {
+                unit: "d",
+                expected: PrometheusDurationUnit {
+                    rank: 2,
+                    bit: 0x004,
+                    nanoseconds: 86_400_000_000_000,
+                },
+            },
+            DurationUnitCase {
+                unit: "h",
+                expected: PrometheusDurationUnit {
+                    rank: 3,
+                    bit: 0x008,
+                    nanoseconds: 3_600_000_000_000,
+                },
+            },
+            DurationUnitCase {
+                unit: "m",
+                expected: PrometheusDurationUnit {
+                    rank: 4,
+                    bit: 0x010,
+                    nanoseconds: 60_000_000_000,
+                },
+            },
+            DurationUnitCase {
+                unit: "s",
+                expected: PrometheusDurationUnit {
+                    rank: 5,
+                    bit: 0x020,
+                    nanoseconds: 1_000_000_000,
+                },
+            },
+            DurationUnitCase {
+                unit: "ms",
+                expected: PrometheusDurationUnit {
+                    rank: 6,
+                    bit: 0x040,
+                    nanoseconds: 1_000_000,
+                },
+            },
+            DurationUnitCase {
+                unit: "us",
+                expected: PrometheusDurationUnit {
+                    rank: 7,
+                    bit: 0x080,
+                    nanoseconds: 1_000,
+                },
+            },
+            DurationUnitCase {
+                unit: "ns",
+                expected: PrometheusDurationUnit {
+                    rank: 8,
+                    bit: 0x100,
+                    nanoseconds: 1,
+                },
+            },
         ];
 
-        for (unit, expected) in units {
-            assert_eq!(
-                prometheus_duration_unit(unit),
-                Some(expected),
-                "unit {unit}"
-            );
+        for case in units {
+            assert_eq!(prometheus_duration_unit(case.unit), Some(case.expected));
         }
         assert_eq!(prometheus_duration_unit("fortnight"), None);
     }
@@ -77,17 +146,34 @@ mod tests {
     fn bytes_literals_cover_decimal_binary_and_invalid_amounts() {
         use assert2::{assert, check};
 
-        for (literal, expected) in [
-            ("0B", 0.0),
-            ("2GB", 2_000_000_000.0),
-            ("3TB", 3_000_000_000_000.0),
-            ("4KiB", 4_096.0),
-            ("5GiB", 5_368_709_120.0),
-            ("6TiB", 6_597_069_766_656.0),
+        for case in [
+            ByteLiteralCase {
+                literal: "0B",
+                expected: 0.0,
+            },
+            ByteLiteralCase {
+                literal: "2GB",
+                expected: 2_000_000_000.0,
+            },
+            ByteLiteralCase {
+                literal: "3TB",
+                expected: 3_000_000_000_000.0,
+            },
+            ByteLiteralCase {
+                literal: "4KiB",
+                expected: 4_096.0,
+            },
+            ByteLiteralCase {
+                literal: "5GiB",
+                expected: 5_368_709_120.0,
+            },
+            ByteLiteralCase {
+                literal: "6TiB",
+                expected: 6_597_069_766_656.0,
+            },
         ] {
             check!(
-                parse_bytes_literal(literal) == Some(ByteSize::from_bytes_f64(expected)),
-                "{literal}"
+                parse_bytes_literal(case.literal) == Some(ByteSize::from_bytes_f64(case.expected))
             );
         }
         assert!(parse_bytes_literal("-1B").is_none());
@@ -122,6 +208,6 @@ pub(crate) use is_ident_char::is_ident_char;
 pub(crate) use is_ident_start::is_ident_start;
 pub(crate) use parse_bytes_literal::parse_bytes_literal;
 pub use parse_prometheus_duration_literal::parse_prometheus_duration_literal;
-pub use prometheus_duration_unit::prometheus_duration_unit;
+pub use prometheus_duration_unit::{PrometheusDurationUnit, prometheus_duration_unit};
 pub(crate) use quoted_char::QuotedChar;
 pub(crate) use read_quoted_body::{QuotedBodyError, read_quoted_body};

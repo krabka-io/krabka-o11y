@@ -5,12 +5,17 @@ pub(crate) fn yaml_string_map_field(fields: &serde_yaml::Mapping, name: &'static
         .get(serde_yaml_key(name))
         .and_then(loki_yaml_mapping)
         .map(|values| {
-            values
-                .iter()
-                .filter_map(|(key, value)| {
-                    Some((key.as_str()?.to_string(), json!(value.as_str()?)))
-                })
-                .collect::<serde_json::Map<_, _>>()
+            let mut decoded = serde_json::Map::new();
+            for entry in values {
+                let Some(key) = entry.0.as_str() else {
+                    continue;
+                };
+                let Some(value) = entry.1.as_str() else {
+                    continue;
+                };
+                decoded.insert(key.to_string(), json!(value));
+            }
+            decoded
         })
         .unwrap_or_default();
     Value::Object(values)

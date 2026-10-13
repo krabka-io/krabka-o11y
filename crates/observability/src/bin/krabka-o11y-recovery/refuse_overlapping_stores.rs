@@ -8,17 +8,31 @@ use super::Url;
 /// runs before any store is opened. Two URLs that name one store in two
 /// forms, such as an `s3://` URL and an `https://` endpoint URL, are not
 /// found.
-pub(crate) fn refuse_overlapping_stores(stores: &[(String, &str)]) -> Result<(), String> {
+pub(crate) struct StoreComparison<'a> {
+    pub(crate) label: String,
+    pub(crate) raw: &'a str,
+}
+
+pub(crate) fn refuse_overlapping_stores(stores: &[StoreComparison<'_>]) -> Result<(), String> {
     let locations = stores
         .iter()
-        .map(|(label, raw)| Ok((label, store_location(raw)?)))
+        .map(|store| {
+            Ok(StoreLocationEntry {
+                label: store.label.clone(),
+                location: store_location(store.raw)?,
+            })
+        })
         .collect::<Result<Vec<_>, String>>()?;
-    for (index, (label, location)) in locations.iter().enumerate() {
-        for (other_label, other) in &locations[index + 1..] {
-            if location.contains(other) || other.contains(location) {
+    for index in 0..locations.len() {
+        let current = &locations[index];
+        for other in &locations[index + 1..] {
+            if current.location.contains(&other.location)
+                || other.location.contains(&current.location)
+            {
                 return Err(format!(
-                    "{label} and {other_label} name overlapping stores; give each one its own \
-                     store"
+                    "{} and {} name overlapping stores; give each one its own \
+                     store",
+                    current.label, other.label
                 ));
             }
         }
@@ -35,6 +49,11 @@ struct StoreLocation {
     segments: Vec<String>,
 }
 
+struct StoreLocationEntry {
+    label: String,
+    location: StoreLocation,
+}
+
 impl StoreLocation {
     /// Whether `other` is this store or a prefix inside it.
     fn contains(&self, other: &Self) -> bool {
@@ -46,10 +65,12 @@ impl StoreLocation {
 
 fn store_location(raw: &str) -> Result<StoreLocation, String> {
     let url = Url::parse(raw).map_err(|error| format!("invalid store URL `{raw}`: {error}"))?;
-    let authority = match (url.host_str(), url.port()) {
-        (Some(host), Some(port)) => format!("{host}:{port}"),
-        (Some(host), None) => host.to_string(),
-        (None, _) => String::new(),
+    let authority = match url.host_str() {
+        Some(host) => match url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_string(),
+        },
+        None => String::new(),
     };
     let segments = url
         .path_segments()
@@ -73,43 +94,115 @@ mod tests {
 
     use super::*;
 
+    struct OverlapCase {
+        first: &'static str,
+        second: &'static str,
+        disjoint: bool,
+    }
+
     #[test]
     fn overlapping_stores_are_refused_before_a_store_is_opened() {
         let cases = [
-            ("s3://restore-metrics", "s3://restore-logs", true),
-            ("s3://restore-metrics", "s3://restore-metrics", false),
-            ("s3://restore-metrics", "s3://restore-metrics/", false),
-            ("s3://restore", "s3://restore/metrics", false),
-            ("s3://restore/metrics/", "s3://restore", false),
-            ("s3://restore/metrics", "s3://restore/logs", true),
-            ("s3://restore/metrics", "s3://restore/metrics-old", true),
-            ("s3://restore/metrics", "gs://restore/metrics", true),
-            ("file:///mnt/logs", "file:///mnt/logs/querier", false),
-            ("file:///mnt/logs-a", "file:///mnt/logs-b", true),
-            (
-                "http://minio:9000/restore",
-                "http://minio:9001/restore",
-                true,
-            ),
+            OverlapCase {
+                first: "s3://restore-metrics",
+                second: "s3://restore-logs",
+                disjoint: true,
+            },
+            OverlapCase {
+                first: "s3://restore-metrics",
+                second: "s3://restore-metrics",
+                disjoint: false,
+            },
+            OverlapCase {
+                first: "s3://restore-metrics",
+                second: "s3://restore-metrics/",
+                disjoint: false,
+            },
+            OverlapCase {
+                first: "s3://restore",
+                second: "s3://restore/metrics",
+                disjoint: false,
+            },
+            OverlapCase {
+                first: "s3://restore/metrics/",
+                second: "s3://restore",
+                disjoint: false,
+            },
+            OverlapCase {
+                first: "s3://restore/metrics",
+                second: "s3://restore/logs",
+                disjoint: true,
+            },
+            OverlapCase {
+                first: "s3://restore/metrics",
+                second: "s3://restore/metrics-old",
+                disjoint: true,
+            },
+            OverlapCase {
+                first: "s3://restore/metrics",
+                second: "gs://restore/metrics",
+                disjoint: true,
+            },
+            OverlapCase {
+                first: "file:///mnt/logs",
+                second: "file:///mnt/logs/querier",
+                disjoint: false,
+            },
+            OverlapCase {
+                first: "file:///mnt/logs-a",
+                second: "file:///mnt/logs-b",
+                disjoint: true,
+            },
+            OverlapCase {
+                first: "http://minio:9000/restore",
+                second: "http://minio:9001/restore",
+                disjoint: true,
+            },
         ];
-        for (first, second, disjoint) in cases {
+        for case in cases {
             let result = refuse_overlapping_stores(&[
-                ("part `metrics`".into(), first),
-                ("part `logs`".into(), second),
+                StoreComparison {
+                    label: "part `metrics`".into(),
+                    raw: case.first,
+                },
+                StoreComparison {
+                    label: "part `logs`".into(),
+                    raw: case.second,
+                },
             ]);
-            check!(result.is_ok() == disjoint, "{first} {second}: {result:?}");
+            check!(
+                result.is_ok() == case.disjoint,
+                "{} {}: {result:?}",
+                case.first,
+                case.second
+            );
         }
         check!(
             refuse_overlapping_stores(&[
-                ("the backup set".into(), "s3://backups/cut-1"),
-                ("part `metrics`".into(), "s3://krabka-metrics"),
-                ("part `logs`".into(), "s3://backups"),
+                StoreComparison {
+                    label: "the backup set".into(),
+                    raw: "s3://backups/cut-1"
+                },
+                StoreComparison {
+                    label: "part `metrics`".into(),
+                    raw: "s3://krabka-metrics"
+                },
+                StoreComparison {
+                    label: "part `logs`".into(),
+                    raw: "s3://backups"
+                },
             ]) == Err(
                 "the backup set and part `logs` name overlapping stores; give each one its own \
                  store"
                     .into()
             )
         );
-        check!(refuse_overlapping_stores(&[("part `metrics`".into(), "not a url")]).is_err());
+        check!(
+            refuse_overlapping_stores(&[StoreComparison {
+                label: "part `metrics`".into(),
+                raw: "not a url",
+            }])
+            .is_err()
+        );
     }
 }

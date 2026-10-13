@@ -2,6 +2,12 @@ use super::{
     IndexShardObject, IndexShardRange, parse_shard_bound_key, unescape_object_path_segment,
 };
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ParsedIndexShardLocation {
+    pub tenant: String,
+    pub object: IndexShardObject,
+}
+
 /// Classifies an object listed under the index-shard prefix of a key.
 ///
 /// Returns the tenant it belongs to and what it is. The tenant segment comes
@@ -14,34 +20,59 @@ use super::{
 pub(crate) fn parse_index_shard_location(
     shards_prefix: &str,
     location: &str,
-) -> Option<(String, IndexShardObject)> {
+) -> Option<ParsedIndexShardLocation> {
     let rest = location
         .strip_prefix(shards_prefix)?
         .trim_start_matches('/');
-    let (tenant_segment, rest) = rest.split_once('/')?;
+    let segments = rest.split_once('/')?;
+    let tenant_segment = segments.0;
+    let rest = segments.1;
     let tenant = unescape_object_path_segment(tenant_segment.strip_prefix("tenant=")?)?;
 
     if rest == "unbound.kbi" {
-        return Some((tenant, IndexShardObject::UnboundSeries));
+        return Some(ParsedIndexShardLocation {
+            tenant,
+            object: IndexShardObject::UnboundSeries,
+        });
     }
 
     let mut parts = rest.split('/');
-    let (Some(span), Some("shard.kbi"), None) = (parts.next(), parts.next(), parts.next()) else {
-        return Some((tenant, IndexShardObject::Foreign));
-    };
+    let span = parts.next();
+    let kind = parts.next();
+    let extra = parts.next();
+    if !matches!(span, Some(_)) || kind != Some("shard.kbi") || extra.is_some() {
+        return Some(ParsedIndexShardLocation {
+            tenant,
+            object: IndexShardObject::Foreign,
+        });
+    }
+    let Some(span) = span else { unreachable!() };
     let Some(span) = span.strip_prefix("time=") else {
-        return Some((tenant, IndexShardObject::Foreign));
+        return Some(ParsedIndexShardLocation {
+            tenant,
+            object: IndexShardObject::Foreign,
+        });
     };
     // Both bounds are fixed-width, so the separator sits at a known offset and
     // there is no need to guess which `-` divides them.
-    let Some((start, end)) = span.split_once('-') else {
-        return Some((tenant, IndexShardObject::Foreign));
+    let Some(bounds) = span.split_once('-') else {
+        return Some(ParsedIndexShardLocation {
+            tenant,
+            object: IndexShardObject::Foreign,
+        });
     };
-    let object = match (parse_shard_bound_key(start), parse_shard_bound_key(end)) {
-        (Some(start), Some(end)) if start <= end => {
-            IndexShardObject::Shard(IndexShardRange::new(start, end))
+    let object = if let Some(start) = parse_shard_bound_key(bounds.0) {
+        if let Some(end) = parse_shard_bound_key(bounds.1) {
+            if start <= end {
+                IndexShardObject::Shard(IndexShardRange::new(start, end))
+            } else {
+                IndexShardObject::Foreign
+            }
+        } else {
+            IndexShardObject::Foreign
         }
-        _ => IndexShardObject::Foreign,
+    } else {
+        IndexShardObject::Foreign
     };
-    Some((tenant, object))
+    Some(ParsedIndexShardLocation { tenant, object })
 }

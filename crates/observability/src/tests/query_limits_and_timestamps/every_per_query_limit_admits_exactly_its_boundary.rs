@@ -25,7 +25,9 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
         blocks: block_bytes
             .iter()
             .enumerate()
-            .map(|(index, size)| {
+            .map(|entry| {
+                let index = entry.0;
+                let size = entry.1;
                 BlockDescriptor::new_with_size(
                     BlockKey::new(
                         "tenant",

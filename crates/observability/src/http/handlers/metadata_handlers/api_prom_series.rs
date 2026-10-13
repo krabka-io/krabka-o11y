@@ -1,6 +1,6 @@
 use super::{
-    HeaderMap, IntoResponse, QuerierState, RawQuery, RequestSecurity, Response, State,
-    execute_api_prom_series_query, parse_series_params,
+    HeaderMap, QuerierState, RawQuery, RequestSecurity, Response, State, api_prom_series_query,
+    execute_api_prom_series_query,
 };
 
 pub(crate) async fn api_prom_series(
@@ -9,12 +9,8 @@ pub(crate) async fn api_prom_series(
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
-    let params = match parse_series_params(raw_query.as_deref()) {
-        Ok(params) => params,
-        Err(error) => return error.into_response(),
-    };
-    match execute_api_prom_series_query(&state, &security, &headers, &params).await {
-        Ok(response) => response,
-        Err(error) => error.into_response(),
-    }
+    api_prom_series_query(raw_query.as_deref(), |params| async move {
+        execute_api_prom_series_query(&state, &security, &headers, &params).await
+    })
+    .await
 }

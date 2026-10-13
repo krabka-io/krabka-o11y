@@ -6,21 +6,18 @@ pub(crate) async fn an_http_query_over_a_deleted_block_warns_in_the_response() {
     // index entry still names. The query answers with the blocks it can read and
     // reports the missing one as a `PromQL` warning. That warning has to reach
     // Grafana, so the HTTP envelope carries it.
-    let (block_store, _) = deleted_api_block_store().await;
+    let fixture = deleted_api_block_store().await;
 
     let state = Arc::new(PrometheusApiState::new(
-        Arc::new(MetricBlockStore::new(block_store)),
+        Arc::new(MetricBlockStore::new(fixture.block_store)),
         EngineOpts::default(),
     ));
     let router = authenticate_requests(prometheus_router(state), &ServerSecurity::default());
     let response = router
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?time=1&query=up")
-                .header("x-scope-orgid", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(crate::test_support::http::empty_tenant_request(
+            "/api/v1/query?time=1&query=up",
+            "tenant-a",
+        ))
         .await
         .unwrap();
 

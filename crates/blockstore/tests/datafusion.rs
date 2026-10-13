@@ -16,7 +16,10 @@ use krabka_blockstore::{
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 
 fn series(app: &str) -> u64 {
-    series_fingerprint(&labels([("app", app), ("env", "prod")]))
+    series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", app),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]))
 }
 
 fn planned_key() -> BlockKey {

@@ -1,5 +1,10 @@
 use super::{EnvFilter, Layer, LogLevelControl, MakeWriter, Registry, reload};
 
+pub struct JsonLoggingLayer {
+    pub layer: Box<dyn Layer<Registry> + Send + Sync>,
+    pub control: LogLevelControl,
+}
+
 /// Builds this process's stdout logging layer and the control over its filter.
 ///
 /// The layer is the one `krabka-telemetry` would have installed -- the same
@@ -10,21 +15,23 @@ use super::{EnvFilter, Layer, LogLevelControl, MakeWriter, Registry, reload};
 /// [`install_json_logging`](super::install_json_logging) is the call a binary
 /// wants. This one exists for a caller that installs the subscriber itself,
 /// including a test that captures the lines to check what the filter admitted.
-pub fn json_logging_layer<W>(
-    default_filter: &str,
-    make_writer: W,
-) -> (Box<dyn Layer<Registry> + Send + Sync>, LogLevelControl)
+pub fn json_logging_layer<W>(default_filter: &str, make_writer: W) -> JsonLoggingLayer
 where
     W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
 {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     let level = LogLevelControl::level_word(&filter);
-    let (filter, handle) = reload::Layer::new(filter);
+    let reloadable = reload::Layer::new(filter);
+    let filter = reloadable.0;
+    let handle = reloadable.1;
     let layer = tracing_subscriber::fmt::layer()
         .event_format(krabka_logfmt::CloudLogging)
         .with_writer(make_writer)
         .with_filter(filter)
         .boxed();
-    (layer, LogLevelControl::reloadable(&level, handle))
+    JsonLoggingLayer {
+        layer,
+        control: LogLevelControl::reloadable(&level, handle),
+    }
 }

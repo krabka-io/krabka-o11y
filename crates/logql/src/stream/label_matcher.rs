@@ -3,11 +3,17 @@ use std::borrow::Cow;
 use super::{Labels, MatchOp, ParseError, Regex, anchored_regex_pattern};
 
 #[derive(Clone, Debug)]
+struct CompiledRegex {
+    pattern: String,
+    regex: Regex,
+}
+
+#[derive(Clone, Debug)]
 pub struct LabelMatcher {
     pub name: String,
     pub op: MatchOp,
     pub value: String,
-    compiled_regex: Option<(String, Regex)>,
+    compiled_regex: Option<CompiledRegex>,
 }
 
 impl LabelMatcher {
@@ -55,16 +61,19 @@ impl LabelMatcher {
                     source,
                 }
             })?;
-            self.compiled_regex = Some((self.value.clone(), regex));
+            self.compiled_regex = Some(CompiledRegex {
+                pattern: self.value.clone(),
+                regex,
+            });
         }
         Ok(())
     }
 
     pub(crate) fn regex(&self) -> Cow<'_, Regex> {
-        if let Some((pattern, regex)) = &self.compiled_regex
-            && pattern == &self.value
+        if let Some(compiled) = &self.compiled_regex
+            && compiled.pattern == self.value
         {
-            return Cow::Borrowed(regex);
+            return Cow::Borrowed(&compiled.regex);
         }
         // The source fields are public. A caller can change the pattern or
         // operation after construction; never use a stale compiled pattern.

@@ -49,22 +49,23 @@ impl HistogramQuantileRepair {
         };
         let start = timestamp(self.min_ts_ms)?;
         let end = timestamp(self.max_ts_ms)?;
-        let (base, position) = message
-            .rsplit_once(" (")
-            .filter(|(_, position)| {
-                position
-                    .strip_suffix(')')
-                    .and_then(|value| value.split_once(':'))
-                    .is_some_and(|(line, column)| {
-                        !line.is_empty()
-                            && !column.is_empty()
-                            && line.bytes().all(|byte| byte.is_ascii_digit())
-                            && column.bytes().all(|byte| byte.is_ascii_digit())
-                    })
-            })
-            .map_or((message, String::new()), |(base, position)| {
-                (base, format!(" ({position}"))
-            });
+        let suffix_start = message.rfind(" (").filter(|open| {
+            let position = &message[open + 2..];
+            let Some(position_body) = position.strip_suffix(')') else {
+                return false;
+            };
+            let Some(colon) = position_body.find(':') else {
+                return false;
+            };
+            let line = &position_body[..colon];
+            let column = &position_body[colon + 1..];
+            !line.is_empty()
+                && !column.is_empty()
+                && line.bytes().all(|byte| byte.is_ascii_digit())
+                && column.bytes().all(|byte| byte.is_ascii_digit())
+        });
+        let base = suffix_start.map_or(message, |open| &message[..open]);
+        let position = suffix_start.map_or_else(String::new, |open| message[open..].to_owned());
         Some(format!(
             "{base}, from buckets {} to {}, with a max diff of {}, over {} samples from {start} to {end}{position}",
             general_float(f64::from_bits(self.min_bucket_bits)),
@@ -80,7 +81,9 @@ fn general_float(value: f64) -> String {
         return crate::http_api::format_sample_value(value);
     }
     let text = format!("{value:e}");
-    let (mantissa, exponent) = text.split_once('e').expect("scientific exponent");
+    let exponent_at = text.find('e').expect("scientific exponent");
+    let mantissa = &text[..exponent_at];
+    let exponent = &text[exponent_at + 1..];
     let exponent: i32 = exponent.parse().expect("integer exponent");
     format!("{mantissa}e{exponent:+03}")
 }
@@ -90,7 +93,9 @@ fn two_significant_digits(value: f64) -> String {
         return general_float(value);
     }
     let text = format!("{value:.1e}");
-    let (mantissa, exponent) = text.split_once('e').expect("scientific exponent");
+    let exponent_at = text.find('e').expect("scientific exponent");
+    let mantissa = &text[..exponent_at];
+    let exponent = &text[exponent_at + 1..];
     let exponent: i32 = exponent.parse().expect("integer exponent");
     if !(-4..2).contains(&exponent) {
         return format!(
@@ -124,14 +129,16 @@ mod tests {
             first.render("base for metric name \"h\" (1:25)").unwrap()
                 == "base for metric name \"h\", from buckets 0.5 to +Inf, with a max diff of 10, over 2 samples from 1970-01-09T15:52:03Z to 1970-01-09T15:52:04Z (1:25)"
         );
-        for (value, expected) in [
-            (1.23, "1.2"),
-            (10.0, "10"),
-            (123.0, "1.2e+02"),
-            (0.00123, "0.0012"),
-            (0.000_099_9, "0.0001"),
-        ] {
-            assert!(two_significant_digits(value) == expected);
-        }
+    }
+
+    #[yare::parameterized(
+        ordinary = { 1.23, "1.2" },
+        ten = { 10.0, "10" },
+        scientific = { 123.0, "1.2e+02" },
+        decimal = { 0.00123, "0.0012" },
+        small_decimal = { 0.000_099_9, "0.0001" },
+    )]
+    fn formats_two_significant_digits(value: f64, expected: &str) {
+        assert2::assert!(two_significant_digits(value) == expected);
     }
 }

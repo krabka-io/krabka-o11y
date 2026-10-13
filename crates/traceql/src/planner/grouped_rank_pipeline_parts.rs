@@ -1,8 +1,16 @@
 use super::{Aggregate, Field, Pipeline, RankFilter};
 
+pub(crate) struct GroupedRankPipelineParts<'a> {
+    pub(crate) aggregate: &'a Aggregate,
+    pub(crate) by: &'a [Field],
+    pub(crate) rank: &'a Pipeline,
+    pub(crate) pre_filter: Option<RankFilter>,
+    pub(crate) post_filter: Option<RankFilter>,
+}
+
 pub(crate) fn grouped_rank_pipeline_parts(
     pipeline: &[Pipeline],
-) -> Option<(&Aggregate, &[Field], &Pipeline, RankFilter, RankFilter)> {
+) -> Option<GroupedRankPipelineParts<'_>> {
     match pipeline {
         [
             Pipeline::Aggregate(agg),
@@ -18,7 +26,13 @@ pub(crate) fn grouped_rank_pipeline_parts(
             Pipeline::Aggregate(agg),
             rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
             Pipeline::By(by),
-        ] => Some((agg, by, rank, None, None)),
+        ] => Some(GroupedRankPipelineParts {
+            aggregate: agg,
+            by,
+            rank,
+            pre_filter: None,
+            post_filter: None,
+        }),
         [
             Pipeline::Aggregate(agg),
             Pipeline::By(by),
@@ -36,7 +50,13 @@ pub(crate) fn grouped_rank_pipeline_parts(
             Pipeline::Filter { op, value },
             rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
             Pipeline::By(by),
-        ] => Some((agg, by, rank, Some((*op, *value)), None)),
+        ] => Some(GroupedRankPipelineParts {
+            aggregate: agg,
+            by,
+            rank,
+            pre_filter: Some(RankFilter::new(*op, *value)),
+            post_filter: None,
+        }),
         [
             Pipeline::Aggregate(agg),
             Pipeline::By(by),
@@ -60,7 +80,13 @@ pub(crate) fn grouped_rank_pipeline_parts(
             rank @ (Pipeline::TopK(_) | Pipeline::BottomK(_)),
             Pipeline::Filter { op, value },
             Pipeline::By(by),
-        ] => Some((agg, by, rank, None, Some((*op, *value)))),
+        ] => Some(GroupedRankPipelineParts {
+            aggregate: agg,
+            by,
+            rank,
+            pre_filter: None,
+            post_filter: Some(RankFilter::new(*op, *value)),
+        }),
         _ => None,
     }
 }

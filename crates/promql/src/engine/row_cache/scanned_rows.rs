@@ -4,8 +4,8 @@ use futures::TryStreamExt as _;
 use tokio::sync::OnceCell;
 
 use super::{
-    Arc, FLOAT_ROW_COLUMNS, FloatRow, FloatRowColumns, FloatWindow, HistogramRow, Result,
-    ScanResult, SessionContext, collect_float_rows, collect_histogram_rows,
+    Arc, FLOAT_ROW_COLUMNS, FloatRow, FloatRowColumns, FloatRowsWithCount, FloatWindow,
+    HistogramRow, Result, ScanResult, SessionContext, collect_float_rows, collect_histogram_rows,
     samples_per_query_exceeded,
 };
 
@@ -63,12 +63,15 @@ impl ScannedRows {
         max_samples: usize,
         from_ms: i64,
         to_ms: i64,
-    ) -> Result<Option<(usize, Vec<FloatRow>)>> {
+    ) -> Result<Option<FloatRowsWithCount>> {
         if self.floats.get().is_some() {
             return Ok(None);
         }
         let Some(table) = &self.float_table else {
-            return Ok(Some((0, Vec::new())));
+            return Ok(Some(FloatRowsWithCount {
+                total: 0,
+                rows: Vec::new(),
+            }));
         };
         let dataframe = self
             .ctx
@@ -111,7 +114,7 @@ impl ScannedRows {
         }
         let mut rows = last.into_values().collect::<Vec<_>>();
         rows.sort_unstable_by_key(|row| row.fp);
-        Ok(Some((total, rows)))
+        Ok(Some(FloatRowsWithCount { total, rows }))
     }
 
     /// The histogram rows of the scan, in `(fingerprint, timestamp)` order.
@@ -126,9 +129,13 @@ impl ScannedRows {
                     }
                     None => Vec::new(),
                 };
-                rows.sort_by_key(|row| (row.fp, row.ts_ms));
+                rows.sort_by(|left, right| {
+                    left.fp
+                        .cmp(&right.fp)
+                        .then_with(|| left.ts_ms.cmp(&right.ts_ms))
+                });
                 rows.dedup_by(|later, earlier| {
-                    if (later.fp, later.ts_ms) == (earlier.fp, earlier.ts_ms) {
+                    if later.fp == earlier.fp && later.ts_ms == earlier.ts_ms {
                         earlier.clone_from(later);
                         true
                     } else {

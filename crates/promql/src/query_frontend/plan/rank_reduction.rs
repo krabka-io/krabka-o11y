@@ -3,7 +3,13 @@ use super::{
     expr_supports_frontend_sharding,
 };
 
-pub(crate) fn rank_reduction(expr: &Expr) -> Option<(usize, RankReduction, Option<LabelModifier>)> {
+pub(crate) struct RankReductionPlan {
+    pub(crate) k: usize,
+    pub(crate) kind: RankReduction,
+    pub(crate) modifier: Option<LabelModifier>,
+}
+
+pub(crate) fn rank_reduction(expr: &Expr) -> Option<RankReductionPlan> {
     match expr {
         Expr::Aggregate(aggregate)
             if matches!(aggregate.op.id(), T_BOTTOMK | T_TOPK)
@@ -15,7 +21,11 @@ pub(crate) fn rank_reduction(expr: &Expr) -> Option<(usize, RankReduction, Optio
             } else {
                 RankReduction::Bottom
             };
-            Some((aggregate_k(aggregate)?, kind, aggregate.modifier.clone()))
+            Some(RankReductionPlan {
+                k: aggregate_k(aggregate)?,
+                kind,
+                modifier: aggregate.modifier.clone(),
+            })
         }
         Expr::Paren(paren) => rank_reduction(&paren.expr),
         _ => None,

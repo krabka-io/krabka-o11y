@@ -1,19 +1,45 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct ClassicBucket {
+    upper_bound: &'static str,
+    cumulative_count: f64,
+}
+
 pub(crate) fn mixed_histogram_store() -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "series"), ("host", "a")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "series"),
+            crate::test_support::TestLabelPair::new("host", "a"),
+        ]),
         0,
         native_histogram(4.0, 5.0),
     );
-    for (le, value) in [("0.1", 2.0), ("1", 3.0), ("+Inf", 9.0)] {
+    for bucket in [
+        ClassicBucket::builder()
+            .upper_bound("0.1")
+            .cumulative_count(2.0)
+            .build(),
+        ClassicBucket::builder()
+            .upper_bound("1")
+            .cumulative_count(3.0)
+            .build(),
+        ClassicBucket::builder()
+            .upper_bound("+Inf")
+            .cumulative_count(9.0)
+            .build(),
+    ] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "series"), ("host", "a"), ("le", le)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "series"),
+                crate::test_support::TestLabelPair::new("host", "a"),
+                crate::test_support::TestLabelPair::new("le", bucket.upper_bound),
+            ]),
             0,
-            value,
+            bucket.cumulative_count,
         );
     }
     store
@@ -27,9 +53,9 @@ pub(crate) fn mixed_api_group_store() -> InMemoryMetricStore {
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "mixed_metric"),
-            ("job", "api"),
-            ("instance", "float"),
+            crate::test_support::TestLabelPair::new("__name__", "mixed_metric"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "float"),
         ]),
         10_000,
         4.0,
@@ -37,9 +63,9 @@ pub(crate) fn mixed_api_group_store() -> InMemoryMetricStore {
     store.push_histogram(
         "tenant-a",
         labels(&[
-            ("__name__", "mixed_metric"),
-            ("job", "api"),
-            ("instance", "hist"),
+            crate::test_support::TestLabelPair::new("__name__", "mixed_metric"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "hist"),
         ]),
         10_000,
         native_histogram(4.0, 10.0),

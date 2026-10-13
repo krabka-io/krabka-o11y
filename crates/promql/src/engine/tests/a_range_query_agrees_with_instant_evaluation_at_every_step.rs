@@ -19,57 +19,126 @@ use super::{super::labels::labels_key, *};
 /// memo.
 #[tokio::test]
 pub(crate) async fn a_range_query_agrees_with_instant_evaluation_at_every_step() {
+    struct StoredSeries<'a> {
+        metric_name: &'a str,
+        job: &'a str,
+        samples: &'a [TimedValue],
+    }
+    struct TimedValue {
+        timestamp_ms: i64,
+        value: f64,
+    }
+    #[derive(PartialEq, Eq)]
+    struct RangeSampleBits {
+        timestamp_ms: i64,
+        value_bits: u64,
+    }
+
     let mut store = InMemoryMetricStore::new();
-    for (name, job, samples) in [
-        (
-            "http_requests_total",
-            "api",
-            vec![
-                (0_i64, 0.0),
-                (60_000, 1.0),
-                (120_000, 3.0),
-                (180_000, 6.0),
-                (240_000, 10.0),
-                (300_000, 15.0),
+    let series_fixtures = [
+        StoredSeries {
+            metric_name: "http_requests_total",
+            job: "api",
+            samples: &[
+                TimedValue {
+                    timestamp_ms: 0,
+                    value: 0.0,
+                },
+                TimedValue {
+                    timestamp_ms: 60_000,
+                    value: 1.0,
+                },
+                TimedValue {
+                    timestamp_ms: 120_000,
+                    value: 3.0,
+                },
+                TimedValue {
+                    timestamp_ms: 180_000,
+                    value: 6.0,
+                },
+                TimedValue {
+                    timestamp_ms: 240_000,
+                    value: 10.0,
+                },
+                TimedValue {
+                    timestamp_ms: 300_000,
+                    value: 15.0,
+                },
             ],
-        ),
-        (
-            "http_requests_total",
-            "db",
-            vec![
-                (0, 0.0),
-                (60_000, 2.0),
-                (120_000, 4.0),
+        },
+        StoredSeries {
+            metric_name: "http_requests_total",
+            job: "db",
+            samples: &[
+                TimedValue {
+                    timestamp_ms: 0,
+                    value: 0.0,
+                },
+                TimedValue {
+                    timestamp_ms: 60_000,
+                    value: 2.0,
+                },
+                TimedValue {
+                    timestamp_ms: 120_000,
+                    value: 4.0,
+                },
                 // A gap, so some steps have a no-value rate and some series
                 // drop out of a step entirely.
-                (300_000, 9.0),
+                TimedValue {
+                    timestamp_ms: 300_000,
+                    value: 9.0,
+                },
             ],
-        ),
-        (
-            "gauge",
-            "api",
-            vec![
-                (0, 2.0),
-                (60_000, 4.0),
-                (120_000, f64::NAN),
-                (180_000, 16.0),
-                (240_000, 32.0),
-                (300_000, 64.0),
+        },
+        StoredSeries {
+            metric_name: "gauge",
+            job: "api",
+            samples: &[
+                TimedValue {
+                    timestamp_ms: 0,
+                    value: 2.0,
+                },
+                TimedValue {
+                    timestamp_ms: 60_000,
+                    value: 4.0,
+                },
+                TimedValue {
+                    timestamp_ms: 120_000,
+                    value: f64::NAN,
+                },
+                TimedValue {
+                    timestamp_ms: 180_000,
+                    value: 16.0,
+                },
+                TimedValue {
+                    timestamp_ms: 240_000,
+                    value: 32.0,
+                },
+                TimedValue {
+                    timestamp_ms: 300_000,
+                    value: 64.0,
+                },
             ],
-        ),
-    ] {
-        for (ts_ms, value) in samples {
+        },
+    ];
+    for series in series_fixtures {
+        for sample in series.samples {
             store.push_float(
                 "t",
-                labels(&[("__name__", name), ("job", job)]),
-                ts_ms,
-                value,
+                labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", series.metric_name),
+                    crate::test_support::TestLabelPair::new("job", series.job),
+                ]),
+                sample.timestamp_ms,
+                sample.value,
             );
         }
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    let (start_ms, end_ms, step_ms) = (0_i64, 300_000_i64, 60_000_i64);
+    let start_ms = 0_i64;
+    let end_ms = 300_000_i64;
+    let step_ms = 60_000_i64;
     let step = millis(60_000);
     for query in [
         "gauge",
@@ -94,18 +163,21 @@ pub(crate) async fn a_range_query_agrees_with_instant_evaluation_at_every_step()
         else {
             panic!("expected a range matrix for `{query}`");
         };
-        let mut got: BTreeMap<String, Vec<(i64, u64)>> = BTreeMap::new();
+        let mut got: BTreeMap<String, Vec<RangeSampleBits>> = BTreeMap::new();
         for one in &series {
             got.insert(
                 labels_key(&one.labels),
                 one.samples
                     .iter()
-                    .map(|(ts_ms, value)| (*ts_ms, float_value(value).to_bits()))
+                    .map(|sample| RangeSampleBits {
+                        timestamp_ms: sample.timestamp_ms,
+                        value_bits: float_value(&sample.value).to_bits(),
+                    })
                     .collect(),
             );
         }
 
-        let mut want: BTreeMap<String, Vec<(i64, u64)>> = BTreeMap::new();
+        let mut want: BTreeMap<String, Vec<RangeSampleBits>> = BTreeMap::new();
         let mut instant_ms = start_ms;
         while instant_ms <= end_ms {
             let result = engine
@@ -118,7 +190,10 @@ pub(crate) async fn a_range_query_agrees_with_instant_evaluation_at_every_step()
             for sample in samples {
                 want.entry(labels_key(&sample.labels))
                     .or_default()
-                    .push((instant_ms, float_value(&sample.value).to_bits()));
+                    .push(RangeSampleBits {
+                        timestamp_ms: instant_ms,
+                        value_bits: float_value(&sample.value).to_bits(),
+                    });
             }
             instant_ms += step_ms;
         }

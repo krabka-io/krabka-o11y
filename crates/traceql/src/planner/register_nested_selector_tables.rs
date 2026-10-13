@@ -3,17 +3,24 @@ use super::{
     collect_nested_selectors, collect_table, register_batches, selector,
 };
 
+pub(crate) struct NestedSelectorTable {
+    pub(crate) selector: FieldExpr,
+    pub(crate) table_name: String,
+}
+
 pub(crate) async fn register_nested_selector_tables<S: SpanStore>(
     store: &S,
     ctx: &PlannerContext,
     target_ctx: &SessionContext,
     root: &SpansetExpr,
-) -> Result<Vec<(FieldExpr, String)>> {
+) -> Result<Vec<NestedSelectorTable>> {
     let mut selectors = Vec::new();
     collect_nested_selectors(root, &mut selectors);
 
     let mut tables = Vec::new();
-    for (idx, selector) in selectors.into_iter().enumerate() {
+    for entry in selectors.into_iter().enumerate() {
+        let idx = entry.0;
+        let selector = entry.1;
         let table_name = format!("nested_selector_{idx}");
         let scan = store
             .scan_with_options(
@@ -27,7 +34,10 @@ pub(crate) async fn register_nested_selector_tables<S: SpanStore>(
         super::register_field_comparison_columns(&scan.ctx, &scan.span_table, &[&selector]).await?;
         let batches = collect_table(&scan.ctx, &scan.span_table).await?;
         register_batches(target_ctx, &table_name, batches)?;
-        tables.push((selector, table_name));
+        tables.push(NestedSelectorTable {
+            selector,
+            table_name,
+        });
     }
     Ok(tables)
 }

@@ -1,10 +1,11 @@
+pub(crate) use super::{MetricEvaluationRange, MetricRangeScanRequest, PreparedMetricRangeScan};
 use crate::{
     ActiveLogDeleteFilter, Arc, BTreeMap, BlockDescriptor, ColdBlockScan, CompactionFrontier,
     FsPath, LabelIndex, Labels, LokiStreamEncoding, LokiStreamEntry, MetricQuery, MetricWindow,
     ObjectPath, ObjectStore, QueryError, QueryHotTail, RecordBatch, SessionContext, StreamPlan,
     TimeRange, Value, WalLogRecord, append_matching_hot_log_record,
     append_matching_hot_metric_record, append_matching_log_row, apply_absent_over_time,
-    checked_eval_times, default_block_fetch_concurrency,
+    default_block_fetch_concurrency,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
     for_each_query_row, format_metric_samples, json, loki_matrix_response, loki_stream_results,

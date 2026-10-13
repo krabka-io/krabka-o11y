@@ -31,17 +31,17 @@ impl TenantIndex {
         }
         self.series.insert(fingerprint, labels.clone());
 
-        for (name, value) in labels.iter() {
+        for pair in labels.iter() {
             self.postings
-                .entry(name.clone())
+                .entry(pair.name.to_string())
                 .or_default()
-                .entry(value.clone())
+                .entry(pair.value.to_string())
                 .or_default()
                 .insert(fingerprint);
             self.values
-                .entry(name.clone())
+                .entry(pair.name.to_string())
                 .or_default()
-                .insert(value.clone());
+                .insert(pair.value.to_string());
         }
     }
 
@@ -147,15 +147,14 @@ impl TenantIndex {
         });
         // Collect once so the tree is bulk-built, rather than inserting each
         // fingerprint while merging the matching value postings.
-        let matched_fps: BTreeSet<_> = self
-            .postings
-            .get(&label_matcher.name)
-            .into_iter()
-            .flat_map(|values| values.iter())
-            .filter(|(value, _)| regex.is_match(value))
-            .flat_map(|(_, fps)| fps.iter().copied())
-            .chain(absent)
-            .collect();
+        let mut matched_fps: BTreeSet<_> = absent.collect();
+        if let Some(values) = self.postings.get(&label_matcher.name) {
+            for value in values.keys() {
+                if regex.is_match(value) {
+                    matched_fps.extend(values[value].iter().copied());
+                }
+            }
+        }
 
         if label_matcher.op == MatchOp::Re {
             Ok(matched_fps)

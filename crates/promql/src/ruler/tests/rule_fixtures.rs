@@ -55,11 +55,11 @@ pub(crate) fn up_samples_engine(samples: &[UpSample<'_>]) -> PromqlEngine<InMemo
 
 /// The firing `InstanceUp{job="api"}` alert active since `starts_at_ms`.
 pub(crate) fn instance_up_alert(starts_at_ms: i64) -> super::super::AlertmanagerAlert {
+    let mut labels = BTreeMap::new();
+    labels.insert("alertname".to_string(), "InstanceUp".to_string());
+    labels.insert("job".to_string(), "api".to_string());
     super::super::AlertmanagerAlert {
-        labels: BTreeMap::from([
-            ("alertname".to_string(), "InstanceUp".to_string()),
-            ("job".to_string(), "api".to_string()),
-        ]),
+        labels,
         annotations: BTreeMap::new(),
         starts_at_ms,
         ends_at_ms: None,
@@ -73,8 +73,8 @@ pub(crate) fn job_up_current_record(timestamp_ms: i64) -> WalRecord {
     WalRecord {
         tenant: "tenant-a".to_string(),
         labels: vec![
-            ("__name__".to_string(), "job:up:current".into()),
-            ("job".to_string(), "api".into()),
+            krabka_metrics::MetricLabelPair::new("__name__", "job:up:current".into()),
+            krabka_metrics::MetricLabelPair::new("job", "api".into()),
         ],
         payload: SamplePayload::Float {
             timestamp_ms,
@@ -99,16 +99,14 @@ rules:
     .expect("recording group yaml");
     let alerting_group: serde_yaml::Value =
         serde_yaml::from_str(alerting_yaml).expect("alerting group yaml");
-    BTreeMap::from([
-        (
-            "team-a".to_string(),
-            BTreeMap::from([("recording".to_string(), recording_group)]),
-        ),
-        (
-            "team-b".to_string(),
-            BTreeMap::from([("alerting".to_string(), alerting_group)]),
-        ),
-    ])
+    let mut recording_namespace = BTreeMap::new();
+    recording_namespace.insert("recording".to_string(), recording_group);
+    let mut alerting_namespace = BTreeMap::new();
+    alerting_namespace.insert("alerting".to_string(), alerting_group);
+    let mut rules = BTreeMap::new();
+    rules.insert("team-a".to_string(), recording_namespace);
+    rules.insert("team-b".to_string(), alerting_namespace);
+    rules
 }
 
 /// One rule group that holds only its name and evaluation interval.
@@ -122,11 +120,16 @@ pub(crate) struct IntervalGroup {
 pub(crate) fn interval_rule_set(groups: &[IntervalGroup]) -> RuleSet {
     let mut rules = RuleSet::new();
     for group in groups {
-        let yaml = serde_yaml::to_value(BTreeMap::from([
-            ("name", group.group_name),
-            ("interval", group.interval),
-        ]))
-        .expect("group yaml");
+        let mut group_mapping = serde_yaml::Mapping::new();
+        group_mapping.insert(
+            serde_yaml::Value::String("name".to_string()),
+            serde_yaml::Value::String(group.group_name.to_string()),
+        );
+        group_mapping.insert(
+            serde_yaml::Value::String("interval".to_string()),
+            serde_yaml::Value::String(group.interval.to_string()),
+        );
+        let yaml = serde_yaml::Value::Mapping(group_mapping);
         rules
             .entry(group.namespace.to_string())
             .or_default()

@@ -5,10 +5,27 @@ use krabka_blockstore::{
     LogMatchOp as MatchOp, TimeRange, labels, series_fingerprint,
 };
 
+struct PredicateCase {
+    candidate: krabka_blockstore::LogLabels,
+    want: bool,
+}
+
+struct SeriesLabelsCase<'a> {
+    tenant: &'a str,
+    series_id: u64,
+    want: Option<&'a krabka_blockstore::LogLabels>,
+}
+
 #[test]
 fn series_fingerprint_is_stable_across_label_ordering() {
-    let left = labels([("env", "prod"), ("app", "api")]);
-    let right = labels([("app", "api"), ("env", "prod")]);
+    let left = labels([
+        krabka_blockstore::LabelPair::new("env", "prod"),
+        krabka_blockstore::LabelPair::new("app", "api"),
+    ]);
+    let right = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
 
     assert2::assert!(series_fingerprint(&left) == series_fingerprint(&right));
 }
@@ -16,10 +33,34 @@ fn series_fingerprint_is_stable_across_label_ordering() {
 #[test]
 fn label_index_is_tenant_scoped_and_applies_all_matcher_ops() {
     let mut index = LabelIndex::default();
-    let api_prod = index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    index.insert_series("tenant-a", labels([("app", "api"), ("env", "dev")]));
-    let worker_prod = index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-    index.insert_series("tenant-b", labels([("app", "api"), ("env", "prod")]));
+    let api_prod = index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "dev"),
+        ]),
+    );
+    let worker_prod = index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "worker"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    index.insert_series(
+        "tenant-b",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
 
     let matched = index.match_series(
         "tenant-a",
@@ -36,23 +77,50 @@ fn label_index_is_tenant_scoped_and_applies_all_matcher_ops() {
 #[test]
 fn label_predicate_equal_matches_only_identical_label_value() {
     let predicate = LabelPredicate::new("app", MatchOp::Equal, "api").unwrap();
-    let matching = labels([("app", "api"), ("env", "prod")]);
-    let different = labels([("app", "worker"), ("env", "prod")]);
+    let matching = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
+    let different = labels([
+        krabka_blockstore::LabelPair::new("app", "worker"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
 
-    for (_name, candidate, want) in [
-        ("identical value", matching, true),
-        ("different value", different, false),
-        ("missing label", labels([("env", "prod")]), false),
+    for case in [
+        PredicateCase {
+            candidate: matching,
+            want: true,
+        },
+        PredicateCase {
+            candidate: different,
+            want: false,
+        },
+        PredicateCase {
+            candidate: labels([krabka_blockstore::LabelPair::new("env", "prod")]),
+            want: false,
+        },
     ] {
-        assert2::assert!(predicate.matches(&candidate) == want);
+        assert2::assert!(predicate.matches(&case.candidate) == case.want);
     }
 }
 
 #[test]
 fn label_index_exact_match_requires_posting_candidate_set() {
     let mut index = LabelIndex::default();
-    let api = index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
+    let api = index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "worker"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
 
     let matched = index.match_series(
         "tenant-a",
@@ -65,10 +133,19 @@ fn label_index_exact_match_requires_posting_candidate_set() {
 #[test]
 fn label_metadata_is_tenant_scoped() {
     let mut index = LabelIndex::default();
-    index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     index.insert_series(
         "tenant-b",
-        labels([("service", "billing"), ("env", "prod")]),
+        labels([
+            krabka_blockstore::LabelPair::new("service", "billing"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
     );
 
     assert2::assert!(index.label_names("tenant-a") == BTreeSet::from(["app".into(), "env".into()]));
@@ -82,28 +159,57 @@ fn label_metadata_is_tenant_scoped() {
 #[test]
 fn label_index_returns_labels_and_tenant_series() {
     let mut index = LabelIndex::default();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
-    let worker_labels = labels([("app", "worker"), ("env", "prod")]);
+    let api_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
+    let worker_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "worker"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let api = index.insert_series("tenant-a", api_labels.clone());
     let worker = index.insert_series("tenant-a", worker_labels.clone());
-    index.insert_series("tenant-b", labels([("app", "api")]));
+    index.insert_series(
+        "tenant-b",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
 
-    for (_name, tenant, series_id, want) in [
-        ("first tenant api", "tenant-a", api, Some(&api_labels)),
-        (
-            "first tenant worker",
-            "tenant-a",
-            worker,
-            Some(&worker_labels),
-        ),
-        ("unknown series", "tenant-a", 0, None),
-        ("other tenant", "tenant-b", api, None),
+    for case in [
+        SeriesLabelsCase {
+            tenant: "tenant-a",
+            series_id: api,
+            want: Some(&api_labels),
+        },
+        SeriesLabelsCase {
+            tenant: "tenant-a",
+            series_id: worker,
+            want: Some(&worker_labels),
+        },
+        SeriesLabelsCase {
+            tenant: "tenant-a",
+            series_id: 0,
+            want: None,
+        },
+        SeriesLabelsCase {
+            tenant: "tenant-b",
+            series_id: api,
+            want: None,
+        },
     ] {
-        assert2::assert!(index.labels_for(tenant, series_id) == want);
+        assert2::assert!(index.labels_for(case.tenant, case.series_id) == case.want);
     }
 
-    let mut expected = vec![(api, api_labels), (worker, worker_labels)];
-    expected.sort_by_key(|(fingerprint, _)| *fingerprint);
+    let mut expected = vec![
+        krabka_blockstore::TenantSeries {
+            fingerprint: api,
+            labels: api_labels,
+        },
+        krabka_blockstore::TenantSeries {
+            fingerprint: worker,
+            labels: worker_labels,
+        },
+    ];
+    expected.sort_by_key(|series| series.fingerprint);
     assert2::assert!(index.tenant_series("tenant-a") == expected);
     assert2::assert!(index.tenant_series("missing") == Vec::new());
 }
@@ -111,9 +217,18 @@ fn label_index_returns_labels_and_tenant_series() {
 #[test]
 fn block_index_prunes_by_tenant_time_and_fingerprint() {
     let mut series = LabelIndex::default();
-    let api = series.insert_series("tenant-a", labels([("app", "api")]));
-    let worker = series.insert_series("tenant-a", labels([("app", "worker")]));
-    let other_tenant_api = series.insert_series("tenant-b", labels([("app", "api")]));
+    let api = series.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
+    let worker = series.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "worker")]),
+    );
+    let other_tenant_api = series.insert_series(
+        "tenant-b",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
 
     let mut blocks = BlockIndex::default();
     blocks.insert(BlockDescriptor::new(

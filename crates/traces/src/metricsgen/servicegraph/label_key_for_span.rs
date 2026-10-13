@@ -4,21 +4,21 @@ pub(crate) fn label_key_for_span(
     span: &SpanRecord,
     is_client: bool,
     connection_type: ConnectionType,
-    labels: Vec<(String, String)>,
+    labels: Vec<krabka_traceql::MetricLabel>,
 ) -> LabelKey {
     if is_client {
-        (
-            span.service_name.clone(),
-            String::new(),
+        LabelKey {
+            client: span.service_name.clone(),
+            server: String::new(),
             connection_type,
-            labels,
-        )
+            dimensions: labels,
+        }
     } else {
-        (
-            String::new(),
-            span.service_name.clone(),
+        LabelKey {
+            client: String::new(),
+            server: span.service_name.clone(),
             connection_type,
-            labels,
-        )
+            dimensions: labels,
+        }
     }
 }

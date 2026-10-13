@@ -11,12 +11,12 @@ pub(crate) fn apply_metric_binary_arithmetic_to_sample_operands(
     let Some(output_values) = output_sample.as_array_mut() else {
         return false;
     };
-    let Some((left_value, right_value)) = metric_binary_operand_values(operands) else {
+    let Some(values) = metric_binary_operand_values(operands) else {
         return false;
     };
     let scalar_operands = ScalarOperands {
-        sample: left_value,
-        scalar: right_value,
+        sample: values.left,
+        scalar: values.right,
         scalar_side: ScalarSide::Right,
     };
     let Some(result) = metric_scalar_arithmetic_value(scalar_operands, op) else {

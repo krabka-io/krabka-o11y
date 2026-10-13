@@ -17,7 +17,7 @@ pub(crate) fn one_sample_matrix(series: Labels) -> AnnotatedQueryResult {
         drop_name: false,
         start_timestamps_ms: std::collections::BTreeMap::new(),
         labels: series.into(),
-        samples: vec![(0, SampleValue::Float(1.0))],
+        samples: vec![RangeSeriesSample::new(0, SampleValue::Float(1.0))],
     }]))
 }
 
@@ -33,10 +33,14 @@ pub(crate) fn up_api_matrix(points: &[FloatPoint]) -> AnnotatedQueryResult {
     unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
         drop_name: false,
         start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
+        labels: labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ])
+        .into(),
         samples: points
             .iter()
-            .map(|point| (point.ts_ms, SampleValue::Float(point.value)))
+            .map(|point| RangeSeriesSample::new(point.ts_ms, SampleValue::Float(point.value)))
             .collect(),
     }]))
 }

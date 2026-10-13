@@ -1,5 +1,10 @@
 use super::*;
 
+struct ContentTypeCase {
+    value: &'static str,
+    accepted: Option<bool>,
+}
+
 #[test]
 pub(crate) fn loki_content_type_and_body_decoding_accept_only_expected_forms() {
     let mut headers = HeaderMap::new();
@@ -16,16 +21,31 @@ pub(crate) fn loki_content_type_and_body_decoding_accept_only_expected_forms() {
     headers.insert(CONTENT_ENCODING, "br".parse().unwrap());
     assert!(decode_loki_http_body(&headers, b"raw").is_err());
 
-    for (value, want) in [
-        ("application/json", Some(true)),
-        ("Application/JSON; charset=utf-8", Some(true)),
-        ("application/x-protobuf", Some(false)),
-        ("application/json; charset", None),
-        ("application/json; charset=", None),
+    for case in [
+        ContentTypeCase {
+            value: "application/json",
+            accepted: Some(true),
+        },
+        ContentTypeCase {
+            value: "Application/JSON; charset=utf-8",
+            accepted: Some(true),
+        },
+        ContentTypeCase {
+            value: "application/x-protobuf",
+            accepted: Some(false),
+        },
+        ContentTypeCase {
+            value: "application/json; charset",
+            accepted: None,
+        },
+        ContentTypeCase {
+            value: "application/json; charset=",
+            accepted: None,
+        },
     ] {
         assert_eq!(
-            is_loki_json_content_type(&loki_content_type(value)).ok(),
-            want
+            is_loki_json_content_type(&loki_content_type(case.value)).ok(),
+            case.accepted
         );
     }
 }

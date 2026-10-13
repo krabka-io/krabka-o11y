@@ -24,11 +24,12 @@ pub(crate) fn apply_histogram_float_binary(
             matches!(op, BinaryOp::TrimUpper),
         )));
     }
-    let divide_by_zero = matches!((op, scalar_side), (BinaryOp::Div, ScalarSide::Right))
+    let divide_by_zero = matches!(op, BinaryOp::Div)
+        && matches!(scalar_side, ScalarSide::Right)
         && matches!(scalar.classify(), std::num::FpCategory::Zero);
-    let factor = match (op, scalar_side) {
-        (BinaryOp::Mul, ScalarSide::Left | ScalarSide::Right) => scalar,
-        (BinaryOp::Div, ScalarSide::Right) => 1.0 / scalar,
+    let factor = match op {
+        BinaryOp::Mul => scalar,
+        BinaryOp::Div if matches!(scalar_side, ScalarSide::Right) => 1.0 / scalar,
         _ => return None,
     };
     let mut out = scaled_native_histogram(histogram, factor);

@@ -32,7 +32,8 @@ pub(crate) use format_loki_query_length::format_loki_query_length;
 pub(crate) use gcd_signed::gcd_signed;
 pub(crate) use parse_scalar_sample::parse_scalar_sample;
 pub(crate) use rational_arithmetic::{
-    Rational, decimal_scaled_numerator, impl_rational_division_ops, rational_to_f64,
+    Rational, decimal_scaled_numerator, impl_rational_division_ops, impl_rational_float_conversion,
+    rational_to_f64,
 };
 pub(crate) use resolved_range_step::resolved_range_step;
 pub(crate) use scalar_sample::ScalarSample;

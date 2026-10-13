@@ -100,46 +100,68 @@ pub(crate) fn field_comparison_matches(
 }
 
 pub(crate) fn scalar_matches(lhs: &Value, op: ComparisonOp, rhs: &Value) -> bool {
-    match (lhs, rhs) {
-        (Value::Array(_), Value::Array(_)) => false,
-        (Value::Array(values), scalar) => {
-            if matches!(op, ComparisonOp::Neq | ComparisonOp::Nre) {
-                values.iter().all(|value| scalar_matches(value, op, scalar))
-            } else {
-                values.iter().any(|value| scalar_matches(value, op, scalar))
+    match lhs {
+        Value::Array(lhs_values) => match rhs {
+            Value::Array(_) => false,
+            scalar => {
+                if matches!(op, ComparisonOp::Neq | ComparisonOp::Nre) {
+                    lhs_values
+                        .iter()
+                        .all(|value| scalar_matches(value, op, scalar))
+                } else {
+                    lhs_values
+                        .iter()
+                        .any(|value| scalar_matches(value, op, scalar))
+                }
             }
-        }
-        (scalar, Value::Array(values)) => {
-            if matches!(op, ComparisonOp::Neq | ComparisonOp::Nre) {
-                values.iter().all(|value| scalar_matches(scalar, op, value))
-            } else {
-                values.iter().any(|value| scalar_matches(scalar, op, value))
-            }
-        }
-        (Value::Str(lhs), Value::Str(rhs)) => match op {
-            ComparisonOp::Eq => lhs == rhs,
-            ComparisonOp::Neq => lhs != rhs,
-            ComparisonOp::Lt => lhs < rhs,
-            ComparisonOp::Lte => lhs <= rhs,
-            ComparisonOp::Gt => lhs > rhs,
-            ComparisonOp::Gte => lhs >= rhs,
-            ComparisonOp::Re | ComparisonOp::Nre => regex::Regex::new(&format!("^(?:{rhs})$"))
-                .is_ok_and(|regex| regex.is_match(lhs) == (op == ComparisonOp::Re)),
         },
-        (Value::Int(lhs) | Value::Duration(lhs), Value::Int(rhs) | Value::Duration(rhs)) => {
-            num_cmp(*lhs, op, *rhs)
-        }
-        (Value::Float(lhs), Value::Float(rhs)) => float_cmp(*lhs, op, *rhs),
-        (Value::Float(lhs), Value::Int(rhs) | Value::Duration(rhs)) => {
-            float_cmp(*lhs, op, super::f64_from_i64(*rhs))
-        }
-        (Value::Int(lhs) | Value::Duration(lhs), Value::Float(rhs)) => {
-            float_cmp(super::f64_from_i64(*lhs), op, *rhs)
-        }
-        (Value::Bool(lhs), Value::Bool(rhs)) => super::bool_cmp(*lhs, op, *rhs),
-        // No string coercion: an integer attribute never equals a string with
-        // the same spelling, and incompatible operands produce false for != too.
-        _ => false,
+        scalar => match rhs {
+            Value::Array(rhs_values) => {
+                if matches!(op, ComparisonOp::Neq | ComparisonOp::Nre) {
+                    rhs_values
+                        .iter()
+                        .all(|value| scalar_matches(scalar, op, value))
+                } else {
+                    rhs_values
+                        .iter()
+                        .any(|value| scalar_matches(scalar, op, value))
+                }
+            }
+            Value::Str(rhs) => match scalar {
+                Value::Str(lhs) => match op {
+                    ComparisonOp::Eq => lhs == rhs,
+                    ComparisonOp::Neq => lhs != rhs,
+                    ComparisonOp::Lt => lhs < rhs,
+                    ComparisonOp::Lte => lhs <= rhs,
+                    ComparisonOp::Gt => lhs > rhs,
+                    ComparisonOp::Gte => lhs >= rhs,
+                    ComparisonOp::Re | ComparisonOp::Nre => {
+                        regex::Regex::new(&format!("^(?:{rhs})$"))
+                            .is_ok_and(|regex| regex.is_match(lhs) == (op == ComparisonOp::Re))
+                    }
+                },
+                _ => false,
+            },
+            Value::Int(rhs) | Value::Duration(rhs) => match scalar {
+                Value::Int(lhs) | Value::Duration(lhs) => num_cmp(*lhs, op, *rhs),
+                Value::Float(lhs) => float_cmp(*lhs, op, super::f64_from_i64(*rhs)),
+                _ => false,
+            },
+            Value::Float(rhs) => match scalar {
+                Value::Float(lhs) => float_cmp(*lhs, op, *rhs),
+                Value::Int(lhs) | Value::Duration(lhs) => {
+                    float_cmp(super::f64_from_i64(*lhs), op, *rhs)
+                }
+                _ => false,
+            },
+            Value::Bool(rhs) => match scalar {
+                Value::Bool(lhs) => super::bool_cmp(*lhs, op, *rhs),
+                _ => false,
+            },
+            // No string coercion: an integer attribute never equals a string with
+            // the same spelling, and incompatible operands produce false for != too.
+            Value::Nil => false,
+        },
     }
 }
 
@@ -154,7 +176,7 @@ mod tests {
         let row = CompareRow {
             ts: super::super::UnixNano(0),
             attrs: Vec::new(),
-            raw_span_attrs: vec![("number".into(), AttrValue::Int(2))],
+            raw_span_attrs: vec![crate::result::Attribute::new("number", AttrValue::Int(2))],
             raw_resource_attrs: Vec::new(),
             name: None,
             status_code: Some(2),
@@ -207,49 +229,22 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn dynamic_comparisons_preserve_types_ordering_and_regex_operands() {
-        for (lhs, op, rhs, expected) in [
-            (Value::Int(3), ComparisonOp::Eq, Value::Int(3), true),
-            (
-                Value::Int(3),
-                ComparisonOp::Eq,
-                Value::Str("3".into()),
-                false,
-            ),
-            (
-                Value::Int(3),
-                ComparisonOp::Neq,
-                Value::Str("4".into()),
-                false,
-            ),
-            (Value::Float(3.5), ComparisonOp::Gt, Value::Float(3.0), true),
-            (
-                Value::Bool(true),
-                ComparisonOp::Eq,
-                Value::Bool(false),
-                false,
-            ),
-            (
-                Value::Str("a".into()),
-                ComparisonOp::Lt,
-                Value::Str("b".into()),
-                true,
-            ),
-            (
-                Value::Str("cart".into()),
-                ComparisonOp::Re,
-                Value::Str("ca.*".into()),
-                true,
-            ),
-            (
-                Value::Str("cart".into()),
-                ComparisonOp::Re,
-                Value::Str("ar".into()),
-                false,
-            ),
-        ] {
-            assert!(scalar_matches(&lhs, op, &rhs) == expected);
-        }
+    #[yare::parameterized(
+        int_equality = { Value::Int(3), ComparisonOp::Eq, Value::Int(3), true },
+        int_and_string_are_unequal = { Value::Int(3), ComparisonOp::Eq, Value::Str("3".into()), false },
+        unequal_requires_same_type = { Value::Int(3), ComparisonOp::Neq, Value::Str("4".into()), false },
+        float_greater_than = { Value::Float(3.5), ComparisonOp::Gt, Value::Float(3.0), true },
+        bool_equality = { Value::Bool(true), ComparisonOp::Eq, Value::Bool(false), false },
+        string_ordering = { Value::Str("a".into()), ComparisonOp::Lt, Value::Str("b".into()), true },
+        regex_match = { Value::Str("cart".into()), ComparisonOp::Re, Value::Str("ca.*".into()), true },
+        regex_non_match = { Value::Str("cart".into()), ComparisonOp::Re, Value::Str("ar".into()), false },
+    )]
+    fn dynamic_comparisons_preserve_types_ordering_and_regex_operands(
+        lhs: Value,
+        op: ComparisonOp,
+        rhs: Value,
+        expected: bool,
+    ) {
+        ::core::assert!(scalar_matches(&lhs, op, &rhs) == expected);
     }
 }

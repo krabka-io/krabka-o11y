@@ -152,9 +152,9 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
     check!(
         descriptors[0].fingerprints
             == BTreeSet::from([series_fingerprint(&labels([
-                ("app", "api"),
-                ("env", "prod"),
-                ("service_name", "api"),
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("env", "prod"),
+                krabka_blockstore::LabelPair::new("service_name", "api"),
             ]))])
     );
 
@@ -332,7 +332,11 @@ fn expected_wal_records() -> Vec<WalLogRecord> {
     vec![
         WalLogRecord {
             tenant: TENANT.to_string(),
-            labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
+            labels: labels([
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("env", "prod"),
+                krabka_blockstore::LabelPair::new("service_name", "api"),
+            ]),
             timestamp_ns: 10,
             line: "api error".to_string(),
             structured_metadata: BTreeMap::from([
@@ -346,7 +350,11 @@ fn expected_wal_records() -> Vec<WalLogRecord> {
         },
         WalLogRecord {
             tenant: TENANT.to_string(),
-            labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
+            labels: labels([
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("env", "prod"),
+                krabka_blockstore::LabelPair::new("service_name", "api"),
+            ]),
             timestamp_ns: 20,
             line: "api recovered".to_string(),
             structured_metadata: BTreeMap::from([(

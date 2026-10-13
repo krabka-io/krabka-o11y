@@ -17,6 +17,25 @@ use crate::{
     },
 };
 
+/// A decoded WAL record and the partition watermark it advances.
+#[derive(Clone, Copy, Debug)]
+pub struct WalRecordAt<'a> {
+    pub record: &'a WalRecord,
+    pub partition: PartitionIndex,
+    pub offset: Offset,
+}
+
+impl<'a> WalRecordAt<'a> {
+    #[must_use]
+    pub const fn new(record: &'a WalRecord, partition: PartitionIndex, offset: Offset) -> Self {
+        Self {
+            record,
+            partition,
+            offset,
+        }
+    }
+}
+
 /// Shared hot-head metric store rebuilt from the metrics WAL tail.
 ///
 /// A read takes a snapshot by cloning the inner `Arc` pointer and holds it for
@@ -125,12 +144,14 @@ impl WalHead {
     /// guard drops at the end, so a concurrent query sees either every record
     /// in the batch or none of them, never a prefix. A record that panics
     /// part-way discards the whole batch rather than publishing a prefix.
-    pub fn apply_wal_records_at<'a>(
-        &self,
-        records: impl IntoIterator<Item = (&'a WalRecord, PartitionIndex, Offset)>,
-    ) {
+    pub fn apply_wal_records_at<'a>(&self, records: impl IntoIterator<Item = WalRecordAt<'a>>) {
         self.update(|store| {
-            for (record, partition, offset) in records {
+            for WalRecordAt {
+                record,
+                partition,
+                offset,
+            } in records
+            {
                 store.apply_wal_record(record);
                 store.record_offset(partition, offset);
             }

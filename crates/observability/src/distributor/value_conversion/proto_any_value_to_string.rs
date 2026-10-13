@@ -15,22 +15,22 @@ pub(crate) fn proto_any_value_to_string(value: &proto_any_value::Value) -> Strin
                 .collect::<Vec<_>>(),
         )
         .expect("OTLP protobuf array values serialize to JSON"),
-        proto_any_value::Value::KvlistValue(value) => serde_json::to_string(
-            &value
-                .values
-                .iter()
-                .map(|attribute| {
-                    (
+        proto_any_value::Value::KvlistValue(value) => {
+            serde_json::to_string(&value.values.iter().fold(
+                BTreeMap::new(),
+                |mut values, attribute| {
+                    values.insert(
                         attribute.key.clone(),
                         attribute
                             .value
                             .as_ref()
                             .map_or(Value::Null, proto_value_to_json),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>(),
-        )
-        .expect("OTLP protobuf key-value lists serialize to JSON"),
+                    );
+                    values
+                },
+            ))
+            .expect("OTLP protobuf key-value lists serialize to JSON")
+        }
         proto_any_value::Value::StringValueStrindex(value) => value.to_string(),
     }
 }

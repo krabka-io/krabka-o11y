@@ -1,4 +1,9 @@
-pub(crate) fn parse_leading_label_list(query: &str) -> Option<(Vec<String>, &str)> {
+pub(crate) struct ParsedLabelList<'a> {
+    pub(crate) labels: Vec<String>,
+    pub(crate) remaining: &'a str,
+}
+
+pub(crate) fn parse_leading_label_list(query: &str) -> Option<ParsedLabelList<'_>> {
     let inner = query.strip_prefix('(')?;
     let labels_end = inner.find(')')?;
     let labels_text = &inner[..labels_end];
@@ -12,5 +17,8 @@ pub(crate) fn parse_leading_label_list(query: &str) -> Option<(Vec<String>, &str
             .map(str::to_string)
             .collect()
     };
-    Some((labels, &inner[labels_end + 1..]))
+    Some(ParsedLabelList {
+        labels,
+        remaining: &inner[labels_end + 1..],
+    })
 }

@@ -14,7 +14,10 @@ pub(crate) async fn unary_minus_negates_native_histogram_values_and_marks_gauge(
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         10_000,
         histogram,
     );

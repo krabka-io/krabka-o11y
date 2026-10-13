@@ -2,23 +2,31 @@ use regex::Regex;
 
 use super::runes;
 
+pub(super) struct RegexReplacement {
+    pub value: Vec<u8>,
+    pub matches: usize,
+}
+
 pub(super) fn regex_apply(
     name: &str,
     pattern: &[u8],
     input: &[u8],
     replacement: &[u8],
-) -> Option<(Vec<u8>, usize)> {
+) -> Option<RegexReplacement> {
     let pattern = std::str::from_utf8(pattern).ok()?;
     let regex = Regex::new(pattern).ok()?;
     // Go's regex reader decodes each invalid byte as RuneError while retaining
     // original byte offsets for unmatched text and captures.
     let mut normalized = String::new();
     let mut offsets = vec![0];
-    for (ch, start, length) in runes(input) {
+    for rune in runes(input) {
         let before = normalized.len();
-        normalized.push(ch);
-        offsets.extend(std::iter::repeat_n(start, normalized.len() - before - 1));
-        offsets.push(start + length);
+        normalized.push(rune.character);
+        offsets.extend(std::iter::repeat_n(
+            rune.start,
+            normalized.len() - before - 1,
+        ));
+        offsets.push(rune.start + rune.length);
     }
     let mut output = Vec::new();
     let mut end = 0;
@@ -39,7 +47,10 @@ pub(super) fn regex_apply(
         count += 1;
     }
     output.extend(&input[end..]);
-    Some((output, count))
+    Some(RegexReplacement {
+        value: output,
+        matches: count,
+    })
 }
 
 fn expand(

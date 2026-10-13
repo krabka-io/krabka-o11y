@@ -1,4 +1,4 @@
-use krabka_observability::{CriticalTaskError, SupervisedTasks};
+use krabka_observability::SupervisedTasks;
 
 use super::{
     Arc, MimirTenantAdminState, QueryFrontendOptions, RoleLaunch, RoleObjectStore, ServerSecurity,
@@ -83,8 +83,8 @@ pub(crate) async fn run_query_frontend(
             },
             Arc::new(query_cache),
         );
-    let state = if let Some((head, readiness)) = status_wal {
-        state.with_wal_head_status(head, readiness)
+    let state = if let Some(status) = status_wal {
+        state.with_wal_head_status(status.head, status.readiness)
     } else {
         state
     };
@@ -96,21 +96,16 @@ pub(crate) async fn run_query_frontend(
             head,
         )))
         .merge(readiness_router(readiness));
-    let (bound, server) =
+    let serving =
         serve_prometheus_router_joinable(cli.listen, router, security, shutdown.signalled())
             .await?;
     tracing::info!(
-        %bound,
+        %serving.addr,
         tls = security.tls_enabled(),
         authentication = security.authentication_enabled(),
         "metrics-service query-frontend listening"
     );
-    let outcome = tokio::select! {
-        result = server => result.map_err(Into::into),
-        name = tasks.first_unexpected_exit() => Err(Box::<dyn std::error::Error>::from(
-            CriticalTaskError(name),
-        )),
-    };
+    let outcome = crate::server_or_critical_task_exit!(serving.server, tasks);
     tasks.shutdown().await;
     outcome
 }

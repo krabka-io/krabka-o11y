@@ -54,10 +54,16 @@ pub(crate) use missing_loki_rule_directory_response::missing_loki_rule_directory
 pub(crate) use missing_loki_rule_namespace_response::missing_loki_rule_namespace_response;
 pub(crate) use parse_loki_rule_group::parse_loki_rule_group;
 pub(crate) use prometheus_alerts::prometheus_alerts;
-pub(crate) use prometheus_ruler_request::{PrometheusRulerInputs, PrometheusRulerRequest};
+pub(crate) use prometheus_ruler_request::{PrometheusRulerRequest, prometheus_ruler_request};
 pub(crate) use prometheus_rules::prometheus_rules;
 pub(crate) use prometheus_rules_filters::PrometheusRulesFilters;
 pub(crate) use ring_status_page::ring_status_page;
 pub(crate) use ruler_status_page::ruler_status_page;
 pub(crate) use validate_loki_rule::validate_loki_rule;
 pub(crate) use validate_loki_rule_group::validate_loki_rule_group;
+
+#[derive(serde::Deserialize)]
+pub(crate) struct LokiRuleGroupPath {
+    pub(crate) namespace: String,
+    pub(crate) group_name: String,
+}

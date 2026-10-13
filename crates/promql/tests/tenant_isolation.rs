@@ -32,10 +32,21 @@ const B_ZONE: &str = "bravo-zone-b";
 const A_TRACE: &str = "alpha-trace-a";
 const B_TRACE: &str = "bravo-trace-b";
 
-fn labels(pairs: &[(&str, &str)]) -> Labels {
+struct LabelPair {
+    name: &'static str,
+    value: &'static str,
+}
+
+impl LabelPair {
+    const fn new(name: &'static str, value: &'static str) -> Self {
+        Self { name, value }
+    }
+}
+
+fn labels(pairs: &[LabelPair]) -> Labels {
     let mut labels = Labels::new();
-    for (name, value) in pairs {
-        labels.insert(*name, *value);
+    for pair in pairs {
+        labels.insert(pair.name, pair.value);
     }
     labels
 }
@@ -53,10 +64,10 @@ async fn boot_isolated_api_with(security: ServerSecurity) -> SocketAddr {
     store.push_float(
         ORG_A,
         labels(&[
-            ("__name__", "up"),
-            ("job", A_JOB),
-            ("instance", A_INSTANCE),
-            ("zone", A_ZONE),
+            LabelPair::new("__name__", "up"),
+            LabelPair::new("job", A_JOB),
+            LabelPair::new("instance", A_INSTANCE),
+            LabelPair::new("zone", A_ZONE),
         ]),
         10_000,
         1.0,
@@ -64,18 +75,21 @@ async fn boot_isolated_api_with(security: ServerSecurity) -> SocketAddr {
     store.push_float(
         ORG_A,
         labels(&[
-            ("__name__", "up"),
-            ("job", A_JOB),
-            ("instance", A_INSTANCE),
-            ("zone", A_ZONE),
+            LabelPair::new("__name__", "up"),
+            LabelPair::new("job", A_JOB),
+            LabelPair::new("instance", A_INSTANCE),
+            LabelPair::new("zone", A_ZONE),
         ]),
         20_000,
         2.0,
     );
     store.push_exemplar(
         ORG_A,
-        labels(&[("__name__", "up"), ("job", A_JOB)]),
-        labels(&[("trace_id", A_TRACE)]),
+        labels(&[
+            LabelPair::new("__name__", "up"),
+            LabelPair::new("job", A_JOB),
+        ]),
+        labels(&[LabelPair::new("trace_id", A_TRACE)]),
         10_500,
         1.0,
     );
@@ -84,10 +98,10 @@ async fn boot_isolated_api_with(security: ServerSecurity) -> SocketAddr {
     store.push_float(
         ORG_B,
         labels(&[
-            ("__name__", "up"),
-            ("job", B_JOB),
-            ("instance", B_INSTANCE),
-            ("zone", B_ZONE),
+            LabelPair::new("__name__", "up"),
+            LabelPair::new("job", B_JOB),
+            LabelPair::new("instance", B_INSTANCE),
+            LabelPair::new("zone", B_ZONE),
         ]),
         10_000,
         3.0,
@@ -95,18 +109,21 @@ async fn boot_isolated_api_with(security: ServerSecurity) -> SocketAddr {
     store.push_float(
         ORG_B,
         labels(&[
-            ("__name__", "up"),
-            ("job", B_JOB),
-            ("instance", B_INSTANCE),
-            ("zone", B_ZONE),
+            LabelPair::new("__name__", "up"),
+            LabelPair::new("job", B_JOB),
+            LabelPair::new("instance", B_INSTANCE),
+            LabelPair::new("zone", B_ZONE),
         ]),
         20_000,
         4.0,
     );
     store.push_exemplar(
         ORG_B,
-        labels(&[("__name__", "up"), ("job", B_JOB)]),
-        labels(&[("trace_id", B_TRACE)]),
+        labels(&[
+            LabelPair::new("__name__", "up"),
+            LabelPair::new("job", B_JOB),
+        ]),
+        labels(&[LabelPair::new("trace_id", B_TRACE)]),
         10_500,
         3.0,
     );
@@ -134,67 +151,108 @@ const GRAFANA_TOKEN_SHA256: &str =
 
 /// Every route that resolves a tenant, with a request that passes its
 /// parameter checks, so the only thing left to refuse it is the tenant.
-fn tenant_routes() -> Vec<(reqwest::Method, &'static str, &'static str)> {
-    let get = reqwest::Method::GET;
-    let post = reqwest::Method::POST;
-    let delete = reqwest::Method::DELETE;
+struct TenantRoute {
+    method: reqwest::Method,
+    path: &'static str,
+    body: &'static str,
+}
+
+impl TenantRoute {
+    fn new(method: reqwest::Method, path: &'static str, body: &'static str) -> Self {
+        Self { method, path, body }
+    }
+}
+
+fn tenant_routes() -> Vec<TenantRoute> {
     vec![
-        (get.clone(), "/api/v1/query?query=up&time=20", ""),
-        (post.clone(), "/api/v1/query", "query=up&time=20"),
-        (
-            get.clone(),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/query?query=up&time=20", ""),
+        TenantRoute::new(reqwest::Method::POST, "/api/v1/query", "query=up&time=20"),
+        TenantRoute::new(
+            reqwest::Method::GET,
             "/api/v1/query_range?query=up&start=10&end=20&step=10",
             "",
         ),
-        (
-            post.clone(),
+        TenantRoute::new(
+            reqwest::Method::POST,
             "/api/v1/query_range",
             "query=up&start=10&end=20&step=10",
         ),
-        (
-            get.clone(),
+        TenantRoute::new(
+            reqwest::Method::GET,
             "/api/v1/query_exemplars?query=up&start=10&end=11",
             "",
         ),
-        (
-            post.clone(),
+        TenantRoute::new(
+            reqwest::Method::POST,
             "/api/v1/query_exemplars",
             "query=up&start=10&end=11",
         ),
-        (
-            get.clone(),
+        TenantRoute::new(
+            reqwest::Method::GET,
             "/api/v1/series?match%5B%5D=up&start=10&end=20",
             "",
         ),
-        (
-            post.clone(),
+        TenantRoute::new(
+            reqwest::Method::POST,
             "/api/v1/series",
             "match%5B%5D=up&start=10&end=20",
         ),
-        (get.clone(), "/api/v1/labels?start=10&end=20", ""),
-        (post.clone(), "/api/v1/labels", "start=10&end=20"),
-        (get.clone(), "/api/v1/label/job/values?start=10&end=20", ""),
-        (post.clone(), "/api/v1/label/job/values", "start=10&end=20"),
-        (get.clone(), "/api/v1/cardinality/label_names", ""),
-        (post.clone(), "/api/v1/cardinality/label_names", ""),
-        (get.clone(), "/api/v1/cardinality/label_values", ""),
-        (post.clone(), "/api/v1/cardinality/label_values", ""),
-        (get.clone(), "/api/v1/cardinality/active_series", ""),
-        (post.clone(), "/api/v1/cardinality/active_series", ""),
-        (post.clone(), "/api/v1/read", ""),
-        (get.clone(), "/api/v1/metadata", ""),
-        (get.clone(), "/api/v1/targets/metadata", ""),
-        (get.clone(), "/api/v1/rules", ""),
-        (get.clone(), "/api/v1/alerts", ""),
-        (get.clone(), "/api/v1/status/runtimeinfo", ""),
-        (get.clone(), "/api/v1/status/tsdb", ""),
-        (get.clone(), "/api/v1/status/tsdb/blocks", ""),
-        (get.clone(), "/prometheus/config/v1/rules", ""),
-        (get.clone(), "/prometheus/config/v1/rules/ns", ""),
-        (post, "/prometheus/config/v1/rules/ns", ""),
-        (delete.clone(), "/prometheus/config/v1/rules/ns", ""),
-        (get, "/prometheus/config/v1/rules/ns/group", ""),
-        (delete, "/prometheus/config/v1/rules/ns/group", ""),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/labels?start=10&end=20", ""),
+        TenantRoute::new(reqwest::Method::POST, "/api/v1/labels", "start=10&end=20"),
+        TenantRoute::new(
+            reqwest::Method::GET,
+            "/api/v1/label/job/values?start=10&end=20",
+            "",
+        ),
+        TenantRoute::new(
+            reqwest::Method::POST,
+            "/api/v1/label/job/values",
+            "start=10&end=20",
+        ),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/cardinality/label_names", ""),
+        TenantRoute::new(reqwest::Method::POST, "/api/v1/cardinality/label_names", ""),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/cardinality/label_values", ""),
+        TenantRoute::new(
+            reqwest::Method::POST,
+            "/api/v1/cardinality/label_values",
+            "",
+        ),
+        TenantRoute::new(
+            reqwest::Method::GET,
+            "/api/v1/cardinality/active_series",
+            "",
+        ),
+        TenantRoute::new(
+            reqwest::Method::POST,
+            "/api/v1/cardinality/active_series",
+            "",
+        ),
+        TenantRoute::new(reqwest::Method::POST, "/api/v1/read", ""),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/metadata", ""),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/targets/metadata", ""),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/rules", ""),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/alerts", ""),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/status/runtimeinfo", ""),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/status/tsdb", ""),
+        TenantRoute::new(reqwest::Method::GET, "/api/v1/status/tsdb/blocks", ""),
+        TenantRoute::new(reqwest::Method::GET, "/prometheus/config/v1/rules", ""),
+        TenantRoute::new(reqwest::Method::GET, "/prometheus/config/v1/rules/ns", ""),
+        TenantRoute::new(reqwest::Method::POST, "/prometheus/config/v1/rules/ns", ""),
+        TenantRoute::new(
+            reqwest::Method::DELETE,
+            "/prometheus/config/v1/rules/ns",
+            "",
+        ),
+        TenantRoute::new(
+            reqwest::Method::GET,
+            "/prometheus/config/v1/rules/ns/group",
+            "",
+        ),
+        TenantRoute::new(
+            reqwest::Method::DELETE,
+            "/prometheus/config/v1/rules/ns/group",
+            "",
+        ),
     ]
 }
 
@@ -240,21 +298,21 @@ async fn every_tenant_route_refuses_a_principal_without_the_tenant() {
             .body(body)
     };
 
-    for (method, path, body) in tenant_routes() {
-        let refused = send(&method, path, body, ORG_B)
+    for route in tenant_routes() {
+        let refused = send(&route.method, route.path, route.body, ORG_B)
             .bearer_auth(GRAFANA_TOKEN)
             .send()
             .await
             .expect("send request");
         let refused_status = refused.status();
         let refused_body = refused.text().await.expect("response text");
-        let granted = send(&method, path, body, ORG_A)
+        let granted = send(&route.method, route.path, route.body, ORG_A)
             .bearer_auth(GRAFANA_TOKEN)
             .send()
             .await
             .expect("send request")
             .status();
-        let anonymous = send(&method, path, body, ORG_A)
+        let anonymous = send(&route.method, route.path, route.body, ORG_A)
             .send()
             .await
             .expect("send request")
@@ -262,12 +320,16 @@ async fn every_tenant_route_refuses_a_principal_without_the_tenant() {
 
         assert2::check!(
             refused_status == reqwest::StatusCode::FORBIDDEN,
-            "{method} {path}"
+            "{} {}",
+            route.method,
+            route.path
         );
         assert2::check!(
             refused_body
                 == format!("principal \"grafana\" is not allowed to access tenant \"{ORG_B}\"\n"),
-            "{method} {path}"
+            "{} {}",
+            route.method,
+            route.path
         );
         assert2::check!(
             ![
@@ -275,23 +337,32 @@ async fn every_tenant_route_refuses_a_principal_without_the_tenant() {
                 reqwest::StatusCode::FORBIDDEN
             ]
             .contains(&granted),
-            "{method} {path}: {granted}"
+            "{} {}: {granted}",
+            route.method,
+            route.path
         );
         assert2::check!(
             anonymous == reqwest::StatusCode::UNAUTHORIZED,
-            "{method} {path}"
+            "{} {}",
+            route.method,
+            route.path
         );
     }
 }
 
 /// Sends a GET for `path` with the given tenant header. Returns the status and
 /// the raw body text.
+struct TenantResponse {
+    status: reqwest::StatusCode,
+    body: String,
+}
+
 async fn get_with_tenant(
     client: &reqwest::Client,
     addr: SocketAddr,
     path: &str,
     tenant: &str,
-) -> (reqwest::StatusCode, String) {
+) -> TenantResponse {
     let response = client
         .get(format!("http://{addr}{path}"))
         .header("X-Scope-OrgID", tenant)
@@ -300,7 +371,7 @@ async fn get_with_tenant(
         .expect("send request");
     let status = response.status();
     let text = response.text().await.expect("response text");
-    (status, text)
+    TenantResponse { status, body: text }
 }
 
 /// Foreign-tenant sentinel substrings that must be ABSENT from `tenant`'s body.
@@ -357,11 +428,11 @@ async fn instant_query_is_tenant_isolated() {
     let client = reqwest::Client::new();
     let path = "/api/v1/query?query=up&time=20";
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_A).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_A).await;
     assert_isolated(ORG_A, "query", status, &body);
     assert2::assert!(own_sentinels(ORG_A).iter().any(|own| body.contains(own)));
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_B).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_B).await;
     assert_isolated(ORG_B, "query", status, &body);
     assert2::assert!(own_sentinels(ORG_B).iter().any(|own| body.contains(own)));
 }
@@ -372,10 +443,10 @@ async fn range_query_is_tenant_isolated() {
     let client = reqwest::Client::new();
     let path = "/api/v1/query_range?query=up&start=10&end=20&step=10";
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_A).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_A).await;
     assert_isolated(ORG_A, "query_range", status, &body);
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_B).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_B).await;
     assert_isolated(ORG_B, "query_range", status, &body);
 }
 
@@ -385,11 +456,11 @@ async fn series_is_tenant_isolated() {
     let client = reqwest::Client::new();
     let path = "/api/v1/series?match%5B%5D=up&start=10&end=20";
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_A).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_A).await;
     assert_isolated(ORG_A, "series", status, &body);
     assert2::assert!(body.contains(A_JOB));
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_B).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_B).await;
     assert_isolated(ORG_B, "series", status, &body);
     assert2::assert!(body.contains(B_JOB));
 }
@@ -400,10 +471,10 @@ async fn labels_is_tenant_isolated() {
     let client = reqwest::Client::new();
     let path = "/api/v1/labels?start=10&end=20";
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_A).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_A).await;
     assert_isolated(ORG_A, "labels", status, &body);
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_B).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_B).await;
     assert_isolated(ORG_B, "labels", status, &body);
 }
 
@@ -414,19 +485,19 @@ async fn label_values_is_tenant_isolated() {
 
     // `job` values must be partitioned by tenant.
     let path = "/api/v1/label/job/values?start=10&end=20";
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_A).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_A).await;
     assert_isolated(ORG_A, "label/job/values", status, &body);
     assert2::assert!(body.contains(A_JOB));
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_B).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_B).await;
     assert_isolated(ORG_B, "label/job/values", status, &body);
     assert2::assert!(body.contains(B_JOB));
 
     // `instance` and `zone` values must also be partitioned.
     for label in ["instance", "zone"] {
         let path = format!("/api/v1/label/{label}/values?start=10&end=20");
-        let (status, body) = get_with_tenant(&client, addr, &path, ORG_A).await;
+        let TenantResponse { status, body } = get_with_tenant(&client, addr, &path, ORG_A).await;
         assert_isolated(ORG_A, &format!("label/{label}/values"), status, &body);
-        let (status, body) = get_with_tenant(&client, addr, &path, ORG_B).await;
+        let TenantResponse { status, body } = get_with_tenant(&client, addr, &path, ORG_B).await;
         assert_isolated(ORG_B, &format!("label/{label}/values"), status, &body);
     }
 }
@@ -437,11 +508,11 @@ async fn query_exemplars_is_tenant_isolated() {
     let client = reqwest::Client::new();
     let path = "/api/v1/query_exemplars?query=up&start=10&end=11";
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_A).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_A).await;
     assert_isolated(ORG_A, "query_exemplars", status, &body);
     assert2::assert!(body.contains(A_TRACE));
 
-    let (status, body) = get_with_tenant(&client, addr, path, ORG_B).await;
+    let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_B).await;
     assert_isolated(ORG_B, "query_exemplars", status, &body);
     assert2::assert!(body.contains(B_TRACE));
 }
@@ -460,18 +531,18 @@ async fn cardinality_endpoints_are_tenant_isolated() {
         "/api/v1/cardinality/label_values",
         "/prometheus/api/v1/cardinality/active_series",
     ] {
-        let (status, body) = get_with_tenant(&client, addr, path, ORG_A).await;
+        let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_A).await;
         assert_cardinality_isolated(ORG_A, path, status, &body);
-        let (status, body) = get_with_tenant(&client, addr, path, ORG_B).await;
+        let TenantResponse { status, body } = get_with_tenant(&client, addr, path, ORG_B).await;
         assert_cardinality_isolated(ORG_B, path, status, &body);
     }
 
     // The label_values cardinality surface should additionally reflect each
     // tenant's own job value when it lists values.
     let path = "/api/v1/cardinality/label_values?label_names%5B%5D=job";
-    let (_, body) = get_with_tenant(&client, addr, path, ORG_A).await;
+    let TenantResponse { body, .. } = get_with_tenant(&client, addr, path, ORG_A).await;
     assert2::assert!(!body.contains(B_JOB));
-    let (_, body) = get_with_tenant(&client, addr, path, ORG_B).await;
+    let TenantResponse { body, .. } = get_with_tenant(&client, addr, path, ORG_B).await;
     assert2::assert!(!body.contains(A_JOB));
 }
 
@@ -484,42 +555,82 @@ async fn read_surfaces_reject_missing_tenant_header() {
     let addr = boot_isolated_api().await;
     let client = reqwest::Client::new();
 
-    for (method, path) in [
-        (reqwest::Method::GET, "/api/v1/query?query=up&time=20"),
-        (
-            reqwest::Method::GET,
-            "/api/v1/query_range?query=up&start=10&end=20&step=10",
-        ),
-        (
-            reqwest::Method::GET,
-            "/api/v1/series?match%5B%5D=up&start=10&end=20",
-        ),
-        (reqwest::Method::GET, "/api/v1/labels?start=10&end=20"),
-        (
-            reqwest::Method::GET,
-            "/api/v1/label/job/values?start=10&end=20",
-        ),
-        (
-            reqwest::Method::GET,
-            "/api/v1/query_exemplars?query=up&start=10&end=11",
-        ),
-        (reqwest::Method::GET, "/api/v1/cardinality/label_names"),
-        (reqwest::Method::GET, "/api/v1/cardinality/label_values"),
-        (
-            reqwest::Method::GET,
-            "/prometheus/api/v1/cardinality/active_series",
-        ),
-        (reqwest::Method::GET, "/prometheus/api/v1/metadata"),
-        (reqwest::Method::GET, "/prometheus/api/v1/rules"),
-        (reqwest::Method::GET, "/prometheus/api/v1/alerts"),
-        (reqwest::Method::POST, "/prometheus/api/v1/read"),
-        (reqwest::Method::GET, "/prometheus/config/v1/rules"),
-        (reqwest::Method::GET, "/prometheus/config/v1/rules/ns/group"),
-        (reqwest::Method::POST, "/prometheus/config/v1/rules/ns"),
-        (reqwest::Method::DELETE, "/prometheus/config/v1/rules/ns"),
+    struct MissingTenantRouteCase {
+        method: reqwest::Method,
+        path: &'static str,
+    }
+    for case in [
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/api/v1/query?query=up&time=20",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/api/v1/query_range?query=up&start=10&end=20&step=10",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/api/v1/series?match%5B%5D=up&start=10&end=20",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/api/v1/labels?start=10&end=20",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/api/v1/label/job/values?start=10&end=20",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/api/v1/query_exemplars?query=up&start=10&end=11",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/api/v1/cardinality/label_names",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/api/v1/cardinality/label_values",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/prometheus/api/v1/cardinality/active_series",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/prometheus/api/v1/metadata",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/prometheus/api/v1/rules",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/prometheus/api/v1/alerts",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::POST,
+            path: "/prometheus/api/v1/read",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/prometheus/config/v1/rules",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::GET,
+            path: "/prometheus/config/v1/rules/ns/group",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::POST,
+            path: "/prometheus/config/v1/rules/ns",
+        },
+        MissingTenantRouteCase {
+            method: reqwest::Method::DELETE,
+            path: "/prometheus/config/v1/rules/ns",
+        },
     ] {
         let response = client
-            .request(method.clone(), format!("http://{addr}{path}"))
+            .request(case.method.clone(), format!("http://{addr}{}", case.path))
             .send()
             .await
             .expect("send request");
@@ -531,12 +642,16 @@ async fn read_surfaces_reject_missing_tenant_header() {
         let body = response.text().await.expect("response text");
         assert2::check!(
             status == reqwest::StatusCode::UNAUTHORIZED,
-            "{method} {path}"
+            "{} {}",
+            case.method,
+            case.path
         );
         assert2::check!(
             content_type.as_deref() == Some(&b"text/plain; charset=utf-8"[..]),
-            "{method} {path}"
+            "{} {}",
+            case.method,
+            case.path
         );
-        assert2::check!(body == "no org id\n", "{method} {path}");
+        assert2::check!(body == "no org id\n", "{} {}", case.method, case.path);
     }
 }

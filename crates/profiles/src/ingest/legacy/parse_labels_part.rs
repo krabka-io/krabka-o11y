@@ -4,6 +4,11 @@ use prost::Message as _;
 
 use super::{JfrLabels, LabelsSnapshot, ProfilesError};
 
+struct ContextLabels {
+    context_id: i64,
+    labels: Vec<krabka_blockstore::LabelPair>,
+}
+
 pub(crate) fn parse_labels_part(raw: &[u8]) -> Result<JfrLabels, ProfilesError> {
     if raw.is_empty() {
         return Ok(JfrLabels::default());
@@ -17,7 +22,9 @@ pub(crate) fn parse_labels_part(raw: &[u8]) -> Result<JfrLabels, ProfilesError> 
         })?;
         let global = object
             .iter()
-            .map(|(key, value)| {
+            .map(|entry| {
+                let key = entry.0;
+                let value = entry.1;
                 let value = match value {
                     serde_json::Value::String(value) => value.clone(),
                     serde_json::Value::Number(value) => value.to_string(),
@@ -29,7 +36,7 @@ pub(crate) fn parse_labels_part(raw: &[u8]) -> Result<JfrLabels, ProfilesError> 
                         )));
                     }
                 };
-                Ok((key.clone(), value))
+                Ok(krabka_blockstore::LabelPair::new(key, value))
             })
             .collect::<Result<_, _>>()?;
         return Ok(JfrLabels {
@@ -43,20 +50,30 @@ pub(crate) fn parse_labels_part(raw: &[u8]) -> Result<JfrLabels, ProfilesError> 
     let contexts = snapshot
         .contexts
         .into_iter()
-        .map(|(context_id, context)| {
-            let labels = context
-                .labels
-                .into_iter()
-                .filter_map(|(key, value)| {
-                    Some((
-                        snapshot.strings.get(&key)?.clone(),
-                        snapshot.strings.get(&value)?.clone(),
-                    ))
-                })
-                .collect();
-            (context_id, labels)
+        .map(|context_entry| {
+            let context_id = context_entry.0;
+            let context = context_entry.1;
+            let mut labels = Vec::new();
+            for label_entry in context.labels {
+                let key = label_entry.0;
+                let value = label_entry.1;
+                let Some(name) = snapshot.strings.get(&key) else {
+                    continue;
+                };
+                let Some(value) = snapshot.strings.get(&value) else {
+                    continue;
+                };
+                labels.push(krabka_blockstore::LabelPair::new(
+                    name.clone(),
+                    value.clone(),
+                ));
+            }
+            ContextLabels { context_id, labels }
         })
-        .collect();
+        .fold(HashMap::default(), |mut contexts, entry| {
+            contexts.insert(entry.context_id, entry.labels);
+            contexts
+        });
     Ok(JfrLabels {
         global: Vec::new(),
         contexts,

@@ -1,14 +1,22 @@
 use super::{
     AlertmanagerSink, Arc, MetricStore, PrometheusApiState, RecordingRuleWalSink, RulerAlertState,
-    RulerGroupEvaluation, RulerGroupState, RulerShard, RulerStateSink, TenantId,
+    RulerEvaluationSchedule, RulerGroupEvaluation, RulerGroupState, RulerShard, RulerSinks,
+    RulerStateSink, TenantId,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
 };
+
+#[derive(Clone, Copy)]
+pub struct RulerEvaluationContext<'a> {
+    pub tenant: &'a TenantId,
+    pub shard: RulerShard,
+    pub eval_time_ms: i64,
+}
 
 #[tracing::instrument(
     level = "info",
     name = "metrics.ruler.evaluate_once",
     skip_all,
-    fields(tenant = %tenant, eval_time_ms),
+    fields(tenant = %context.tenant, eval_time_ms = context.eval_time_ms),
     err
 )]
 ///
@@ -16,12 +24,10 @@ use super::{
 /// Returns an error if the operation cannot be completed.
 pub async fn evaluate_ruler_once<S, W, A, R>(
     state: &Arc<PrometheusApiState<S>>,
-    sinks: (&W, &A, &R),
+    sinks: RulerSinks<'_, W, A, R>,
     alert_state: &mut RulerAlertState,
     group_state: &mut RulerGroupState,
-    tenant: &TenantId,
-    shard: RulerShard,
-    eval_time_ms: i64,
+    context: RulerEvaluationContext<'_>,
 ) -> Result<RulerGroupEvaluation, krabka_promql::PromqlError>
 where
     S: MetricStore,
@@ -29,17 +35,9 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    state.set_ruler_evaluation_time_ms(eval_time_ms);
-    let report = evaluate_ruler_once_deferred(
-        state,
-        sinks,
-        alert_state,
-        group_state,
-        tenant,
-        shard,
-        eval_time_ms,
-    )
-    .await?;
+    state.set_ruler_evaluation_time_ms(context.eval_time_ms);
+    let report =
+        evaluate_ruler_once_deferred(state, sinks, alert_state, group_state, context).await?;
     state.apply_ruler_evaluation_report(&report);
     Ok(report.evaluation)
 }
@@ -51,12 +49,10 @@ where
 /// Returns the evaluation or sink error without publishing the report.
 pub async fn evaluate_ruler_once_deferred<S, W, A, R>(
     state: &Arc<PrometheusApiState<S>>,
-    sinks: (&W, &A, &R),
+    sinks: RulerSinks<'_, W, A, R>,
     alert_state: &mut RulerAlertState,
     group_state: &mut RulerGroupState,
-    tenant: &TenantId,
-    shard: RulerShard,
-    eval_time_ms: i64,
+    context: RulerEvaluationContext<'_>,
 ) -> Result<krabka_promql::RulerEvaluationReport, krabka_promql::PromqlError>
 where
     S: MetricStore,
@@ -64,16 +60,15 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    let (wal_sink, alert_sink, state_sink) = sinks;
-    let rules = state.ruler_rule_set(tenant);
-    let engine = state.engine_for_tenant(tenant);
+    let rules = state.ruler_rule_set(context.tenant);
+    let engine = state.engine_for_tenant(context.tenant);
     let report = evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
         &engine,
-        (wal_sink, alert_sink, state_sink),
+        sinks,
         alert_state,
-        tenant,
+        context.tenant,
         &rules,
-        (group_state, shard, eval_time_ms),
+        RulerEvaluationSchedule::new(group_state, context.shard, context.eval_time_ms),
     )
     .await?;
     Ok(report)

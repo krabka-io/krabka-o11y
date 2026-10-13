@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct CounterPoint {
+    timestamp_ms: i64,
+    value: f64,
+}
+
 /// A counter that holds its value across a step has not reset. The anchored
 /// `increase` correction fires only on a strict decrease, so a flat pair must
 /// contribute nothing -- counting it as a reset adds the whole pre-step value
@@ -7,8 +13,23 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn anchored_increase_does_not_treat_a_flat_counter_step_as_a_reset() {
     let mut store = InMemoryMetricStore::new();
-    for (ts, value) in [(0, 5.0), (60_000, 5.0), (120_000, 7.0)] {
-        store.push_float("tenant-a", labels(&[("__name__", "ctr")]), ts, value);
+    for point in [
+        CounterPoint::builder().timestamp_ms(0).value(5.0).build(),
+        CounterPoint::builder()
+            .timestamp_ms(60_000)
+            .value(5.0)
+            .build(),
+        CounterPoint::builder()
+            .timestamp_ms(120_000)
+            .value(7.0)
+            .build(),
+    ] {
+        store.push_float(
+            "tenant-a",
+            labels(&[crate::test_support::TestLabelPair::new("__name__", "ctr")]),
+            point.timestamp_ms,
+            point.value,
+        );
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

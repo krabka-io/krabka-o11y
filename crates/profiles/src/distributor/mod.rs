@@ -2,7 +2,6 @@
 
 use std::{
     collections::{BTreeSet, HashMap},
-    future::Future,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
@@ -283,7 +282,7 @@ mod tests {
     fn series_record(name: &str) -> ProfileRecord {
         ProfileRecord {
             tenant: "tenant-a".to_string(),
-            labels: vec![("__name__".to_string(), name.to_string())],
+            labels: vec![krabka_blockstore::LabelPair::new("__name__", name)],
             profile_type: "cpu".to_string(),
             samples: vec![],
             symbols: crate::wal::WalSymbolSet {
@@ -362,7 +361,7 @@ mod tests {
     /// has no such case and must reject zero like any other unknown id.
     #[test]
     fn pprof_ids_resolve_through_the_reference_table() {
-        let refs = HashMap::from([(7_u64, 1_u32), (9, 2)]);
+        let refs = maplit::hashmap! { 7_u64 => 1_u32, 9 => 2 };
 
         check!(
             super::normalize_optional_pprof_id(0, &refs, "f").unwrap() == 0,
@@ -393,57 +392,66 @@ mod tests {
     /// back off, or stop sending this shape of request.
     #[test]
     fn every_limit_error_maps_to_the_code_the_client_should_act_on() {
+        struct ErrorCodeCase {
+            error: crate::limits::LimitError,
+            expected: Code,
+        }
+
         let cases = [
-            (
-                crate::limits::LimitError::IngestionRateExceeded {
+            ErrorCodeCase {
+                error: crate::limits::LimitError::IngestionRateExceeded {
                     rate: 1.0,
                     observed: 2.0,
                 },
-                Code::ResourceExhausted,
-            ),
-            (
-                crate::limits::LimitError::MaxSeries {
+                expected: Code::ResourceExhausted,
+            },
+            ErrorCodeCase {
+                error: crate::limits::LimitError::MaxSeries {
                     limit: 1,
                     observed: 2,
                 },
-                Code::ResourceExhausted,
-            ),
-            (
-                crate::limits::LimitError::SessionCardinalityExceeded { limit: 1 },
-                Code::ResourceExhausted,
-            ),
-            (
-                crate::limits::LimitError::LabelNameTooLong {
+                expected: Code::ResourceExhausted,
+            },
+            ErrorCodeCase {
+                error: crate::limits::LimitError::SessionCardinalityExceeded { limit: 1 },
+                expected: Code::ResourceExhausted,
+            },
+            ErrorCodeCase {
+                error: crate::limits::LimitError::LabelNameTooLong {
                     limit: 1,
                     observed: 2,
                 },
-                Code::InvalidArgument,
-            ),
-            (
-                crate::limits::LimitError::LabelValueTooLong {
+                expected: Code::InvalidArgument,
+            },
+            ErrorCodeCase {
+                error: crate::limits::LimitError::LabelValueTooLong {
                     limit: 1,
                     observed: 2,
                 },
-                Code::InvalidArgument,
-            ),
-            (
-                crate::limits::LimitError::TooManyLabels {
+                expected: Code::InvalidArgument,
+            },
+            ErrorCodeCase {
+                error: crate::limits::LimitError::TooManyLabels {
                     limit: 1,
                     observed: 2,
                 },
-                Code::InvalidArgument,
-            ),
-            (
-                crate::limits::LimitError::QueryLengthExceeded {
+                expected: Code::InvalidArgument,
+            },
+            ErrorCodeCase {
+                error: crate::limits::LimitError::QueryLengthExceeded {
                     limit_secs: 1,
                     observed_secs: 2,
                 },
-                Code::InvalidArgument,
-            ),
+                expected: Code::InvalidArgument,
+            },
         ];
 
-        for (err, expected) in cases {
-            check!(super::limit_connect_code(&err) == expected, "for {err}");
+        for case in cases {
+            check!(
+                super::limit_connect_code(&case.error) == case.expected,
+                "for {}",
+                case.error
+            );
         }
     }
 
@@ -619,7 +627,9 @@ mod tests {
                 OverridesProvider::new(Limits::default()),
             )
         });
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         // Two resource profiles, so the request becomes two WAL records and
         // the sink can take one of them.
         let mut request = otlp_export_request();
@@ -681,7 +691,7 @@ mod tests {
         check!(recs.iter().all(|rec| rec.tenant == "tenant-a"));
         check!(
             recs.iter()
-                .all(|rec| rec.labels.iter().any(|(name, _)| name == "service_name"))
+                .all(|rec| rec.labels.iter().any(|label| label.name == "service_name"))
         );
     }
 
@@ -739,7 +749,7 @@ mod tests {
         let sink = push_recorded(profile).await;
         let recs = sink.0.lock().unwrap();
         assert!(recs[0].samples[0].stacktrace_location_refs == vec![1]);
-        assert!(recs[0].symbols.locations[1].lines[0].0 == 1);
+        assert!(recs[0].symbols.locations[1].lines[0].function_id == 1);
     }
 
     #[tokio::test]
@@ -893,8 +903,8 @@ overrides:
             recs[index]
                 .labels
                 .iter()
-                .find(|(name, _)| name == "__session_id__")
-                .map(|(_, value)| value.clone())
+                .find(|pair| pair.name == "__session_id__")
+                .map(|pair| pair.value.clone())
                 .expect("the session id survives")
         };
         check!(session(0) == "0", "one bucket leaves only bucket zero");
@@ -918,10 +928,9 @@ overrides:
 
         let recs = sink.0.lock().unwrap();
         assert!(
-            recs[0]
-                .labels
-                .iter()
-                .any(|(name, value)| name == "__session_id__" && value == "deadbeefcafef00d")
+            recs[0].labels.iter().any(|label| {
+                label.name == "__session_id__" && label.value == "deadbeefcafef00d"
+            })
         );
     }
 
@@ -1088,7 +1097,7 @@ overrides:
 
     async fn serve_on_loopback(
         state: Arc<DistributorState>,
-    ) -> (SocketAddr, tokio::sync::oneshot::Sender<()>) {
+    ) -> crate::test_support::BoundTestServer {
         serve_on_loopback_with(async |addr, security, shutdown| {
             serve(addr, state, security, shutdown).await
         })
@@ -1178,7 +1187,9 @@ overrides:
     async fn otlp_http_profiles_path_appends_records() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let body = otlp_export_request().encode_to_vec();
 
         let response = reqwest::Client::new()
@@ -1192,8 +1203,8 @@ overrides:
 
         assert!(response.status() == StatusCode::OK, "{response:?}");
         let recs = the_one_tenant_a_record(&sink);
-        check!(recs[0].labels.iter().any(|(name, value)| {
-            name == "__profile_type__" && value == "samples:samples:count:samples:count"
+        check!(recs[0].labels.iter().any(|label| {
+            label.name == "__profile_type__" && label.value == "samples:samples:count:samples:count"
         }));
     }
 
@@ -1203,7 +1214,9 @@ overrides:
 
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let json = serde_json::to_vec(&otlp_export_request()).unwrap();
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(&json).unwrap();
@@ -1228,7 +1241,9 @@ overrides:
     async fn legacy_ingest_accepts_plain_folded_groups_body() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
 
         let response = reqwest::Client::new()
             .post(format!(
@@ -1243,23 +1258,20 @@ overrides:
 
         assert!(response.status() == StatusCode::OK, "{response:?}");
         let recs = the_one_tenant_a_record(&sink);
-        for (name, value) in [
+        for expected_label in [
             // A folded upload is Pyroscope's default CPU profile, whatever the
             // `?units=` says, and its counts are stored as the time they stand
             // for: three counts at the default 100 Hz are 30ms.
-            (
+            krabka_blockstore::LabelPair::new(
                 "__profile_type__",
                 "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
             ),
-            ("service_name", "api"),
-            ("pyroscope_spy", "unknown"),
+            krabka_blockstore::LabelPair::new("service_name", "api"),
+            krabka_blockstore::LabelPair::new("pyroscope_spy", "unknown"),
         ] {
-            check!(
-                recs[0]
-                    .labels
-                    .iter()
-                    .any(|(label_name, label_value)| label_name == name && label_value == value)
-            );
+            check!(recs[0].labels.iter().any(|label| {
+                label.name == expected_label.name && label.value == expected_label.value
+            }));
         }
         assert!(recs[0].samples.len() == 1);
         check!(recs[0].samples[0].value == 30_000_000);
@@ -1270,7 +1282,9 @@ overrides:
     async fn pyroscope_ingest_alias_uses_the_legacy_handler() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
 
         let response = reqwest::Client::new()
             .post(format!(
@@ -1507,9 +1521,14 @@ overrides:
                 // Deliberately mixed: functions+line numbers symbolized, but no
                 // filenames and no inline frames. A correct mapping must NOT
                 // collapse these onto `has_functions`.
-                symbolization: krabka_pprof::proto::MappingSymbolization::from_parts((
-                    true, false, true, false,
-                )),
+                symbolization: krabka_pprof::proto::MappingSymbolization::from_parts(
+                    krabka_pprof::proto::MappingSymbolizationParts {
+                        functions: true,
+                        filenames: false,
+                        line_numbers: true,
+                        inline_frames: false,
+                    },
+                ),
             }],
             string_table: vec![
                 String::new(),
@@ -1568,8 +1587,9 @@ mod wal_sink;
 use client_facing_message::client_facing_message;
 use connect_error::connect_error;
 use connect_ingest::{ConnectIngest, connect_ingest};
-pub(crate) use distributor_state::CumulativeProfileCache;
 pub use distributor_state::DistributorState;
+#[doc(hidden)]
+pub use distributor_state::{CumulativeProfileCache, CumulativeProfileKey};
 use enforce_and_reserve_max_series::enforce_and_reserve_max_series;
 use enforce_ingestion_rate::enforce_ingestion_rate;
 use evict_one_tenant::evict_one_tenant;

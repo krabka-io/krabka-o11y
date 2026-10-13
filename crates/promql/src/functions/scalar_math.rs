@@ -85,10 +85,8 @@ mod tests {
         rows: usize,
     ) -> DfResult<ColumnarValue> {
         let udf = ScalarMathUdf::new(op);
-        let arg_fields = call_args
-            .iter()
-            .enumerate()
-            .map(|(index, _)| Arc::new(Field::new(format!("arg_{index}"), DataType::Float64, true)))
+        let arg_fields = (0..call_args.len())
+            .map(|index| Arc::new(Field::new(format!("arg_{index}"), DataType::Float64, true)))
             .collect();
         udf.invoke_with_args(ScalarFunctionArgs {
             args: call_args,
@@ -103,71 +101,105 @@ mod tests {
         left.to_bits() == right.to_bits() || (left.is_nan() && right.is_nan())
     }
 
-    #[test]
-    fn unary_matches_rust_f64() {
-        // `bits_eq` treats any-NaN == any-NaN, so NaN expectations
-        // (sqrt/ln of a negative, preserved rather than dropped) sit in the
-        // same table as the exact cases; ln(0) -> -inf.
-        for (op, input, want) in [
-            (ScalarMathOp::Abs, -3.0, 3.0),
-            (ScalarMathOp::Sqrt, 4.0, 2.0),
-            (ScalarMathOp::Sqrt, -1.0, f64::NAN),
-            (ScalarMathOp::Ln, 0.0, f64::NEG_INFINITY),
-            (ScalarMathOp::Ln, -1.0, f64::NAN),
-            (ScalarMathOp::Log2, 8.0, 3.0),
-        ] {
-            let got = run(op, &[], &[input])[0];
-            assert2::assert!(bits_eq(got, want));
-        }
+    #[yare::parameterized(
+        abs = { ScalarMathOp::Abs, -3.0, 3.0 },
+        sqrt = { ScalarMathOp::Sqrt, 4.0, 2.0 },
+        sqrt_negative = { ScalarMathOp::Sqrt, -1.0, f64::NAN },
+        ln_zero = { ScalarMathOp::Ln, 0.0, f64::NEG_INFINITY },
+        ln_negative = { ScalarMathOp::Ln, -1.0, f64::NAN },
+        log2 = { ScalarMathOp::Log2, 8.0, 3.0 },
+    )]
+    fn unary_matches_rust_f64(op: ScalarMathOp, input: f64, want: f64) {
+        let got = run(op, &[], &[input])[0];
+        assert2::assert!(bits_eq(got, want));
     }
 
-    #[test]
-    fn sgn_handles_nan_and_signed_zero() {
-        // -0.0 is neither > 0 nor < 0, so sgn(-0.0) = 0.0 (positive zero,
-        // pinned by the bit comparison); sgn(NaN) stays NaN.
-        for (input, want) in [
-            (5.0, 1.0),
-            (-5.0, -1.0),
-            (0.0, 0.0),
-            (-0.0, 0.0),
-            (f64::NAN, f64::NAN),
-        ] {
-            let got = run(ScalarMathOp::Sgn, &[], &[input])[0];
-            assert2::assert!(bits_eq(got, want));
-        }
+    #[yare::parameterized(
+        positive = { 5.0, 1.0 },
+        negative = { -5.0, -1.0 },
+        zero = { 0.0, 0.0 },
+        negative_zero = { -0.0, 0.0 },
+        nan = { f64::NAN, f64::NAN },
+    )]
+    fn sgn_handles_nan_and_signed_zero(input: f64, want: f64) {
+        let got = run(ScalarMathOp::Sgn, &[], &[input])[0];
+        assert2::assert!(bits_eq(got, want));
     }
 
-    #[test]
-    fn round_matches_interpreter_half_up() {
-        // .5 rounds up (toward +inf), matching `round_to_nearest`.
-        for (to_nearest, value, want) in [
-            (1.0, 2.5, 3.0),
-            (1.0, -2.5, -2.0),
-            (5.0, 12.0, 10.0),
-            (5.0, 13.0, 15.0),
-        ] {
-            let got = run(ScalarMathOp::Round, &[to_nearest], &[value])[0];
-            assert2::assert!(bits_eq(got, want));
-        }
+    #[yare::parameterized(
+        positive_half = { 1.0, 2.5, 3.0 },
+        negative_half = { 1.0, -2.5, -2.0 },
+        nearest_ten_low = { 5.0, 12.0, 10.0 },
+        nearest_ten_high = { 5.0, 13.0, 15.0 },
+    )]
+    fn round_matches_interpreter_half_up(to_nearest: f64, value: f64, want: f64) {
+        let got = run(ScalarMathOp::Round, &[to_nearest], &[value])[0];
+        assert2::assert!(bits_eq(got, want));
     }
 
     #[test]
     fn clamp_family_bounds_values() {
         // Signed zeros pass through unclamped (pinned by the bit comparison);
         // a NaN bound yields NaN.
-        let cases: &[(ScalarMathOp, &[f64], f64, f64)] = &[
-            (ScalarMathOp::ClampMin, &[0.0], -3.0, 0.0),
-            (ScalarMathOp::ClampMin, &[0.0], 3.0, 3.0),
-            (ScalarMathOp::ClampMax, &[10.0], 42.0, 10.0),
-            (ScalarMathOp::Clamp, &[0.0, 100.0], 150.0, 100.0),
-            (ScalarMathOp::Clamp, &[0.0, 100.0], -5.0, 0.0),
-            (ScalarMathOp::ClampMin, &[0.0], -0.0, -0.0),
-            (ScalarMathOp::ClampMax, &[-0.0], 0.0, 0.0),
-            (ScalarMathOp::ClampMin, &[f64::NAN], 3.0, f64::NAN),
+        struct ClampCase {
+            op: ScalarMathOp,
+            bounds: &'static [f64],
+            value: f64,
+            expected: f64,
+        }
+        let cases = [
+            ClampCase {
+                op: ScalarMathOp::ClampMin,
+                bounds: &[0.0],
+                value: -3.0,
+                expected: 0.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMin,
+                bounds: &[0.0],
+                value: 3.0,
+                expected: 3.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMax,
+                bounds: &[10.0],
+                value: 42.0,
+                expected: 10.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::Clamp,
+                bounds: &[0.0, 100.0],
+                value: 150.0,
+                expected: 100.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::Clamp,
+                bounds: &[0.0, 100.0],
+                value: -5.0,
+                expected: 0.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMin,
+                bounds: &[0.0],
+                value: -0.0,
+                expected: -0.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMax,
+                bounds: &[-0.0],
+                value: 0.0,
+                expected: 0.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMin,
+                bounds: &[f64::NAN],
+                value: 3.0,
+                expected: f64::NAN,
+            },
         ];
-        for &(op, bounds, value, want) in cases {
-            let got = run(op, bounds, &[value])[0];
-            assert2::assert!(bits_eq(got, want));
+        for case in cases {
+            let got = run(case.op, case.bounds, &[case.value])[0];
+            assert2::assert!(bits_eq(got, case.expected));
         }
     }
 

@@ -1,28 +1,37 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct InstanceSample {
+    instance: &'static str,
+    value: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn vector_vector_group_right_carries_labels_from_one_side() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "target_limit"),
-            ("job", "api"),
-            ("region", "east"),
+            crate::test_support::TestLabelPair::new("__name__", "target_limit"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("region", "east"),
         ]),
         10_000,
         100.0,
     );
-    for (instance, value) in [("a", 10.0), ("b", 25.0)] {
+    for sample in [
+        InstanceSample::builder().instance("a").value(10.0).build(),
+        InstanceSample::builder().instance("b").value(25.0).build(),
+    ] {
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "http_requests_total"),
-                ("job", "api"),
-                ("instance", instance),
+                crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", sample.instance),
             ]),
             10_000,
-            value,
+            sample.value,
         );
     }
 

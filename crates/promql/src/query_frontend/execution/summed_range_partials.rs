@@ -12,6 +12,11 @@ pub(crate) struct FrontendRangeRun<'a, E: ?Sized, C: ?Sized> {
     pub(crate) request: &'a FrontendRangeRequest,
 }
 
+pub(crate) struct SummedRangePartials<const N: usize> {
+    pub(crate) results: [QueryResult; N],
+    pub(crate) annotations: Annotations,
+}
+
 impl<E, C> FrontendRangeRun<'_, E, C>
 where
     E: RangeQueryExecutor,
@@ -25,7 +30,7 @@ where
     pub(crate) async fn summed_partials<const N: usize>(
         &self,
         queries: [&str; N],
-    ) -> Result<([QueryResult; N], Annotations), PromqlError> {
+    ) -> Result<SummedRangePartials<N>, PromqlError> {
         let request = self.request;
         let plans = queries
             .into_iter()
@@ -54,7 +59,9 @@ where
         }
         let mut annotations: Option<Annotations> = None;
         let mut summed = Vec::with_capacity(N);
-        for (results, partial_annotations) in executed {
+        for partial in executed {
+            let results = partial.results;
+            let partial_annotations = partial.annotations;
             match &mut annotations {
                 Some(annotations) => annotations.extend(&partial_annotations),
                 None => annotations = Some(partial_annotations),
@@ -66,6 +73,9 @@ where
         }
         let summed = <[QueryResult; N]>::try_from(summed)
             .unwrap_or_else(|_| unreachable!("one summed result per query"));
-        Ok((summed, annotations.unwrap_or_default()))
+        Ok(SummedRangePartials {
+            results: summed,
+            annotations: annotations.unwrap_or_default(),
+        })
     }
 }

@@ -35,6 +35,25 @@ use crate::{
     readiness::tempo_readiness_routes,
 };
 
+pub(crate) fn status_text_response(status: StatusCode, body: impl Into<String>) -> Response {
+    Response::builder()
+        .status(status)
+        .body(Body::from(body.into()))
+        .expect("the HTTP response builds")
+}
+
+pub(crate) fn status_bytes_response(
+    status: StatusCode,
+    content_type: &'static str,
+    body: Vec<u8>,
+) -> Response {
+    Response::builder()
+        .status(status)
+        .header(axum::http::header::CONTENT_TYPE, content_type)
+        .body(Body::from(body))
+        .expect("the HTTP response builds")
+}
+
 // --- param helpers (mirror the querier's contract) --------------------------
 
 #[cfg(test)]
@@ -146,63 +165,39 @@ mod tests {
     #[test]
     fn a_logfmt_value_reports_what_it_consumed() {
         let parse = crate::querier::http::parse_logfmt_value;
+        let matches = |input: &str, value: &str, consumed: usize| {
+            parse(input).is_some_and(|parsed| parsed.value == value && parsed.consumed == consumed)
+        };
 
         // Bare values run to the first whitespace.
-        check!(parse("abc") == Some(("abc".to_string(), 3)));
-        check!(
-            parse("abc def") == Some(("abc".to_string(), 3)),
-            "stops at the space"
-        );
-        check!(
-            parse("") == Some((String::new(), 0)),
-            "an empty value consumes nothing"
-        );
+        check!(matches("abc", "abc", 3));
+        check!(matches("abc def", "abc", 3), "stops at the space");
+        check!(matches("", "", 0), "an empty value consumes nothing");
 
         // Quoted values consume their quotes: two more than the text.
-        check!(parse(r#""abc""#) == Some(("abc".to_string(), 5)));
+        check!(matches(r#""abc""#, "abc", 5));
+        check!(matches(r#""abc" rest"#, "abc", 5), "and stop at the close");
+        check!(matches(r#""a b""#, "a b", 5), "whitespace inside quotes");
         check!(
-            parse(r#""abc" rest"#) == Some(("abc".to_string(), 5)),
-            "and stop at the close"
-        );
-        check!(
-            parse(r#""a b""#) == Some(("a b".to_string(), 5)),
-            "whitespace inside quotes"
-        );
-        check!(
-            parse(r#""""#) == Some((String::new(), 2)),
+            matches(r#""""#, "", 2),
             "an empty quoted value is two bytes"
         );
 
         // Escapes: the three named ones become control characters, and anything
         // else after a backslash is itself.
+        check!(matches(r#""a\nb""#, "a\nb", 6), "backslash-n is a newline");
+        check!(matches(r#""a\tb""#, "a\tb", 6), "backslash-t is a tab");
+        check!(matches(r#""a\rb""#, "a\rb", 6), "backslash-r is a return");
+        check!(matches(r#""a\"b""#, r#"a"b"#, 6), "an escaped quote");
+        check!(matches(r#""a\\b""#, r"a\b", 6), "an escaped backslash");
         check!(
-            parse(r#""a\nb""#) == Some(("a\nb".to_string(), 6)),
-            "backslash-n is a newline"
-        );
-        check!(
-            parse(r#""a\tb""#) == Some(("a\tb".to_string(), 6)),
-            "backslash-t is a tab"
-        );
-        check!(
-            parse(r#""a\rb""#) == Some(("a\rb".to_string(), 6)),
-            "backslash-r is a return"
-        );
-        check!(
-            parse(r#""a\"b""#) == Some((r#"a"b"#.to_string(), 6)),
-            "an escaped quote"
-        );
-        check!(
-            parse(r#""a\\b""#) == Some((r"a\b".to_string(), 6)),
-            "an escaped backslash"
-        );
-        check!(
-            parse(r#""a\qb""#) == Some(("aqb".to_string(), 6)),
+            matches(r#""a\qb""#, "aqb", 6),
             "an unknown escape is itself"
         );
 
         // An unterminated quote is not a value at all.
-        check!(parse(r#""abc"#) == None);
-        check!(parse(r#"""#) == None);
+        check!(parse(r#""abc"#).is_none());
+        check!(parse(r#"""#).is_none());
     }
 
     /// Go-style durations concatenate a number and a unit, and several pairs
@@ -275,23 +270,18 @@ mod tests {
         check!(parse("1e9").is_none(), "no exponent form");
     }
 
-    #[test]
-    fn step_accepts_seconds_and_go_durations() {
-        for (input, want) in [
-            // Bare epoch-seconds (what the frontend already accepted).
-            ("30", Some(30_000_000_000)),
-            // Go-duration forms Grafana's Tempo datasource actually sends.
-            ("30s", Some(30_000_000_000)),
-            ("5m", Some(300_000_000_000)),
-            ("1h", Some(3_600_000_000_000)),
-            ("100ms", Some(100_000_000)),
-            ("1m30s", Some(90_000_000_000)),
-            // Garbage is still rejected.
-            ("nonsense", None),
-            ("30q", None),
-        ] {
-            check!(parse_step_to_ns(input) == want);
-        }
+    #[yare::parameterized(
+        bare_seconds = { "30", Some(30_000_000_000) },
+        seconds = { "30s", Some(30_000_000_000) },
+        minutes = { "5m", Some(300_000_000_000) },
+        hours = { "1h", Some(3_600_000_000_000) },
+        milliseconds = { "100ms", Some(100_000_000) },
+        compound = { "1m30s", Some(90_000_000_000) },
+        malformed_number = { "nonsense", None },
+        malformed_unit = { "30q", None },
+    )]
+    fn step_accepts_seconds_and_go_durations(input: &str, expected: Option<i64>) {
+        check!(parse_step_to_ns(input) == expected);
     }
 
     #[test]
@@ -343,7 +333,7 @@ mod with_warnings;
 
 use backend_error_response::backend_error_response;
 use bounded_count::bounded_count;
-use buildinfo::buildinfo;
+pub(crate) use buildinfo::buildinfo;
 use echo::echo;
 use endpoint_variant::{
     ApiVersion, InstantMetrics, MetricsQueryKind, RangeMetrics, RouteVariant, SearchDelivery,
@@ -359,13 +349,13 @@ use parse_scope::parse_scope;
 use parse_step_to_ns::parse_step_to_ns;
 use required_seconds::required_seconds;
 use required_step::required_step;
-use required_time_bounds::required_time_bounds;
+use required_time_bounds::{RequiredTimeBounds, required_time_bounds};
 pub use router_with_backend::router_with_backend;
 use scope_name::scope_name;
 use scope_param::scope_param;
 use search::search;
 use search_query::search_query;
-use search_request::search_request;
+use search_request::{SearchRequest, search_request};
 use search_tag_values::search_tag_values;
 use search_tags::search_tags;
 use tags_to_traceql::tags_to_traceql;
@@ -374,6 +364,6 @@ use trace_v1_response::trace_v1_response;
 use with_warnings::with_warnings;
 
 use crate::querier::http::{
-    TenantRequest, metrics_request, optional_time_bounds, parse_go_duration_ns, parse_logfmt_tags,
-    parse_seconds_to_ns, query_param, request_tenant, tenant_and_bounds,
+    TenantRequest, TenantTimeBounds, metrics_request, optional_time_bounds, parse_go_duration_ns,
+    parse_logfmt_tags, parse_seconds_to_ns, query_param, request_tenant, tenant_and_bounds,
 };

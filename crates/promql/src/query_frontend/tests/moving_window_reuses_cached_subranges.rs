@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Debug, Eq, PartialEq)]
+struct RangeBoundsCase {
+    start_ms: i64,
+    end_ms: i64,
+}
+
 #[tokio::test]
 pub(crate) async fn moving_window_reuses_cached_subranges() {
     let opts = QueryFrontendOptions {
@@ -68,7 +74,22 @@ pub(crate) async fn moving_window_reuses_cached_subranges() {
     assert2::assert!(second_fresh == 2);
     let second_starts = all_calls[first_fresh..]
         .iter()
-        .map(|query| (query.start_ms, query.end_ms))
+        .map(|query| RangeBoundsCase {
+            start_ms: query.start_ms,
+            end_ms: query.end_ms,
+        })
         .collect::<Vec<_>>();
-    assert2::assert!(second_starts == vec![(60_000, 60_000), (360_000, 420_000)]);
+    assert2::assert!(
+        second_starts
+            == vec![
+                RangeBoundsCase {
+                    start_ms: 60_000,
+                    end_ms: 60_000,
+                },
+                RangeBoundsCase {
+                    start_ms: 360_000,
+                    end_ms: 420_000,
+                },
+            ]
+    );
 }

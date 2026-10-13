@@ -60,9 +60,9 @@ impl StorageAuditOptions {
     /// state, with no tenant, is always in scope.
     #[must_use]
     pub fn covers_tenant(&self, tenant: Option<&str>) -> bool {
-        match (&self.tenant, tenant) {
-            (Some(wanted), Some(tenant)) => wanted == tenant,
-            _ => true,
+        match &self.tenant {
+            Some(wanted) => tenant.is_none_or(|tenant| wanted == tenant),
+            None => true,
         }
     }
 }

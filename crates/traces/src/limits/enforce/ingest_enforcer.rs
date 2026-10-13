@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeasuredAttribute {
+    pub key: String,
+    pub value_bytes: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct IngestEnforcer {
     pub(crate) buckets: DashMap<String, Arc<RateBucket>>,
@@ -93,19 +99,22 @@ impl IngestEnforcer {
 
     /// Enforce the per-attribute byte cap.
     ///
-    /// Each entry is `(key, value_bytes)`, where `value_bytes` is the value's
+    /// Each entry carries a key and `value_bytes`, which is the value's
     /// TRUE encoded byte length. Callers must therefore measure `Bytes`, `Int`
     /// and `Double` values, and must not convert them to a string first.
     ///
     /// # Errors
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
-    pub fn check_attributes(limits: &Limits, attrs: &[(String, u64)]) -> Result<(), LimitError> {
+    pub fn check_attributes(
+        limits: &Limits,
+        attrs: &[MeasuredAttribute],
+    ) -> Result<(), LimitError> {
         let limit = limits.max_attribute.bytes_u64();
         if limit == 0 {
             return Ok(());
         }
-        for (key, value_bytes) in attrs {
-            let observed = (key.len() as u64).max(*value_bytes);
+        for attr in attrs {
+            let observed = (attr.key.len() as u64).max(attr.value_bytes);
             if observed > limit {
                 return Err(LimitError::AttributeTooLong { limit, observed });
             }

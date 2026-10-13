@@ -21,17 +21,26 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
         ]);
         let kept =
             super::super::prelude::apply_metric_binary_arithmetic_to_series(&mut left, &right, op);
-        (kept, range_pairs(&left))
+        super::super::series_samples::BinaryOperationResult {
+            kept,
+            samples: range_pairs(&left),
+        }
     };
 
     check!(
         apply(MetricScalarArithmeticOp::Subtract)
-            == (true, vec![(1, "8".to_string()), (6, "6".to_string())]),
+            == super::super::series_samples::BinaryOperationResult {
+                kept: true,
+                samples: vec![formatted_sample(1, "8"), formatted_sample(6, "6")],
+            },
         "10-2 and 7-1, and the unmatched pair dropped"
     );
     check!(
         apply(MetricScalarArithmeticOp::Divide)
-            == (true, vec![(1, "5".to_string()), (6, "7".to_string())])
+            == super::super::series_samples::BinaryOperationResult {
+                kept: true,
+                samples: vec![formatted_sample(1, "5"), formatted_sample(6, "7")],
+            }
     );
 
     // Everything dropped reports false so the caller can discard the

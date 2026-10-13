@@ -11,7 +11,7 @@ pub(crate) struct SpanFixture<'a> {
     pub(crate) parent: Option<u8>,
     pub(crate) name: &'a str,
     pub(crate) duration_nanos: i64,
-    pub(crate) attrs: Vec<(&'a str, AttrValue)>,
+    pub(crate) attrs: Vec<Attribute>,
 }
 
 impl Default for SpanFixture<'_> {
@@ -42,11 +42,7 @@ impl SpanFixture<'_> {
             status_message: String::new(),
             instrumentation_name: String::new(),
             instrumentation_version: String::new(),
-            attrs: self
-                .attrs
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
+            attrs: self.attrs,
             events: Vec::new(),
             links: Vec::new(),
         }

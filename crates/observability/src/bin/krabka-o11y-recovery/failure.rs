@@ -8,21 +8,20 @@ use super::{Path, RecoveryError, write_report};
 /// names one, as JSON with the same `kind` tags that a cut uses.
 pub(crate) fn failure(error: &RecoveryError, report: Option<&Path>) -> String {
     let message = error.to_string();
-    if let (
-        RecoveryError::BrokerMismatch {
-            operation,
-            findings,
-        },
-        Some(path),
-    ) = (error, report)
+    if let RecoveryError::BrokerMismatch {
+        operation,
+        findings,
+    } = error
     {
-        let failure = json!({
-            "error": message,
-            "operation": operation,
-            "findings": findings,
-        });
-        if let Err(write_error) = write_report(&failure, path) {
-            return format!("{message}; the failure report was not written: {write_error}");
+        if let Some(path) = report {
+            let failure = json!({
+                "error": message,
+                "operation": operation,
+                "findings": findings,
+            });
+            if let Err(write_error) = write_report(&failure, path) {
+                return format!("{message}; the failure report was not written: {write_error}");
+            }
         }
     }
     message

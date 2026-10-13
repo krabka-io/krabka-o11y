@@ -47,3 +47,4 @@ assert2 = { workspace = true }
 mutants = { workspace = true }
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+yare.workspace = true

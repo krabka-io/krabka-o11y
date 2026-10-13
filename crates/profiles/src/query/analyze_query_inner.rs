@@ -1,8 +1,7 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, authorize_tenant, connect_error, merge_profile_type_selector,
-    parse_label_selector, parse_render_query, pb, tenant_connect_error,
-    tenant_denied_connect_error, tenant_from_headers,
+    ProfileStore, QuerierState, connect_error, merge_profile_type_selector, parse_label_selector,
+    parse_render_query, parse_render_query::ParsedRenderQuery, pb,
 };
 
 pub(crate) async fn analyze_query_inner<S>(
@@ -14,9 +13,7 @@ pub(crate) async fn analyze_query_inner<S>(
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
     // The pinned v2 query frontend exposes this diagnostic as an empty stub.
     if state.query_architecture == super::PyroscopeQueryArchitecture::V2 {
         return Ok(ConnectResponse::new(
@@ -34,17 +31,32 @@ where
     state
         .validate_query_range(&tenant, req.start, req.end)
         .map_err(connect_error)?;
-    let (profile_type, selector) =
-        if !state.query_analysis_series_enabled || req.query.trim().is_empty() {
-            (String::new(), "{}".to_string())
-        } else if req.query.trim().starts_with('{') {
-            (String::new(), req.query.clone())
-        } else {
-            let (profile_type, selector) = parse_render_query(&req.query).map_err(connect_error)?;
-            let selector =
-                merge_profile_type_selector(&selector, &profile_type).map_err(connect_error)?;
-            (profile_type, selector)
-        };
+    let parsed = if !state.query_analysis_series_enabled || req.query.trim().is_empty() {
+        ParsedRenderQuery {
+            profile_type: String::new(),
+            selector: "{}".to_string(),
+        }
+    } else if req.query.trim().starts_with('{') {
+        ParsedRenderQuery {
+            profile_type: String::new(),
+            selector: req.query.clone(),
+        }
+    } else {
+        let ParsedRenderQuery {
+            profile_type,
+            selector,
+        } = parse_render_query(&req.query).map_err(connect_error)?;
+        let selector =
+            merge_profile_type_selector(&selector, &profile_type).map_err(connect_error)?;
+        ParsedRenderQuery {
+            profile_type,
+            selector,
+        }
+    };
+    let ParsedRenderQuery {
+        profile_type,
+        selector,
+    } = parsed;
     let matchers = parse_label_selector(&selector).map_err(connect_error)?;
     let query_stats = state
         .store

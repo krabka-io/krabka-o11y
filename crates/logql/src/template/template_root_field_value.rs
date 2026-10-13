@@ -1,9 +1,11 @@
 use super::{Labels, TemplateRuntimeValue, template_variable_path_value};
 
 pub(crate) fn template_root_field_value(fields: &Labels, path: &[String]) -> TemplateRuntimeValue {
-    let Some((first, rest)) = path.split_first() else {
+    let Some(first_and_rest) = path.split_first() else {
         return TemplateRuntimeValue::Labels(fields.clone());
     };
+    let first = first_and_rest.0;
+    let rest = first_and_rest.1;
 
     let Some(value) = fields.get(first) else {
         return TemplateRuntimeValue::String(String::new());

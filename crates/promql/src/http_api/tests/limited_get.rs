@@ -17,8 +17,11 @@ pub(crate) async fn limited_get(
         PrometheusApiState::new(Arc::new(store), EngineOpts::default())
             .with_query_limits(OverridesProvider::new(limits)),
     );
-    let (status, body) = annotated_query_body(state, uri).await;
-    JsonReply { status, body }
+    let response = annotated_query_body(state, uri).await;
+    JsonReply {
+        status: response.status,
+        body: response.body,
+    }
 }
 
 /// Checks a `422` Prometheus `execution` error whose message `message_matches`

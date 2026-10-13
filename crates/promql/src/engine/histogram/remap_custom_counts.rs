@@ -7,7 +7,9 @@ pub(crate) fn remap_custom_counts(
     target_values: &[f64],
 ) -> BTreeMap<i32, f64> {
     let mut out = BTreeMap::new();
-    for (index, count) in spanned_histogram_counts(spans, counts) {
+    for entry in spanned_histogram_counts(spans, counts) {
+        let index = entry.0;
+        let count = entry.1;
         let upper = custom_histogram_bound(index, source_values);
         let target_index = target_values
             .iter()

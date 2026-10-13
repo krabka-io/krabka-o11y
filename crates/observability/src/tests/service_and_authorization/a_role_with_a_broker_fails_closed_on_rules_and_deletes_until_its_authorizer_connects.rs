@@ -1,5 +1,11 @@
 use super::*;
 
+struct RoleRequestCase {
+    target: Role,
+    method: &'static str,
+    uri: &'static str,
+}
+
 /// The production path installs a broker-backed authorizer that fails closed
 /// until it connects. The ruler routes and the delete-request routes must get
 /// that authorizer too, and not the allow-all one an embedded router gets. A
@@ -19,15 +25,27 @@ pub(crate) async fn a_role_with_a_broker_fails_closed_on_rules_and_deletes_until
     };
     let unavailable = "query authorization check unavailable for tenant `tenant-a`: broker-backed query authorization is not connected";
 
-    for (target, method, uri) in [
-        (Role::Querier, "GET", "/loki/api/v1/rules"),
-        (Role::Querier, "POST", "/loki/api/v1/rules/default"),
-        (
-            Role::BlockBuilder,
-            "POST",
-            "/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D&start=1",
-        ),
-        (Role::BlockBuilder, "GET", "/loki/api/v1/delete"),
+    for case in [
+        RoleRequestCase {
+            target: Role::Querier,
+            method: "GET",
+            uri: "/loki/api/v1/rules",
+        },
+        RoleRequestCase {
+            target: Role::Querier,
+            method: "POST",
+            uri: "/loki/api/v1/rules/default",
+        },
+        RoleRequestCase {
+            target: Role::BlockBuilder,
+            method: "POST",
+            uri: "/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D&start=1",
+        },
+        RoleRequestCase {
+            target: Role::BlockBuilder,
+            method: "GET",
+            uri: "/loki/api/v1/delete",
+        },
     ] {
         let data_root = tempfile::tempdir().expect("a temp dir");
         write_log_index_manifest(
@@ -37,7 +55,7 @@ pub(crate) async fn a_role_with_a_broker_fails_closed_on_rules_and_deletes_until
         )
         .expect("an empty manifest");
         let config = ServiceConfig {
-            target,
+            target: case.target,
             data_root: data_root.path().to_path_buf(),
             index_prefix: Some("observability/logs".to_string()),
             ..ServiceConfig::default()
@@ -45,17 +63,19 @@ pub(crate) async fn a_role_with_a_broker_fails_closed_on_rules_and_deletes_until
         let token = CancellationToken::new();
         let dependencies =
             ServiceDependencies::default().with_deferred_query_authorizer_connect(connect.clone());
-        let (router, tasks) =
+        let service_router =
             build_service_router_with_shutdown(&config, dependencies, None, token.clone())
                 .await
                 .expect("the role builds");
+        let router = service_router.router;
+        let tasks = service_router.background_tasks;
 
         let response = router
             .clone()
             .oneshot(
                 axum::http::Request::builder()
-                    .method(method)
-                    .uri(uri)
+                    .method(case.method)
+                    .uri(case.uri)
                     .header("X-Scope-OrgID", "tenant-a")
                     .body(axum::body::Body::from("name: g\nrules: []\n"))
                     .expect("a request"),
@@ -64,7 +84,9 @@ pub(crate) async fn a_role_with_a_broker_fails_closed_on_rules_and_deletes_until
             .expect("a response");
         check!(
             response.status() == StatusCode::INTERNAL_SERVER_ERROR,
-            "{method} {uri}"
+            "{} {}",
+            case.method,
+            case.uri
         );
         let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
             .await
@@ -77,7 +99,9 @@ pub(crate) async fn a_role_with_a_broker_fails_closed_on_rules_and_deletes_until
                     "error": unavailable,
                     "data": null,
                 })),
-            "{method} {uri}"
+            "{} {}",
+            case.method,
+            case.uri
         );
 
         let ready = router
@@ -91,16 +115,18 @@ pub(crate) async fn a_role_with_a_broker_fails_closed_on_rules_and_deletes_until
             .expect("a response");
         check!(
             ready.status() == StatusCode::SERVICE_UNAVAILABLE,
-            "{target:?}"
+            "{:?}",
+            case.target
         );
         check!(
-            tasks.iter().any(|(name, _)| *name == "query authorization"),
-            "{target:?}"
+            tasks.iter().any(|task| task.name == "query authorization"),
+            "{:?}",
+            case.target
         );
 
         token.cancel();
-        for (_, task) in tasks {
-            check!(task.await.is_ok());
+        for task in tasks {
+            check!(task.handle.await.is_ok());
         }
     }
 }

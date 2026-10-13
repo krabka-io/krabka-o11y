@@ -32,12 +32,15 @@ pub(crate) fn apply_histogram_quantile(
                 native_histogram_quantile(quantile, histogram, metric)
             },
             classic: |metric: &str, buckets: &mut Vec<ClassicBucket>| {
-                let (quantile_value, forced, repairs) =
-                    classic_histogram_quantile(quantile, buckets);
-                if forced {
-                    emit_histogram_quantile_forced_monotonicity_info(metric, time_ms, repairs);
+                let result = classic_histogram_quantile(quantile, buckets);
+                if result.forced {
+                    emit_histogram_quantile_forced_monotonicity_info(
+                        metric,
+                        time_ms,
+                        result.repairs,
+                    );
                 }
-                quantile_value
+                result.value
             },
         },
     )

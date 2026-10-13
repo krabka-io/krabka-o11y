@@ -75,13 +75,13 @@ mod tests {
     use assert2::assert;
     use axum::{Json, response::IntoResponse};
     use http_body_util::BodyExt as _;
-    use krabka_traceql::{AttrValue, SearchResponse, SpanRef, SpanSet, TraceResult};
+    use krabka_traceql::{AttrValue, Attribute, SearchResponse, SpanRef, SpanSet, TraceResult};
     use krabka_units::{Time, bytes, convert::TimeExt as _};
     use serde_json::{Value, json};
 
     use super::search_json;
 
-    fn span(attributes: Vec<(String, AttrValue)>) -> SpanRef {
+    fn span(attributes: Vec<Attribute>) -> SpanRef {
         SpanRef {
             span_id: [1; 8],
             parent_span_id: None,
@@ -96,7 +96,7 @@ mod tests {
             status_message: String::new(),
             instrumentation_name: String::new(),
             instrumentation_version: String::new(),
-            resource_attributes: vec![("not returned".to_owned(), AttrValue::Bool(true))],
+            resource_attributes: vec![Attribute::new("not returned", AttrValue::Bool(true))],
             attributes,
             events: Vec::new(),
             links: Vec::new(),
@@ -114,11 +114,11 @@ mod tests {
                 span_sets: vec![
                     SpanSet {
                         spans: vec![span(vec![
-                            ("z".to_owned(), AttrValue::Int(i64::MIN)),
-                            ("a".to_owned(), AttrValue::Bool(false)),
-                            ("z".to_owned(), AttrValue::Str("second".to_owned())),
-                            (
-                                "nested".to_owned(),
+                            Attribute::new("z", AttrValue::Int(i64::MIN)),
+                            Attribute::new("a", AttrValue::Bool(false)),
+                            Attribute::new("z", AttrValue::Str("second".to_owned())),
+                            Attribute::new(
+                                "nested",
                                 AttrValue::Array(vec![
                                     AttrValue::Float(f64::NAN),
                                     AttrValue::Float(f64::INFINITY),
@@ -126,8 +126,8 @@ mod tests {
                                     AttrValue::Array(vec![AttrValue::Float(1.25)]),
                                 ]),
                             ),
-                            (
-                                "opaque".to_owned(),
+                            Attribute::new(
+                                "opaque",
                                 AttrValue::Unsupported(
                                     r#"{"kvlistValue":{"values":[{"key":"x","value":{}}]},"future":true}"#.to_owned(),
                                 ),
@@ -135,9 +135,9 @@ mod tests {
                         ])],
                         matched: u32::MAX,
                         attributes: vec![
-                            ("z".to_owned(), AttrValue::Int(7)),
-                            ("a".to_owned(), AttrValue::Array(Vec::new())),
-                            ("z".to_owned(), AttrValue::Int(8)),
+                            Attribute::new("z", AttrValue::Int(7)),
+                            Attribute::new("a", AttrValue::Array(Vec::new())),
+                            Attribute::new("z", AttrValue::Int(8)),
                         ],
                     },
                     SpanSet {
@@ -233,18 +233,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn search_trace_milliseconds_truncate_while_span_nanos_stay_strings() {
-        for (duration, expected_ms) in [(-1_999_999, -1), (999_999, 0), (1_000_000, 1)] {
-            let mut response = response();
-            response.traces[0].duration = Time::from_nanos(duration);
-            response.traces[0].span_sets[0].spans[0].duration = Time::from_nanos(duration);
-            let actual = serde_json::to_value(search_json(response)).unwrap();
-            assert!(actual["traces"][0]["durationMs"] == json!(expected_ms));
-            assert!(
-                actual["traces"][0]["spanSets"][0]["spans"][0]["durationNanos"]
-                    == json!(duration.to_string())
-            );
-        }
+    #[yare::parameterized(
+        negative_fraction = { -1_999_999, -1 },
+        positive_submillisecond = { 999_999, 0 },
+        exact_millisecond = { 1_000_000, 1 },
+    )]
+    fn search_trace_milliseconds_truncate_while_span_nanos_stay_strings(
+        duration: i64,
+        expected_ms: i64,
+    ) {
+        let mut response = response();
+        response.traces[0].duration = Time::from_nanos(duration);
+        response.traces[0].span_sets[0].spans[0].duration = Time::from_nanos(duration);
+        let actual = serde_json::to_value(search_json(response)).unwrap();
+        ::core::assert!(actual["traces"][0]["durationMs"] == json!(expected_ms));
+        ::core::assert!(
+            actual["traces"][0]["spanSets"][0]["spans"][0]["durationNanos"]
+                == json!(duration.to_string())
+        );
     }
 }

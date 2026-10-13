@@ -48,7 +48,7 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::BTreeMap, sync::Arc};
 
     use arrow::{
         array::{Float64Array, Int64Array, StringArray},
@@ -96,6 +96,18 @@ mod tests {
         LeafRow::group("prod").job("db").sample(2.0),
         LeafRow::group("canary").job("api").sample(4.0),
     ];
+
+    const GROUP_ROWS: [LeafRow<'static>; 3] = [
+        LeafRow::group("prod").job("api").sample(9.0),
+        LeafRow::group("prod").job("db").sample(2.0),
+        LeafRow::group("canary").job("api").sample(4.0),
+    ];
+
+    struct AggregateCase {
+        operation: SimpleAggregateOp,
+        rows: &'static [LeafRow<'static>],
+        expected: Vec<AggregateGroup>,
+    }
 
     /// Builds a leaf plan over an in-memory table like an instant-selector output.
     ///
@@ -171,7 +183,21 @@ mod tests {
         }
     }
 
-    async fn run(plan: LogicalPlan, ctx: &SessionContext) -> Vec<(Vec<(String, String)>, f64)> {
+    #[derive(Debug, PartialEq)]
+    struct AggregateGroup {
+        labels: BTreeMap<String, String>,
+        value: f64,
+    }
+
+    fn group(label: Option<&str>, value: f64) -> AggregateGroup {
+        let mut labels = BTreeMap::new();
+        if let Some(label) = label {
+            labels.insert("group".to_string(), label.to_string());
+        }
+        AggregateGroup { labels, value }
+    }
+
+    async fn run(plan: LogicalPlan, ctx: &SessionContext) -> Vec<AggregateGroup> {
         let batches = ctx
             .execute_logical_plan(plan)
             .await
@@ -181,6 +207,8 @@ mod tests {
             .unwrap();
         let mut out = Vec::new();
         for batch in &batches {
+            let schema = batch.schema();
+            let fields = schema.fields();
             let value = batch
                 .column_by_name(AGGREGATE_VALUE_COLUMN)
                 .unwrap()
@@ -188,9 +216,12 @@ mod tests {
                 .downcast_ref::<Float64Array>()
                 .unwrap();
             for row in 0..batch.num_rows() {
-                let mut labels = Vec::new();
-                for (index, field) in batch.schema().fields().iter().enumerate() {
+                let mut labels = BTreeMap::new();
+                let mut index = 0;
+                while index < fields.len() {
+                    let field = &fields[index];
                     if field.name() == AGGREGATE_VALUE_COLUMN {
+                        index += 1;
                         continue;
                     }
                     let column = batch
@@ -198,13 +229,16 @@ mod tests {
                         .as_any()
                         .downcast_ref::<StringArray>()
                         .unwrap();
-                    labels.push((field.name().clone(), column.value(row).to_string()));
+                    labels.insert(field.name().clone(), column.value(row).to_string());
+                    index += 1;
                 }
-                labels.sort();
-                out.push((labels, value.value(row)));
+                out.push(AggregateGroup {
+                    labels,
+                    value: value.value(row),
+                });
             }
         }
-        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out.sort_by(|a, b| a.labels.cmp(&b.labels));
         out
     }
 
@@ -213,7 +247,7 @@ mod tests {
     async fn aggregate_by_group(
         op: SimpleAggregateOp,
         rows: &[LeafRow<'_>],
-    ) -> Vec<(Vec<(String, String)>, f64)> {
+    ) -> Vec<AggregateGroup> {
         let ctx = SessionContext::new();
         let leaf = selector_like_leaf(&ctx, rows).await;
         let plan = plan_simple_aggregate(leaf, op, &Grouping::By(vec!["group".into()])).unwrap();
@@ -229,7 +263,7 @@ mod tests {
         .unwrap();
         let got = run(plan, ctx).await;
         assert2::assert!(got.len() == 1);
-        assert2::assert!(got[0].1.is_nan());
+        assert2::assert!(got[0].value.is_nan());
     }
 
     /// `sum by (group)` and `sum without (job)` both collapse to the `group`
@@ -246,10 +280,7 @@ mod tests {
             let plan = plan_simple_aggregate(leaf, SimpleAggregateOp::Sum, &grouping).unwrap();
             let got = run(plan, &ctx).await;
             assert2::assert!(
-                got == vec![
-                    (vec![("group".to_string(), "canary".to_string())], 4.0),
-                    (vec![("group".to_string(), "prod".to_string())], 3.0),
-                ],
+                got == vec![group(Some("canary"), 4.0), group(Some("prod"), 3.0)],
                 "{grouping:?}"
             );
         }
@@ -262,36 +293,26 @@ mod tests {
         let plan =
             plan_simple_aggregate(leaf, SimpleAggregateOp::Sum, &Grouping::By(vec![])).unwrap();
         let got = run(plan, &ctx).await;
-        assert2::assert!(got == vec![(vec![], 7.0)]);
+        assert2::assert!(got == vec![group(None, 7.0)]);
     }
 
     #[tokio::test]
     async fn count_and_group_yield_floats() {
         let cases = [
-            (
-                SimpleAggregateOp::Count,
-                PROD_AND_CANARY,
-                vec![
-                    (vec![("group".to_string(), "canary".to_string())], 1.0),
-                    (vec![("group".to_string(), "prod".to_string())], 2.0),
-                ],
-            ),
-            (
-                SimpleAggregateOp::Group,
-                [
-                    LeafRow::group("prod").job("api").sample(9.0),
-                    LeafRow::group("prod").job("db").sample(2.0),
-                    LeafRow::group("canary").job("api").sample(4.0),
-                ],
-                vec![
-                    (vec![("group".to_string(), "canary".to_string())], 1.0),
-                    (vec![("group".to_string(), "prod".to_string())], 1.0),
-                ],
-            ),
+            AggregateCase {
+                operation: SimpleAggregateOp::Count,
+                rows: &PROD_AND_CANARY,
+                expected: vec![group(Some("canary"), 1.0), group(Some("prod"), 2.0)],
+            },
+            AggregateCase {
+                operation: SimpleAggregateOp::Group,
+                rows: &GROUP_ROWS,
+                expected: vec![group(Some("canary"), 1.0), group(Some("prod"), 1.0)],
+            },
         ];
-        for (op, rows, want) in cases {
-            let got = aggregate_by_group(op, &rows).await;
-            assert2::assert!(got == want);
+        for case in cases {
+            let got = aggregate_by_group(case.operation, case.rows).await;
+            assert2::assert!(got == case.expected);
         }
     }
 
@@ -340,12 +361,22 @@ mod tests {
         // A group mixing genuine NaN with finite samples: Prometheus takes the
         // extremum over the non-NaN values (NaN ignored), unlike Arrow's built-in
         // min/max which propagate NaN.
-        for (op, want) in [
-            (SimpleAggregateOp::Min, 1.0_f64),
-            (SimpleAggregateOp::Max, 3.0_f64),
+        struct ExtremumCase {
+            operation: SimpleAggregateOp,
+            expected: f64,
+        }
+        for case in [
+            ExtremumCase {
+                operation: SimpleAggregateOp::Min,
+                expected: 1.0,
+            },
+            ExtremumCase {
+                operation: SimpleAggregateOp::Max,
+                expected: 3.0,
+            },
         ] {
             let got = aggregate_by_group(
-                op,
+                case.operation,
                 &[
                     LeafRow::group("prod").job("api").sample(f64::NAN),
                     LeafRow::group("prod").job("db").sample(3.0),
@@ -355,7 +386,7 @@ mod tests {
             )
             .await;
             assert2::assert!(got.len() == 1);
-            assert2::assert!(got[0].1.to_bits() == want.to_bits());
+            assert2::assert!(got[0].value.to_bits() == case.expected.to_bits());
         }
     }
 
@@ -373,7 +404,7 @@ mod tests {
             )
             .await;
             assert2::assert!(got.len() == 1);
-            assert2::assert!(got[0].1.is_nan());
+            assert2::assert!(got[0].value.is_nan());
         }
     }
 
@@ -400,7 +431,7 @@ mod tests {
         .unwrap();
         let got = run(plan, &ctx).await;
         // Only group y survives; the all-NULL group x produces no row.
-        assert2::assert!(got == vec![(vec![("group".to_string(), "y".to_string())], 3.0)]);
+        assert2::assert!(got == vec![group(Some("y"), 3.0)]);
     }
 
     #[tokio::test]
@@ -428,7 +459,7 @@ mod tests {
         let got = run(plan, &ctx).await;
         // 2 value-bearing rows (1.0 and the genuine NaN); the two NULLs are
         // dropped before counting.
-        assert2::assert!(got == vec![(vec![("group".to_string(), "prod".to_string())], 2.0)]);
+        assert2::assert!(got == vec![group(Some("prod"), 2.0)]);
     }
 
     #[tokio::test]

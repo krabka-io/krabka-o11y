@@ -1,7 +1,12 @@
 use super::{
     ApiError, IntoResponse, MetricStore, PrometheusApiState, Response, StatusCode, TenantId,
-    accepted_response, rule_group_name, validate_rule_group,
+    accepted_response, response_with_status, rule_group_name, validate_rule_group,
 };
+
+pub(crate) struct StoredRulerConfigGroup {
+    pub(crate) response: Response,
+    pub(crate) group_name: Option<String>,
+}
 
 /// Validates one posted rule group and stores it under `tenant` and `namespace`.
 ///
@@ -12,30 +17,36 @@ pub(crate) fn store_ruler_config_group<S: MetricStore>(
     tenant: TenantId,
     namespace: &str,
     body: &[u8],
-) -> (Response, Option<String>) {
+) -> StoredRulerConfigGroup {
     let group: serde_yaml::Value = match serde_yaml::from_slice(body) {
         Ok(group) => group,
         Err(_) => {
-            return (
-                (StatusCode::BAD_REQUEST, "unable to decode rule group\n").into_response(),
-                None,
-            );
+            return StoredRulerConfigGroup {
+                response: response_with_status(
+                    StatusCode::BAD_REQUEST,
+                    "unable to decode rule group\n",
+                ),
+                group_name: None,
+            };
         }
     };
     let group_name = match rule_group_name(&group) {
         Ok(name) => name,
         Err(error) => {
-            return (
-                (StatusCode::BAD_REQUEST, format!("{}\n", error.message)).into_response(),
-                None,
-            );
+            return StoredRulerConfigGroup {
+                response: response_with_status(
+                    StatusCode::BAD_REQUEST,
+                    format!("{}\n", error.message),
+                ),
+                group_name: None,
+            };
         }
     };
     if let Err(error) = validate_rule_group(&group) {
-        return (
-            (StatusCode::BAD_REQUEST, format!("{}\n", error.message)).into_response(),
-            Some(group_name),
-        );
+        return StoredRulerConfigGroup {
+            response: response_with_status(StatusCode::BAD_REQUEST, format!("{}\n", error.message)),
+            group_name: Some(group_name),
+        };
     }
 
     let response = match state.ruler_rules.write() {
@@ -50,5 +61,8 @@ pub(crate) fn store_ruler_config_group<S: MetricStore>(
         }
         Err(_) => ApiError::internal("ruler rules lock poisoned").into_response(),
     };
-    (response, Some(group_name))
+    StoredRulerConfigGroup {
+        response,
+        group_name: Some(group_name),
+    }
 }

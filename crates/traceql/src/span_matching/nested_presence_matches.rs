@@ -1,5 +1,10 @@
 use super::{MatchCmp, MatchValue};
 
+struct NestedPresenceComparison<'a> {
+    operator: MatchCmp,
+    expected: &'a MatchValue,
+}
+
 /// The answer to a nil comparison on a nested field, or `None` for any
 /// other comparison.
 ///
@@ -10,9 +15,18 @@ pub fn nested_presence_matches(
     op: MatchCmp,
     expected: &MatchValue,
 ) -> Option<bool> {
-    match (op, expected) {
-        (MatchCmp::Eq, MatchValue::Nil) => Some(!has_values),
-        (MatchCmp::Neq, MatchValue::Nil) => Some(has_values),
+    match (NestedPresenceComparison {
+        operator: op,
+        expected,
+    }) {
+        NestedPresenceComparison {
+            operator: MatchCmp::Eq,
+            expected: MatchValue::Nil,
+        } => Some(!has_values),
+        NestedPresenceComparison {
+            operator: MatchCmp::Neq,
+            expected: MatchValue::Nil,
+        } => Some(has_values),
         _ => None,
     }
 }

@@ -10,13 +10,6 @@ use super::*;
 /// map. An entry with nothing to categorise still gets the envelope, empty.
 #[test]
 pub(crate) fn a_stream_entry_is_two_elements_until_a_request_categorizes_labels() {
-    let labels = |pairs: &[(&str, &str)]| {
-        pairs
-            .iter()
-            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-            .collect::<Labels>()
-    };
-
     let bare = LokiStreamEntry::new(
         19,
         "api error".to_string(),
@@ -29,8 +22,11 @@ pub(crate) fn a_stream_entry_is_two_elements_until_a_request_categorizes_labels(
     let annotated = LokiStreamEntry::new(
         19,
         "api error".to_string(),
-        labels(&[("span_id", "def"), ("trace_id", "abc")]),
-        labels(&[("status", "500")]),
+        krabka_blockstore::labels([
+            krabka_blockstore::LabelPair::new("span_id", "def"),
+            krabka_blockstore::LabelPair::new("trace_id", "abc"),
+        ]),
+        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("status", "500")]),
     );
     check!(
         serde_json::to_value(&annotated).expect("an entry serialises")

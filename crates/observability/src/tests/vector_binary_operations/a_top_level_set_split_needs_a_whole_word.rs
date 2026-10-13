@@ -11,13 +11,25 @@ use super::*;
 /// boundary test applies to each; and the `is_ascii_alphabetic` precheck,
 /// which only skips characters where `starts_with` would fail anyway. Both
 /// are equivalent mutations rather than gaps.
+
+fn split_matches(
+    actual: Option<crate::http::params_format::metric_formatting::TopLevelQuerySplit<'_>>,
+    left: &str,
+    operator: &str,
+    right: &str,
+) -> bool {
+    actual.is_some_and(|split| {
+        split.left == left && split.operator == operator && split.right == right
+    })
+}
+
 #[test]
 pub(crate) fn a_top_level_set_split_needs_a_whole_word() {
     let split = super::super::prelude::split_top_level_set_query;
 
-    check!(split("a and b") == Some(("a ", "and", "b")));
-    check!(split("a or b") == Some(("a ", "or", "b")));
-    check!(split("a unless b") == Some(("a ", "unless", "b")));
+    check!(split_matches(split("a and b"), "a ", "and", "b"));
+    check!(split_matches(split("a or b"), "a ", "or", "b"));
+    check!(split_matches(split("a unless b"), "a ", "unless", "b"));
 
     // A word that merely starts with an operator is not one. Each of the
     // three has its own trap, since only a shared boundary test saves
@@ -32,9 +44,19 @@ pub(crate) fn a_top_level_set_split_needs_a_whole_word() {
     check!(split("a andb").is_none());
 
     // Nested operators are not top level, and a quoted one is text.
-    check!(split("sum(a and b) or c") == Some(("sum(a and b) ", "or", "c")));
+    check!(split_matches(
+        split("sum(a and b) or c"),
+        "sum(a and b) ",
+        "or",
+        "c"
+    ));
     check!(split(r#"{app="a or b"}"#).is_none());
-    check!(split("rate(x[5m]) unless y") == Some(("rate(x[5m]) ", "unless", "y")));
+    check!(split_matches(
+        split("rate(x[5m]) unless y"),
+        "rate(x[5m]) ",
+        "unless",
+        "y"
+    ));
 
     // Nothing to split.
     check!(split("a").is_none());

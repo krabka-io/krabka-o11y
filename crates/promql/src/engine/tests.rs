@@ -9,9 +9,83 @@ use super::{
     MAX_RESOLUTION_POINTS, MatrixSelectorAt, check_resolution_points, match_rate_range_call,
 };
 use crate::{
-    EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue,
-    test_support::tenant_id,
+    AnnotatedQueryResult, Annotations, EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine,
+    PromqlError, QueryResult, SampleValue,
+    test_support::{labels, tenant_id},
 };
+
+fn push_float_counter_series(
+    store: &mut InMemoryMetricStore,
+    labels: Labels,
+    factor: f64,
+    last_step: i32,
+) {
+    for step in 0..=last_step {
+        store.push_float(
+            "t",
+            labels.clone(),
+            i64::from(step) * 60_000,
+            f64::from(step) * factor,
+        );
+    }
+}
+
+struct QueryAt {
+    query: &'static str,
+    time_ms: i64,
+}
+
+struct FloatSampleInput {
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct LabeledFloatSeries {
+    labels: Labels,
+    samples: Vec<FloatSampleInput>,
+}
+
+fn push_float_series(
+    store: &mut InMemoryMetricStore,
+    series: impl IntoIterator<Item = LabeledFloatSeries>,
+) {
+    for series in series {
+        for sample in series.samples {
+            store.push_float(
+                "t",
+                series.labels.clone(),
+                sample.timestamp_ms,
+                sample.value,
+            );
+        }
+    }
+}
+
+async fn assert_call_planner_matches_interpreter<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    queries: &[QueryAt],
+) {
+    for query_at in queries {
+        let parity = planned_and_interpreted(engine, query_at.query, query_at.time_ms).await;
+        let via_operators = parity.via_operators;
+        let via_interpreter = parity.via_interpreter;
+        let via_operators = sort_instant_result(via_operators);
+        let via_interpreter = sort_instant_result(via_interpreter);
+        assert2::assert!(query_results_match(&via_interpreter, &via_operators));
+    }
+}
+
+async fn assert_annotated_call_planner_matches_interpreter<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+    time_ms: i64,
+) {
+    let parity = annotated_planned_and_interpreted(engine, query, time_ms).await;
+    let via_interpreter = fingerprint_sorted(parity.via_interpreter.result, query);
+    let via_operators = fingerprint_sorted(parity.via_operators.result, query);
+    assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
+    assert2::assert!(parity.via_operators.annotations == parity.via_interpreter.annotations);
+}
 
 mod a_classic_histogram_answers_beside_a_native_sibling;
 mod a_comparison_keeps_the_metric_name_that_arithmetic_drops;
@@ -171,7 +245,6 @@ mod instant_unary_numeric_functions_transform_vector_values;
 mod instant_vector;
 mod kahan_sum_inc_recovers_lost_bits_on_both_branches;
 mod label_ops_planner_path_matches_interpreter;
-mod labels;
 mod last_over_time_aggregate;
 mod limit_ratio_over_bound_emits_capping_warning;
 mod lone_matrix_series;
@@ -266,7 +339,8 @@ use assert_single_float_sample::{assert_single_float_sample, lone_unnamed_sample
 use assert_single_on_x_float_sample::{OnXHistogramStats, assert_on_x_histogram_stats};
 use assert_sparse_aggregate_excludes_no_value::assert_sparse_aggregate_excludes_no_value;
 use case_values::{
-    CaseQuery, CaseValue, assert_case_values, assert_signed_temperature_cases, push_cases,
+    CaseQuery, CaseValue, InstanceValueCase, QueryValueCase, assert_case_values,
+    assert_signed_temperature_cases, push_cases,
 };
 use classic_bucket_store::classic_bucket_store;
 use float_store::{FloatStore, default_engine, lookback_engine};
@@ -276,7 +350,6 @@ use instant_vector::{
     LoneValueQuery, assert_lone_unlabeled_value_at, assert_lone_value, assert_lone_value_at,
     instant_vector,
 };
-use labels::labels;
 use lone_matrix_series::{ExpectedPoint, check_series_points, lone_matrix_series};
 use memory_bytes_engine::{
     JobInstanceSample, has_job_memory_bytes_sample, job_memory_bytes_engine, memory_bytes_engine,
@@ -300,6 +373,28 @@ use region_info_engine::{InstanceRequests, region_info_engine};
 #[cfg(feature = "experimental-functions")]
 use sample_instances::{sample_instances, selected_memory_instances};
 use series_store::SeriesFixture;
+
+fn three_point_gauge_store(metric: &str) -> InMemoryMetricStore {
+    SeriesFixture::new(labels(&[
+        crate::test_support::TestLabelPair::new("__name__", metric),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]))
+    .at(0_i64, 1.0)
+    .at(60_000, 3.0)
+    .at(120_000, 5.0)
+    .store()
+}
+
+fn sample_with_label<'a>(
+    samples: &'a [crate::InstantSample],
+    name: &str,
+    value: &str,
+) -> &'a crate::InstantSample {
+    samples
+        .iter()
+        .find(|sample| sample.labels.get(name) == Some(value))
+        .expect("the sample has the requested label")
+}
 use set_op_store::set_op_store;
 use short_lookback_up_engine::short_lookback_up_engine;
 use sort_instant_result::sort_instant_result;

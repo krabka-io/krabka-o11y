@@ -20,7 +20,10 @@ pub struct QuerierConfig {
 impl Default for QuerierConfig {
     fn default() -> Self {
         Self {
-            listen_addr: ([0, 0, 0, 0], 3200).into(),
+            listen_addr: std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                3200,
+            ),
             default_search_limit: 20,
             default_spss: 3,
             max_traces: 1000,
@@ -38,7 +41,10 @@ mod tests {
         let c = QuerierConfig::default();
         assert2::assert!(
             c == QuerierConfig {
-                listen_addr: ([0, 0, 0, 0], 3200).into(),
+                listen_addr: std::net::SocketAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                    3200
+                ),
                 default_search_limit: 20,
                 default_spss: 3,
                 max_traces: 1000,

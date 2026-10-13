@@ -42,6 +42,11 @@ pub struct AuditService {
     writer: Option<JoinHandle<()>>,
 }
 
+pub struct AuditServiceParts {
+    pub handle: AuditHandle,
+    pub writer: Option<JoinHandle<()>>,
+}
+
 impl AuditService {
     /// An audit layer that records nothing and has no writer task.
     #[must_use]
@@ -138,8 +143,11 @@ impl AuditService {
 
     /// The handle, and the writer task when audit is on.
     #[must_use]
-    pub fn into_parts(self) -> (AuditHandle, Option<JoinHandle<()>>) {
-        (self.handle, self.writer)
+    pub fn into_parts(self) -> AuditServiceParts {
+        AuditServiceParts {
+            handle: self.handle,
+            writer: self.writer,
+        }
     }
 }
 
@@ -156,17 +164,22 @@ impl WriterState {
     /// A spool that survived a restart ends at the newest chained record, so
     /// the chain goes on from that record and not from the genesis head.
     fn load(args: &AuditArgs) -> Result<Self, AuditBuildError> {
-        let signer = match (&args.signing_key_path, &args.signing_key_id) {
-            (None, None) => None,
-            (Some(path), Some(key_id)) => Some(Arc::new(
+        let signer = if let Some(path) = &args.signing_key_path {
+            let Some(key_id) = &args.signing_key_id else {
+                return Err(AuditBuildError::IncompleteSigningKey);
+            };
+            Some(Arc::new(
                 FileEd25519Signer::from_pkcs8_file(path, key_id.clone()).map_err(|source| {
                     AuditBuildError::SigningKey {
                         path: path.clone(),
                         source,
                     }
                 })?,
-            )),
-            _ => return Err(AuditBuildError::IncompleteSigningKey),
+            ))
+        } else if args.signing_key_id.is_none() {
+            None
+        } else {
+            return Err(AuditBuildError::IncompleteSigningKey);
         };
         let Some(dir) = args.spool_dir.as_deref() else {
             return Ok(Self {
@@ -183,8 +196,8 @@ impl WriterState {
         let chain = spool
             .resume_point()
             .map_err(spool_error)?
-            .map_or_else(ChainState::new, |(next_seq, head)| {
-                ChainState::resume(next_seq, head)
+            .map_or_else(ChainState::new, |resume_point| {
+                ChainState::resume(resume_point.0, resume_point.1)
             });
         Ok(Self {
             signer,
@@ -202,7 +215,9 @@ impl WriterState {
         clocks: AuditClocks,
         shutdown: CancellationToken,
     ) -> AuditService {
-        let (log, receiver) = AuditLog::new(args.queue_capacity.get());
+        let queue = AuditLog::new(args.queue_capacity.get());
+        let log = queue.0;
+        let receiver = queue.1;
         let stats = Arc::new(AuditStats::new());
         let handle = AuditHandle::new(log, Arc::clone(&stats), clocks.clock);
         let writer = AuditWriter::new(

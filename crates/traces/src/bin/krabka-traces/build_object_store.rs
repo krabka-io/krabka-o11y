@@ -13,11 +13,11 @@ pub(crate) fn build_object_store(
     metrics: ObjectStoreMetrics,
 ) -> Result<ConfiguredObjectStore, Box<dyn std::error::Error + Send + Sync>> {
     let root = Url::parse(&cli.object_store_url)?;
-    let (store, prefix) = object_store::parse_url_opts(&root, std::env::vars())?;
+    let parsed = object_store::parse_url_opts(&root, std::env::vars())?;
     let configured = ConfiguredObjectStore {
-        store: MeteredObjectStore::wrap(Arc::from(store), metrics),
+        store: MeteredObjectStore::wrap(Arc::from(parsed.0), metrics),
         root,
-        prefix,
+        prefix: parsed.1,
     };
     tracing::debug!(
         object_store_url = %configured.root,

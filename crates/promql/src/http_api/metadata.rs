@@ -29,3 +29,19 @@ use metadata_params::MetadataParams;
 use parse_metadata_params::parse_metadata_params;
 pub(super) use target_metadata::target_metadata;
 use target_metadata_json::target_metadata_json;
+
+async fn metadata_response<S, Render>(
+    state: &PrometheusApiState<S>,
+    auth: RequestAuth<'_>,
+    raw_query: Option<&str>,
+    render: Render,
+) -> Response
+where
+    S: MetricStore,
+    Render: FnOnce(MetadataParams, Vec<MetadataRecord>) -> Response,
+{
+    match limited_metadata(state, auth, raw_query).await {
+        Ok(metadata) => render(metadata.params, metadata.records),
+        Err(rejection) => rejection.into_response(),
+    }
+}

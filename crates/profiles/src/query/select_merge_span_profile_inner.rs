@@ -1,7 +1,6 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, authorize_tenant, connect_error, parse_span_selectors, pb,
-    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    ProfileStore, QuerierState, connect_error, parse_span_selectors, pb,
 };
 
 pub(crate) async fn select_merge_span_profile_inner<S>(
@@ -13,9 +12,7 @@ pub(crate) async fn select_merge_span_profile_inner<S>(
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
     let req = req.0;
     let span_ids = parse_span_selectors(&req.span_selector).map_err(connect_error)?;
     let max_nodes = req.max_nodes.map_or(0, |count| {
@@ -28,9 +25,9 @@ where
     let response = if req.format == pb::querier::v1::ProfileFormat::Tree as i32 {
         let tree = state
             .select_merge_span_profile_tree(
-                (&tenant, &req.profile_type_id, &req.label_selector),
+                super::QueryTarget::new(&tenant, &req.profile_type_id, &req.label_selector),
                 &span_ids,
-                (req.start, req.end),
+                super::QueryRange::new(req.start, req.end),
                 max_nodes,
             )
             .await
@@ -42,9 +39,9 @@ where
     } else {
         let flamegraph = state
             .select_merge_span_profile(
-                (&tenant, &req.profile_type_id, &req.label_selector),
+                super::QueryTarget::new(&tenant, &req.profile_type_id, &req.label_selector),
                 &span_ids,
-                (req.start, req.end),
+                super::QueryRange::new(req.start, req.end),
                 max_nodes,
             )
             .await

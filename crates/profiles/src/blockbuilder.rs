@@ -9,7 +9,7 @@ use std::{
 use arrow::record_batch::RecordBatch;
 use krabka_blockstore::{
     BlockIndex, BlockMeta, BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels,
-    ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, ProfileIndex,
+    ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, OffsetRange, ProfileIndex,
     ProfileSampleRow, RetryingObjectStore, SummaryColumns, encode_profile_samples,
     escape_object_path_segment, profile_samples_decl, retry_object_store,
 };
@@ -19,7 +19,10 @@ use krabka_observability::{
     wal_consumer_metrics::WalConsumerMetrics,
     wal_group_assignment::{WalAssignmentWatch, WalRebalanceListener},
 };
-use krabka_pprof::{FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, SymbolDb};
+use krabka_pprof::{
+    FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, MappingSymbolizationParts,
+    SymbolDb,
+};
 use krabka_units::{
     ByteSize, Time, convert::StdDurationExt as _, kibibytes, mebibytes, millis, secs,
 };
@@ -32,6 +35,18 @@ use crate::{
     metrics::ServiceMetrics,
     wal::{PROFILES_WAL_TOPIC, ProfileRecord, WalMapping, WalSymbolSet},
 };
+
+pub(crate) fn wal_sample_ids(
+    position: Option<crate::wal::WalPosition>,
+    ordinal: usize,
+) -> Result<Vec<Vec<u8>>, ProfilesError> {
+    let Some(position) = position else {
+        return Ok(Vec::new());
+    };
+    let ordinal =
+        u64::try_from(ordinal).map_err(|error| ProfilesError::Decode(error.to_string()))?;
+    Ok(vec![position.sample_identity(ordinal)])
+}
 
 #[cfg(test)]
 mod tests {
@@ -47,6 +62,25 @@ mod tests {
     use super::*;
     use crate::wal::{ProfileRecord, WalMapping, WalSample, WalSymbolSet};
 
+    struct TenantSegmentCase {
+        name: &'static str,
+        tenant: &'static str,
+        segment: &'static str,
+    }
+
+    struct TenantRowCount {
+        tenant: &'static str,
+        row_count: usize,
+    }
+
+    struct WalHandoffCase {
+        name: &'static str,
+        topic: &'static str,
+        offset: i64,
+        value: i64,
+        expected: i64,
+    }
+
     fn format_headers() -> Vec<krabka_client_consumer::Header> {
         vec![krabka_client_consumer::Header {
             key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
@@ -60,11 +94,11 @@ mod tests {
         ProfileRecord {
             tenant: "t".into(),
             labels: vec![
-                ("__name__".into(), name.into()),
-                ("service_name".into(), "api".into()),
-                (
-                    "__profile_type__".into(),
-                    "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
+                krabka_blockstore::LabelPair::new("__name__", name),
+                krabka_blockstore::LabelPair::new("service_name", "api"),
+                krabka_blockstore::LabelPair::new(
+                    "__profile_type__",
+                    "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
                 ),
             ],
             profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
@@ -110,7 +144,12 @@ mod tests {
                 file_offset: 0x10,
                 filename: 10,
                 build_id: 20,
-                symbolization: MappingSymbolization::from_parts((true, false, true, false)),
+                symbolization: MappingSymbolization::from_parts(MappingSymbolizationParts {
+                    functions: true,
+                    filenames: false,
+                    line_numbers: true,
+                    inline_frames: false,
+                }),
             }
         );
 
@@ -130,7 +169,12 @@ mod tests {
                 file_offset: 0x10,
                 filename: 10,
                 build_id: 20,
-                symbolization: MappingSymbolization::from_parts((false, true, false, true)),
+                symbolization: MappingSymbolization::from_parts(MappingSymbolizationParts {
+                    functions: false,
+                    filenames: true,
+                    line_numbers: false,
+                    inline_frames: true,
+                }),
             }
         );
     }
@@ -151,36 +195,60 @@ mod tests {
     #[test]
     fn the_tenant_is_one_escaped_segment_that_reads_back_as_the_tenant() {
         let cases = [
-            ("plain", "tenant-a", "tenant-a"),
-            ("star", "a*b", "a!2Ab"),
-            ("escape marker", "a!b", "a!21b"),
-            ("quote and parentheses", "a'(b)", "a!27!28b!29"),
-            ("dots", "a.b", "a.b"),
+            TenantSegmentCase {
+                name: "plain",
+                tenant: "tenant-a",
+                segment: "tenant-a",
+            },
+            TenantSegmentCase {
+                name: "star",
+                tenant: "a*b",
+                segment: "a!2Ab",
+            },
+            TenantSegmentCase {
+                name: "escape marker",
+                tenant: "a!b",
+                segment: "a!21b",
+            },
+            TenantSegmentCase {
+                name: "quote and parentheses",
+                tenant: "a'(b)",
+                segment: "a!27!28b!29",
+            },
+            TenantSegmentCase {
+                name: "dots",
+                tenant: "a.b",
+                segment: "a.b",
+            },
         ];
 
-        for (name, tenant, segment) in cases {
-            let key = object_key(tenant, 3, 10, 20, 100, 200);
+        for case in cases {
+            let key = object_key(case.tenant, 3, 10, 20, 100, 200);
             check!(
                 key == format!(
-                    "blocks/{segment}/00003/00000000000000000010-00000000000000000020-100-200.parquet"
+                    "blocks/{}/00003/00000000000000000010-00000000000000000020-100-200.parquet",
+                    case.segment
                 ),
-                "{name}"
+                "{}",
+                case.name
             );
             let path = Path::from(key.as_str());
             check!(
                 path.as_ref() == key,
-                "{name}: the object store keeps the key"
+                "{}: the object store keeps the key",
+                case.name
             );
             let parts: Vec<_> = path.parts().collect();
-            check!(parts.len() == 4, "{name}: {key}");
+            check!(parts.len() == 4, "{}: {key}", case.name);
             check!(
                 parts
                     .get(1)
                     .and_then(|part| krabka_blockstore::unescape_object_path_segment(
                         part.as_ref()
                     ))
-                    == Some(tenant.to_string()),
-                "{name}"
+                    == Some(case.tenant.to_string()),
+                "{}",
+                case.name
             );
         }
     }
@@ -247,7 +315,7 @@ mod tests {
             "t",
             0,
             &records,
-            (10, 20),
+            OffsetRange::new(10, 20),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
@@ -290,11 +358,21 @@ mod tests {
         .unwrap();
 
         check!(metas.len() == 2);
-        for (tenant, row_count) in [("t", 2), ("u", 1)] {
+        for expected in [
+            TenantRowCount {
+                tenant: "t",
+                row_count: 2,
+            },
+            TenantRowCount {
+                tenant: "u",
+                row_count: 1,
+            },
+        ] {
             check!(
                 metas
                     .iter()
-                    .any(|meta| meta.tenant == tenant && meta.row_count == row_count)
+                    .any(|meta| meta.tenant == expected.tenant
+                        && meta.row_count == expected.row_count)
             );
         }
         for meta in metas {
@@ -327,28 +405,43 @@ mod tests {
             record.symbols.locations = vec![crate::wal::WalLocation {
                 address: 0x40,
                 mapping_id: 0,
-                lines: vec![(0, 11)],
+                lines: vec![crate::wal::WalLine {
+                    function_id: 0,
+                    line: 11,
+                }],
             }];
             record
         };
         let profile_type = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
-        for (name, topic, offset, value, expected) in [
-            ("same WAL record", PROFILES_WAL_TOPIC, 10, 7, 7),
-            ("different topic", "replacement-profiles-wal", 10, 7, 14),
-            (
-                "reused offset with different data",
-                PROFILES_WAL_TOPIC,
-                10,
-                11,
-                18,
-            ),
-            (
-                "independent identical record",
-                PROFILES_WAL_TOPIC,
-                11,
-                7,
-                14,
-            ),
+        for case in [
+            WalHandoffCase {
+                name: "same WAL record",
+                topic: PROFILES_WAL_TOPIC,
+                offset: 10,
+                value: 7,
+                expected: 7,
+            },
+            WalHandoffCase {
+                name: "different topic",
+                topic: "replacement-profiles-wal",
+                offset: 10,
+                value: 7,
+                expected: 14,
+            },
+            WalHandoffCase {
+                name: "reused offset with different data",
+                topic: PROFILES_WAL_TOPIC,
+                offset: 10,
+                value: 11,
+                expected: 18,
+            },
+            WalHandoffCase {
+                name: "independent identical record",
+                topic: PROFILES_WAL_TOPIC,
+                offset: 11,
+                value: 7,
+                expected: 14,
+            },
         ] {
             let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
             let mut index = ProfileIndex::new();
@@ -363,11 +456,11 @@ mod tests {
             .await
             .unwrap();
 
-            let mut incoming = consumer_record(0, offset, record(value));
-            incoming.topic = topic.to_string();
+            let mut incoming = consumer_record(0, case.offset, record(case.value));
+            incoming.topic = case.topic.to_string();
             let bytes = incoming.value.as_deref().unwrap();
             let hot = crate::hot_store::WalTailProfileStore::new();
-            hot.append_records_with_positions([(
+            hot.append_records_with_positions([crate::hot_store::PositionedWalRecord::new(
                 ProfileRecord::decode(bytes).unwrap(),
                 Some(crate::wal::WalPosition::from_record(&incoming, bytes)),
             )])
@@ -386,7 +479,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            check!(flamegraph.total == expected, "{name}");
+            check!(flamegraph.total == case.expected, "{}", case.name);
         }
     }
 
@@ -461,7 +554,7 @@ mod symbol_refs;
 pub use block_builder_config::BlockBuilderConfig;
 pub use block_object_prefix::BLOCK_OBJECT_PREFIX;
 pub use build_block::build_block;
-pub(crate) use build_block::build_block_with_positions;
+pub(crate) use build_block::{PositionedProfileRecord, build_block_with_positions};
 pub use built_sample::BuiltSample;
 use consumer_record_accumulator::ConsumerRecordAccumulator;
 pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;

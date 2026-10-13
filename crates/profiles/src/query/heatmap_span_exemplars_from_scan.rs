@@ -6,7 +6,7 @@ use super::{
 pub(crate) async fn heatmap_span_exemplars_from_scan(
     scan: &krabka_pprof::ProfileScan,
     slots: HeatmapSlotsMillis,
-    labels: &[(String, String)],
+    labels: &[krabka_pprof::ProfileLabel],
 ) -> Result<BTreeMap<i64, Vec<pb::querier::v1::Exemplar>>, ProfileError> {
     let HeatmapSlotsMillis {
         start: start_ms,

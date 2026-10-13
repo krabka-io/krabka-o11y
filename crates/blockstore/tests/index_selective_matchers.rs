@@ -1,49 +1,155 @@
 use std::collections::BTreeSet;
 
 use assert2::assert;
-use krabka_blockstore::{Index, LabelMatcher, Labels, MatchOp};
+use krabka_blockstore::{Index, LabelMatcher, LabelPair, Labels, MatchOp};
+
+struct SeriesFixture {
+    fingerprint: u64,
+    labels: Vec<LabelPair>,
+}
+
+struct MatcherExpectedCase {
+    matcher: LabelMatcher,
+    expected: Vec<u64>,
+}
+
+struct RegexCase {
+    name: &'static str,
+    op: MatchOp,
+    pattern: &'static str,
+    expected: Vec<u64>,
+}
+
+fn matcher_expected(matcher: LabelMatcher, expected: &[u64]) -> MatcherExpectedCase {
+    MatcherExpectedCase {
+        matcher,
+        expected: expected.to_vec(),
+    }
+}
 
 fn fixture() -> Index {
     let mut index = Index::new();
-    for (fingerprint, pairs) in [
-        (11, vec![("app", "api"), ("region", "west"), ("zone", "")]),
-        (12, vec![("app", "api"), ("region", "east")]),
-        (13, vec![("app", "api"), ("region", "東京")]),
-        (14, vec![("app", "worker")]),
-        (15, vec![("app", "worker"), ("zone", "west")]),
-        (16, vec![("app", "api"), ("region", "west\nzone\0")]),
-        (17, vec![("region", "west")]),
-        (18, vec![("app", "")]),
-        (19, vec![("app", "api"), ("zone", "非空")]),
+    for fixture in [
+        SeriesFixture {
+            fingerprint: 11,
+            labels: vec![
+                LabelPair::new("app", "api"),
+                LabelPair::new("region", "west"),
+                LabelPair::new("zone", ""),
+            ],
+        },
+        SeriesFixture {
+            fingerprint: 12,
+            labels: vec![
+                LabelPair::new("app", "api"),
+                LabelPair::new("region", "east"),
+            ],
+        },
+        SeriesFixture {
+            fingerprint: 13,
+            labels: vec![
+                LabelPair::new("app", "api"),
+                LabelPair::new("region", "東京"),
+            ],
+        },
+        SeriesFixture {
+            fingerprint: 14,
+            labels: vec![LabelPair::new("app", "worker")],
+        },
+        SeriesFixture {
+            fingerprint: 15,
+            labels: vec![
+                LabelPair::new("app", "worker"),
+                LabelPair::new("zone", "west"),
+            ],
+        },
+        SeriesFixture {
+            fingerprint: 16,
+            labels: vec![
+                LabelPair::new("app", "api"),
+                LabelPair::new("region", "west\nzone\0"),
+            ],
+        },
+        SeriesFixture {
+            fingerprint: 17,
+            labels: vec![LabelPair::new("region", "west")],
+        },
+        SeriesFixture {
+            fingerprint: 18,
+            labels: vec![LabelPair::new("app", "")],
+        },
+        SeriesFixture {
+            fingerprint: 19,
+            labels: vec![LabelPair::new("app", "api"), LabelPair::new("zone", "非空")],
+        },
     ] {
-        let mut labels = Labels::from_pairs(pairs);
+        let mut labels = Labels::from_pairs(fixture.labels);
         labels.insert("all", "series");
-        index.add_series("tenant", fingerprint, &labels);
+        index.add_series("tenant", fixture.fingerprint, &labels);
     }
-    index.add_series("other", 10, &Labels::from_pairs([("app", "api")]));
+    index.add_series(
+        "other",
+        10,
+        &Labels::from_pairs([LabelPair::new("app", "api")]),
+    );
     index
 }
 
 #[test]
 fn regex_posting_unions_preserve_missing_empty_and_multiline_labels() {
     let index = fixture();
-    for (name, op, pattern, expected) in [
-        ("region", MatchOp::Re, "west|east", vec![11, 12, 17]),
-        ("region", MatchOp::Re, ".+", vec![11, 12, 13, 17]),
-        ("region", MatchOp::Re, "(?s:.+)", vec![11, 12, 13, 16, 17]),
-        ("region", MatchOp::Nre, "", vec![11, 12, 13, 16, 17]),
-        ("zone", MatchOp::Nre, "", vec![15, 19]),
-        ("zone", MatchOp::Re, "west|非空", vec![15, 19]),
-        ("region", MatchOp::Re, "東京|west\\nzone\\x00", vec![13, 16]),
-        (
-            "app",
-            MatchOp::Re,
-            "api|worker",
-            vec![11, 12, 13, 14, 15, 16, 19],
-        ),
+    for case in [
+        RegexCase {
+            name: "region",
+            op: MatchOp::Re,
+            pattern: "west|east",
+            expected: vec![11, 12, 17],
+        },
+        RegexCase {
+            name: "region",
+            op: MatchOp::Re,
+            pattern: ".+",
+            expected: vec![11, 12, 13, 17],
+        },
+        RegexCase {
+            name: "region",
+            op: MatchOp::Re,
+            pattern: "(?s:.+)",
+            expected: vec![11, 12, 13, 16, 17],
+        },
+        RegexCase {
+            name: "region",
+            op: MatchOp::Nre,
+            pattern: "",
+            expected: vec![11, 12, 13, 16, 17],
+        },
+        RegexCase {
+            name: "zone",
+            op: MatchOp::Nre,
+            pattern: "",
+            expected: vec![15, 19],
+        },
+        RegexCase {
+            name: "zone",
+            op: MatchOp::Re,
+            pattern: "west|非空",
+            expected: vec![15, 19],
+        },
+        RegexCase {
+            name: "region",
+            op: MatchOp::Re,
+            pattern: "東京|west\\nzone\\x00",
+            expected: vec![13, 16],
+        },
+        RegexCase {
+            name: "app",
+            op: MatchOp::Re,
+            pattern: "api|worker",
+            expected: vec![11, 12, 13, 14, 15, 16, 19],
+        },
     ] {
-        let expected = expected.into_iter().collect::<BTreeSet<_>>();
-        let matcher = LabelMatcher::new(name, op, pattern);
+        let expected = case.expected.into_iter().collect::<BTreeSet<_>>();
+        let matcher = LabelMatcher::new(case.name, case.op, case.pattern);
         let all = LabelMatcher::new("all", MatchOp::Eq, "series");
         for matchers in [
             vec![matcher.clone()],
@@ -54,18 +160,19 @@ fn regex_posting_unions_preserve_missing_empty_and_multiline_labels() {
         }
     }
     let anchor = LabelMatcher::new("app", MatchOp::Re, "api|worker");
-    for (matcher, expected) in [
-        (
+    for case in [
+        matcher_expected(
             LabelMatcher::new("zone", MatchOp::Re, ".*"),
-            vec![11, 12, 13, 14, 15, 16, 19],
+            &[11, 12, 13, 14, 15, 16, 19],
         ),
-        (LabelMatcher::new("region", MatchOp::Nre, ".*"), vec![16]),
-        (
+        matcher_expected(LabelMatcher::new("region", MatchOp::Nre, ".*"), &[16]),
+        matcher_expected(
             LabelMatcher::new("missing", MatchOp::Re, ".*"),
-            vec![11, 12, 13, 14, 15, 16, 19],
+            &[11, 12, 13, 14, 15, 16, 19],
         ),
     ] {
-        let expected = expected.into_iter().collect::<BTreeSet<_>>();
+        let expected = case.expected.into_iter().collect::<BTreeSet<_>>();
+        let matcher = case.matcher;
         for matchers in [
             vec![anchor.clone(), matcher.clone()],
             vec![matcher, anchor.clone()],
@@ -74,18 +181,19 @@ fn regex_posting_unions_preserve_missing_empty_and_multiline_labels() {
         }
     }
     let all = LabelMatcher::new("all", MatchOp::Eq, "series");
-    for (matcher, expected) in [
-        (
+    for case in [
+        matcher_expected(
             LabelMatcher::new("zone", MatchOp::Re, ".*"),
-            vec![11, 12, 13, 14, 15, 16, 17, 18, 19],
+            &[11, 12, 13, 14, 15, 16, 17, 18, 19],
         ),
-        (
+        matcher_expected(
             LabelMatcher::new("zone", MatchOp::Re, ""),
-            vec![11, 12, 13, 14, 16, 17, 18],
+            &[11, 12, 13, 14, 16, 17, 18],
         ),
-        (LabelMatcher::new("region", MatchOp::Nre, ".*"), vec![16]),
+        matcher_expected(LabelMatcher::new("region", MatchOp::Nre, ".*"), &[16]),
     ] {
-        let expected = expected.into_iter().collect::<BTreeSet<_>>();
+        let expected = case.expected.into_iter().collect::<BTreeSet<_>>();
+        let matcher = case.matcher;
         for matchers in [
             vec![all.clone(), matcher.clone()],
             vec![matcher, all.clone()],
@@ -99,56 +207,57 @@ fn regex_posting_unions_preserve_missing_empty_and_multiline_labels() {
 fn selective_resolution_preserves_full_matcher_ledger_in_each_order() {
     let index = fixture();
     let anchor = LabelMatcher::new("app", MatchOp::Eq, "api");
-    for (matcher, expected) in [
-        (
+    for case in [
+        matcher_expected(
             LabelMatcher::new("region", MatchOp::Neq, "west"),
-            vec![12, 13, 16, 19],
+            &[12, 13, 16, 19],
         ),
-        (LabelMatcher::new("region", MatchOp::Eq, ""), vec![19]),
-        (
+        matcher_expected(LabelMatcher::new("region", MatchOp::Eq, ""), &[19]),
+        matcher_expected(
             LabelMatcher::new("zone", MatchOp::Eq, ""),
-            vec![11, 12, 13, 16],
+            &[11, 12, 13, 16],
         ),
-        (LabelMatcher::new("zone", MatchOp::Neq, ""), vec![19]),
-        (
+        matcher_expected(LabelMatcher::new("zone", MatchOp::Neq, ""), &[19]),
+        matcher_expected(
             LabelMatcher::new("zone", MatchOp::Re, ""),
-            vec![11, 12, 13, 16],
+            &[11, 12, 13, 16],
         ),
-        (LabelMatcher::new("zone", MatchOp::Nre, ""), vec![19]),
-        (
+        matcher_expected(LabelMatcher::new("zone", MatchOp::Nre, ""), &[19]),
+        matcher_expected(
             LabelMatcher::new("region", MatchOp::Re, ".+"),
-            vec![11, 12, 13],
+            &[11, 12, 13],
         ),
-        (
+        matcher_expected(
             LabelMatcher::new("region", MatchOp::Nre, "west|east"),
-            vec![13, 16, 19],
+            &[13, 16, 19],
         ),
-        (LabelMatcher::new("region", MatchOp::Re, "east"), vec![12]),
-        (
+        matcher_expected(LabelMatcher::new("region", MatchOp::Re, "east"), &[12]),
+        matcher_expected(
             LabelMatcher::new("region", MatchOp::Re, "東京|west\nzone\x00"),
-            vec![13, 16],
+            &[13, 16],
         ),
-        (LabelMatcher::new("region", MatchOp::Nre, ".*"), vec![16]),
-        (
+        matcher_expected(LabelMatcher::new("region", MatchOp::Nre, ".*"), &[16]),
+        matcher_expected(
             LabelMatcher::new("region", MatchOp::Re, ".*"),
-            vec![11, 12, 13, 19],
+            &[11, 12, 13, 19],
         ),
-        (LabelMatcher::new("app", MatchOp::Eq, "worker"), vec![]),
-        (LabelMatcher::new("missing", MatchOp::Eq, "value"), vec![]),
-        (
+        matcher_expected(LabelMatcher::new("app", MatchOp::Eq, "worker"), &[]),
+        matcher_expected(LabelMatcher::new("missing", MatchOp::Eq, "value"), &[]),
+        matcher_expected(
             LabelMatcher::new("missing", MatchOp::Re, ".*"),
-            vec![11, 12, 13, 16, 19],
+            &[11, 12, 13, 16, 19],
         ),
-        (
+        matcher_expected(
             LabelMatcher::new("__query_shard__", MatchOp::Eq, "1_of_2"),
-            vec![12, 16],
+            &[12, 16],
         ),
-        (
+        matcher_expected(
             LabelMatcher::new("__query_shard__", MatchOp::Neq, "1_of_2"),
-            vec![11, 13, 19],
+            &[11, 13, 19],
         ),
     ] {
-        let expected = expected.into_iter().collect::<BTreeSet<_>>();
+        let expected = case.expected.into_iter().collect::<BTreeSet<_>>();
+        let matcher = case.matcher;
         for matchers in [
             vec![anchor.clone(), matcher.clone()],
             vec![matcher.clone(), anchor.clone()],
@@ -219,8 +328,16 @@ fn selective_resolution_preserves_validation_and_short_circuit_errors() {
 fn selective_resolution_uses_tenant_labels_and_keeps_snapshots_independent() {
     let mut index = fixture();
     let snapshot = index.clone();
-    index.add_series("tenant", 11, &Labels::from_pairs([("app", "replacement")]));
-    index.add_series("tenant", 20, &Labels::from_pairs([("app", "api")]));
+    index.add_series(
+        "tenant",
+        11,
+        &Labels::from_pairs([LabelPair::new("app", "replacement")]),
+    );
+    index.add_series(
+        "tenant",
+        20,
+        &Labels::from_pairs([LabelPair::new("app", "api")]),
+    );
     let matchers = [
         LabelMatcher::new("region", MatchOp::Neq, "east"),
         LabelMatcher::new("app", MatchOp::Eq, "api"),

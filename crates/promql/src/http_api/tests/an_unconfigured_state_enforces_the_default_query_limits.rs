@@ -1,5 +1,17 @@
 use super::*;
 
+struct EngineCaps {
+    max_samples: usize,
+    max_fetched_series: usize,
+}
+
+struct ProcessCapsCase {
+    name: &'static str,
+    process: EngineOpts,
+    tenant_limits: Option<Limits>,
+    expected: EngineCaps,
+}
+
 /// Mimir applies its default limits without a runtime config, so a querier
 /// started with no overrides file must still cap what one query selects. A
 /// state built without `with_query_limits` enforces `Limits::default()` at the
@@ -21,7 +33,10 @@ pub(crate) fn an_unconfigured_state_enforces_the_default_query_limits() {
             None => state,
         };
         let opts = state.engine_for_tenant(&tenant).opts;
-        (opts.max_samples, opts.max_fetched_series)
+        EngineCaps {
+            max_samples: opts.max_samples,
+            max_fetched_series: opts.max_fetched_series,
+        }
     };
 
     let unconfigured = PrometheusApiState::new(Arc::new(two_series_store()), EngineOpts::default());
@@ -41,38 +56,59 @@ pub(crate) fn an_unconfigured_state_enforces_the_default_query_limits() {
         ..Limits::default()
     };
     let cases = [
-        (
-            "default limits, no process series cap",
-            EngineOpts::default(),
-            None,
-            (EngineOpts::default().max_samples, default_series),
-        ),
-        (
-            "tenant caps lower the process caps",
+        ProcessCapsCase {
+            name: "default limits, no process series cap",
+            process: EngineOpts::default(),
+            tenant_limits: None,
+            expected: EngineCaps {
+                max_samples: EngineOpts::default().max_samples,
+                max_fetched_series: default_series,
+            },
+        },
+        ProcessCapsCase {
+            name: "tenant caps lower the process caps",
             process,
-            Some(tenant_caps(10, 3)),
-            (10, 3),
-        ),
-        (
-            "tenant caps cannot raise the process caps",
+            tenant_limits: Some(tenant_caps(10, 3)),
+            expected: EngineCaps {
+                max_samples: 10,
+                max_fetched_series: 3,
+            },
+        },
+        ProcessCapsCase {
+            name: "tenant caps cannot raise the process caps",
             process,
-            Some(tenant_caps(1_000, 70)),
-            (100, 7),
-        ),
-        (
-            "zero tenant caps keep the process caps",
+            tenant_limits: Some(tenant_caps(1_000, 70)),
+            expected: EngineCaps {
+                max_samples: 100,
+                max_fetched_series: 7,
+            },
+        },
+        ProcessCapsCase {
+            name: "zero tenant caps keep the process caps",
             process,
-            Some(tenant_caps(0, 0)),
-            (100, 7),
-        ),
-        (
-            "a zero process series cap leaves the tenant cap",
-            EngineOpts::default(),
-            Some(tenant_caps(0, 5)),
-            (EngineOpts::default().max_samples, 5),
-        ),
+            tenant_limits: Some(tenant_caps(0, 0)),
+            expected: EngineCaps {
+                max_samples: 100,
+                max_fetched_series: 7,
+            },
+        },
+        ProcessCapsCase {
+            name: "a zero process series cap leaves the tenant cap",
+            process: EngineOpts::default(),
+            tenant_limits: Some(tenant_caps(0, 5)),
+            expected: EngineCaps {
+                max_samples: EngineOpts::default().max_samples,
+                max_fetched_series: 5,
+            },
+        },
     ];
-    for (name, process, limits, expected) in cases {
-        assert2::check!(engine_caps(process, limits) == expected, "{name}");
+    for case in cases {
+        let actual = engine_caps(case.process, case.tenant_limits);
+        assert2::check!(
+            actual.max_samples == case.expected.max_samples
+                && actual.max_fetched_series == case.expected.max_fetched_series,
+            "{}",
+            case.name
+        );
     }
 }

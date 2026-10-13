@@ -132,26 +132,42 @@ mod tests {
     fn attribute_size_cap_enforced() {
         let limits = limits_with(0, 4);
 
-        for (attrs, want) in [
-            (vec![("ab".to_string(), 2_u64)], Ok(())),
-            (
+        struct Case {
+            attrs: Vec<MeasuredAttribute>,
+            want: Result<(), LimitError>,
+        }
+        for case in [
+            Case {
+                attrs: vec![MeasuredAttribute {
+                    key: "ab".to_string(),
+                    value_bytes: 2_u64,
+                }],
+                want: Ok(()),
+            },
+            Case {
                 // Over-long key.
-                vec![("toolong".to_string(), 1_u64)],
-                Err(LimitError::AttributeTooLong {
+                attrs: vec![MeasuredAttribute {
+                    key: "toolong".to_string(),
+                    value_bytes: 1_u64,
+                }],
+                want: Err(LimitError::AttributeTooLong {
                     limit: 4,
                     observed: 7,
                 }),
-            ),
-            (
+            },
+            Case {
                 // Over-long value.
-                vec![("a".to_string(), 7_u64)],
-                Err(LimitError::AttributeTooLong {
+                attrs: vec![MeasuredAttribute {
+                    key: "a".to_string(),
+                    value_bytes: 7_u64,
+                }],
+                want: Err(LimitError::AttributeTooLong {
                     limit: 4,
                     observed: 7,
                 }),
-            ),
+            },
         ] {
-            assert2::assert!(IngestEnforcer::check_attributes(&limits, &attrs) == want);
+            assert2::assert!(IngestEnforcer::check_attributes(&limits, &case.attrs) == case.want);
         }
     }
 
@@ -160,7 +176,10 @@ mod tests {
         // A value whose TRUE byte length exceeds the cap must be rejected even
         // when a stringification would under-report it (e.g. `Bytes`).
         let limits = limits_with(0, 4);
-        let oversized_bytes = vec![("k".to_string(), 8_u64)];
+        let oversized_bytes = vec![MeasuredAttribute {
+            key: "k".to_string(),
+            value_bytes: 8_u64,
+        }];
         assert2::assert!(matches!(
             IngestEnforcer::check_attributes(&limits, &oversized_bytes),
             Err(LimitError::AttributeTooLong { .. })
@@ -261,6 +280,6 @@ mod query_enforcer;
 mod rounded_positive_rate;
 
 use f64_from_u64::f64_from_u64;
-pub use ingest_enforcer::IngestEnforcer;
+pub use ingest_enforcer::{IngestEnforcer, MeasuredAttribute};
 pub use query_enforcer::QueryEnforcer;
 use rounded_positive_rate::rounded_positive_rate;

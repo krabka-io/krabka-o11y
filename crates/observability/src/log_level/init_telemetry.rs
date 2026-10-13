@@ -1,5 +1,10 @@
 use super::{LogLevelControl, Telemetry, install_json_logging};
 
+pub struct TelemetryStartup {
+    pub telemetry: Telemetry,
+    pub log_level_control: LogLevelControl,
+}
+
 /// Starts a service's telemetry and returns the control `/log_level` drives.
 ///
 /// Without OTLP this installs the stdout subscriber here, so the filter keeps
@@ -17,12 +22,12 @@ pub fn init_telemetry(
     fmt_default_filter: &str,
     otel_default_filter: &str,
     tracer_name: &str,
-) -> Result<(Telemetry, LogLevelControl), krabka_telemetry::TelemetryError> {
+) -> Result<TelemetryStartup, krabka_telemetry::TelemetryError> {
     let Some(otlp) = otlp else {
-        return Ok((
-            Telemetry { guard: None },
-            install_json_logging(fmt_default_filter),
-        ));
+        return Ok(TelemetryStartup {
+            telemetry: Telemetry { guard: None },
+            log_level_control: install_json_logging(fmt_default_filter),
+        });
     };
     let guard = krabka_telemetry::init(
         Some(otlp),
@@ -35,5 +40,8 @@ pub fn init_telemetry(
             &tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(fmt_default_filter)),
         )));
-    Ok((Telemetry { guard: Some(guard) }, control))
+    Ok(TelemetryStartup {
+        telemetry: Telemetry { guard: Some(guard) },
+        log_level_control: control,
+    })
 }

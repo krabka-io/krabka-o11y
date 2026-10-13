@@ -46,7 +46,7 @@ pub fn decode_otlp(data: &TracesData) -> Result<Vec<Span>, WireError> {
                 } else {
                     Some(fixed8(&span.parent_span_id, "parent_span_id")?)
                 };
-                let (status, status_message) = status_of(span.status.as_ref());
+                let status = status_of(span.status.as_ref());
                 let events = span
                     .events
                     .iter()
@@ -82,8 +82,8 @@ pub fn decode_otlp(data: &TracesData) -> Result<Vec<Span>, WireError> {
                             .saturating_sub(span.start_time_unix_nano),
                     )
                     .unwrap_or(i64::MAX),
-                    status,
-                    status_message,
+                    status: status.code,
+                    status_message: status.message,
                     resource_attrs: resource_attrs.clone(),
                     span_attrs,
                     events,

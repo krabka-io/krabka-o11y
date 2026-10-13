@@ -10,18 +10,20 @@ pub(crate) fn parse_go_duration_ns(value: &str) -> Result<u64, String> {
     while !rest.is_empty() {
         let number_len = rest
             .char_indices()
-            .take_while(|(_, c)| c.is_ascii_digit() || *c == '.')
-            .map(|(idx, c)| idx + c.len_utf8())
+            .take_while(|entry| entry.1.is_ascii_digit() || entry.1 == '.')
+            .map(|entry| entry.0 + entry.1.len_utf8())
             .last()
             .ok_or_else(|| format!("expected number in {value:?}"))?;
-        let (number, tail) = rest.split_at(number_len);
+        let number = &rest[..number_len];
+        let tail = &rest[number_len..];
         let unit_len = tail
             .char_indices()
-            .take_while(|(_, c)| c.is_ascii_alphabetic() || *c == 'µ')
-            .map(|(idx, c)| idx + c.len_utf8())
+            .take_while(|entry| entry.1.is_ascii_alphabetic() || entry.1 == 'µ')
+            .map(|entry| entry.0 + entry.1.len_utf8())
             .last()
             .ok_or_else(|| format!("expected unit after {number:?}"))?;
-        let (unit, next) = tail.split_at(unit_len);
+        let unit = &tail[..unit_len];
+        let next = &tail[unit_len..];
         let multiplier = match unit {
             "ns" => 1,
             "us" | "µs" => 1_000,

@@ -63,6 +63,7 @@ pub(crate) use annotations::emit_warning;
 use annotations::{invalid_quantile_warning, is_valid_quantile};
 #[cfg(test)]
 use binary::{InstantOperands, InstantValue, combine_instant_binary};
+use futures::{FutureExt, future::BoxFuture};
 pub(crate) use histogram::add_compatible_native_histogram;
 #[cfg(all(test, feature = "experimental-functions"))]
 use histogram::apply_histogram_quantiles;
@@ -83,10 +84,12 @@ use planned::{InstantShape, PlannedInstant};
 use planner_support::{LabelOpsKind, string_literal_value};
 #[cfg(test)]
 use planner_support::{match_rate_range_call, range_expr_routes_through_planner};
+use promql_parser::parser::{Expr, VectorSelector};
 pub(crate) use query_stats::{
     PerStepSampleStats, QuerySampleStats, collect_query_sample_stats, query_stats_step,
 };
 use query_stats::{query_stats_enabled, record_queryable_samples};
+pub(crate) use range_functions::kahan_sum_inc;
 #[cfg(all(test, feature = "experimental-functions"))]
 use range_functions::validate_smoothing_factor;
 #[cfg(test)]
@@ -103,9 +106,60 @@ use crate::extension::is_stale_nan;
 #[cfg(test)]
 use crate::planner::label_ops;
 use crate::{
-    PromqlError, error::Result, planner::ExtendedSelectorModifier, result::RangeSeries,
+    PromqlError,
+    error::Result,
+    planner::ExtendedSelectorModifier,
+    result::{InstantSample, RangeSeries},
     store::MetricStore,
 };
+
+pub(super) struct InnerVectorQuery<'a> {
+    tenant: &'a str,
+    value_arg: &'a Expr,
+    time_ms: i64,
+}
+
+impl<'a> InnerVectorQuery<'a> {
+    pub(super) fn new(tenant: &'a str, value_arg: &'a Expr, time_ms: i64) -> Self {
+        Self {
+            tenant,
+            value_arg,
+            time_ms,
+        }
+    }
+}
+
+impl<S: MetricStore> PromqlEngine<S> {
+    pub(super) fn resolve_inner_vector<'a>(
+        &'a self,
+        query: InnerVectorQuery<'a>,
+        select: impl FnOnce(
+            &'a Self,
+            &'a str,
+            &'a VectorSelector,
+            i64,
+        ) -> BoxFuture<'a, Result<Option<Vec<InstantSample>>>>
+        + Send
+        + 'a,
+    ) -> BoxFuture<'a, Result<Option<Vec<InstantSample>>>> {
+        async move {
+            let inner = unparenthesized_expression(query.value_arg);
+            if let Expr::VectorSelector(selector) = inner {
+                return select(self, query.tenant, selector, query.time_ms).await;
+            }
+            self.planned_instant_vector(query.tenant, inner, query.time_ms)
+                .await
+        }
+        .boxed()
+    }
+}
+
+fn unparenthesized_expression(mut expression: &Expr) -> &Expr {
+    while let Expr::Paren(paren) = expression {
+        expression = &paren.expr;
+    }
+    expression
+}
 
 #[cfg(feature = "experimental-functions")]
 tokio::task_local! {
@@ -134,8 +188,8 @@ pub use check_resolution_points::check_resolution_points;
 use current_at_modifier_bounds::current_at_modifier_bounds;
 pub use engine_opts::EngineOpts;
 pub(crate) use histogram::{
-    compact_spanned_histogram_counts, spanned_histogram_counts, standard_histogram_bound,
-    template_histogram_value,
+    compact_spanned_histogram_counts, for_each_spanned_histogram_count, spanned_histogram_counts,
+    standard_histogram_bound, template_histogram_value,
 };
 pub(crate) use labels::aggregate_labels;
 pub use max_resolution_points::MAX_RESOLUTION_POINTS;

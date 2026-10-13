@@ -25,10 +25,10 @@ pub(crate) fn apply_outer_range_fn(
                     eval_ms: time_ms,
                 },
             )
-            .map(|(labels, value)| InstantSample {
-                labels,
+            .map(|sample| InstantSample {
+                labels: sample.labels,
                 ts_ms: time_ms,
-                value,
+                value: sample.value,
                 drop_name: series.drop_name
                     || !matches!(outer, OuterRangeFn::OverTime(kind) if kind.preserves_metric_name()),
             })

@@ -25,7 +25,10 @@ impl WalSymbolSet {
             locations: vec![WalLocation {
                 address: 0,
                 mapping_id: 0,
-                lines: vec![(0, 1)],
+                lines: vec![super::WalLine {
+                    function_id: 0,
+                    line: 1,
+                }],
             }],
             mappings: Vec::new(),
         }

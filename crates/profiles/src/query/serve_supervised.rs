@@ -2,6 +2,7 @@ use super::{
     Arc, ProfileStore, QuerierState, ServerListener, ServerSecurity, SocketAddr, TcpListener,
     router, serve_router,
 };
+use crate::ServerTask;
 
 /// Serve the querier, returning the bound address and the accept loop's handle
 /// for the caller to supervise.
@@ -26,7 +27,7 @@ pub async fn serve_supervised<S>(
     readiness: krabka_observability::RoleReadiness,
     security: &ServerSecurity,
     shutdown: tokio_util::sync::CancellationToken,
-) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)>
+) -> std::io::Result<ServerTask>
 where
     S: ProfileStore + 'static,
 {
@@ -45,5 +46,5 @@ where
         }
         state.shutdown_async_queries().await;
     });
-    Ok((bound, handle))
+    Ok(ServerTask::new(bound, handle))
 }

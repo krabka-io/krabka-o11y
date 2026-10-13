@@ -11,7 +11,10 @@ pub(crate) async fn pruning_a_chunked_head_leaves_open_snapshots_intact() {
     // an open one at once and the prune has to cross both kinds.
     let rows = ROW_CHUNK_LEN * 2 + 7;
     let mut store = InMemoryMetricStore::with_retention(secs(1));
-    let series = lbls(&[("__name__", "up"), ("job", "api")]);
+    let series = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
     for row in 0..rows {
         let ts_ms = i64::try_from(row).expect("a row index fits an i64") + 1;
         store.push_float("t", series.clone(), ts_ms, 1.0);

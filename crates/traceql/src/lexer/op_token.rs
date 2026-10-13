@@ -1,28 +1,90 @@
-use super::Token;
+use super::{ScanResult, Token};
 
-pub(crate) fn op_token(s: &str) -> Option<(Token, usize)> {
-    for (raw, tok) in [
-        ("!>>", Token::NegDesc),
-        ("&>>", Token::UnionDesc),
-        ("!<<", Token::NegAnc),
-        ("&<<", Token::UnionAnc),
-        (">>", Token::Desc),
-        ("<<", Token::Anc),
-        ("!>", Token::NegChild),
-        ("!<", Token::NegParent),
-        ("&>", Token::UnionChild),
-        ("&<", Token::UnionParent),
-        ("&~", Token::UnionSibling),
-        ("&&", Token::And),
-        ("||", Token::Or),
-        (">=", Token::Gte),
-        ("<=", Token::Lte),
-        ("=~", Token::Re),
-        ("!~", Token::NegSibling),
-        ("!=", Token::Neq),
+struct OperatorToken {
+    raw: &'static str,
+    token: Token,
+}
+
+pub(crate) fn op_token(s: &str) -> Option<ScanResult<Token>> {
+    for operator in [
+        OperatorToken {
+            raw: "!>>",
+            token: Token::NegDesc,
+        },
+        OperatorToken {
+            raw: "&>>",
+            token: Token::UnionDesc,
+        },
+        OperatorToken {
+            raw: "!<<",
+            token: Token::NegAnc,
+        },
+        OperatorToken {
+            raw: "&<<",
+            token: Token::UnionAnc,
+        },
+        OperatorToken {
+            raw: ">>",
+            token: Token::Desc,
+        },
+        OperatorToken {
+            raw: "<<",
+            token: Token::Anc,
+        },
+        OperatorToken {
+            raw: "!>",
+            token: Token::NegChild,
+        },
+        OperatorToken {
+            raw: "!<",
+            token: Token::NegParent,
+        },
+        OperatorToken {
+            raw: "&>",
+            token: Token::UnionChild,
+        },
+        OperatorToken {
+            raw: "&<",
+            token: Token::UnionParent,
+        },
+        OperatorToken {
+            raw: "&~",
+            token: Token::UnionSibling,
+        },
+        OperatorToken {
+            raw: "&&",
+            token: Token::And,
+        },
+        OperatorToken {
+            raw: "||",
+            token: Token::Or,
+        },
+        OperatorToken {
+            raw: ">=",
+            token: Token::Gte,
+        },
+        OperatorToken {
+            raw: "<=",
+            token: Token::Lte,
+        },
+        OperatorToken {
+            raw: "=~",
+            token: Token::Re,
+        },
+        OperatorToken {
+            raw: "!~",
+            token: Token::NegSibling,
+        },
+        OperatorToken {
+            raw: "!=",
+            token: Token::Neq,
+        },
     ] {
-        if s.starts_with(raw) {
-            return Some((tok, raw.len()));
+        if s.starts_with(operator.raw) {
+            return Some(ScanResult {
+                value: operator.token,
+                consumed: operator.raw.len(),
+            });
         }
     }
 
@@ -48,9 +110,15 @@ pub(crate) fn op_token(s: &str) -> Option<(Token, usize)> {
         '}' => Token::RBrace,
         '|' => Token::Pipe,
         '&' => {
-            return Some((Token::Ident("&".into()), ch.len_utf8()));
+            return Some(ScanResult {
+                value: Token::Ident("&".into()),
+                consumed: ch.len_utf8(),
+            });
         }
         _ => return None,
     };
-    Some((tok, ch.len_utf8()))
+    Some(ScanResult {
+        value: tok,
+        consumed: ch.len_utf8(),
+    })
 }

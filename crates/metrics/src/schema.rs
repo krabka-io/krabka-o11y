@@ -13,14 +13,26 @@ mod tests {
 
     use super::*;
 
+    struct ColumnType {
+        name: &'static str,
+        data_type: DataType,
+    }
+
+    fn column_type(name: &'static str, data_type: DataType) -> ColumnType {
+        ColumnType { name, data_type }
+    }
+
     #[test]
     fn float_schema_has_mandatory_and_value() {
         let s = float_sample_schema();
-        for (column, data_type) in [
-            (COL_FINGERPRINT, DataType::UInt64),
-            (COL_TIMESTAMP, DataType::Int64),
-            ("value", DataType::Float64),
-            (COL_NH_START_TS, DataType::Int64),
+        for ColumnType {
+            name: column,
+            data_type,
+        } in [
+            column_type(COL_FINGERPRINT, DataType::UInt64),
+            column_type(COL_TIMESTAMP, DataType::Int64),
+            column_type("value", DataType::Float64),
+            column_type(COL_NH_START_TS, DataType::Int64),
         ] {
             check!(
                 s.column_with_name(column).unwrap().1.data_type() == &data_type,
@@ -33,7 +45,7 @@ mod tests {
     #[test]
     fn native_histogram_span_columns_are_list_of_struct() {
         let s = native_histogram_schema();
-        let (_, field) = s.column_with_name(COL_NH_POS_SPANS).unwrap();
+        let field = s.column_with_name(COL_NH_POS_SPANS).unwrap().1;
         // List<Struct<offset:Int32, length:UInt32>>
         match field.data_type() {
             DataType::List(inner) => match inner.data_type() {
@@ -58,13 +70,16 @@ mod tests {
     #[test]
     fn metadata_schema_has_metric_metadata_columns() {
         let s = metadata_schema();
-        for (column, data_type) in [
-            (COL_FINGERPRINT, DataType::UInt64),
-            (COL_TIMESTAMP, DataType::Int64),
-            ("metric_family_name", DataType::Utf8),
-            ("metric_type", DataType::Utf8),
-            ("help", DataType::Utf8),
-            ("unit", DataType::Utf8),
+        for ColumnType {
+            name: column,
+            data_type,
+        } in [
+            column_type(COL_FINGERPRINT, DataType::UInt64),
+            column_type(COL_TIMESTAMP, DataType::Int64),
+            column_type("metric_family_name", DataType::Utf8),
+            column_type("metric_type", DataType::Utf8),
+            column_type("help", DataType::Utf8),
+            column_type("unit", DataType::Utf8),
         ] {
             check!(
                 s.column_with_name(column).unwrap().1.data_type() == &data_type,
@@ -151,7 +166,7 @@ mod tests {
             CCOL_REFERENCE_ID,
             CCOL_GNSS_FIX,
         ] {
-            let (_, field) = schema.column_with_name(column).unwrap();
+            let field = schema.column_with_name(column).unwrap().1;
             check!(
                 field.data_type()
                     == &DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
@@ -163,7 +178,7 @@ mod tests {
     #[test]
     fn clock_reading_ingest_stamp_is_a_non_null_int64() {
         let schema = clock_reading_schema();
-        let (_, field) = schema.column_with_name(CCOL_INGEST_UNIX_NANOS).unwrap();
+        let field = schema.column_with_name(CCOL_INGEST_UNIX_NANOS).unwrap().1;
 
         assert!(field == &Field::new(CCOL_INGEST_UNIX_NANOS, DataType::Int64, false));
     }
@@ -196,14 +211,14 @@ mod tests {
     fn clock_reading_decl_requires_the_signal_columns_and_sorts_by_series_then_time() {
         // Every column is required and non-null; only the fingerprint is unsigned.
         let required = [
-            (COL_FINGERPRINT, DataType::UInt64),
-            (COL_TIMESTAMP, DataType::Int64),
-            (CCOL_READING_UNIX_NANOS, DataType::Int64),
-            (CCOL_UNCERTAINTY_NANOS, DataType::Int64),
-            (CCOL_INGEST_UNIX_NANOS, DataType::Int64),
+            column_type(COL_FINGERPRINT, DataType::UInt64),
+            column_type(COL_TIMESTAMP, DataType::Int64),
+            column_type(CCOL_READING_UNIX_NANOS, DataType::Int64),
+            column_type(CCOL_UNCERTAINTY_NANOS, DataType::Int64),
+            column_type(CCOL_INGEST_UNIX_NANOS, DataType::Int64),
         ]
         .into_iter()
-        .map(|(name, data_type)| RequiredColumn::new(name, data_type, false))
+        .map(|column| RequiredColumn::new(column.name, column.data_type, false))
         .collect();
         assert!(
             clock_reading_decl()

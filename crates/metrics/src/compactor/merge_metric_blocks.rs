@@ -62,8 +62,11 @@ where
     let mut runs = Vec::with_capacity(inputs.len());
     let mut schema = None;
     for key in &planned.job.input_keys {
-        let (meta, input_schema, batches) =
+        let opened =
             open_block_stream(store.clone(), key, block_read_max, MERGE_READ_BATCH_ROWS).await?;
+        let meta = opened.meta;
+        let input_schema = opened.schema;
+        let batches = opened.batches;
         match &schema {
             None => schema = Some(input_schema),
             Some(first) if *first == input_schema => {}
@@ -140,20 +143,19 @@ where
             .unwrap_or_default(),
         row_count: meta.row_count,
     };
-    let series: BTreeMap<u64, crate::MetricLabels> = inputs
-        .iter()
-        .flat_map(|input| input.series.iter())
-        .map(|series| (series.fingerprint, series.labels.clone()))
-        .collect();
+    let mut series = BTreeMap::<u64, crate::MetricLabels>::new();
+    for item in inputs.iter().flat_map(|input| input.series.iter()) {
+        series.insert(item.fingerprint, item.labels.clone());
+    }
     let manifest = CompactionIndexManifest::from_block_meta(
         planned.kind,
         &plan,
         &meta,
         series
             .into_iter()
-            .map(|(fingerprint, labels)| CompactionSeriesLabels {
-                fingerprint,
-                labels,
+            .map(|item| CompactionSeriesLabels {
+                fingerprint: item.0,
+                labels: item.1,
             })
             .collect(),
     );

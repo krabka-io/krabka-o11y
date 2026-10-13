@@ -21,9 +21,9 @@ impl BlockMetaInfo {
         let row_groups = row_group_bytes
             .iter()
             .enumerate()
-            .map(|(index, &bytes)| RowGroupInfo {
-                index: u32::try_from(index).unwrap_or(u32::MAX),
-                compressed: ByteSize::from_bytes(bytes),
+            .map(|indexed_bytes| RowGroupInfo {
+                index: u32::try_from(indexed_bytes.0).unwrap_or(u32::MAX),
+                compressed: ByteSize::from_bytes(*indexed_bytes.1),
             })
             .collect();
         Self {

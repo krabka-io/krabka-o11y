@@ -1,5 +1,16 @@
 use super::{FloatRow, SeriesFingerprint};
 
+struct SeriesSpan {
+    fingerprint: SeriesFingerprint,
+    start: usize,
+    end: usize,
+}
+
+pub(crate) struct WindowSeries<'a> {
+    pub(crate) fingerprint: SeriesFingerprint,
+    pub(crate) rows: &'a [FloatRow],
+}
+
 /// The float rows of one scan, grouped by series and time-ordered inside each
 /// series.
 ///
@@ -14,7 +25,7 @@ pub(crate) struct FloatWindow {
     /// One `(fingerprint, start, end)` per series, in ascending fingerprint
     /// order. `rows[start..end]` is that series' samples, ascending by
     /// timestamp.
-    spans: Vec<(SeriesFingerprint, usize, usize)>,
+    spans: Vec<SeriesSpan>,
 }
 
 impl FloatWindow {
@@ -29,13 +40,20 @@ impl FloatWindow {
     /// blocks concatenates them, and two sorted files do not concatenate into a
     /// sorted one.
     pub(crate) fn new(mut rows: Vec<FloatRow>) -> Self {
-        if !rows.is_sorted_by_key(|row| (row.fp, row.ts_ms)) {
-            rows.sort_by_key(|row| (row.fp, row.ts_ms));
+        let sorted = rows.windows(2).all(|pair| {
+            pair[0].fp < pair[1].fp || (pair[0].fp == pair[1].fp && pair[0].ts_ms <= pair[1].ts_ms)
+        });
+        if !sorted {
+            rows.sort_by(|left, right| {
+                left.fp
+                    .cmp(&right.fp)
+                    .then_with(|| left.ts_ms.cmp(&right.ts_ms))
+            });
         }
         // Replayed WAL records and overlapping blocks name one sample at a
         // series/timestamp. Retain the last row, as the matrix evaluator does.
         rows.dedup_by(|later, earlier| {
-            if (later.fp, later.ts_ms) == (earlier.fp, earlier.ts_ms) {
+            if later.fp == earlier.fp && later.ts_ms == earlier.ts_ms {
                 *earlier = *later;
                 true
             } else {
@@ -47,7 +65,11 @@ impl FloatWindow {
         while start < rows.len() {
             let fp = rows[start].fp;
             let end = start + rows[start..].partition_point(|row| row.fp == fp);
-            spans.push((fp, start, end));
+            spans.push(SeriesSpan {
+                fingerprint: fp,
+                start,
+                end,
+            });
             start = end;
         }
         Self { rows, spans }
@@ -59,10 +81,13 @@ impl FloatWindow {
         &self,
         from_ms: i64,
         to_ms: i64,
-    ) -> impl Iterator<Item = (SeriesFingerprint, &[FloatRow])> {
-        self.spans.iter().filter_map(move |&(fp, start, end)| {
-            let samples = window_slice(&self.rows[start..end], from_ms, to_ms);
-            (!samples.is_empty()).then_some((fp, samples))
+    ) -> impl Iterator<Item = WindowSeries<'_>> {
+        self.spans.iter().filter_map(move |span| {
+            let samples = window_slice(&self.rows[span.start..span.end], from_ms, to_ms);
+            (!samples.is_empty()).then_some(WindowSeries {
+                fingerprint: span.fingerprint,
+                rows: samples,
+            })
         })
     }
 
@@ -70,7 +95,7 @@ impl FloatWindow {
     /// `(fingerprint, timestamp)` order.
     pub(crate) fn rows_between(&self, from_ms: i64, to_ms: i64) -> Vec<FloatRow> {
         self.series(from_ms, to_ms)
-            .flat_map(|(_, samples)| samples.iter().copied())
+            .flat_map(|series| series.rows.iter().copied())
             .collect()
     }
 }

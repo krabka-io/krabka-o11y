@@ -30,16 +30,18 @@ pub(crate) fn window_columns(steps: &[WindowStep<'_>]) -> [ArrayRef; 3] {
         let len = u32::try_from(step.timestamps.len()).unwrap();
         all_ts.extend_from_slice(step.timestamps);
         all_val.extend_from_slice(step.sample_values);
-        ranges.push((offset, len));
+        ranges.push(crate::RangeWindow::new(offset, len));
         offset += len;
         eval.push(step.eval_ts_ms);
     }
-    let (value_ra, ts_ra) = RangeArray::from_paired_ranges(
+    let paired = RangeArray::from_paired_ranges(
         Float64Array::from(all_val),
         Int64Array::from(all_ts),
         ranges,
     )
     .unwrap();
+    let value_ra = paired.values;
+    let ts_ra = paired.timestamps;
     [
         Arc::new(Int64Array::from(eval)),
         Arc::new(ts_ra.into_dict_array().unwrap()),

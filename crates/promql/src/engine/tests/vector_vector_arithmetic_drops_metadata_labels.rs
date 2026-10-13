@@ -6,10 +6,10 @@ pub(crate) async fn vector_vector_arithmetic_drops_metadata_labels() {
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "requests_total"),
-            ("__type__", "counter"),
-            ("__unit__", "requests"),
-            ("instance", "a"),
+            crate::test_support::TestLabelPair::new("__name__", "requests_total"),
+            crate::test_support::TestLabelPair::new("__type__", "counter"),
+            crate::test_support::TestLabelPair::new("__unit__", "requests"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
         ]),
         10_000,
         10.0,
@@ -17,10 +17,10 @@ pub(crate) async fn vector_vector_arithmetic_drops_metadata_labels() {
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "requests_total"),
-            ("__type__", "counter"),
-            ("__unit__", "requests"),
-            ("instance", "b"),
+            crate::test_support::TestLabelPair::new("__name__", "requests_total"),
+            crate::test_support::TestLabelPair::new("__type__", "counter"),
+            crate::test_support::TestLabelPair::new("__unit__", "requests"),
+            crate::test_support::TestLabelPair::new("instance", "b"),
         ]),
         10_000,
         5.0,

@@ -19,11 +19,11 @@ use super::{
 /// a manifest is here to stop.
 pub(crate) fn shard_ranges_for_span(min_ts: i64, max_ts: i64, width: i64) -> Vec<IndexShardRange> {
     let width = width.max(1);
-    let (min_ts, max_ts) = if min_ts <= max_ts {
-        (min_ts, max_ts)
-    } else {
-        (max_ts, min_ts)
-    };
+    let mut min_ts = min_ts;
+    let mut max_ts = max_ts;
+    if min_ts > max_ts {
+        std::mem::swap(&mut min_ts, &mut max_ts);
+    }
     let first = min_ts.div_euclid(width);
     let last = max_ts.div_euclid(width);
     let slots = bounded_shard_slots(first, last, MAX_SHARD_SLOTS_PER_RECORD);

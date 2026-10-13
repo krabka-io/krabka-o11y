@@ -1,10 +1,15 @@
 use super::{
     AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
     RulerAlertState, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupEvaluationStatus,
-    RulerRuleEvaluationStatus, RulerStateSink, TenantId,
+    RulerGroupRef, RulerRuleEvaluationStatus, RulerSinks, RulerStateSink, TenantId,
     evaluate_alerting_rule_with_state_and_sink, evaluate_and_append_recording_rule,
     yaml_optional_string, yaml_required_string, yaml_string_map,
 };
+
+struct RuleEvaluationCounts {
+    recording_records: usize,
+    alerts_dispatched: usize,
+}
 
 /// Evaluates one mixed ruler rule group and persists alert state records.
 ///
@@ -12,7 +17,7 @@ use super::{
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
 pub async fn evaluate_and_persist_ruler_rule_group<S, W, A, R>(
     engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
+    sinks: RulerSinks<'_, W, A, R>,
     alert_state: &mut RulerAlertState,
     tenant: &TenantId,
     group: &serde_yaml::Value,
@@ -29,7 +34,11 @@ where
         sinks,
         alert_state,
         tenant,
-        ("", "", group),
+        RulerGroupRef {
+            namespace: "",
+            group_name: "",
+            group,
+        },
         eval_time_ms,
     )
     .await?
@@ -38,10 +47,10 @@ where
 
 pub(super) async fn evaluate_and_persist_ruler_rule_group_with_report<S, W, A, R>(
     engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
+    sinks: RulerSinks<'_, W, A, R>,
     alert_state: &mut RulerAlertState,
     tenant: &TenantId,
-    group: (&str, &str, &serde_yaml::Value),
+    group: RulerGroupRef<'_>,
     eval_time_ms: i64,
 ) -> Result<RulerEvaluationReport, PromqlError>
 where
@@ -50,18 +59,23 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    let (namespace, group_name, group) = group;
+    let namespace = group.namespace;
+    let group_name = group.group_name;
+    let group = group.group;
     let Some(rules) = group.get("rules").and_then(serde_yaml::Value::as_sequence) else {
         return Err(PromqlError::Exec(
             "ruler rule group must contain rules".into(),
         ));
     };
-    let (wal_sink, alert_sink, state_sink) = sinks;
+    let wal_sink = sinks.wal;
+    let alert_sink = sinks.alertmanager;
+    let state_sink = sinks.ruler_state;
     let group_started = std::time::Instant::now();
     let mut report = RulerEvaluationReport::default();
     let mut group_errors = Vec::new();
 
-    for (rule_index, rule) in rules.iter().enumerate() {
+    for rule_index in 0..rules.len() {
+        let rule = &rules[rule_index];
         let rule_started = std::time::Instant::now();
         let result = if let Some(record_name) = yaml_optional_string(rule, "record") {
             match yaml_required_string(rule, "expr") {
@@ -75,28 +89,34 @@ where
                     eval_time_ms,
                 )
                 .await
-                .map(|count| (count, 0)),
+                .map(|count| RuleEvaluationCounts {
+                    recording_records: count,
+                    alerts_dispatched: 0,
+                }),
                 Err(error) => Err(error),
             }
         } else if yaml_optional_string(rule, "alert").is_some() {
             evaluate_alerting_rule_with_state_and_sink(
                 engine,
-                (wal_sink, alert_sink, state_sink),
+                RulerSinks::new(wal_sink, alert_sink, state_sink),
                 alert_state,
                 tenant,
                 rule,
                 eval_time_ms,
             )
             .await
-            .map(|count| (0, count))
+            .map(|count| RuleEvaluationCounts {
+                recording_records: 0,
+                alerts_dispatched: count,
+            })
         } else {
             continue;
         };
 
         let last_error = match result {
-            Ok((recording_records, alerts_dispatched)) => {
-                report.evaluation.recording_records += recording_records;
-                report.evaluation.alerts_dispatched += alerts_dispatched;
+            Ok(counts) => {
+                report.evaluation.recording_records += counts.recording_records;
+                report.evaluation.alerts_dispatched += counts.alerts_dispatched;
                 String::new()
             }
             Err(error) => {

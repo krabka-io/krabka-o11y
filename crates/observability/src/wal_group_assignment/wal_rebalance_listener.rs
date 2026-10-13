@@ -6,6 +6,8 @@ use std::{
 use async_trait::async_trait;
 use krabka_client_consumer::{Consumer, ConsumerRebalanceListener, RebalanceListenerError};
 
+use crate::wal_consumer_metrics::WalPartitionAssignment;
+
 /// Records partitions revoked while [`Consumer::poll`] applies a rebalance.
 #[derive(Clone, Debug)]
 pub struct WalRebalanceListener {
@@ -69,10 +71,17 @@ impl ConsumerRebalanceListener for WalRebalanceListener {
         _consumer: &Consumer,
         partitions: &[(String, i32)],
     ) -> Result<(), RebalanceListenerError> {
-        let revoked: Vec<i32> = partitions
+        let assignments: Vec<WalPartitionAssignment> = partitions
             .iter()
-            .filter(|(topic, _)| topic == &self.topic)
-            .map(|(_, partition)| *partition)
+            .map(|partition| WalPartitionAssignment {
+                topic: partition.0.clone(),
+                partition: partition.1,
+            })
+            .collect();
+        let revoked: Vec<i32> = assignments
+            .iter()
+            .filter(|assignment| assignment.topic == self.topic)
+            .map(|assignment| assignment.partition)
             .collect();
         lock(&self.revoked).extend(revoked.iter().copied());
         if let Some(rewind) = lock(&self.rewind).as_mut() {
@@ -92,10 +101,18 @@ impl ConsumerRebalanceListener for WalRebalanceListener {
         let Some(rewind) = lock(&self.rewind).clone() else {
             return Ok(());
         };
-        let returned: Vec<(String, i32)> = partitions
+        let assignments: Vec<WalPartitionAssignment> = partitions
             .iter()
-            .filter(|(topic, partition)| topic == &self.topic && rewind.contains(partition))
-            .cloned()
+            .map(|partition| WalPartitionAssignment {
+                topic: partition.0.clone(),
+                partition: partition.1,
+            })
+            .collect();
+        let returned: Vec<WalPartitionAssignment> = assignments
+            .into_iter()
+            .filter(|assignment| {
+                assignment.topic == self.topic && rewind.contains(&assignment.partition)
+            })
             .collect();
         if !returned.is_empty() {
             self.rewind_to_committed(consumer, returned).await?;
@@ -113,15 +130,22 @@ impl WalRebalanceListener {
     async fn rewind_to_committed(
         &self,
         consumer: &Consumer,
-        returned: Vec<(String, i32)>,
+        returned: Vec<WalPartitionAssignment>,
     ) -> Result<(), RebalanceListenerError> {
-        let committed = consumer.committed(&returned).await?;
+        let client_returned = returned
+            .iter()
+            .map(|assignment| (assignment.topic.clone(), assignment.partition))
+            .collect::<Vec<_>>();
+        let committed = consumer.committed(&client_returned).await?;
         let mut never_committed = Vec::new();
         for partition in returned {
-            match committed.get(&partition).and_then(Option::as_ref) {
+            match committed
+                .get(&(partition.topic.clone(), partition.partition))
+                .and_then(Option::as_ref)
+            {
                 Some(offset) => {
                     consumer
-                        .seek(partition.0, partition.1, offset.offset)
+                        .seek(partition.topic, partition.partition, offset.offset)
                         .await?;
                 }
                 None => never_committed.push(partition),
@@ -131,7 +155,11 @@ impl WalRebalanceListener {
         // that rewind all reset to the earliest offset, so that is where a
         // fresh member starts too.
         if !never_committed.is_empty() {
-            consumer.seek_to_beginning(&never_committed).await?;
+            let client_partitions = never_committed
+                .iter()
+                .map(|assignment| (assignment.topic.clone(), assignment.partition))
+                .collect::<Vec<_>>();
+            consumer.seek_to_beginning(&client_partitions).await?;
         }
         Ok(())
     }

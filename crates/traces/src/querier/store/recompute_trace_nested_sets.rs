@@ -1,58 +1,23 @@
-use super::{BTreeMap, SpanRef};
+use krabka_blockstore::{CycleSpans, SpanNode, assign_nested_set};
+
+use super::SpanRef;
 
 pub(crate) fn recompute_trace_nested_sets(spans: &mut [SpanRef]) {
-    enum Frame {
-        Enter { idx: usize, parent_left: i32 },
-        Exit { idx: usize },
-    }
-
-    let positions = spans
+    let nodes = spans
         .iter()
-        .enumerate()
-        .map(|(idx, span)| (span.span_id, idx))
-        .collect::<BTreeMap<_, _>>();
-    let mut children = vec![Vec::new(); spans.len()];
-    let mut roots = Vec::new();
-    for (idx, span) in spans.iter().enumerate() {
-        match span
-            .parent_span_id
-            .and_then(|parent| positions.get(&parent).copied())
-        {
-            Some(parent_idx) if parent_idx != idx => children[parent_idx].push(idx),
-            _ => roots.push(idx),
-        }
-    }
-
-    let mut counter = 1_i32;
-    let mut stack = Vec::new();
-    for &root in roots.iter().rev() {
-        stack.push(Frame::Enter {
-            idx: root,
-            // Root spans encode nestedSetParent = -1 (Tempo's no-parent sentinel;
-            // left values start at 1 so -1 never collides). Must match the stored
-            // assignment in span/nested_set.rs and the Drilldown's `< 0` signal.
-            parent_left: -1,
-        });
-    }
-    while let Some(frame) = stack.pop() {
-        match frame {
-            Frame::Enter { idx, parent_left } => {
-                let left = counter;
-                counter += 1;
-                spans[idx].nested_set_left = left;
-                spans[idx].nested_set_parent = parent_left;
-                stack.push(Frame::Exit { idx });
-                for &child in children[idx].iter().rev() {
-                    stack.push(Frame::Enter {
-                        idx: child,
-                        parent_left: left,
-                    });
-                }
-            }
-            Frame::Exit { idx } => {
-                spans[idx].nested_set_right = counter;
-                counter += 1;
-            }
-        }
+        .map(|span| SpanNode {
+            span_id: span.span_id,
+            parent_span_id: span.parent_span_id,
+        })
+        .collect::<Vec<_>>();
+    for entry in spans
+        .iter_mut()
+        .zip(assign_nested_set(&nodes, CycleSpans::LeaveUnassigned))
+    {
+        let span = entry.0;
+        let nested_set = entry.1;
+        span.nested_set_left = nested_set.nested_set_left;
+        span.nested_set_right = nested_set.nested_set_right;
+        span.nested_set_parent = nested_set.parent_id;
     }
 }

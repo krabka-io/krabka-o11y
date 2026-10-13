@@ -1,9 +1,7 @@
 use super::{
-    BlockDescriptor, ObjectStore, ServiceConfig, ServiceConfigError, ServiceDependencies,
-    ServiceRuntimeError, TenantCompactionIndexCache, advance_and_persist_compaction_frontier,
-    build_compactor_configured_object_store, compactor_delete_requests_for_config,
-    compactor_object_store, load_existing_compaction_frontier,
-    materialize_delete_requests_in_existing_local_manifest_blocks,
+    super::prepare_compactor_wal_inputs, BlockDescriptor, ObjectStore, ServiceConfig,
+    ServiceDependencies, ServiceRuntimeError, advance_and_persist_compaction_frontier,
+    build_compactor_configured_object_store, compactor_object_store,
     materialize_deletes_then_compact_next_kafka_wal_batch, validate_compactor_policy,
 };
 
@@ -63,22 +61,20 @@ impl CompactorRun<'_> {
                 .unwrap_or_else(krabka_blockstore::ObjectStoreMetrics::unregistered),
         )
         .await?;
-        let (store, prefix) =
-            compactor_object_store(config, object_store, configured_store.as_ref())?;
-        let compaction_frontier = dependencies.compaction_frontier.unwrap_or_default();
-        let delete_requests =
-            compactor_delete_requests_for_config(config, dependencies.delete_requests)?;
-        load_existing_compaction_frontier(store, &prefix, &compaction_frontier).await?;
-        materialize_delete_requests_in_existing_local_manifest_blocks(
-            &config.data_root,
-            &delete_requests,
-        )?;
-        let consumer = dependencies
-            .wal_consumer
-            .ok_or(ServiceConfigError::MissingWalConsumer)?;
-        let mut consumer = consumer.lock().await;
-        let mut descriptors = Vec::new();
-        let mut tenant_indexes = TenantCompactionIndexCache::new();
+        let object_store = compactor_object_store(config, object_store, configured_store.as_ref())?;
+        let store = object_store.store;
+        let prefix = object_store.prefix;
+        let wal_inputs =
+            prepare_compactor_wal_inputs(config, &dependencies, store, &prefix).await?;
+        let started = wal_inputs.start().await;
+        let compaction_frontier = started.compaction_frontier;
+        let delete_requests = started.delete_requests;
+        let run = started.run;
+        let super::super::CompactorRunState {
+            mut consumer,
+            mut descriptors,
+            mut tenant_indexes,
+        } = run;
 
         loop {
             let batch_descriptors = materialize_deletes_then_compact_next_kafka_wal_batch(

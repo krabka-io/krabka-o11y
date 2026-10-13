@@ -12,7 +12,9 @@ use super::{PromqlError, Result};
 pub(crate) fn top_level_colon(content: &str) -> Result<Option<usize>> {
     let mut parens = 0_i32;
     let mut quote = None;
-    for (offset, ch) in content.char_indices() {
+    for entry in content.char_indices() {
+        let offset = entry.0;
+        let ch = entry.1;
         if let Some(quote_ch) = quote {
             if ch == quote_ch {
                 quote = None;

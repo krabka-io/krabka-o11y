@@ -16,10 +16,12 @@ pub fn object_key(
     max_offset: MaxOffset,
     window_start_ns: WindowStartNs,
 ) -> String {
-    let (min_offset, max_offset, window_start_ns) = (min_offset.0, max_offset.0, window_start_ns.0);
     let tenant = escape_object_path_segment(tenant);
     format!(
         "{TRACE_BLOCK_OBJECT_PREFIX}/{tenant}/{partition:05}/\
-         {min_offset:020}-{max_offset:020}-{window_start_ns}.parquet"
+         {min_offset:020}-{max_offset:020}-{window_start_ns}.parquet",
+        min_offset = min_offset.0,
+        max_offset = max_offset.0,
+        window_start_ns = window_start_ns.0,
     )
 }

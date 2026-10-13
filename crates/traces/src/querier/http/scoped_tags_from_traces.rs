@@ -12,7 +12,7 @@ pub(crate) fn scoped_tags_from_traces(
             tags.extend(
                 trace_resource_attributes(trace)
                     .into_iter()
-                    .map(|(key, _)| key),
+                    .map(|attribute| attribute.key),
             );
         }
         if !tags.is_empty() {
@@ -27,7 +27,11 @@ pub(crate) fn scoped_tags_from_traces(
         let mut tags = BTreeSet::new();
         for trace in traces {
             for span in &trace.spans {
-                tags.extend(span.attributes.iter().map(|(key, _)| key.clone()));
+                tags.extend(
+                    span.attributes
+                        .iter()
+                        .map(|attribute| attribute.key.clone()),
+                );
             }
         }
         if !tags.is_empty() {
@@ -43,7 +47,12 @@ pub(crate) fn scoped_tags_from_traces(
         for trace in traces {
             for span in &trace.spans {
                 for event in &span.events {
-                    tags.extend(event.attributes.iter().map(|(key, _)| key.clone()));
+                    tags.extend(
+                        event
+                            .attributes
+                            .iter()
+                            .map(|attribute| attribute.key.clone()),
+                    );
                 }
             }
         }
@@ -60,7 +69,11 @@ pub(crate) fn scoped_tags_from_traces(
         for trace in traces {
             for span in &trace.spans {
                 for link in &span.links {
-                    tags.extend(link.attributes.iter().map(|(key, _)| key.clone()));
+                    tags.extend(
+                        link.attributes
+                            .iter()
+                            .map(|attribute| attribute.key.clone()),
+                    );
                 }
             }
         }

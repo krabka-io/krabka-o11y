@@ -22,7 +22,9 @@ pub(crate) fn apply_byte_label_join(
         .into_iter()
         .map(|mut sample| {
             let mut value = Vec::new();
-            for (index, name) in source_names.iter().enumerate() {
+            for source in source_names.iter().enumerate() {
+                let index = source.0;
+                let name = source.1;
                 if index > 0 {
                     value.extend_from_slice(separator.as_bytes());
                 }

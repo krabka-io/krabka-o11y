@@ -27,7 +27,9 @@ async fn cancelling_the_block_builder_flushes_and_commits_what_it_buffered() {
     let broker = OneRecordBroker::start().await;
 
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (config, metrics) = broker.drain_only_config(&store, GROUP_ID);
+    let drain_config = broker.drain_only_config(&store, GROUP_ID);
+    let config = drain_config.config;
+    let metrics = drain_config.metrics;
     let index_key = config.index_key.clone();
 
     // Start the drain only after the WAL record has actually been consumed.

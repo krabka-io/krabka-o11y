@@ -1,8 +1,8 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileError, ProfileStore, QuerierState, SampleSelector, authorize_tenant, connect_error,
+    ProfileError, ProfileStore, QuerierState, SampleSelector, connect_error,
     merge_profile_id_selector, parse_span_selectors, parse_trace_selectors, pb,
-    stack_trace_call_sites, tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    stack_trace_call_sites,
 };
 
 pub(crate) async fn diff_inner<S>(
@@ -14,9 +14,7 @@ pub(crate) async fn diff_inner<S>(
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
     let left = req
         .0
         .left
@@ -50,32 +48,29 @@ where
         &tenant,
         left.max_nodes.max(right.max_nodes).unwrap_or_default(),
     );
+    let left_query = krabka_pprof::DiffQuery {
+        selection: krabka_pprof::ProfileSelection::new(
+            tenant.as_str(),
+            &left.profile_type_id,
+            &left_label_selector,
+        ),
+        range: krabka_pprof::MillisRange::new(left.start, left.end),
+        call_sites: &left_call_sites,
+        sample_selector: left_selector,
+    };
+    let right_query = krabka_pprof::DiffQuery {
+        selection: krabka_pprof::ProfileSelection::new(
+            tenant.as_str(),
+            &right.profile_type_id,
+            &right_label_selector,
+        ),
+        range: krabka_pprof::MillisRange::new(right.start, right.end),
+        call_sites: &right_call_sites,
+        sample_selector: right_selector,
+    };
     let flamegraph = state
         .engine
-        .diff_with_selectors(
-            tenant.as_str(),
-            (
-                (
-                    &left.profile_type_id,
-                    &left_label_selector,
-                    left.start,
-                    left.end,
-                ),
-                &left_call_sites,
-                left_selector,
-            ),
-            (
-                (
-                    &right.profile_type_id,
-                    &right_label_selector,
-                    right.start,
-                    right.end,
-                ),
-                &right_call_sites,
-                right_selector,
-            ),
-            max_nodes,
-        )
+        .diff_with_selectors(left_query, right_query, max_nodes)
         .await
         .map_err(connect_error)?;
     Ok(ConnectResponse::new(pb::querier::v1::DiffResponse {
@@ -87,12 +82,16 @@ fn sample_selector<'a>(
     span_ids: &'a [u64],
     trace_ids: &'a [Vec<u8>],
 ) -> Result<SampleSelector<'a>, ProfileError> {
-    match (span_ids.is_empty(), trace_ids.is_empty()) {
-        (false, false) => Err(ProfileError::Plan(
-            "span_selector and trace_id_selector cannot be combined".to_string(),
-        )),
-        (false, true) => Ok(SampleSelector::Span(span_ids)),
-        (true, false) => Ok(SampleSelector::Trace(trace_ids)),
-        (true, true) => Ok(SampleSelector::None),
+    if !span_ids.is_empty() {
+        if !trace_ids.is_empty() {
+            return Err(ProfileError::Plan(
+                "span_selector and trace_id_selector cannot be combined".to_string(),
+            ));
+        }
+        return Ok(SampleSelector::Span(span_ids));
     }
+    if !trace_ids.is_empty() {
+        return Ok(SampleSelector::Trace(trace_ids));
+    }
+    Ok(SampleSelector::None)
 }

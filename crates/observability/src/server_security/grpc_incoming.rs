@@ -40,7 +40,9 @@ pub fn grpc_incoming(
     listener: ServerListener,
 ) -> impl Stream<Item = Result<GrpcConnection, Infallible>> + Send + 'static {
     futures_util::stream::unfold(listener, |mut listener| async move {
-        let (stream, peer) = Listener::accept(&mut listener).await;
+        let connection = Listener::accept(&mut listener).await;
+        let stream = connection.0;
+        let peer = connection.1;
         if let Err(error) = stream.tcp().set_nodelay(true) {
             tracing::debug!(peer = %peer.socket, %error, "cannot set TCP_NODELAY on a gRPC connection");
         }

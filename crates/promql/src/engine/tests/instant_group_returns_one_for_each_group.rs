@@ -1,14 +1,27 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct GroupSample {
+    job: &'static str,
+    value: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn instant_group_returns_one_for_each_group() {
     let mut store = InMemoryMetricStore::new();
-    for (job, value) in [("api", 10.0), ("api", 30.0), ("web", 99.0)] {
+    for sample in [
+        GroupSample::builder().job("api").value(10.0).build(),
+        GroupSample::builder().job("api").value(30.0).build(),
+        GroupSample::builder().job("web").value(99.0).build(),
+    ] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "up"), ("job", job)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", sample.job),
+            ]),
             10_000,
-            value,
+            sample.value,
         );
     }
 

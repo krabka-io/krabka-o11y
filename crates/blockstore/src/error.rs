@@ -9,6 +9,18 @@ use parquet::errors::ParquetError;
 mod tests {
     use super::*;
 
+    struct SkipReasonCase {
+        name: &'static str,
+        failure: BlockReadFailure,
+        expected: Option<BlockSkipReason>,
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct SkipReasonObservation {
+        name: &'static str,
+        reason: Option<BlockSkipReason>,
+    }
+
     fn not_found(path: &str) -> ObjectStoreError {
         ObjectStoreError::NotFound {
             path: path.to_string(),
@@ -28,43 +40,53 @@ mod tests {
     /// its absence) is the scan's licence to skip that block.
     #[test]
     fn skip_reason_separates_the_blocks_fault_from_the_stores() {
-        let cases: Vec<(&str, BlockReadFailure, Option<BlockSkipReason>)> = vec![
-            (
-                "the object is gone",
-                BlockReadFailure::ObjectStore(not_found("b1.parquet")),
-                Some(BlockSkipReason::Missing),
-            ),
-            (
-                "the object went while the footer was being read",
-                BlockReadFailure::Parquet(ParquetError::External(Box::new(not_found(
+        let cases = vec![
+            SkipReasonCase {
+                name: "the object is gone",
+                failure: BlockReadFailure::ObjectStore(not_found("b1.parquet")),
+                expected: Some(BlockSkipReason::Missing),
+            },
+            SkipReasonCase {
+                name: "the object went while the footer was being read",
+                failure: BlockReadFailure::Parquet(ParquetError::External(Box::new(not_found(
                     "b1.parquet",
                 )))),
-                Some(BlockSkipReason::Missing),
-            ),
-            (
-                "the bytes are not a parquet block",
-                BlockReadFailure::Parquet(ParquetError::General("corrupt footer".to_string())),
-                Some(BlockSkipReason::Corrupt),
-            ),
-            (
-                "the store is unreachable",
-                BlockReadFailure::ObjectStore(unreachable_store()),
-                None,
-            ),
-            (
-                "the store failed while the footer was being read",
-                BlockReadFailure::Parquet(ParquetError::External(Box::new(unreachable_store()))),
-                None,
-            ),
+                expected: Some(BlockSkipReason::Missing),
+            },
+            SkipReasonCase {
+                name: "the bytes are not a parquet block",
+                failure: BlockReadFailure::Parquet(ParquetError::General(
+                    "corrupt footer".to_string(),
+                )),
+                expected: Some(BlockSkipReason::Corrupt),
+            },
+            SkipReasonCase {
+                name: "the store is unreachable",
+                failure: BlockReadFailure::ObjectStore(unreachable_store()),
+                expected: None,
+            },
+            SkipReasonCase {
+                name: "the store failed while the footer was being read",
+                failure: BlockReadFailure::Parquet(ParquetError::External(Box::new(
+                    unreachable_store(),
+                ))),
+                expected: None,
+            },
         ];
 
         let got = cases
             .iter()
-            .map(|(name, failure, _)| (*name, failure.skip_reason()))
+            .map(|case| SkipReasonObservation {
+                name: case.name,
+                reason: case.failure.skip_reason(),
+            })
             .collect::<Vec<_>>();
         let want = cases
             .iter()
-            .map(|(name, _, reason)| (*name, *reason))
+            .map(|case| SkipReasonObservation {
+                name: case.name,
+                reason: case.expected,
+            })
             .collect::<Vec<_>>();
         assert2::assert!(got == want);
     }
@@ -141,6 +163,6 @@ mod skipped_block;
 
 pub use block_read_failure::BlockReadFailure;
 pub use block_skip_reason::BlockSkipReason;
-pub use block_store_error::BlockStoreError;
+pub use block_store_error::{BlockStoreError, UnreadableBlock};
 pub use result::Result;
 pub use skipped_block::SkippedBlock;

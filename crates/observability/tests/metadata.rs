@@ -23,7 +23,10 @@ async fn hot_error_level_app() -> axum::Router {
     hot_tail
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("level", "error")]),
+            labels: labels([
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("level", "error"),
+            ]),
             timestamp_ns: 20,
             line: "api hot error".to_string(),
             structured_metadata: BTreeMap::new(),
@@ -39,10 +42,20 @@ async fn hot_error_level_app() -> axum::Router {
 fn api_then_zoned_worker_app() -> axum::Router {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     let worker = label_index.insert_series(
         "tenant-a",
-        labels([("app", "worker"), ("env", "prod"), ("zone", "east")]),
+        labels([
+            krabka_blockstore::LabelPair::new("app", "worker"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("zone", "east"),
+        ]),
     );
     let mut block_index = BlockIndex::default();
     block_index.insert(BlockDescriptor::new(
@@ -56,26 +69,27 @@ fn api_then_zoned_worker_app() -> axum::Router {
     loki_router(QuerierState::new(dir, label_index, block_index))
 }
 
-#[tokio::test]
-async fn metadata_endpoints_return_loki_parse_error_text_for_invalid_matcher() {
-    let paths = [
-        "/loki/api/v1/labels?query=%7Bapp%3D",
-        "/loki/api/v1/label/app/values?query=%7Bapp%3D",
-        "/loki/api/v1/series?match[]=%7Bapp%3D",
-    ];
-
+async fn assert_metadata_paths_return_bad_request(paths: &[&str], expected: &str) {
     for path in paths {
-        let state = fixture();
-        let app = loki_router(state);
-
+        let app = loki_router(fixture());
         let response = Tenant("tenant-a").get(&app, path).await;
 
         assert!(response.status() == StatusCode::BAD_REQUEST);
-        assert!(
-            text_body(response).await
-                == "parse error at line 1, col 6: syntax error: unexpected $end, expecting STRING"
-        );
+        assert!(text_body(response).await == expected);
     }
+}
+
+#[tokio::test]
+async fn metadata_endpoints_return_loki_parse_error_text_for_invalid_matcher() {
+    assert_metadata_paths_return_bad_request(
+        &[
+            "/loki/api/v1/labels?query=%7Bapp%3D",
+            "/loki/api/v1/label/app/values?query=%7Bapp%3D",
+            "/loki/api/v1/series?match[]=%7Bapp%3D",
+        ],
+        "parse error at line 1, col 6: syntax error: unexpected $end, expecting STRING",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -116,24 +130,15 @@ async fn series_endpoint_allows_missing_matcher_parameter_like_loki() {
 
 #[tokio::test]
 async fn metadata_endpoints_reject_loki_query_ranges_over_limit() {
-    let paths = [
-        "/loki/api/v1/labels?start=0.000000000&end=2595601000000000",
-        "/loki/api/v1/label/app/values?start=0.000000000&end=2595601000000000",
-        "/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000",
-    ];
-
-    for path in paths {
-        let state = fixture();
-        let app = loki_router(state);
-
-        let response = Tenant("tenant-a").get(&app, path).await;
-
-        assert!(response.status() == StatusCode::BAD_REQUEST);
-        assert!(
-            text_body(response).await
-                == "the query time range exceeds the limit (query length: 721h0m1s, limit: 30d1h)"
-        );
-    }
+    assert_metadata_paths_return_bad_request(
+        &[
+            "/loki/api/v1/labels?start=0.000000000&end=2595601000000000",
+            "/loki/api/v1/label/app/values?start=0.000000000&end=2595601000000000",
+            "/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000",
+        ],
+        "the query time range exceeds the limit (query length: 721h0m1s, limit: 30d1h)",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -194,10 +199,10 @@ async fn metadata_endpoints_hide_loki_detected_level_enrichment() {
     label_index.insert_series(
         "tenant-a",
         labels([
-            ("app", "api"),
-            ("detected_level", "error"),
-            ("env", "prod"),
-            ("service_name", "api"),
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("detected_level", "error"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("service_name", "api"),
         ]),
     );
     let app = loki_router(QuerierState::new(dir, label_index, BlockIndex::default()));
@@ -373,11 +378,19 @@ async fn labels_endpoint_applies_since_with_default_end() {
     let mut label_index = LabelIndex::default();
     let recent = label_index.insert_series(
         "tenant-a",
-        labels([("app", "api"), ("env", "prod"), ("zone", "west")]),
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("zone", "west"),
+        ]),
     );
     let old = label_index.insert_series(
         "tenant-a",
-        labels([("app", "api"), ("env", "prod"), ("legacy", "true")]),
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("legacy", "true"),
+        ]),
     );
     let mut block_index = BlockIndex::default();
     block_index.insert(BlockDescriptor::new(
@@ -703,7 +716,10 @@ async fn series_endpoint_accepts_form_post_matcher_with_raw_ampersand() {
     hot_tail
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api&edge"), ("level", "info")]),
+            labels: labels([
+                krabka_blockstore::LabelPair::new("app", "api&edge"),
+                krabka_blockstore::LabelPair::new("level", "info"),
+            ]),
             timestamp_ns: 20,
             line: "api edge hot".to_string(),
             structured_metadata: BTreeMap::new(),

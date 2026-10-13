@@ -67,40 +67,22 @@ mod tests {
         assert!(ints != strings);
     }
 
-    #[test]
-    fn scalar_labels_preserve_anyvalue_type_and_nonfinite_doubles() {
-        for (text, kind, expected) in [
-            ("1", None, json!({"stringValue":"1"})),
-            (
-                "1",
-                Some(TraceMetricLabelType::Int),
-                json!({"intValue":"1"}),
-            ),
-            (
-                "1",
-                Some(TraceMetricLabelType::Double),
-                json!({"doubleValue":1.0}),
-            ),
-            (
-                "false",
-                Some(TraceMetricLabelType::Bool),
-                json!({"boolValue":false}),
-            ),
-            (
-                "NaN",
-                Some(TraceMetricLabelType::Double),
-                json!({"doubleValue":"NaN"}),
-            ),
-            (
-                "inf",
-                Some(TraceMetricLabelType::Double),
-                json!({"doubleValue":"Infinity"}),
-            ),
-        ] {
-            assert!(
-                metric_label_json("span.mixed", text, kind)
-                    == json!({"key":"span.mixed","value":expected})
-            );
-        }
+    #[yare::parameterized(
+        string_value = { "1", None, json!({"stringValue":"1"}) },
+        int_value = { "1", Some(TraceMetricLabelType::Int), json!({"intValue":"1"}) },
+        double_value = { "1", Some(TraceMetricLabelType::Double), json!({"doubleValue":1.0}) },
+        bool_value = { "false", Some(TraceMetricLabelType::Bool), json!({"boolValue":false}) },
+        nan_value = { "NaN", Some(TraceMetricLabelType::Double), json!({"doubleValue":"NaN"}) },
+        infinity_value = { "inf", Some(TraceMetricLabelType::Double), json!({"doubleValue":"Infinity"}) },
+    )]
+    fn scalar_labels_preserve_anyvalue_type_and_nonfinite_doubles(
+        text: &str,
+        kind: Option<TraceMetricLabelType>,
+        expected: Value,
+    ) {
+        ::core::assert!(
+            metric_label_json("span.mixed", text, kind)
+                == json!({"key":"span.mixed","value":expected})
+        );
     }
 }

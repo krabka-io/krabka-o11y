@@ -18,7 +18,9 @@ pub(crate) fn promoted_values<A: Array + 'static, T>(
         .ok_or_else(|| TracesError::Block(format!("{column} is not a list")))?;
 
     let mut out = Vec::with_capacity(slots.len());
-    for (row, slot) in slots.iter().enumerate() {
+    for entry in slots.iter().enumerate() {
+        let row = entry.0;
+        let slot = entry.1;
         out.push(match slot {
             Some(slot) => row_value(values, column, row, *slot, &read)?,
             None => None,
@@ -34,24 +36,13 @@ fn row_value<A: Array + 'static, T>(
     slot: usize,
     read: &impl Fn(&A, usize) -> T,
 ) -> Result<Option<T>, TracesError> {
-    if values.is_null(row) {
+    let Some(attr_values) = crate::nested_list_value(values, column, row, slot)? else {
         return Ok(None);
-    }
-    let row_values = values.value(row);
-    let row_values = row_values
-        .as_any()
-        .downcast_ref::<ListArray>()
-        .ok_or_else(|| TracesError::Block(format!("{column} row is not a list")))?;
-    if slot >= row_values.len() || row_values.is_null(slot) {
-        return Ok(None);
-    }
-    let attr_values = row_values.value(slot);
+    };
     // A value list of another type belongs to another attribute of the same
     // row: only one of the four typed columns is populated per attribute.
     let Some(attr_values) = attr_values.as_any().downcast_ref::<A>() else {
         return Ok(None);
     };
-    Ok((0..attr_values.len())
-        .find(|idx| !attr_values.is_null(*idx))
-        .map(|idx| read(attr_values, idx)))
+    Ok(crate::first_non_null_array_index(attr_values).map(|idx| read(attr_values, idx)))
 }

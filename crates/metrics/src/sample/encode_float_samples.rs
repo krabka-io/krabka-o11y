@@ -13,12 +13,12 @@ pub fn encode_float_samples(rows: &[FloatSampleRow]) -> Result<RecordBatch, Hist
     let mut values = Float64Builder::new();
     let mut start_timestamps = Int64Builder::new();
 
-    for (fingerprint, timestamp, value, start_timestamp) in rows {
-        fingerprints.append_value(*fingerprint);
-        timestamps.append_value(*timestamp);
-        values.append_value(*value);
-        match start_timestamp {
-            Some(start_timestamp) => start_timestamps.append_value(*start_timestamp),
+    for row in rows {
+        fingerprints.append_value(row.fingerprint);
+        timestamps.append_value(row.timestamp_ms);
+        values.append_value(row.value);
+        match row.start_timestamp_ms {
+            Some(start_timestamp) => start_timestamps.append_value(start_timestamp),
             None => start_timestamps.append_null(),
         }
     }

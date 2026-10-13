@@ -1,5 +1,11 @@
 use super::{BTreeMap, NonZeroUsize, TenantId};
 
+#[derive(Debug)]
+pub(crate) struct TenantLruEntry<V> {
+    pub(crate) last_used: u64,
+    pub(crate) value: V,
+}
+
 /// A per-tenant map that holds at most `capacity` tenants.
 ///
 /// Every read and every insert marks the tenant as the most recently used. An
@@ -8,7 +14,7 @@ use super::{BTreeMap, NonZeroUsize, TenantId};
 #[derive(Debug)]
 pub(crate) struct TenantLru<V> {
     pub(crate) capacity: NonZeroUsize,
-    pub(crate) entries: BTreeMap<TenantId, (u64, V)>,
+    pub(crate) entries: BTreeMap<TenantId, TenantLruEntry<V>>,
     pub(crate) recency: BTreeMap<u64, TenantId>,
     pub(crate) clock: u64,
 }
@@ -27,11 +33,11 @@ impl<V> TenantLru<V> {
     pub(crate) fn get_mut(&mut self, tenant: &TenantId) -> Option<&mut V> {
         self.clock += 1;
         let tick = self.clock;
-        let (used, value) = self.entries.get_mut(tenant)?;
-        self.recency.remove(used);
-        *used = tick;
+        let entry = self.entries.get_mut(tenant)?;
+        self.recency.remove(&entry.last_used);
+        entry.last_used = tick;
         self.recency.insert(tick, tenant.clone());
-        Some(value)
+        Some(&mut entry.value)
     }
 
     /// The tenant's value, inserted from `make` when absent, and marked as the
@@ -43,19 +49,22 @@ impl<V> TenantLru<V> {
     ) -> &mut V {
         if !self.entries.contains_key(tenant)
             && self.entries.len() >= self.capacity.get()
-            && let Some((_, evicted)) = self.recency.pop_first()
+            && let Some(evicted_entry) = self.recency.pop_first()
         {
-            self.entries.remove(&evicted);
+            self.entries.remove(&evicted_entry.1);
         }
         self.clock += 1;
         let tick = self.clock;
-        let (used, value) = self
+        let entry = self
             .entries
             .entry(tenant.clone())
-            .or_insert_with(|| (tick, make()));
-        self.recency.remove(used);
-        *used = tick;
+            .or_insert_with(|| TenantLruEntry {
+                last_used: tick,
+                value: make(),
+            });
+        self.recency.remove(&entry.last_used);
+        entry.last_used = tick;
         self.recency.insert(tick, tenant.clone());
-        value
+        &mut entry.value
     }
 }

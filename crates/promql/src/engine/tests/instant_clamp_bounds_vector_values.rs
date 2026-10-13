@@ -1,14 +1,40 @@
 use super::*;
 
+struct ClampInput {
+    instance: &'static str,
+    value: f64,
+}
+
+struct ClampedSample {
+    instance: String,
+    value: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn instant_clamp_bounds_vector_values() {
     let mut store = InMemoryMetricStore::new();
-    for (instance, value) in [("low", -5.0), ("mid", 7.0), ("high", 20.0)] {
+    for input in [
+        ClampInput {
+            instance: "low",
+            value: -5.0,
+        },
+        ClampInput {
+            instance: "mid",
+            value: 7.0,
+        },
+        ClampInput {
+            instance: "high",
+            value: 20.0,
+        },
+    ] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "temperature_celsius"), ("instance", instance)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "temperature_celsius"),
+                crate::test_support::TestLabelPair::new("instance", input.instance),
+            ]),
             10_000,
-            value,
+            input.value,
         );
     }
 
@@ -17,14 +43,24 @@ pub(crate) async fn instant_clamp_bounds_vector_values() {
     assert2::assert!(samples.len() == 3);
     let values = samples
         .iter()
-        .map(|sample| {
-            (
-                sample.labels.get("instance").unwrap().to_string(),
-                float_value(&sample.value),
-            )
+        .map(|sample| ClampedSample {
+            instance: sample.labels.get("instance").unwrap().to_string(),
+            value: float_value(&sample.value),
         })
         .collect::<Vec<_>>();
-    check!(values.contains(&("low".to_string(), 0.0)));
-    check!(values.contains(&("mid".to_string(), 7.0)));
-    check!(values.contains(&("high".to_string(), 10.0)));
+    assert!(
+        values
+            .iter()
+            .any(|sample| sample.instance == "low" && sample.value == 0.0)
+    );
+    assert!(
+        values
+            .iter()
+            .any(|sample| sample.instance == "mid" && sample.value == 7.0)
+    );
+    assert!(
+        values
+            .iter()
+            .any(|sample| sample.instance == "high" && sample.value == 10.0)
+    );
 }

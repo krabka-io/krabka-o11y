@@ -4,7 +4,9 @@ pub(crate) fn scan_top_level(input: &str, mut found: impl FnMut(usize)) -> Resul
     let mut depth = 0usize;
     let mut quote = None;
     let mut escaped = false;
-    for (at, ch) in input.char_indices() {
+    let mut at = 0;
+    while at < input.len() {
+        let ch = input[at..].chars().next().expect("index is within input");
         if let Some(q) = quote {
             if escaped {
                 escaped = false;
@@ -13,6 +15,7 @@ pub(crate) fn scan_top_level(input: &str, mut found: impl FnMut(usize)) -> Resul
             } else if ch == q {
                 quote = None;
             }
+            at += ch.len_utf8();
             continue;
         }
         match ch {
@@ -26,6 +29,7 @@ pub(crate) fn scan_top_level(input: &str, mut found: impl FnMut(usize)) -> Resul
             _ if depth == 0 => found(at),
             _ => {}
         }
+        at += ch.len_utf8();
     }
     if quote.is_some() || depth != 0 {
         return Err(syntax_error("unterminated expression"));

@@ -13,143 +13,110 @@ mod scoped_querier_config;
 
 use scoped_querier_config::scoped_querier_config;
 
+struct EnvironmentOverride {
+    name: &'static str,
+    value: &'static str,
+}
+
+fn environment_override(name: &'static str, value: &'static str) -> EnvironmentOverride {
+    EnvironmentOverride { name, value }
+}
+
 #[test]
 fn service_config_reads_environment() {
     temp_env::with_vars(
         [
-            ("KRABKA_OBSERVABILITY_TARGET", Some("querier")),
-            ("KRABKA_OBSERVABILITY_LISTEN_ADDR", Some("127.0.0.1:3200")),
-            (
+            environment_override("KRABKA_OBSERVABILITY_TARGET", "querier"),
+            environment_override("KRABKA_OBSERVABILITY_LISTEN_ADDR", "127.0.0.1:3200"),
+            environment_override(
                 "KRABKA_OBSERVABILITY_OBJECT_STORE_URL",
-                Some("s3://krabka-observability"),
+                "s3://krabka-observability",
             ),
-            (
+            environment_override(
                 "KRABKA_OBSERVABILITY_WAL_BOOTSTRAP_SERVER",
-                Some("127.0.0.1:9092"),
+                "127.0.0.1:9092",
             ),
-            ("KRABKA_OBSERVABILITY_WAL_TOPIC", Some("logs-wal")),
-            ("KRABKA_OBSERVABILITY_WAL_GROUP_ID", Some("logs-querier")),
-            (
+            environment_override("KRABKA_OBSERVABILITY_WAL_TOPIC", "logs-wal"),
+            environment_override("KRABKA_OBSERVABILITY_WAL_GROUP_ID", "logs-querier"),
+            environment_override(
                 "KRABKA_OBSERVABILITY_DATA_ROOT",
-                Some("/var/lib/krabka-observability"),
+                "/var/lib/krabka-observability",
             ),
-            (
+            environment_override(
                 "KRABKA_OBSERVABILITY_QUERIER_INDEX_SOURCE",
-                Some("tenant-object-store-shards"),
+                "tenant-object-store-shards",
             ),
-            ("KRABKA_OBSERVABILITY_TENANT", Some("tenant-a")),
-            (
-                "KRABKA_OBSERVABILITY_INDEX_PREFIX",
-                Some("observability/logs"),
-            ),
-            ("KRABKA_OBSERVABILITY_QUERY_START_NS", Some("10")),
-            ("KRABKA_OBSERVABILITY_QUERY_END_NS", Some("30")),
-            ("KRABKA_OBSERVABILITY_MAX_QUERY_RANGE", Some("20ns")),
-            ("KRABKA_OBSERVABILITY_MAX_QUERY_SERIES", Some("10")),
-            ("KRABKA_OBSERVABILITY_DISCOVER_LOG_LEVELS", Some("false")),
-            (
+            environment_override("KRABKA_OBSERVABILITY_TENANT", "tenant-a"),
+            environment_override("KRABKA_OBSERVABILITY_INDEX_PREFIX", "observability/logs"),
+            environment_override("KRABKA_OBSERVABILITY_QUERY_START_NS", "10"),
+            environment_override("KRABKA_OBSERVABILITY_QUERY_END_NS", "30"),
+            environment_override("KRABKA_OBSERVABILITY_MAX_QUERY_RANGE", "20ns"),
+            environment_override("KRABKA_OBSERVABILITY_MAX_QUERY_SERIES", "10"),
+            environment_override("KRABKA_OBSERVABILITY_DISCOVER_LOG_LEVELS", "false"),
+            environment_override(
                 "KRABKA_OBSERVABILITY_LOG_LEVEL_FIELDS",
-                Some("priority,SeverityText"),
+                "priority,SeverityText",
             ),
-            (
-                "KRABKA_OBSERVABILITY_LOG_LEVEL_FROM_JSON_MAX_DEPTH",
-                Some("-2"),
-            ),
-            ("KRABKA_OBSERVABILITY_MAX_QUERY_READ", Some("1KiB")),
-            ("KRABKA_OBSERVABILITY_MAX_QUERY_STRING_BYTES", Some("64B")),
-            ("KRABKA_OBSERVABILITY_RETENTION_PERIOD", Some("30d")),
-            ("KRABKA_OBSERVABILITY_MAX_INGEST_BODY", Some("2KiB")),
-            ("KRABKA_OBSERVABILITY_WAL_APPEND_TIMEOUT", Some("250ms")),
-            (
-                "KRABKA_OBSERVABILITY_REJECT_OLD_SAMPLES_MAX_AGE",
-                Some("8d"),
-            ),
-            ("KRABKA_OBSERVABILITY_CREATION_GRACE_PERIOD", Some("11m")),
-            ("KRABKA_OBSERVABILITY_INGEST_QUOTA_BURST_WINDOW", Some("2s")),
-            ("KRABKA_OBSERVABILITY_BROKER_ACCESS_CACHE_TTL", Some("15s")),
-            (
-                "KRABKA_OBSERVABILITY_BROKER_ACCESS_MAX_STALENESS",
-                Some("2m"),
-            ),
-            (
-                "KRABKA_OBSERVABILITY_BROKER_ACCESS_TENANT_CAPACITY",
-                Some("500"),
-            ),
-            (
-                "KRABKA_OBSERVABILITY_WAL_CONNECT_STARTUP_DEADLINE",
-                Some("3m"),
-            ),
-            (
-                "KRABKA_OBSERVABILITY_WAL_CONNECT_ATTEMPT_TIMEOUT",
-                Some("16s"),
-            ),
-            (
-                "KRABKA_OBSERVABILITY_WAL_CONNECT_INITIAL_BACKOFF",
-                Some("300ms"),
-            ),
-            ("KRABKA_OBSERVABILITY_WAL_CONNECT_MAX_BACKOFF", Some("3s")),
-            (
-                "KRABKA_OBSERVABILITY_COMPACTOR_WAL_POLL_TIMEOUT",
-                Some("600ms"),
-            ),
-            (
-                "KRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_WINDOW",
-                Some("3s"),
-            ),
-            (
+            environment_override("KRABKA_OBSERVABILITY_LOG_LEVEL_FROM_JSON_MAX_DEPTH", "-2"),
+            environment_override("KRABKA_OBSERVABILITY_MAX_QUERY_READ", "1KiB"),
+            environment_override("KRABKA_OBSERVABILITY_MAX_QUERY_STRING_BYTES", "64B"),
+            environment_override("KRABKA_OBSERVABILITY_RETENTION_PERIOD", "30d"),
+            environment_override("KRABKA_OBSERVABILITY_MAX_INGEST_BODY", "2KiB"),
+            environment_override("KRABKA_OBSERVABILITY_WAL_APPEND_TIMEOUT", "250ms"),
+            environment_override("KRABKA_OBSERVABILITY_REJECT_OLD_SAMPLES_MAX_AGE", "8d"),
+            environment_override("KRABKA_OBSERVABILITY_CREATION_GRACE_PERIOD", "11m"),
+            environment_override("KRABKA_OBSERVABILITY_INGEST_QUOTA_BURST_WINDOW", "2s"),
+            environment_override("KRABKA_OBSERVABILITY_BROKER_ACCESS_CACHE_TTL", "15s"),
+            environment_override("KRABKA_OBSERVABILITY_BROKER_ACCESS_MAX_STALENESS", "2m"),
+            environment_override("KRABKA_OBSERVABILITY_BROKER_ACCESS_TENANT_CAPACITY", "500"),
+            environment_override("KRABKA_OBSERVABILITY_WAL_CONNECT_STARTUP_DEADLINE", "3m"),
+            environment_override("KRABKA_OBSERVABILITY_WAL_CONNECT_ATTEMPT_TIMEOUT", "16s"),
+            environment_override("KRABKA_OBSERVABILITY_WAL_CONNECT_INITIAL_BACKOFF", "300ms"),
+            environment_override("KRABKA_OBSERVABILITY_WAL_CONNECT_MAX_BACKOFF", "3s"),
+            environment_override("KRABKA_OBSERVABILITY_COMPACTOR_WAL_POLL_TIMEOUT", "600ms"),
+            environment_override("KRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_WINDOW", "3s"),
+            environment_override(
                 "KRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_POLL_TIMEOUT",
-                Some("300ms"),
+                "300ms",
             ),
-            (
+            environment_override(
                 "KRABKA_OBSERVABILITY_COMPACTOR_MAX_RECORDS_PER_BATCH",
-                Some("5000"),
+                "5000",
             ),
-            ("KRABKA_OBSERVABILITY_COMPACTOR_IDLE_INTERVAL", Some("20ms")),
-            (
+            environment_override("KRABKA_OBSERVABILITY_COMPACTOR_IDLE_INTERVAL", "20ms"),
+            environment_override(
                 "KRABKA_OBSERVABILITY_COMPACTOR_RETENTION_SWEEP_INTERVAL",
-                Some("5m"),
+                "5m",
             ),
-            (
+            environment_override(
                 "KRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_INITIAL_BACKOFF",
-                Some("20ms"),
+                "20ms",
             ),
-            (
+            environment_override(
                 "KRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_MAX_BACKOFF",
-                Some("600ms"),
+                "600ms",
             ),
-            (
+            environment_override(
                 "KRABKA_OBSERVABILITY_QUERIER_FRONTIER_REFRESH_INTERVAL",
-                Some("6s"),
+                "6s",
             ),
-            (
-                "KRABKA_OBSERVABILITY_QUERIER_DYNAMIC_INDEX_CACHE_TTL",
-                Some("7s"),
-            ),
-            (
-                "KRABKA_OBSERVABILITY_QUERIER_SHARD_INDEX_CACHE_TTL",
-                Some("6m"),
-            ),
-            (
-                "KRABKA_OBSERVABILITY_QUERIER_SHARD_FETCH_CONCURRENCY",
-                Some("33"),
-            ),
-            (
+            environment_override("KRABKA_OBSERVABILITY_QUERIER_DYNAMIC_INDEX_CACHE_TTL", "7s"),
+            environment_override("KRABKA_OBSERVABILITY_QUERIER_SHARD_INDEX_CACHE_TTL", "6m"),
+            environment_override("KRABKA_OBSERVABILITY_QUERIER_SHARD_FETCH_CONCURRENCY", "33"),
+            environment_override(
                 "KRABKA_OBSERVABILITY_QUERIER_COLD_BLOCK_FETCH_CONCURRENCY",
-                Some("9"),
+                "9",
             ),
-            (
-                "KRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_BUCKET_WIDTH",
-                Some("2m"),
-            ),
-            (
-                "KRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_INTERVAL",
-                Some("60ms"),
-            ),
-            (
+            environment_override("KRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_BUCKET_WIDTH", "2m"),
+            environment_override("KRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_INTERVAL", "60ms"),
+            environment_override(
                 "KRABKA_OBSERVABILITY_QUERIER_DEPENDENCY_RECONNECT_INTERVAL",
-                Some("600ms"),
+                "600ms",
             ),
-        ],
+        ]
+        .into_iter()
+        .map(|entry| (entry.name, Some(entry.value)))
+        .collect::<Vec<_>>(),
         || {
             let config =
                 ServiceConfig::try_parse_from(["krabka-observability"]).expect("parse environment");

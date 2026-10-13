@@ -6,13 +6,22 @@
 
 use proptest::prelude::*;
 
+#[derive(Debug)]
+struct SpacedToken {
+    token: &'static str,
+    spaced: bool,
+}
+
 // Concatenated grammar tokens, each followed by nothing or a space.
 pub fn spaced_token_salad(tokens: &'static [&'static str]) -> impl Strategy<Value = String> {
-    prop::collection::vec((prop::sample::select(tokens), any::<bool>()), 1..14).prop_map(|parts| {
+    let token = prop::sample::select(tokens)
+        .prop_flat_map(|token| any::<bool>().prop_map(move |spaced| SpacedToken { token, spaced }));
+    prop::collection::vec(token, 1..14).prop_map(|parts| {
         let mut out = String::new();
-        for (token, spaced) in parts {
+        for part in parts {
+            let token = part.token;
             out.push_str(token);
-            if spaced {
+            if part.spaced {
                 out.push(' ');
             }
         }

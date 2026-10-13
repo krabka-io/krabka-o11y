@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use krabka_blockstore::Labels;
+use krabka_blockstore::{LabelPair, Labels};
 use krabka_units::prelude::*;
 use prost::Message;
 
@@ -66,8 +66,8 @@ mod tests {
         let decoded = decode_v1(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
 
         assert!(decoded[0].histograms.len() == 1);
-        check!(decoded[0].histograms[0].0 == 10);
-        check!(decoded[0].histograms[0].1.positive_counts == vec![1.0, 3.0]);
+        check!(decoded[0].histograms[0].timestamp_ms == 10);
+        check!(decoded[0].histograms[0].histogram.positive_counts == vec![1.0, 3.0]);
     }
 
     #[test]

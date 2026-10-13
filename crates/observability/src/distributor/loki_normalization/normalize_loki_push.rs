@@ -7,6 +7,13 @@ use super::{
     validate_structured_metadata_limits,
 };
 
+struct ParsedPushValue<'a> {
+    timestamp: &'a Value,
+    line: &'a str,
+    metadata: &'a [Value],
+    is_empty: bool,
+}
+
 pub(crate) fn normalize_loki_push(
     tenant: &TenantId,
     payload: LokiTypedPushRequest,
@@ -31,11 +38,16 @@ pub(crate) fn normalize_loki_push(
                 return Err(DistributorError::InvalidPushValue);
             };
             let zero_timestamp;
-            let (timestamp, line, metadata, is_empty_value) = match value.as_slice() {
-                [timestamp] => (timestamp, "", [].as_slice(), false),
-                [timestamp, line, metadata @ ..] => (
+            let parsed = match value.as_slice() {
+                [timestamp] => ParsedPushValue {
                     timestamp,
-                    line.as_str().ok_or_else(|| {
+                    line: "",
+                    metadata: [].as_slice(),
+                    is_empty: false,
+                },
+                [timestamp, line, metadata @ ..] => ParsedPushValue {
+                    timestamp,
+                    line: line.as_str().ok_or_else(|| {
                         DistributorError::InvalidJsonLineSyntax(loki_json_line_parse_error(
                             &original_stream_labels,
                             timestamp.as_str().unwrap_or_default(),
@@ -43,35 +55,42 @@ pub(crate) fn normalize_loki_push(
                         ))
                     })?,
                     metadata,
-                    false,
-                ),
+                    is_empty: false,
+                },
                 [] => {
                     zero_timestamp = Value::String("0".to_string());
-                    (&zero_timestamp, "", [].as_slice(), true)
+                    ParsedPushValue {
+                        timestamp: &zero_timestamp,
+                        line: "",
+                        metadata: [].as_slice(),
+                        is_empty: true,
+                    }
                 }
             };
-            let timestamp = timestamp
+            let timestamp = parsed
+                .timestamp
                 .as_str()
                 .ok_or(DistributorError::InvalidTimestamp)?;
             let timestamp_ns = timestamp.parse().map_err(|_| {
                 DistributorError::InvalidJsonTimestampSyntax(loki_json_timestamp_parse_error(
-                    timestamp, line,
+                    timestamp,
+                    parsed.line,
                 ))
             })?;
             let timestamp_ns = validate_ingest_timestamp_ns(timestamp_ns)?;
-            if is_empty_value {
+            if parsed.is_empty {
                 validate_loki_empty_json_value_timestamp_window(
                     &stream_labels,
                     limits.reject_old_samples_max_age,
                 )?;
             }
             validate_loki_timestamp_window(timestamp_ns, &stream_labels, limits)?;
-            let mut line = line.to_string();
+            let mut line = parsed.line.to_string();
             truncate_loki_line(&mut line, limits);
             validate_loki_line_size(&line, &stream_labels, limits)?;
             let labels = stream_labels.clone();
 
-            let mut structured_metadata = parse_structured_metadata(metadata.first())?;
+            let mut structured_metadata = parse_structured_metadata(parsed.metadata.first())?;
             validate_structured_metadata_limits(&structured_metadata, &stream_labels, limits)?;
             discover_detected_level_label(&stream_labels, &mut structured_metadata, &line, limits);
             records.push(WalLogRecord {

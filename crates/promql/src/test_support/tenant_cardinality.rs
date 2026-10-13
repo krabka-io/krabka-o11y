@@ -1,13 +1,26 @@
 use crate::{MetricStore, PromqlLabels as Labels};
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ExpectedLabelNameCount<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) series_count: usize,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ExpectedLabelValueCount<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) value: &'a str,
+    pub(crate) series_count: usize,
+}
+
 /// The cardinality a [`MetricStore`] should report for `tenant-a`.
 pub(crate) struct ExpectedCardinality<'a> {
     /// The active series, ordered by their `instance` label.
     pub(crate) active_series: Vec<Labels>,
-    /// `(label name, series count)`, in the store's order.
-    pub(crate) label_name_counts: &'a [(&'a str, usize)],
-    /// `(label name, label value, series count)`, in the store's order.
-    pub(crate) label_value_counts: &'a [(&'a str, &'a str, usize)],
+    /// Label names and their series counts, in the store's order.
+    pub(crate) label_name_counts: &'a [ExpectedLabelNameCount<'a>],
+    /// Label names, values, and series counts, in the store's order.
+    pub(crate) label_value_counts: &'a [ExpectedLabelValueCount<'a>],
 }
 
 /// Checks the active series and the label-name and label-value cardinality
@@ -23,19 +36,20 @@ pub(crate) async fn assert_tenant_cardinality<S: MetricStore>(
     let label_names = store.cardinality_label_names("tenant-a").await.unwrap();
     let name_counts = label_names
         .iter()
-        .map(|stat| (stat.name.as_str(), stat.series_count))
+        .map(|stat| ExpectedLabelNameCount {
+            name: stat.name.as_str(),
+            series_count: stat.series_count,
+        })
         .collect::<Vec<_>>();
     assert2::assert!(name_counts == expected.label_name_counts);
 
     let label_values = store.cardinality_label_values("tenant-a").await.unwrap();
     let value_counts = label_values
         .iter()
-        .map(|stat| {
-            (
-                stat.label_name.as_str(),
-                stat.label_value.as_str(),
-                stat.series_count,
-            )
+        .map(|stat| ExpectedLabelValueCount {
+            name: stat.label_name.as_str(),
+            value: stat.label_value.as_str(),
+            series_count: stat.series_count,
         })
         .collect::<Vec<_>>();
     assert2::assert!(value_counts == expected.label_value_counts);

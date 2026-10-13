@@ -3,10 +3,16 @@ use super::{
     template_control_action, trim_template_body_end,
 };
 
+pub(crate) struct FoundTemplateControlAction<'a> {
+    pub(crate) body_end: usize,
+    pub(crate) expression: &'a str,
+    pub(crate) next_position: usize,
+}
+
 pub(crate) fn find_template_control_action(
     template: &str,
     mut pos: usize,
-) -> Result<Option<(usize, &str, usize)>, ParseError> {
+) -> Result<Option<FoundTemplateControlAction<'_>>, ParseError> {
     let body_start = pos;
     let mut nested_controls = Vec::new();
     loop {
@@ -42,7 +48,11 @@ pub(crate) fn find_template_control_action(
                     } else {
                         open
                     };
-                    return Ok(Some((body_end, expression, action.next_pos)));
+                    return Ok(Some(FoundTemplateControlAction {
+                        body_end,
+                        expression,
+                        next_position: action.next_pos,
+                    }));
                 }
                 nested_controls.pop();
             }
@@ -56,7 +66,11 @@ pub(crate) fn find_template_control_action(
                 } else {
                     open
                 };
-                return Ok(Some((body_end, expression, action.next_pos)));
+                return Ok(Some(FoundTemplateControlAction {
+                    body_end,
+                    expression,
+                    next_position: action.next_pos,
+                }));
             }
             _ => {}
         }

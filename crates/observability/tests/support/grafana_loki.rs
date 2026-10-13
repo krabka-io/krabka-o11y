@@ -12,7 +12,7 @@ use krabka_blockstore::{LabelIndex, LogBlockIndex as BlockIndex};
 use krabka_observability::{InMemoryWalSink, QuerierState, distributor_router, loki_router};
 use serde_json::Value;
 use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt,
+    ContainerAsync, ContainerRequest, GenericImage, ImageExt,
     core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
@@ -78,8 +78,7 @@ pub async fn start_grafana(datasources_yaml: &str) -> TestResult<ContainerAsync<
          which loads the digest-pinned image and sets this. To run one under cargo, set it to \
          that image's tag in //bazel/images/images.bzl.",
     );
-    Ok(tokio::time::timeout(
-        CONTAINER_START_TIMEOUT,
+    start_image_with_timeout(
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
             .with_exposed_port(GRAFANA_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("HTTP Server Listen"))
@@ -93,10 +92,15 @@ pub async fn start_grafana(datasources_yaml: &str) -> TestResult<ContainerAsync<
             .with_host("host.docker.internal", Host::HostGateway)
             .with_env_var("GF_AUTH_ANONYMOUS_ENABLED", "true")
             .with_env_var("GF_AUTH_ANONYMOUS_ORG_ROLE", "Admin")
-            .with_env_var("GF_AUTH_BASIC_ENABLED", "false")
-            .start(),
+            .with_env_var("GF_AUTH_BASIC_ENABLED", "false"),
     )
-    .await??)
+    .await
+}
+
+pub async fn start_image_with_timeout(
+    image: ContainerRequest<GenericImage>,
+) -> TestResult<ContainerAsync<GenericImage>> {
+    Ok(tokio::time::timeout(CONTAINER_START_TIMEOUT, image.start()).await??)
 }
 
 /// An HTTP server at `base`, read through `client`.
@@ -193,9 +197,12 @@ pub async fn serve_pushed(payload: &Value) -> TestResult<ServedQuerier> {
     let state = QuerierState::new(root, LabelIndex::default(), BlockIndex::default())
         .with_hot_tail(sink, i64::MIN);
 
-    let listener = TcpListener::bind(("0.0.0.0", 0)).await?;
+    let listener =
+        TcpListener::bind(std::net::SocketAddr::new("0.0.0.0".parse().unwrap(), 0)).await?;
     let host_port = listener.local_addr()?.port();
-    let (shutdown, stop) = oneshot::channel();
+    let shutdown_channel = oneshot::channel();
+    let shutdown = shutdown_channel.0;
+    let stop = shutdown_channel.1;
     tokio::spawn(async move {
         let _ = axum::serve(listener, loki_router(state))
             .with_graceful_shutdown(async move {

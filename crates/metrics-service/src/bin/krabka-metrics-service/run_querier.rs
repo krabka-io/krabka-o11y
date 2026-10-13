@@ -53,8 +53,8 @@ pub(crate) fn run_querier(
                 .with_erasure_store(Arc::clone(&store))
                 .with_metrics(metrics)
                 .with_audit(audit);
-            let state = if let Some((head, readiness)) = status_wal {
-                state.with_wal_head_status(head, readiness)
+            let state = if let Some(status) = status_wal {
+                state.with_wal_head_status(status.head, status.readiness)
             } else {
                 state
             };
@@ -66,7 +66,7 @@ pub(crate) fn run_querier(
                     head,
                 )))
                 .merge(readiness_router(readiness));
-            let (bound, mut server) = match serve_prometheus_router_joinable(
+            let mut serving = match serve_prometheus_router_joinable(
                 cli.listen,
                 router,
                 &security,
@@ -82,7 +82,7 @@ pub(crate) fn run_querier(
             };
             startup.mark_ready();
             tracing::info!(
-                %bound,
+                %serving.addr,
                 tls = security.tls_enabled(),
                 authentication = security.authentication_enabled(),
                 "metrics-service querier listening"
@@ -91,10 +91,10 @@ pub(crate) fn run_querier(
             // before the process exits -- unless the WAL head consumer stops first, in
             // which case the role fails by name and the drain happens on the way out.
             let outcome = tokio::select! {
-                result = &mut server => result.map_err(Into::into),
+                result = &mut serving.server => result.map_err(Into::into),
                 name = tasks.first_unexpected_exit() => {
                     shutdown.trigger();
-                    let _ = server.await;
+                    let _ = serving.server.await;
                     Err(Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)))
                 },
             };

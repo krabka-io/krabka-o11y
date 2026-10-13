@@ -1,10 +1,10 @@
 use krabka_observability::service_metrics::RequestOutcome;
 
 use super::{
-    AnnotatedQueryResult, ApiError, Arc, ERASURE_REQUEST_PREFIX, EvaluatedQuery,
-    FrontendRangeRequest, HeaderMap, IntoResponse, MetricStore, PerStepSampleStats, Principal,
-    PrometheusApiState, QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, StepGrid,
-    TimeExt, authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
+    ApiError, Arc, ERASURE_REQUEST_PREFIX, EvaluatedQuery, FrontendRangeRequest, HeaderMap,
+    IntoResponse, MetricStore, PerStepSampleStats, Principal, PrometheusApiState,
+    QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, StepGrid, TimeExt,
+    authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
     duration_param, enforce_query_range_limit, evaluated_query_response,
     execute_range_query_frontend, has_erasure_requests, timestamp_ms, validate_timestamp_range,
 };
@@ -91,13 +91,9 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
                 .engine_for_tenant(&tenant)
                 .query_range_with_annotations(&tenant, &params.query, start_ms, end_ms, step)
                 .await
-                .map(|(result, annotations)| AnnotatedQueryResult {
-                    result,
-                    annotations,
-                })
         }
     };
-    let (result, samples) = if stats_requested {
+    let mut evaluated = if stats_requested {
         let per_step = if per_step_stats {
             PerStepSampleStats::Include(StepGrid {
                 start: start_ms,
@@ -107,26 +103,28 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
         } else {
             PerStepSampleStats::Omit
         };
-        let (result, samples) = collect_query_sample_stats(per_step, evaluate).await;
-        (result, Some(samples))
+        let query = collect_query_sample_stats(per_step, evaluate).await;
+        EvaluatedQuery {
+            outcome: query.output,
+            samples: Some(query.stats),
+            preparation,
+            evaluation: std::time::Duration::ZERO,
+        }
     } else {
-        (evaluate.await, None)
+        EvaluatedQuery {
+            outcome: evaluate.await,
+            samples: None,
+            preparation,
+            evaluation: std::time::Duration::ZERO,
+        }
     };
     let evaluation = eval_started.elapsed();
     state.record_eval(
         "range",
-        RequestOutcome::from_result(&result),
+        RequestOutcome::from_result(&evaluated.outcome),
         evaluation.as_time(),
     );
+    evaluated.evaluation = evaluation;
 
-    evaluated_query_response(
-        EvaluatedQuery {
-            outcome: result,
-            samples,
-            preparation,
-            evaluation,
-        },
-        params.limit,
-        timing,
-    )
+    evaluated_query_response(evaluated, params.limit, timing)
 }

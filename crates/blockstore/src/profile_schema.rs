@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn profile_type_is_dictionary_encoded() {
         let schema = profile_samples_schema();
-        let (_, field) = schema.column_with_name(PCOL_PROFILE_TYPE).unwrap();
+        let field = schema.column_with_name(PCOL_PROFILE_TYPE).unwrap().1;
         match field.data_type() {
             DataType::Dictionary(key, value) => {
                 assert2::assert!(key.as_ref() == &DataType::Int32);

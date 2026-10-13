@@ -1,8 +1,13 @@
 use super::{ExtendedSelectorModifier, PromqlError, QuotedCopy, Result, extended_modifier_at};
 
+pub(crate) struct StrippedExtendedSelectorModifiers {
+    pub query: String,
+    pub modifier: Option<ExtendedSelectorModifier>,
+}
+
 pub(crate) fn strip_extended_selector_modifiers(
     query: &str,
-) -> Result<(String, Option<ExtendedSelectorModifier>)> {
+) -> Result<StrippedExtendedSelectorModifiers> {
     let chars = query.chars().collect::<Vec<_>>();
     let mut out = String::with_capacity(query.len());
     let mut index = 0;
@@ -15,7 +20,8 @@ pub(crate) fn strip_extended_selector_modifiers(
         }
         let ch = chars[index];
 
-        if let Some((found, end)) = extended_modifier_at(&chars, index) {
+        if let Some(found_match) = extended_modifier_at(&chars, index) {
+            let found = found_match.modifier;
             if let Some(previous) = modifier
                 && previous != found
             {
@@ -27,7 +33,7 @@ pub(crate) fn strip_extended_selector_modifiers(
             while out.ends_with(char::is_whitespace) {
                 out.pop();
             }
-            index = end;
+            index = found_match.end;
             while chars.get(index).is_some_and(|ch| ch.is_whitespace()) {
                 index += 1;
             }
@@ -41,5 +47,8 @@ pub(crate) fn strip_extended_selector_modifiers(
         index += 1;
     }
 
-    Ok((out, modifier))
+    Ok(StrippedExtendedSelectorModifiers {
+        query: out,
+        modifier,
+    })
 }

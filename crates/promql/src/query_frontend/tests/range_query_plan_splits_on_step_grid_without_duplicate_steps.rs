@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Debug, Eq, PartialEq)]
+struct PlannedRangeCase {
+    start_ms: i64,
+    end_ms: i64,
+    shard: Option<QueryShard>,
+}
+
 #[test]
 pub(crate) fn range_query_plan_splits_on_step_grid_without_duplicate_steps() {
     let plan = plan_range_query(
@@ -16,7 +23,11 @@ pub(crate) fn range_query_plan_splits_on_step_grid_without_duplicate_steps() {
 
     let ranges = plan
         .iter()
-        .map(|subquery| (subquery.start_ms, subquery.end_ms, subquery.shard))
+        .map(|subquery| PlannedRangeCase {
+            start_ms: subquery.start_ms,
+            end_ms: subquery.end_ms,
+            shard: subquery.shard,
+        })
         .collect::<Vec<_>>();
 
     // Eval points 0, 60k, 120k, 180k, 240k bucket into absolute
@@ -26,9 +37,21 @@ pub(crate) fn range_query_plan_splits_on_step_grid_without_duplicate_steps() {
     assert2::assert!(
         ranges
             == vec![
-                (0, 60_000, None),
-                (120_000, 180_000, None),
-                (240_000, 240_000, None),
+                PlannedRangeCase {
+                    start_ms: 0,
+                    end_ms: 60_000,
+                    shard: None,
+                },
+                PlannedRangeCase {
+                    start_ms: 120_000,
+                    end_ms: 180_000,
+                    shard: None,
+                },
+                PlannedRangeCase {
+                    start_ms: 240_000,
+                    end_ms: 240_000,
+                    shard: None,
+                },
             ]
     );
 }

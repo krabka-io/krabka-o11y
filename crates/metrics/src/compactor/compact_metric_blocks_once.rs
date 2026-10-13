@@ -5,6 +5,11 @@ use super::{
     materialize_metric_erasure_requests, merge_metric_blocks, plan_metric_compactions,
 };
 
+struct RetiredBlock {
+    block_key: String,
+    index_key: String,
+}
+
 /// Runs one level-compaction pass over every metric block in object storage.
 ///
 /// A pass plans and applies; it does not loop. Running it again picks up where
@@ -57,22 +62,25 @@ pub async fn compact_metric_blocks_once<S>(
 where
     S: CompactionIndexSink + ?Sized,
 {
-    let (erasure, retired) =
+    let erasures =
         materialize_metric_erasure_requests(store, block_writer, index_sink, block_read_max)
             .await?;
-    if !erasure.is_empty() {
-        deferred.extend(retired);
-        return Ok(erasure);
+    if !erasures.pass.is_empty() {
+        deferred.extend(erasures.retired_blocks);
+        return Ok(erasures.pass);
     }
 
     let manifests = list_compaction_manifests(store).await?;
-    let by_key: BTreeMap<&str, &CompactionIndexManifest> = manifests
-        .iter()
-        .map(|manifest| (manifest.block_key.as_str(), manifest))
-        .collect();
+    let by_key: BTreeMap<&str, &CompactionIndexManifest> =
+        manifests
+            .iter()
+            .fold(BTreeMap::new(), |mut by_key, manifest| {
+                by_key.insert(manifest.block_key.as_str(), manifest);
+                by_key
+            });
 
     let mut pass = MetricCompactionPass::default();
-    let mut retired = Vec::new();
+    let mut retired: Vec<RetiredBlock> = Vec::new();
     // A job that fails ends the pass and leaves the jobs before it applied. The
     // output key is a function of the input keys and their object versions, so
     // the next pass replans the same job and writes the same key: the retry
@@ -89,9 +97,10 @@ where
         )
         .await?;
         retired.extend(planned.job.input_keys.iter().filter_map(|key| {
-            by_key
-                .get(key.as_str())
-                .map(|manifest| (key.clone(), manifest.index_key.clone()))
+            by_key.get(key.as_str()).map(|manifest| RetiredBlock {
+                block_key: key.clone(),
+                index_key: manifest.index_key.clone(),
+            })
         }));
         pass.outputs.push(output);
     }
@@ -100,8 +109,8 @@ where
     // leaves the index.
     let index_deletions: Vec<BlockDeletion> = retired
         .iter()
-        .map(|(_, index_key)| BlockDeletion {
-            object_key: index_key.clone(),
+        .map(|retired| BlockDeletion {
+            object_key: retired.index_key.clone(),
             sidecars: Vec::new(),
         })
         .collect();
@@ -128,8 +137,8 @@ where
     deferred.extend(
         retired
             .into_iter()
-            .filter(|(_, index_key)| !unretired.contains(index_key.as_str()))
-            .map(|(block_key, _)| block_key),
+            .filter(|retired| !unretired.contains(retired.index_key.as_str()))
+            .map(|retired| retired.block_key),
     );
     pass.manifests_retired = manifests_retired.into();
     Ok(pass)

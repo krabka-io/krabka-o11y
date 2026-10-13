@@ -28,11 +28,10 @@ impl OverridesProvider {
         let runtime: RuntimeFile =
             serde_yaml::from_str(yaml).map_err(|error| OverridesError::Yaml(error.to_string()))?;
         let defaults = merge_limits(&Limits::default(), &runtime.defaults);
-        let per_tenant = runtime
-            .overrides
-            .into_iter()
-            .map(|(tenant, partial)| (tenant, merge_limits(&defaults, &partial)))
-            .collect();
+        let mut per_tenant = HashMap::new();
+        for entry in runtime.overrides {
+            per_tenant.insert(entry.0, merge_limits(&defaults, &entry.1));
+        }
         Ok(Self {
             defaults,
             per_tenant,

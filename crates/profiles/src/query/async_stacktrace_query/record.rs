@@ -20,6 +20,17 @@ pub(super) struct Record {
     pub result_generation: Option<u64>,
 }
 
+#[derive(Debug)]
+pub(super) struct LoadedRecord {
+    pub(super) record: Record,
+    pub(super) version: UpdateVersion,
+}
+
+struct VersionedMetadataObject {
+    generation: u64,
+    location: Path,
+}
+
 // Payloads expire, but the small immutable seal remains for the lifetime of
 // this query ID. Removing it would reopen generation keys to suspended owners.
 // ponytail: one seal per expired query; compact only with an equivalent durable
@@ -128,7 +139,7 @@ pub(super) async fn load<S: ProfileStore>(
     state: &QuerierState<S>,
     tenant: &TenantId,
     id: &str,
-) -> Result<(Record, UpdateVersion), ConnectError> {
+) -> Result<LoadedRecord, ConnectError> {
     if is_expired(state, tenant, id).await? {
         return Err(not_found());
     }
@@ -139,7 +150,7 @@ pub(super) async fn load<S: ProfileStore>(
         .try_collect::<Vec<_>>()
         .await
         .map_err(|error| storage_error(&error))?;
-    let (generation, location) = objects
+    let metadata_object = objects
         .into_iter()
         .filter_map(|object| {
             let generation = object
@@ -148,14 +159,18 @@ pub(super) async fn load<S: ProfileStore>(
                 .strip_suffix(".json")?
                 .parse::<u64>()
                 .ok()?;
-            (object.location == metadata_path(tenant, id, generation))
-                .then_some((generation, object.location))
+            (object.location == metadata_path(tenant, id, generation)).then_some(
+                VersionedMetadataObject {
+                    generation,
+                    location: object.location,
+                },
+            )
         })
-        .max_by_key(|(generation, _)| *generation)
+        .max_by_key(|entry| entry.generation)
         .ok_or_else(|| ConnectError::new(super::Code::NotFound, "async query not found"))?;
     let object = state
         .admin_store
-        .get(&location)
+        .get(&metadata_object.location)
         .await
         .map_err(|error| storage_error(&error))?;
     let record: Record = serde_json::from_slice(
@@ -165,7 +180,7 @@ pub(super) async fn load<S: ProfileStore>(
             .map_err(|error| storage_error(&error))?,
     )
     .map_err(|error| ConnectError::new(super::Code::Internal, error.to_string()))?;
-    if record.version != 1 || record.generation != generation {
+    if record.version != 1 || record.generation != metadata_object.generation {
         return Err(ConnectError::new(
             super::Code::Internal,
             "unsupported async metadata version or generation",
@@ -180,13 +195,13 @@ pub(super) async fn load<S: ProfileStore>(
     if is_expired(state, tenant, id).await? {
         return Err(not_found());
     }
-    Ok((
+    Ok(LoadedRecord {
         record,
-        UpdateVersion {
+        version: UpdateVersion {
             e_tag: None,
-            version: Some(generation.to_string()),
+            version: Some(metadata_object.generation.to_string()),
         },
-    ))
+    })
 }
 
 pub(super) async fn write<S: ProfileStore>(
@@ -254,7 +269,9 @@ pub(super) async fn renew<S: ProfileStore>(
     if is_expired(state, tenant, id).await? {
         return Ok(false);
     }
-    let (mut record, version) = load(state, tenant, id).await?;
+    let loaded = load(state, tenant, id).await?;
+    let mut record = loaded.record;
+    let version = loaded.version;
     if record.owner != state.async_runtime.owner
         || record.status != AsyncQueryStatus::InProgress as i32
     {
@@ -272,7 +289,9 @@ pub(super) async fn terminal<S: ProfileStore>(
     status: i32,
     error: String,
 ) -> Result<(), ConnectError> {
-    let (mut record, version) = load(state, tenant, id).await?;
+    let loaded = load(state, tenant, id).await?;
+    let mut record = loaded.record;
+    let version = loaded.version;
     if record.owner != state.async_runtime.owner
         || record.status != AsyncQueryStatus::InProgress as i32
     {

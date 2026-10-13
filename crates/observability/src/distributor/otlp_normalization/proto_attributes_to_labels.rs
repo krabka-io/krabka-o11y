@@ -1,51 +1,38 @@
 use super::{
-    DistributorError, Labels, ProtoKeyValue, normalize_otlp_attribute_name, proto_any_value,
-    proto_value_to_string,
+    DistributorError, Labels, ProtoKeyValue, otlp_attribute_labels::attributes_to_labels,
+    proto_any_value, proto_value_to_string,
 };
 
 pub(crate) fn proto_attributes_to_labels(
     attributes: Option<&[ProtoKeyValue]>,
 ) -> Result<Labels, DistributorError> {
-    let mut labels = Labels::new();
-    for attribute in attributes.unwrap_or_default() {
-        insert_attribute(&mut labels, "", attribute)?;
-    }
-    Ok(labels)
+    attributes_to_labels(
+        attributes,
+        attribute_key,
+        attribute_children,
+        attribute_label_value,
+    )
 }
 
-fn insert_attribute(
-    labels: &mut Labels,
-    prefix: &str,
-    attribute: &ProtoKeyValue,
-) -> Result<(), DistributorError> {
-    if attribute.key.is_empty() {
-        return Err(DistributorError::InvalidOtlpAttribute);
-    }
-    let key = if prefix.is_empty() {
-        attribute.key.clone()
-    } else {
-        format!("{prefix}.{}", attribute.key)
-    };
-    if let Some(proto_any_value::Value::KvlistValue(values)) = attribute
+fn attribute_key(attribute: &ProtoKeyValue) -> &str {
+    &attribute.key
+}
+
+fn attribute_children(attribute: &ProtoKeyValue) -> Option<&[ProtoKeyValue]> {
+    match attribute
         .value
         .as_ref()
         .and_then(|value| value.value.as_ref())
     {
-        for child in &values.values {
-            insert_attribute(labels, &key, child)?;
-        }
-        return Ok(());
+        Some(proto_any_value::Value::KvlistValue(values)) => Some(&values.values),
+        _ => None,
     }
-    let value = attribute
+}
+
+fn attribute_label_value(attribute: &ProtoKeyValue) -> String {
+    attribute
         .value
         .as_ref()
         .map(proto_value_to_string)
-        .unwrap_or_default();
-    if labels
-        .insert(normalize_otlp_attribute_name(&key), value)
-        .is_some()
-    {
-        return Err(DistributorError::InvalidOtlpAttribute);
-    }
-    Ok(())
+        .unwrap_or_default()
 }

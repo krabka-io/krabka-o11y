@@ -21,8 +21,8 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_stdvar_from_moment_
     let QueryResult::RangeMatrix(series) = result.result else {
         panic!("stdvar range matrix");
     };
-    let SampleValue::Float(value) = series[0].samples[0].1 else {
+    let SampleValue::Float(value) = &series[0].samples[0].value else {
         panic!("stdvar float sample");
     };
-    assert2::assert!((value - (38.0 / 3.0)).abs() < 1e-9);
+    assert2::assert!((*value - (38.0 / 3.0)).abs() < 1e-9);
 }

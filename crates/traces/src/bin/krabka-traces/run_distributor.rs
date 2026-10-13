@@ -1,4 +1,4 @@
-use krabka_observability::{CriticalTaskError, SupervisedTasks};
+use krabka_observability::SupervisedTasks;
 
 use super::{
     Arc, DistributorRole, DistributorState, KafkaSink, PrimaryListen, Producer, SocketAddr,
@@ -80,41 +80,34 @@ pub(crate) async fn run_distributor(
     // which no `if let Err` in the task body could have seen -- ends the role.
     let mut tasks = SupervisedTasks::new(shutdown.clone());
 
-    let (grpc_bound, grpc) = distributor::serve_otlp_grpc(endpoint(grpc_addr)).await?;
-    tasks.adopt("traces distributor OTLP/gRPC", grpc);
-    tracing::info!(%grpc_bound, "traces distributor OTLP/gRPC listening");
-    let (jaeger_grpc_bound, jaeger_grpc) =
-        distributor::serve_jaeger_grpc(endpoint(jaeger_grpc_addr)).await?;
-    tasks.adopt("traces distributor Jaeger gRPC", jaeger_grpc);
-    tracing::info!(%jaeger_grpc_bound, "traces distributor Jaeger gRPC listening");
-    if let Some((jaeger_compact_bound, jaeger_compact)) =
+    let grpc = distributor::serve_otlp_grpc(endpoint(grpc_addr)).await?;
+    tasks.adopt("traces distributor OTLP/gRPC", grpc.task);
+    tracing::info!(bound = %grpc.bound_addr, "traces distributor OTLP/gRPC listening");
+    let jaeger_grpc = distributor::serve_jaeger_grpc(endpoint(jaeger_grpc_addr)).await?;
+    tasks.adopt("traces distributor Jaeger gRPC", jaeger_grpc.task);
+    tracing::info!(bound = %jaeger_grpc.bound_addr, "traces distributor Jaeger gRPC listening");
+    if let Some(jaeger_compact) =
         distributor::serve_jaeger_compact_udp(endpoint(jaeger_compact_addr)).await?
     {
-        tasks.adopt("traces distributor Jaeger compact UDP", jaeger_compact);
-        tracing::info!(%jaeger_compact_bound, "traces distributor Jaeger compact UDP listening");
+        tasks.adopt("traces distributor Jaeger compact UDP", jaeger_compact.task);
+        tracing::info!(bound = %jaeger_compact.bound_addr, "traces distributor Jaeger compact UDP listening");
     }
-    let (otlp_http_bound, otlp_http) = distributor::serve(endpoint(otlp_http_addr)).await?;
-    tasks.adopt("traces distributor OTLP/HTTP", otlp_http);
-    tracing::info!(%otlp_http_bound, "traces distributor OTLP/HTTP listening");
-    let (jaeger_http_bound, jaeger_http) = distributor::serve(endpoint(jaeger_http_addr)).await?;
-    tasks.adopt("traces distributor Jaeger thrift HTTP", jaeger_http);
-    tracing::info!(%jaeger_http_bound, "traces distributor Jaeger thrift HTTP listening");
-    let (zipkin_bound, zipkin) = distributor::serve(endpoint(zipkin_addr)).await?;
-    tasks.adopt("traces distributor Zipkin HTTP", zipkin);
-    tracing::info!(%zipkin_bound, "traces distributor Zipkin HTTP listening");
+    let otlp_http = distributor::serve(endpoint(otlp_http_addr)).await?;
+    tasks.adopt("traces distributor OTLP/HTTP", otlp_http.task);
+    tracing::info!(bound = %otlp_http.bound_addr, "traces distributor OTLP/HTTP listening");
+    let jaeger_http = distributor::serve(endpoint(jaeger_http_addr)).await?;
+    tasks.adopt("traces distributor Jaeger thrift HTTP", jaeger_http.task);
+    tracing::info!(bound = %jaeger_http.bound_addr, "traces distributor Jaeger thrift HTTP listening");
+    let zipkin = distributor::serve(endpoint(zipkin_addr)).await?;
+    tasks.adopt("traces distributor Zipkin HTTP", zipkin.task);
+    tracing::info!(bound = %zipkin.bound_addr, "traces distributor Zipkin HTTP listening");
     if primary_listen == PrimaryListen::Serve {
         let addr: SocketAddr = cli.listen.parse()?;
-        let (bound, primary) = distributor::serve(endpoint(addr)).await?;
-        tasks.adopt("traces distributor HTTP", primary);
-        tracing::info!(%bound, "traces distributor listening");
+        let primary = distributor::serve(endpoint(addr)).await?;
+        tasks.adopt("traces distributor HTTP", primary.task);
+        tracing::info!(bound = %primary.bound_addr, "traces distributor listening");
     }
 
-    let outcome = tokio::select! {
-        () = shutdown.cancelled() => Ok(()),
-        name = tasks.first_unexpected_exit() => Err(
-            Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)),
-        ),
-    };
-    tasks.shutdown().await;
-    outcome
+    tasks.run_until_shutdown().await?;
+    Ok(())
 }

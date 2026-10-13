@@ -7,7 +7,8 @@ use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 use super::*;
 use crate::{
     AnnotatedQueryResult, Annotations, EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult,
-    RangeSeries, SampleValue, test_support::tenant_id,
+    RangeSeries, RangeSeriesSample, SampleValue,
+    test_support::{labels, tenant_id},
 };
 
 mod a_cached_range_query_reports_the_annotations_of_the_miss;
@@ -26,7 +27,6 @@ mod frontend_range_execution_uses_cache_and_merges_subquery_results;
 mod frontend_requests;
 mod in_memory_round_trips_then_expires;
 mod in_memory_without_ttl_never_expires;
-mod labels;
 mod manual_clock;
 mod moment_partial_recording_executor;
 mod moving_window_reuses_cached_subranges;
@@ -42,8 +42,7 @@ mod range_query_plan_allows_resolution_at_point_cap_boundary;
 mod range_query_plan_expands_each_split_across_mimir_query_shards;
 mod range_query_plan_rejects_resolution_over_point_cap;
 mod range_query_plan_shards_every_shardable_aggregate;
-mod range_query_plan_skips_nested_avg_until_rewrite_is_aggregate_aware;
-mod range_query_plan_skips_shards_for_unsupported_aggregate_reducers;
+mod range_query_plan_skips_unsupported_shards;
 mod range_query_plan_splits_on_step_grid_without_duplicate_steps;
 mod range_result_cache_is_scoped_by_tenant_query_range_step_and_shard;
 mod range_result_cache_returns_owned_results;
@@ -60,7 +59,6 @@ use avg_partial_recording_executor::AvgPartialRecordingExecutor;
 use cached_up_matrix::{FloatPoint, one_sample_matrix, up_api_matrix, up_range_query};
 use concurrency_probe_executor::ConcurrencyProbeExecutor;
 use frontend_requests::{split_up_request, two_shard_instant_request};
-use labels::labels;
 use manual_clock::ManualClock;
 use moment_partial_recording_executor::MomentPartialRecordingExecutor;
 use native_histogram_with_positive_buckets::native_histogram_with_positive_buckets;
@@ -70,3 +68,18 @@ use shard_calls::{on_both_shards, shard_calls};
 use unannotated::{unannotated, unlabeled_partial};
 use unlabeled_matrix::UnlabeledMatrix;
 use warning_executor::WarningExecutor;
+
+#[derive(bon::Builder)]
+struct UpQueryAndResult {
+    query: FrontendRangeQuery,
+    result: AnnotatedQueryResult,
+}
+
+fn up_query_and_result() -> UpQueryAndResult {
+    UpQueryAndResult::builder()
+        .query(up_range_query(0, None))
+        .result(one_sample_matrix(labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+        ])))
+        .build()
+}

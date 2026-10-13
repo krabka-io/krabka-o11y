@@ -1,9 +1,16 @@
-use krabka_observability::persisted_format::validate_persisted_format;
+use krabka_observability::persisted_format::{PersistedHeader, validate_persisted_format};
 
 use super::{
     Arc, BTreeMap, BlockIndex, BlockMeta, ConsumerRecord, Labels, ObjectStore, ObjectStoreMetrics,
-    ProfileIndex, ProfileRecord, ProfilesError, STACKTRACE_PARTITION, build_block_with_positions,
+    OffsetRange, PositionedProfileRecord, ProfileIndex, ProfileRecord, ProfilesError,
+    STACKTRACE_PARTITION, build_block_with_positions,
 };
+
+#[derive(Ord, PartialOrd, Eq, PartialEq)]
+struct TenantPartition {
+    tenant: String,
+    partition: i32,
+}
 
 ///
 /// # Errors
@@ -16,16 +23,13 @@ pub async fn flush_consumer_records_with_index(
     metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     for record in records {
-        validate_persisted_format(
-            record
-                .headers
-                .iter()
-                .map(|header| (header.key.as_str(), header.value.as_deref())),
-        )
+        validate_persisted_format(record.headers.iter().map(|header| PersistedHeader {
+            key: header.key.as_str(),
+            value: header.value.as_deref(),
+        }))
         .map_err(|error| ProfilesError::Wal(error.to_string()))?;
     }
-    let mut batches: BTreeMap<(String, i32), Vec<(crate::wal::WalPosition, ProfileRecord)>> =
-        BTreeMap::new();
+    let mut batches: BTreeMap<TenantPartition, Vec<PositionedProfileRecord>> = BTreeMap::new();
     for record in records {
         let value = record
             .value
@@ -42,29 +46,37 @@ pub async fn flush_consumer_records_with_index(
             .add_series(&decoded.tenant, labels.fingerprint(), &labels)
             .map_err(|error| ProfilesError::Block(error.to_string()))?;
         batches
-            .entry((decoded.tenant.clone(), record.partition))
+            .entry(TenantPartition {
+                tenant: decoded.tenant.clone(),
+                partition: record.partition,
+            })
             .or_default()
-            .push((crate::wal::WalPosition::from_record(record, value), decoded));
+            .push(PositionedProfileRecord::new(
+                Some(crate::wal::WalPosition::from_record(record, value)),
+                decoded,
+            ));
     }
 
     let mut metas = Vec::new();
-    for ((tenant, partition), mut records) in batches {
-        records.sort_by_key(|(position, _)| position.offset);
+    for batch_entry in batches {
+        let key = batch_entry.0;
+        let mut records = batch_entry.1;
+        records.sort_by_key(|record| record.position.map_or(0, |position| position.offset));
         for chunk in records.chunks(flush_records.max(1)) {
             let min_offset = chunk
                 .first()
-                .map(|(position, _)| position.offset)
+                .and_then(|record| record.position.map(|position| position.offset))
                 .unwrap_or_default();
             let max_offset = chunk
                 .last()
-                .map(|(position, _)| position.offset)
+                .and_then(|record| record.position.map(|position| position.offset))
                 .unwrap_or_default();
             let built = build_block_with_positions(
                 store,
-                &tenant,
-                partition,
+                &key.tenant,
+                key.partition,
                 chunk,
-                (min_offset, max_offset),
+                OffsetRange::new(min_offset, max_offset),
                 metrics,
             )
             .await?;

@@ -4,6 +4,13 @@ use super::{
     Result, SchemaRef, StreamExt, TryStreamExt,
 };
 
+/// The metadata, schema, and row stream opened from one block.
+pub struct OpenBlockStream {
+    pub meta: ObjectMeta,
+    pub schema: SchemaRef,
+    pub batches: BlockBatchStream,
+}
+
 /// Opens the block at `object_key` as a stream of batches, and reports the
 /// schema it was written with.
 ///
@@ -29,7 +36,7 @@ pub async fn open_block_stream(
     object_key: &str,
     max_bytes: ByteSize,
     batch_rows: usize,
-) -> Result<(ObjectMeta, SchemaRef, BlockBatchStream)> {
+) -> Result<OpenBlockStream> {
     let path = Path::from(object_key);
     let meta = store.head(&path).await.map_err(|error| {
         BlockStoreError::block_unreadable(object_key, BlockReadFailure::ObjectStore(error))
@@ -63,5 +70,9 @@ pub async fn open_block_stream(
             BlockStoreError::block_unreadable(&key, BlockReadFailure::Parquet(error))
         })
         .boxed();
-    Ok((meta, schema, batches))
+    Ok(OpenBlockStream {
+        meta,
+        schema,
+        batches,
+    })
 }

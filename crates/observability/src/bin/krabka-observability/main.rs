@@ -208,7 +208,11 @@ mod tests {
                     name: LOGS_WAL_TOPIC.to_string(),
                     partitions: 1,
                     replicas: 1,
-                    configs: BTreeMap::from([("retention.ms".to_string(), "900000".to_string())]),
+                    configs: {
+                        let mut configs = BTreeMap::new();
+                        configs.insert("retention.ms".to_string(), "900000".to_string());
+                        configs
+                    },
                 }],
                 krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
             )
@@ -250,7 +254,7 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `init_telemetry`, not `krabka_telemetry::init`: without OTLP it installs
     // the same JSON stdout layer over a reloadable filter, which is what makes
     // `POST /log_level` move the level rather than report that it did.
-    let (telemetry, _log_level) = init_telemetry(
+    let telemetry_startup = init_telemetry(
         krabka_telemetry::OtlpConfig::from_env(
             |k| std::env::var(k).ok(),
             "krabka-logs",
@@ -261,6 +265,8 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "info",
         "krabka-logs",
     )?;
+    let telemetry = telemetry_startup.telemetry;
+    let _log_level = telemetry_startup.log_level_control;
     // Loaded once, before any port opens and before any broker connection, so
     // a bad combination of security flags stops the start with its own error.
     let server_security = cli.service.server_security.load()?;

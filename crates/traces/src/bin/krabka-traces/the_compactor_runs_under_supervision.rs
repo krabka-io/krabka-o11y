@@ -17,8 +17,8 @@ use krabka_observability::RoleReadiness;
 use tokio::sync::oneshot;
 
 use self::compaction_passes::{
-    COMPACTION_INTERVAL, assert_no_pass_after_the_stop, assert_stage_drains_with_its_loop,
-    assert_stopped_without_a_pass, passes_reach,
+    COMPACTION_INTERVAL, assert_role_stops_after_cancel, assert_stage_drains_with_its_loop,
+    assert_stopped_without_a_pass, cancel_ready_role_after_two_passes,
 };
 use super::{CancellationToken, Cli, ServiceMetrics, SharedObjectStore, run_compactor};
 
@@ -57,20 +57,13 @@ async fn a_cancelled_compactor_returns_and_leaves_no_loop_behind() {
         }
     });
 
-    passes_reach(&metrics.compaction, 2).await;
-    check!(readiness.is_ready(), "{:?}", readiness.pending());
-    shutdown.cancel();
+    cancel_ready_role_after_two_passes(&metrics.compaction, &readiness, &shutdown).await;
     let outcome = tokio::time::timeout(Duration::from_secs(5), role)
         .await
         .expect("the compactor returns when its token is cancelled")
         .expect("the compactor role task");
 
-    check!(outcome.is_ok());
-    assert_no_pass_after_the_stop(
-        &metrics.compaction,
-        "a compaction loop was still running after the role returned",
-    )
-    .await;
+    assert_role_stops_after_cancel(&outcome, &metrics.compaction).await;
 }
 
 /// A role started with its token already cancelled stops without a pass, and
@@ -111,7 +104,9 @@ async fn a_compactor_started_during_shutdown_returns_without_a_pass() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_compactor_stage_of_target_all_stops_within_its_drain_budget() {
     let metrics = ServiceMetrics::new();
-    let (outcome_tx, outcome_rx) = oneshot::channel();
+    let outcome_channel = oneshot::channel();
+    let outcome_tx = outcome_channel.0;
+    let outcome_rx = outcome_channel.1;
     let staged = metrics.clone();
     assert_stage_drains_with_its_loop(&metrics.compaction, move |token| async move {
         let object_store = SharedObjectStore::new();

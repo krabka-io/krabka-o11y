@@ -19,7 +19,9 @@ mod tests {
         let key = encode_checkpoint_key("tenant-a", &trace, &[0xAA, 0xBB]);
         let parsed = parse_checkpoint_key(&key).unwrap();
 
-        assert2::assert!(parsed == ("tenant-a".to_string(), trace, vec![0xAA, 0xBB]));
+        assert2::assert!(parsed.tenant == "tenant-a");
+        assert2::assert!(parsed.trace_id == trace);
+        assert2::assert!(parsed.edge_id == vec![0xAA, 0xBB]);
     }
 
     #[test]
@@ -45,7 +47,13 @@ mod tests {
 
         store.save("t", b"k1", b"");
         let after_tombstone = store.load_all("t");
-        assert2::assert!(after_tombstone == vec![(b"k2".to_vec(), b"v2".to_vec())]);
+        assert2::assert!(
+            after_tombstone
+                == vec![CheckpointEntry {
+                    key: b"k2".to_vec(),
+                    value: b"v2".to_vec(),
+                }]
+        );
         check!(store.load_all("other").is_empty());
         check!(store.tenants() == vec!["t".to_string()]);
     }
@@ -61,10 +69,10 @@ mod put_bytes;
 mod store_key;
 
 pub use checkpoint_codec_error::CheckpointCodecError;
-pub use edge_checkpoint_store::EdgeCheckpointStore;
+pub use edge_checkpoint_store::{CheckpointEntry, EdgeCheckpointStore};
 pub use encode_checkpoint_key::encode_checkpoint_key;
 use get_bytes::get_bytes;
 pub use in_memory_checkpoint_store::InMemoryCheckpointStore;
-pub use parse_checkpoint_key::parse_checkpoint_key;
+pub use parse_checkpoint_key::{ParsedCheckpointKey, parse_checkpoint_key};
 use put_bytes::put_bytes;
 use store_key::StoreKey;

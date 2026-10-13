@@ -204,11 +204,16 @@ fn healthy_fleet() -> Vec<ClockFixture> {
 /// Two brokers report, and the larger value wins.
 const DECLARED_BOUND_STEPS: [i64; 2] = [6, 3];
 
-fn labels(name: &str, pairs: &[(&str, &str)]) -> Labels {
+struct ClockLabel {
+    name: String,
+    value: String,
+}
+
+fn labels(name: &str, pairs: &[ClockLabel]) -> Labels {
     let mut labels = Labels::new();
     labels.insert("__name__", name);
-    for (key, value) in pairs {
-        labels.insert(*key, *value);
+    for pair in pairs {
+        labels.insert(pair.name.as_str(), pair.value.as_str());
     }
     labels
 }
@@ -237,16 +242,21 @@ fn store_with_fleet(fleet: &[ClockFixture], declared_bound_steps: &[i64]) -> InM
                 );
             }
         }
-        for (index, steps) in declared_bound_steps.iter().enumerate() {
+        let mut index = 0;
+        for steps in declared_bound_steps {
             store.push_float(
                 TENANT,
                 labels(
                     "krabka_broker_delivery_clock_uncertainty_seconds",
-                    &[("broker", &index.to_string())],
+                    &[ClockLabel {
+                        name: "broker".to_string(),
+                        value: index.to_string(),
+                    }],
                 ),
                 timestamp_ms,
                 ClockFixture::seconds(*steps),
             );
+            index += 1;
         }
         tick += 1;
         timestamp_ms += READING_INTERVAL_MS;
@@ -319,12 +329,14 @@ impl Ruler {
         self.wal.take();
         evaluate_ruler_once(
             &self.state,
-            (&self.wal, &self.alerts, &NoRulerState),
+            krabka_promql::RulerSinks::new(&self.wal, &self.alerts, &NoRulerState),
             &mut self.alert_state,
             &mut self.group_state,
-            &tenant(),
-            RulerShard::new(1, 1).expect("one shard of one"),
-            eval_time_ms,
+            krabka_metrics_service::RulerEvaluationContext {
+                tenant: &tenant(),
+                shard: RulerShard::new(1, 1).expect("one shard of one"),
+                eval_time_ms,
+            },
         )
         .await
         .expect("the bundle evaluates");
@@ -373,26 +385,25 @@ impl Ruler {
     ) -> BTreeMap<String, BTreeMap<String, String>> {
         self.state.set_ruler_evaluation_time_ms(eval_time_ms);
         let json = self.api_json("/prometheus/api/v1/alerts").await;
-        json["data"]["alerts"]
+        let mut annotations_by_alert = BTreeMap::new();
+        for alert in json["data"]["alerts"]
             .as_array()
             .expect("alert array")
             .iter()
-            .map(|alert| {
-                let name = alert["name"].as_str().unwrap_or_default().to_string();
-                let annotations = alert["annotations"]
-                    .as_object()
-                    .map(|object| {
-                        object
-                            .iter()
-                            .map(|(key, value)| {
-                                (key.clone(), value.as_str().unwrap_or_default().to_string())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                (name, annotations)
-            })
-            .collect()
+        {
+            let name = alert["name"].as_str().unwrap_or_default().to_string();
+            let mut annotations = BTreeMap::new();
+            if let Some(object) = alert["annotations"].as_object() {
+                for entry in object {
+                    annotations.insert(
+                        entry.0.clone(),
+                        entry.1.as_str().unwrap_or_default().to_string(),
+                    );
+                }
+            }
+            annotations_by_alert.insert(name, annotations);
+        }
+        annotations_by_alert
     }
 
     /// Returns the alerts that fire once every `for` extent has elapsed.
@@ -539,8 +550,8 @@ fn series_key(labels: &krabka_metrics::MetricLabels) -> String {
     let name = labels.get("__name__").unwrap_or_default().to_string();
     let rest = labels
         .iter()
-        .filter(|(label, _)| label.as_str() != "__name__")
-        .map(|(label, value)| format!("{label}=\"{value}\""))
+        .filter(|label| label.name.as_str() != "__name__")
+        .map(|label| format!("{}=\"{}\"", label.name, label.value))
         .collect::<Vec<_>>()
         .join(",");
     format!("{name}{{{rest}}}")
@@ -607,10 +618,11 @@ fn sample_timestamp(record: &WalRecord) -> i64 {
 }
 
 fn recorded_values(records: &[WalRecord]) -> BTreeMap<String, f64> {
-    records
-        .iter()
-        .map(|record| (series_key(&record.labels()), float_value(record)))
-        .collect()
+    let mut values = BTreeMap::new();
+    for record in records {
+        values.insert(series_key(&record.labels()), float_value(record));
+    }
+    values
 }
 
 /// Builds a store that holds the clock projection and the series the recording
@@ -647,12 +659,10 @@ async fn store_with_derived_series(fleet: &[ClockFixture]) -> InMemoryMetricStor
 async fn the_bundle_installs_as_two_groups_of_one_namespace() {
     let ruler = Ruler::with_fleet(&healthy_fleet()).await;
 
-    let installed = ruler
-        .state
-        .ruler_rule_set(&tenant())
-        .into_iter()
-        .map(|(namespace, groups)| (namespace, groups.into_keys().collect::<Vec<_>>()))
-        .collect::<BTreeMap<_, _>>();
+    let mut installed = BTreeMap::new();
+    for entry in ruler.state.ruler_rule_set(&tenant()) {
+        installed.insert(entry.0, entry.1.into_keys().collect::<Vec<_>>());
+    }
 
     check!(
         installed
@@ -668,6 +678,9 @@ async fn the_bundle_installs_as_two_groups_of_one_namespace() {
 
 #[tokio::test]
 async fn every_bundled_rule_evaluates_against_the_engine() {
+    struct RenderedRule {
+        health: String,
+    }
     let ruler = Ruler::with_fleet(&healthy_fleet()).await;
     ruler.state.set_ruler_evaluation_time_ms(MIDPOINT_MS);
 
@@ -677,13 +690,8 @@ async fn every_bundled_rule_evaluates_against_the_engine() {
         .expect("rule groups")
         .iter()
         .flat_map(|group| group["rules"].as_array().expect("rules").iter())
-        .map(|rule| {
-            (
-                rule["name"].as_str().unwrap_or_default().to_string(),
-                rule["type"].as_str().unwrap_or_default().to_string(),
-                rule["health"].as_str().unwrap_or_default().to_string(),
-                rule["lastError"].as_str().unwrap_or_default().to_string(),
-            )
+        .map(|rule| RenderedRule {
+            health: rule["health"].as_str().unwrap_or_default().to_string(),
         })
         .collect::<Vec<_>>();
 
@@ -691,9 +699,9 @@ async fn every_bundled_rule_evaluates_against_the_engine() {
     // carries the failure in `lastError`.
     let unhealthy = rendered
         .iter()
-        .filter(|(_, _, health, _)| health != "ok")
+        .filter(|rule| rule.health != "ok")
         .collect::<Vec<_>>();
-    check!(unhealthy == Vec::<&(String, String, String, String)>::new());
+    check!(unhealthy.is_empty());
     check!(rendered.len() == 14);
 }
 
@@ -766,20 +774,38 @@ async fn the_budget_ratio_follows_the_recorded_inputs_by_one_cycle() {
 
 #[tokio::test]
 async fn the_unsynchronized_count_counts_the_clocks_that_track_no_reference() {
+    struct UnsynchronizedCase {
+        name: &'static str,
+        degraded: Vec<ClockSyncState>,
+        expected: f64,
+    }
     let cases = [
-        ("every clock synchronized", vec![], 0.0),
-        ("one clock in holdover", vec![ClockSyncState::Holdover], 1.0),
-        (
-            "one clock in holdover and one free running",
-            vec![ClockSyncState::Holdover, ClockSyncState::FreeRunning],
-            2.0,
-        ),
+        UnsynchronizedCase {
+            name: "every clock synchronized",
+            degraded: vec![],
+            expected: 0.0,
+        },
+        UnsynchronizedCase {
+            name: "one clock in holdover",
+            degraded: vec![ClockSyncState::Holdover],
+            expected: 1.0,
+        },
+        UnsynchronizedCase {
+            name: "one clock in holdover and one free running",
+            degraded: vec![ClockSyncState::Holdover, ClockSyncState::FreeRunning],
+            expected: 2.0,
+        },
     ];
 
-    for (name, degraded, expected) in cases {
+    for UnsynchronizedCase {
+        name,
+        degraded,
+        expected,
+    } in cases
+    {
         let mut fleet = healthy_fleet();
-        for (clock, state) in fleet.iter_mut().zip(degraded) {
-            *clock = clock.with_sync_state(state);
+        for assignment in fleet.iter_mut().zip(degraded) {
+            *assignment.0 = assignment.0.with_sync_state(assignment.1);
         }
         let mut ruler = Ruler::with_fleet(&fleet).await;
 
@@ -804,15 +830,38 @@ async fn the_uncertainty_alerts_cross_their_thresholds() {
     // The comparisons are strict, and a clock whose uncertainty passes the
     // declared bound also widens the fleet skew past twice that bound, because
     // its own interval is already wider than two bounds.
+    struct UncertaintyCase {
+        name: &'static str,
+        uncertainty_steps: i64,
+    }
     let cases = [
-        ("one step of uncertainty, far under the bound", 1),
-        ("half of the declared bound, and no alert", 3),
-        ("more than half of the bound, and a warning", 4),
-        ("the declared bound exactly, which is not above it", 6),
-        ("one step over the declared bound", 7),
+        UncertaintyCase {
+            name: "one step of uncertainty, far under the bound",
+            uncertainty_steps: 1,
+        },
+        UncertaintyCase {
+            name: "half of the declared bound, and no alert",
+            uncertainty_steps: 3,
+        },
+        UncertaintyCase {
+            name: "more than half of the bound, and a warning",
+            uncertainty_steps: 4,
+        },
+        UncertaintyCase {
+            name: "the declared bound exactly, which is not above it",
+            uncertainty_steps: 6,
+        },
+        UncertaintyCase {
+            name: "one step over the declared bound",
+            uncertainty_steps: 7,
+        },
     ];
 
-    for (name, uncertainty_steps) in cases {
+    for UncertaintyCase {
+        name,
+        uncertainty_steps,
+    } in cases
+    {
         let mut fleet = healthy_fleet();
         fleet[2] = ClockFixture::healthy("node-c", 0, uncertainty_steps);
         let ruler = Ruler::with_derived_fleet(&fleet).await;
@@ -959,39 +1008,49 @@ async fn the_state_alerts_pick_the_current_state() {
     // Every reading publishes all five states, the current one at 1 and the
     // rest at 0. An alert that matched a zero-valued sibling would fire on
     // every state at once.
+    struct StateAlertCase {
+        state: ClockSyncState,
+        expected: Vec<RenderedAlert>,
+    }
     let cases = [
-        (ClockSyncState::Synchronized, Vec::new()),
-        (
-            ClockSyncState::Holdover,
-            vec![RenderedAlert::firing(
+        StateAlertCase {
+            state: ClockSyncState::Synchronized,
+            expected: Vec::new(),
+        },
+        StateAlertCase {
+            state: ClockSyncState::Holdover,
+            expected: vec![RenderedAlert::firing(
                 "ClockInHoldover",
                 "warning",
                 "node-a",
                 "1",
             )],
-        ),
-        (
-            ClockSyncState::FreeRunning,
-            vec![RenderedAlert::firing(
+        },
+        StateAlertCase {
+            state: ClockSyncState::FreeRunning,
+            expected: vec![RenderedAlert::firing(
                 "ClockUnsynchronized",
                 "critical",
                 "node-a",
                 "1",
             )],
-        ),
-        (
-            ClockSyncState::Unsynchronized,
-            vec![RenderedAlert::firing(
+        },
+        StateAlertCase {
+            state: ClockSyncState::Unsynchronized,
+            expected: vec![RenderedAlert::firing(
                 "ClockUnsynchronized",
                 "critical",
                 "node-a",
                 "1",
             )],
-        ),
-        (ClockSyncState::Stepped, Vec::new()),
+        },
+        StateAlertCase {
+            state: ClockSyncState::Stepped,
+            expected: Vec::new(),
+        },
     ];
 
-    for (state, expected) in cases {
+    for StateAlertCase { state, expected } in cases {
         let fleet = [ClockFixture::healthy("node-a", 0, 1).with_sync_state(state)];
         let ruler = Ruler::with_derived_fleet(&fleet).await;
 
@@ -1001,21 +1060,31 @@ async fn the_state_alerts_pick_the_current_state() {
 
 #[tokio::test]
 async fn the_gnss_alert_fires_only_while_the_receiver_reports_no_fix() {
+    struct GnssAlertCase {
+        fix: GnssFix,
+        expected: Vec<RenderedAlert>,
+    }
     let cases = [
-        (GnssFix::ThreeD, Vec::new()),
-        (GnssFix::TwoD, Vec::new()),
-        (
-            GnssFix::None,
-            vec![RenderedAlert::firing(
+        GnssAlertCase {
+            fix: GnssFix::ThreeD,
+            expected: Vec::new(),
+        },
+        GnssAlertCase {
+            fix: GnssFix::TwoD,
+            expected: Vec::new(),
+        },
+        GnssAlertCase {
+            fix: GnssFix::None,
+            expected: vec![RenderedAlert::firing(
                 "GnssFixLost",
                 "warning",
                 "node-a",
                 "1",
             )],
-        ),
+        },
     ];
 
-    for (fix, expected) in cases {
+    for GnssAlertCase { fix, expected } in cases {
         let fleet = [ClockFixture::healthy("node-a", 0, 1).with_gnss_fix(fix)];
         let ruler = Ruler::with_derived_fleet(&fleet).await;
 

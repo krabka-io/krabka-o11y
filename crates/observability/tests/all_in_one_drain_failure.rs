@@ -69,7 +69,9 @@ async fn stop_with(consumer: impl LogWalConsumer) -> Result<(), ServiceRuntimeEr
         all_drain_stage_timeout: millis(25),
         ..ServiceConfig::default()
     };
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let listener = TcpListener::bind(std::net::SocketAddr::new("127.0.0.1".parse().unwrap(), 0))
+        .await
+        .unwrap();
     let shutdown = CancellationToken::new();
     shutdown.cancel();
     let store = InMemory::new();

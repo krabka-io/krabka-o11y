@@ -18,7 +18,9 @@ impl RoleObjectStore {
         readiness: &RoleReadiness,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let url = url::Url::parse(&cli.object_store_url)?;
-        let (store, prefix) = object_store::parse_url_opts(&url, std::env::vars())?;
+        let parsed = object_store::parse_url_opts(&url, std::env::vars())?;
+        let store = parsed.0;
+        let prefix = parsed.1;
         let store: Arc<dyn ObjectStore> =
             Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
         let object_store_metrics = metrics.object_store.clone();

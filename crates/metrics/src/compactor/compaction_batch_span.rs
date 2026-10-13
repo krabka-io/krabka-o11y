@@ -1,4 +1,6 @@
-use super::{ConsumerRecord, TRACEPARENT, set_remote_parent};
+use krabka_observability::{KafkaWalHeader, set_remote_parent_from_kafka_headers};
+
+use super::{ConsumerRecord, TRACEPARENT};
 
 /// Builds the per-poll-batch `metrics_compaction` consumer span and joins it to
 /// the producer trace on a WAL record's `traceparent` header, if there is one.
@@ -22,15 +24,15 @@ pub(crate) fn compaction_batch_span(
             .iter()
             .any(|header| header.key == TRACEPARENT)
     }) {
-        set_remote_parent(
-            &span,
-            record.headers.iter().map(|header| {
-                (
-                    header.key.as_str(),
-                    header.value.as_deref().unwrap_or(&[][..]),
-                )
-            }),
-        );
+        let headers = record
+            .headers
+            .iter()
+            .map(|header| KafkaWalHeader {
+                key: header.key.clone(),
+                value: header.value.as_ref().map(|value| value.to_vec()),
+            })
+            .collect::<Vec<_>>();
+        set_remote_parent_from_kafka_headers(&span, &headers);
     }
     span
 }

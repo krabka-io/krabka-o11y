@@ -5,12 +5,17 @@ use super::{
 /// A tenant's configured rule groups, keyed by namespace and then group name.
 pub(crate) type TenantRuleGroups = BTreeMap<String, BTreeMap<String, serde_yaml::Value>>;
 
+pub(crate) struct TenantRuleSnapshot {
+    pub(crate) tenant: TenantId,
+    pub(crate) rules: TenantRuleGroups,
+}
+
 /// The request's tenant and a copy of its configured rule groups. An `Err` is
 /// the error response that ends the request.
 pub(crate) fn tenant_ruler_rules<S: MetricStore>(
     state: &PrometheusApiState<S>,
     auth: RequestAuth<'_>,
-) -> Result<(TenantId, TenantRuleGroups), Rejection> {
+) -> Result<TenantRuleSnapshot, Rejection> {
     let tenant = auth.tenant()?;
     let rules = match state.ruler_rules.read() {
         Ok(rules) => rules.get(&tenant).cloned().unwrap_or_default(),
@@ -20,5 +25,5 @@ pub(crate) fn tenant_ruler_rules<S: MetricStore>(
             )));
         }
     };
-    Ok((tenant, rules))
+    Ok(TenantRuleSnapshot { tenant, rules })
 }

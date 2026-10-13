@@ -1,5 +1,15 @@
 use super::*;
 
+struct QueryResponseBody {
+    status: axum::http::StatusCode,
+    bytes: axum::body::Bytes,
+}
+
+struct PostQueryCase {
+    name: &'static str,
+    response: axum::response::Response,
+}
+
 /// The four POST query endpoints each answer with a JSON body. Replacing
 /// any of them with a default `Response` yields an empty 200 -- a status
 /// check alone accepts that, so the body has to be read.
@@ -24,35 +34,58 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
             .await
             .expect("the response body is readable");
-        (status, bytes)
+        QueryResponseBody { status, bytes }
     };
 
-    for (name, response) in [
-        (
-            "detected_fields",
-            super::super::prelude::detected_fields_post(State(state.clone()), request()).await,
-        ),
-        (
-            "detected_labels",
-            super::super::prelude::detected_labels_post(State(state.clone()), request()).await,
-        ),
-        (
-            "index_volume",
-            super::super::prelude::index_volume_post(State(state.clone()), request()).await,
-        ),
-        (
-            "label_names",
-            super::super::prelude::api_prom_label_names_post(State(state.clone()), request()).await,
-        ),
-    ] {
-        let (status, bytes) = read(response.into_response()).await;
-        check!(status == axum::http::StatusCode::OK, "{name}: {status}");
-        let value: serde_json::Value = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|error| panic!("{name}: body is not JSON ({error}): {bytes:?}"));
-        if name == "index_volume" {
+    let cases = [
+        PostQueryCase {
+            name: "detected_fields",
+            response: super::super::prelude::detected_fields_post(State(state.clone()), request())
+                .await
+                .expect("detected-fields request succeeds"),
+        },
+        PostQueryCase {
+            name: "detected_labels",
+            response: super::super::prelude::detected_labels_post(State(state.clone()), request())
+                .await
+                .expect("detected-labels request succeeds"),
+        },
+        PostQueryCase {
+            name: "index_volume",
+            response: super::super::prelude::index_volume_post(State(state.clone()), request())
+                .await
+                .expect("index-volume request succeeds"),
+        },
+        PostQueryCase {
+            name: "label_names",
+            response: super::super::prelude::api_prom_label_names_post(
+                State(state.clone()),
+                request(),
+            )
+            .await
+            .expect("label-names request succeeds"),
+        },
+    ];
+    for case in cases {
+        let answer = read(case.response.into_response()).await;
+        check!(
+            answer.status == axum::http::StatusCode::OK,
+            "{}: {}",
+            case.name,
+            answer.status
+        );
+        let value: serde_json::Value =
+            serde_json::from_slice(&answer.bytes).unwrap_or_else(|error| {
+                panic!(
+                    "{}: body is not JSON ({error}): {:?}",
+                    case.name, answer.bytes
+                )
+            });
+        if case.name == "index_volume" {
             check!(
                 value["status"] == "success" && value["data"]["resultType"] == "vector",
-                "{name}: got {value}"
+                "{}: got {value}",
+                case.name
             );
             check!(
                 value["data"]["result"].as_array().map(Vec::len) == Some(0),
@@ -62,7 +95,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
             // An empty store answers with an empty JSON object, not with an
             // empty body -- a client parsing the response needs something
             // to parse.
-            check!(value == serde_json::json!({}), "{name}: got {value}");
+            check!(value == serde_json::json!({}), "{}: got {value}", case.name);
         }
     }
 }

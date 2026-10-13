@@ -255,7 +255,9 @@ impl TagCatalog for LiveStore {
         end_ns: i64,
     ) -> LiveResult<Vec<krabka_traceql::TypedValue>> {
         let tag = tag.strip_prefix('.').unwrap_or(tag);
-        let (attr_tag, attr_scope) = krabka_traceql::TagScope::split_resource_or_span_prefix(tag);
+        let prefix = krabka_traceql::TagScope::split_resource_or_span_prefix(tag);
+        let attr_tag = prefix.tag;
+        let attr_scope = prefix.scope;
         let mut values = BTreeSet::new();
         if let Some(traces) = self.by_tenant.get(tenant) {
             for spans in traces.values() {
@@ -290,16 +292,19 @@ impl TagCatalog for LiveStore {
                 collect_event_values(span, tag, &mut values);
                 collect_link_values(span, tag, &mut values);
                 if tag == "instrumentation:name" && !span.instrumentation_scope.is_empty() {
-                    values.insert(("string".into(), span.instrumentation_scope.clone()));
+                    values.insert(krabka_traceql::TypedValue::new(
+                        "string",
+                        span.instrumentation_scope.clone(),
+                    ));
                 }
                 if tag == "instrumentation:version" && !span.instrumentation_version.is_empty() {
-                    values.insert(("string".into(), span.instrumentation_version.clone()));
+                    values.insert(krabka_traceql::TypedValue::new(
+                        "string",
+                        span.instrumentation_version.clone(),
+                    ));
                 }
             }
         }
-        Ok(values
-            .into_iter()
-            .map(|(type_, value)| krabka_traceql::TypedValue { type_, value })
-            .collect())
+        Ok(values.into_iter().collect())
     }
 }

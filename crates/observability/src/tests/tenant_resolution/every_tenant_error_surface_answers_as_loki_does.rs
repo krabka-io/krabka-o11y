@@ -1,6 +1,13 @@
 use super::*;
 
-async fn parts_for_test(response: Response) -> (StatusCode, String, Vec<u8>) {
+#[derive(Debug, Eq, PartialEq)]
+struct TenantResponseParts {
+    status: StatusCode,
+    content_type: String,
+    body: Vec<u8>,
+}
+
+async fn parts_for_test(response: Response) -> TenantResponseParts {
     let status = response.status();
     let content_type = response
         .headers()
@@ -12,7 +19,11 @@ async fn parts_for_test(response: Response) -> (StatusCode, String, Vec<u8>) {
         .await
         .expect("a buffered body")
         .to_vec();
-    (status, content_type, body)
+    TenantResponseParts {
+        status,
+        content_type,
+        body,
+    }
 }
 
 /// Every row is the status, content type and body the pinned Loki 3.5.1
@@ -39,140 +50,153 @@ pub(crate) async fn every_tenant_error_surface_answers_as_loki_does() {
         .into_bytes()
     };
 
+    struct TenantErrorCase<'a> {
+        error: &'a TenantRequestError,
+        surface: TenantErrorSurface,
+        status: StatusCode,
+        content_type: &'static str,
+        body: Vec<u8>,
+    }
     let cases = [
-        (
-            &missing,
-            TenantErrorSurface::Push,
-            StatusCode::UNAUTHORIZED,
-            TEXT,
-            b"no org id\n".to_vec(),
-        ),
-        (
-            &missing,
-            TenantErrorSurface::Read,
-            StatusCode::UNAUTHORIZED,
-            TEXT,
-            b"no org id\n".to_vec(),
-        ),
-        (
-            &missing,
-            TenantErrorSurface::Ruler,
-            StatusCode::UNAUTHORIZED,
-            TEXT,
-            b"no org id\n".to_vec(),
-        ),
-        (
-            &slash,
-            TenantErrorSurface::Push,
-            StatusCode::BAD_REQUEST,
-            TEXT,
-            format!("{slash_text}\n").into_bytes(),
-        ),
-        (
-            &multiple,
-            TenantErrorSurface::Push,
-            StatusCode::BAD_REQUEST,
-            TEXT,
-            b"multiple org IDs present\n".to_vec(),
-        ),
-        (
-            &slash,
-            TenantErrorSurface::OtlpPush,
-            StatusCode::BAD_REQUEST,
-            "application/octet-stream",
-            otlp_status,
-        ),
-        (
-            &slash,
-            TenantErrorSurface::Read,
-            StatusCode::BAD_REQUEST,
-            TEXT,
-            slash_text.as_bytes().to_vec(),
-        ),
-        (
-            &multiple,
-            TenantErrorSurface::Read,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            TEXT,
-            b"multiple org IDs present".to_vec(),
-        ),
-        (
-            &slash,
-            TenantErrorSurface::QuerierRead,
-            StatusCode::BAD_REQUEST,
-            TEXT,
-            format!("rpc error: code = Code(400) desc = {slash_text}").into_bytes(),
-        ),
-        (
-            &multiple,
-            TenantErrorSurface::QuerierRead,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            TEXT,
-            b"multiple org IDs present".to_vec(),
-        ),
-        (
-            &slash,
-            TenantErrorSurface::InstantLogQuery,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            TEXT,
-            slash_text.as_bytes().to_vec(),
-        ),
-        (
-            &slash,
-            TenantErrorSurface::Patterns,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            TEXT,
-            slash_text.as_bytes().to_vec(),
-        ),
-        (
-            &multiple,
-            TenantErrorSurface::Patterns,
-            StatusCode::NOT_FOUND,
-            TEXT,
-            Vec::new(),
-        ),
-        (
-            &slash,
-            TenantErrorSurface::Tail,
-            StatusCode::BAD_REQUEST,
-            TEXT,
-            slash_text.as_bytes().to_vec(),
-        ),
-        (
-            &multiple,
-            TenantErrorSurface::Tail,
-            StatusCode::BAD_REQUEST,
-            TEXT,
-            b"multiple org IDs present".to_vec(),
-        ),
-        (
-            &slash,
-            TenantErrorSurface::Ruler,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            TEXT,
-            ruler("no org id"),
-        ),
-        (
-            &multiple,
-            TenantErrorSurface::Ruler,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            TEXT,
-            ruler("no org id"),
-        ),
-        (
-            &slash,
-            TenantErrorSurface::PrometheusRuler,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            TEXT,
-            ruler("no valid org id found"),
-        ),
+        TenantErrorCase {
+            error: &missing,
+            surface: TenantErrorSurface::Push,
+            status: StatusCode::UNAUTHORIZED,
+            content_type: TEXT,
+            body: b"no org id\n".to_vec(),
+        },
+        TenantErrorCase {
+            error: &missing,
+            surface: TenantErrorSurface::Read,
+            status: StatusCode::UNAUTHORIZED,
+            content_type: TEXT,
+            body: b"no org id\n".to_vec(),
+        },
+        TenantErrorCase {
+            error: &missing,
+            surface: TenantErrorSurface::Ruler,
+            status: StatusCode::UNAUTHORIZED,
+            content_type: TEXT,
+            body: b"no org id\n".to_vec(),
+        },
+        TenantErrorCase {
+            error: &slash,
+            surface: TenantErrorSurface::Push,
+            status: StatusCode::BAD_REQUEST,
+            content_type: TEXT,
+            body: format!("{slash_text}\n").into_bytes(),
+        },
+        TenantErrorCase {
+            error: &multiple,
+            surface: TenantErrorSurface::Push,
+            status: StatusCode::BAD_REQUEST,
+            content_type: TEXT,
+            body: b"multiple org IDs present\n".to_vec(),
+        },
+        TenantErrorCase {
+            error: &slash,
+            surface: TenantErrorSurface::OtlpPush,
+            status: StatusCode::BAD_REQUEST,
+            content_type: "application/octet-stream",
+            body: otlp_status,
+        },
+        TenantErrorCase {
+            error: &slash,
+            surface: TenantErrorSurface::Read,
+            status: StatusCode::BAD_REQUEST,
+            content_type: TEXT,
+            body: slash_text.as_bytes().to_vec(),
+        },
+        TenantErrorCase {
+            error: &multiple,
+            surface: TenantErrorSurface::Read,
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            content_type: TEXT,
+            body: b"multiple org IDs present".to_vec(),
+        },
+        TenantErrorCase {
+            error: &slash,
+            surface: TenantErrorSurface::QuerierRead,
+            status: StatusCode::BAD_REQUEST,
+            content_type: TEXT,
+            body: format!("rpc error: code = Code(400) desc = {slash_text}").into_bytes(),
+        },
+        TenantErrorCase {
+            error: &multiple,
+            surface: TenantErrorSurface::QuerierRead,
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            content_type: TEXT,
+            body: b"multiple org IDs present".to_vec(),
+        },
+        TenantErrorCase {
+            error: &slash,
+            surface: TenantErrorSurface::InstantLogQuery,
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            content_type: TEXT,
+            body: slash_text.as_bytes().to_vec(),
+        },
+        TenantErrorCase {
+            error: &slash,
+            surface: TenantErrorSurface::Patterns,
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            content_type: TEXT,
+            body: slash_text.as_bytes().to_vec(),
+        },
+        TenantErrorCase {
+            error: &multiple,
+            surface: TenantErrorSurface::Patterns,
+            status: StatusCode::NOT_FOUND,
+            content_type: TEXT,
+            body: Vec::new(),
+        },
+        TenantErrorCase {
+            error: &slash,
+            surface: TenantErrorSurface::Tail,
+            status: StatusCode::BAD_REQUEST,
+            content_type: TEXT,
+            body: slash_text.as_bytes().to_vec(),
+        },
+        TenantErrorCase {
+            error: &multiple,
+            surface: TenantErrorSurface::Tail,
+            status: StatusCode::BAD_REQUEST,
+            content_type: TEXT,
+            body: b"multiple org IDs present".to_vec(),
+        },
+        TenantErrorCase {
+            error: &slash,
+            surface: TenantErrorSurface::Ruler,
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            content_type: TEXT,
+            body: ruler("no org id"),
+        },
+        TenantErrorCase {
+            error: &multiple,
+            surface: TenantErrorSurface::Ruler,
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            content_type: TEXT,
+            body: ruler("no org id"),
+        },
+        TenantErrorCase {
+            error: &slash,
+            surface: TenantErrorSurface::PrometheusRuler,
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            content_type: TEXT,
+            body: ruler("no valid org id found"),
+        },
     ];
 
-    for (error, surface, status, content_type, body) in cases {
-        let expected = (status, content_type.to_string(), body);
+    for case in cases {
+        let expected = TenantResponseParts {
+            status: case.status,
+            content_type: case.content_type.to_string(),
+            body: case.body,
+        };
         check!(
-            parts_for_test(tenant_error_response(error, surface)).await == expected,
-            "{surface:?} {error}"
+            parts_for_test(tenant_error_response(case.error, case.surface)).await == expected,
+            "{:?} {}",
+            case.surface,
+            case.error
         );
     }
 }

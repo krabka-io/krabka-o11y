@@ -18,13 +18,14 @@ pub(crate) fn parse_log_tenant_index_shard_range_from_object_path(
         return None;
     }
 
-    for (index, _) in range_part.match_indices('-') {
+    for index in range_part.match_indices('-').map(|marker| marker.0) {
         if index == 0 {
             continue;
         }
-        let (start, end) = range_part.split_at(index);
-        let end = &end[1..];
-        if let (Ok(start_ns), Ok(end_ns)) = (start.parse::<i64>(), end.parse::<i64>())
+        let start = &range_part[..index];
+        let end = &range_part[index + 1..];
+        if let Ok(start_ns) = start.parse::<i64>()
+            && let Ok(end_ns) = end.parse::<i64>()
             && let Ok(range) = TimeRange::new(start_ns, end_ns)
         {
             return Some(range);

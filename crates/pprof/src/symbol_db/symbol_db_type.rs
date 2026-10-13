@@ -3,7 +3,7 @@ use super::{
     LocationRec, MappingRec, MappingSymbolization, NativeResolver, Partition, ProfileError,
     RawLocation, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping, SerdeCompat,
     Serialize, SymbolSource, SymbolizeRequest, TreeNode, WincodeDeserialize, WincodeSerialize,
-    drop_go_type_parameters, remap_index,
+    drop_go_type_parameters, partition::TreeChildKey, remap_index,
 };
 
 /// Deduplicated symbol database for a profile block.
@@ -22,6 +22,12 @@ pub struct SymbolDb {
     #[serde(skip)]
     pub(crate) mapping_index: HashMap<MappingRec, u32>,
     pub(crate) partitions: HashMap<u64, Partition>,
+}
+
+struct PendingSymbolization {
+    location_index: usize,
+    mapping_id: u32,
+    request: SymbolizeRequest,
 }
 
 impl SymbolDb {
@@ -138,7 +144,10 @@ impl SymbolDb {
         let mut parent = -1;
         for location_ref in location_refs.iter().rev() {
             let location_ref = i32::try_from(*location_ref).expect("location ref fits i32");
-            let key = (parent, location_ref);
+            let key = TreeChildKey {
+                parent,
+                location_ref,
+            };
             if let Some(child) = part.children.get(&key) {
                 parent = i32::try_from(*child).expect("node index fits i32");
                 continue;
@@ -444,31 +453,29 @@ impl SymbolDb {
     /// Resolve every location that does not already carry function metadata.
     /// Returns the number of locations updated.
     pub fn symbolize_native(&mut self, resolver: &dyn NativeResolver) -> usize {
-        let pending = self
-            .locations
-            .iter()
-            .enumerate()
-            .filter(|(_, location)| location.lines.is_empty())
-            .filter_map(|(location_index, location)| {
+        let pending = (0..self.locations.len())
+            .filter_map(|location_index| {
+                let location = &self.locations[location_index];
+                if !location.lines.is_empty() {
+                    return None;
+                }
                 let mapping = self.mappings.get(location.mapping_id as usize)?;
-                (!mapping.symbolization.has_functions()).then(|| {
-                    (
-                        location_index,
-                        location.mapping_id,
-                        SymbolizeRequest {
-                            build_id: self.string(mapping.build_id).to_string(),
-                            filename: self.string(mapping.filename).to_string(),
-                            address: location.address.saturating_sub(mapping.memory_start)
-                                + mapping.file_offset,
-                        },
-                    )
+                (!mapping.symbolization.has_functions()).then(|| PendingSymbolization {
+                    location_index,
+                    mapping_id: location.mapping_id,
+                    request: SymbolizeRequest {
+                        build_id: self.string(mapping.build_id).to_string(),
+                        filename: self.string(mapping.filename).to_string(),
+                        address: location.address.saturating_sub(mapping.memory_start)
+                            + mapping.file_offset,
+                    },
                 })
             })
             .collect::<Vec<_>>();
         let mut resolved_mappings = HashSet::new();
         let mut updated = 0;
-        for (location_index, mapping_id, request) in pending {
-            let Some(symbols) = resolver.symbolize(&request) else {
+        for pending in pending {
+            let Some(symbols) = resolver.symbolize(&pending.request) else {
                 continue;
             };
             let lines = symbols
@@ -491,8 +498,8 @@ impl SymbolDb {
             if lines.is_empty() {
                 continue;
             }
-            self.locations[location_index].lines = lines;
-            resolved_mappings.insert(mapping_id);
+            self.locations[pending.location_index].lines = lines;
+            resolved_mappings.insert(pending.mapping_id);
             updated += 1;
         }
         for mapping_id in resolved_mappings {
@@ -502,7 +509,13 @@ impl SymbolDb {
                 .filter(|location| location.mapping_id == mapping_id)
                 .all(|location| !location.lines.is_empty());
             if complete && let Some(mapping) = self.mappings.get_mut(mapping_id as usize) {
-                mapping.symbolization = MappingSymbolization::from_parts((true, true, true, true));
+                mapping.symbolization =
+                    MappingSymbolization::from_parts(super::MappingSymbolizationParts {
+                        functions: true,
+                        filenames: true,
+                        line_numbers: true,
+                        inline_frames: true,
+                    });
             }
         }
         if updated != 0 {
@@ -529,7 +542,10 @@ impl SymbolDb {
             })
             .collect::<Vec<_>>();
         requests.sort_by(|a, b| {
-            (&a.build_id, &a.filename, a.address).cmp(&(&b.build_id, &b.filename, b.address))
+            a.build_id
+                .cmp(&b.build_id)
+                .then_with(|| a.filename.cmp(&b.filename))
+                .then_with(|| a.address.cmp(&b.address))
         });
         requests.dedup();
         requests
@@ -552,30 +568,34 @@ impl SymbolDb {
     }
 
     pub(crate) fn rebuild_indexes(&mut self) {
-        self.string_index = self
-            .strings
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| (value.clone(), u32::try_from(idx).expect("idx fits u32")))
-            .collect();
-        self.function_index = self
-            .functions
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| (*value, u32::try_from(idx).expect("idx fits u32")))
-            .collect();
-        self.location_index = self
-            .locations
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| (value.clone(), u32::try_from(idx).expect("idx fits u32")))
-            .collect();
-        self.mapping_index = self
-            .mappings
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| (*value, u32::try_from(idx).expect("idx fits u32")))
-            .collect();
+        self.string_index.clear();
+        for idx in 0..self.strings.len() {
+            self.string_index.insert(
+                self.strings[idx].clone(),
+                u32::try_from(idx).expect("idx fits u32"),
+            );
+        }
+        self.function_index.clear();
+        for idx in 0..self.functions.len() {
+            self.function_index.insert(
+                self.functions[idx],
+                u32::try_from(idx).expect("idx fits u32"),
+            );
+        }
+        self.location_index.clear();
+        for idx in 0..self.locations.len() {
+            self.location_index.insert(
+                self.locations[idx].clone(),
+                u32::try_from(idx).expect("idx fits u32"),
+            );
+        }
+        self.mapping_index.clear();
+        for idx in 0..self.mappings.len() {
+            self.mapping_index.insert(
+                self.mappings[idx],
+                u32::try_from(idx).expect("idx fits u32"),
+            );
+        }
         for partition in self.partitions.values_mut() {
             partition.rebuild_children();
         }

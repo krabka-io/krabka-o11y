@@ -107,12 +107,12 @@ pub(crate) fn format_pipeline_stage(stage: &PipelineStage) -> String {
         PipelineStage::FieldFilter(filter) => format_field_filter(filter),
         PipelineStage::FieldFilterChain(chain) => {
             let mut formatted = format_field_filter(chain.first());
-            for (op, filter) in chain.rest() {
-                formatted.push_str(match op {
+            for step in chain.rest() {
+                formatted.push_str(match step.operation {
                     FieldFilterLogicOp::And => " and ",
                     FieldFilterLogicOp::Or => " or ",
                 });
-                formatted.push_str(&format_field_filter(filter));
+                formatted.push_str(&format_field_filter(&step.filter));
             }
             formatted
         }

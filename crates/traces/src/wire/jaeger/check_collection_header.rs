@@ -1,7 +1,7 @@
 use super::WireError;
 
 /// A collection header as read from the wire.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CollectionHeader {
     pub(crate) element_type: u8,
     pub(crate) len: usize,
@@ -34,20 +34,26 @@ pub(crate) fn check_collection_header(
 }
 
 /// A map header as read from the wire.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MapHeader {
     pub(crate) key_type: u8,
     pub(crate) value_type: u8,
     pub(crate) len: usize,
 }
 
-/// Refuse a map whose keys or values fail [`check_collection_header`], and
-/// return the key type, value type, and length of one that passes.
+/// A field header as read from a Thrift struct.
+#[derive(Clone, Copy)]
+pub(crate) struct FieldHeader {
+    pub(crate) field_type: u8,
+    pub(crate) field_id: i16,
+}
+
+/// Refuse a map whose keys or values fail [`check_collection_header`].
 pub(crate) fn check_map_header(
     header: MapHeader,
     stop: u8,
     remaining_bytes: usize,
-) -> Result<(u8, u8, usize), WireError> {
+) -> Result<(), WireError> {
     let MapHeader {
         key_type,
         value_type,
@@ -60,5 +66,5 @@ pub(crate) fn check_map_header(
             remaining_bytes,
         )?;
     }
-    Ok((key_type, value_type, len))
+    Ok(())
 }

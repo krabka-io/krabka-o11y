@@ -50,6 +50,45 @@ mod tests {
     use super::*;
     use crate::compaction::BlockLevel;
 
+    struct ExpirationCase {
+        name: &'static str,
+        max_ts: i64,
+        want: bool,
+    }
+
+    struct UnitWindowCase {
+        unit: BlockTimestampUnit,
+        now: i64,
+        per_ms: i64,
+    }
+
+    struct ClockBoundsCase {
+        name: &'static str,
+        now: i64,
+        max_ts: i64,
+        want: bool,
+    }
+
+    struct UnitTicksCase {
+        unit: BlockTimestampUnit,
+        want: i64,
+    }
+
+    struct TenantRetentionWindow {
+        tenant: String,
+        window: Time,
+    }
+
+    fn retention_windows(
+        entries: impl IntoIterator<Item = TenantRetentionWindow>,
+    ) -> BTreeMap<String, Time> {
+        let mut windows = BTreeMap::new();
+        for entry in entries {
+            windows.insert(entry.tenant, entry.window);
+        }
+        windows
+    }
+
     fn candidate(tenant: &str, object_key: &str, max_ts: i64) -> CompactionCandidate {
         CompactionCandidate {
             tenant: tenant.to_string(),
@@ -74,20 +113,43 @@ mod tests {
     #[test]
     fn a_block_expires_only_once_it_ends_before_the_cutoff() {
         const NOW: i64 = 10_000;
-        let windows = BTreeMap::from([("t".to_string(), millis(1_000))]);
+        let windows = retention_windows([TenantRetentionWindow {
+            tenant: "t".to_string(),
+            window: millis(1_000),
+        }]);
 
-        for (name, max_ts, want) in [
-            ("well before the cutoff", 8_000_i64, true),
-            ("one tick before the cutoff", 8_999, true),
-            ("exactly on the cutoff", 9_000, false),
-            ("one tick after the cutoff", 9_001, false),
-            ("still being written", NOW, false),
+        for case in [
+            ExpirationCase {
+                name: "well before the cutoff",
+                max_ts: 8_000_i64,
+                want: true,
+            },
+            ExpirationCase {
+                name: "one tick before the cutoff",
+                max_ts: 8_999,
+                want: true,
+            },
+            ExpirationCase {
+                name: "exactly on the cutoff",
+                max_ts: 9_000,
+                want: false,
+            },
+            ExpirationCase {
+                name: "one tick after the cutoff",
+                max_ts: 9_001,
+                want: false,
+            },
+            ExpirationCase {
+                name: "still being written",
+                max_ts: NOW,
+                want: false,
+            },
         ] {
-            let candidates = vec![candidate("t", "b", max_ts)];
+            let candidates = vec![candidate("t", "b", case.max_ts)];
 
             let got = plan_expired_blocks(&candidates, NOW, BlockTimestampUnit::Millis, &windows);
 
-            check!(!got.is_empty() == want, "{name}");
+            check!(!got.is_empty() == case.want, "{}", case.name);
         }
     }
 
@@ -95,7 +157,10 @@ mod tests {
     /// the other way round would make an unconfigured tenant lose its data.
     #[test]
     fn a_zero_window_keeps_every_block_forever() {
-        let windows = BTreeMap::from([("t".to_string(), Time::ZERO)]);
+        let windows = retention_windows([TenantRetentionWindow {
+            tenant: "t".to_string(),
+            window: Time::ZERO,
+        }]);
         let candidates = vec![
             candidate("t", "ancient", i64::MIN + 1),
             candidate("t", "recent", 0),
@@ -108,9 +173,15 @@ mod tests {
 
     #[test]
     fn each_tenant_is_swept_by_its_own_window() {
-        let windows = BTreeMap::from([
-            ("short".to_string(), millis(1_000)),
-            ("long".to_string(), millis(100_000)),
+        let windows = retention_windows([
+            TenantRetentionWindow {
+                tenant: "short".to_string(),
+                window: millis(1_000),
+            },
+            TenantRetentionWindow {
+                tenant: "long".to_string(),
+                window: millis(100_000),
+            },
         ]);
         let candidates = vec![
             candidate("short", "short-block", 5_000),
@@ -138,22 +209,34 @@ mod tests {
         const NOW_MS: i64 = 1_700_000_000_000;
         const HOUR_MS: i64 = 60 * 60 * 1_000;
         const DAY_MS: i64 = 24 * HOUR_MS;
-        let windows = BTreeMap::from([("t".to_string(), days(1))]);
+        let windows = retention_windows([TenantRetentionWindow {
+            tenant: "t".to_string(),
+            window: days(1),
+        }]);
 
-        for (unit, now, per_ms) in [
-            (BlockTimestampUnit::Millis, NOW_MS, 1_i64),
-            (BlockTimestampUnit::Nanos, NOW_MS * 1_000_000, 1_000_000),
+        for case in [
+            UnitWindowCase {
+                unit: BlockTimestampUnit::Millis,
+                now: NOW_MS,
+                per_ms: 1_i64,
+            },
+            UnitWindowCase {
+                unit: BlockTimestampUnit::Nanos,
+                now: NOW_MS * 1_000_000,
+                per_ms: 1_000_000,
+            },
         ] {
             let candidates = vec![
-                candidate("t", "two-days-old", now - 2 * DAY_MS * per_ms),
-                candidate("t", "one-hour-old", now - HOUR_MS * per_ms),
+                candidate("t", "two-days-old", case.now - 2 * DAY_MS * case.per_ms),
+                candidate("t", "one-hour-old", case.now - HOUR_MS * case.per_ms),
             ];
 
-            let got = plan_expired_blocks(&candidates, now, unit, &windows);
+            let got = plan_expired_blocks(&candidates, case.now, case.unit, &windows);
 
             check!(
                 expired_keys(&got) == vec!["two-days-old".to_string()],
-                "{unit:?}"
+                "{:?}",
+                case.unit
             );
         }
     }
@@ -162,7 +245,16 @@ mod tests {
     /// the plan cannot depend on the order the candidates arrived in.
     #[test]
     fn the_plan_is_ordered_by_tenant_and_then_object_key() {
-        let windows = BTreeMap::from([("a".to_string(), millis(1)), ("b".to_string(), millis(1))]);
+        let windows = retention_windows([
+            TenantRetentionWindow {
+                tenant: "a".to_string(),
+                window: millis(1),
+            },
+            TenantRetentionWindow {
+                tenant: "b".to_string(),
+                window: millis(1),
+            },
+        ]);
         let candidates = vec![
             candidate("b", "z", 0),
             candidate("a", "y", 0),
@@ -198,28 +290,57 @@ mod tests {
     /// must not panic the compactor.
     #[test]
     fn a_clock_at_the_bounds_of_the_range_saturates_rather_than_overflowing() {
-        let windows = BTreeMap::from([("t".to_string(), days(365))]);
+        let windows = retention_windows([TenantRetentionWindow {
+            tenant: "t".to_string(),
+            window: days(365),
+        }]);
 
-        for (name, now, max_ts, want) in [
-            ("the clock at its floor", i64::MIN, i64::MIN, false),
-            ("the clock at its ceiling", i64::MAX, i64::MIN, true),
-            ("a block at the ceiling", i64::MAX, i64::MAX, false),
+        for case in [
+            ClockBoundsCase {
+                name: "the clock at its floor",
+                now: i64::MIN,
+                max_ts: i64::MIN,
+                want: false,
+            },
+            ClockBoundsCase {
+                name: "the clock at its ceiling",
+                now: i64::MAX,
+                max_ts: i64::MIN,
+                want: true,
+            },
+            ClockBoundsCase {
+                name: "a block at the ceiling",
+                now: i64::MAX,
+                max_ts: i64::MAX,
+                want: false,
+            },
         ] {
-            let candidates = vec![candidate("t", "b", max_ts)];
+            let candidates = vec![candidate("t", "b", case.max_ts)];
 
-            let got = plan_expired_blocks(&candidates, now, BlockTimestampUnit::Nanos, &windows);
+            let got =
+                plan_expired_blocks(&candidates, case.now, BlockTimestampUnit::Nanos, &windows);
 
-            check!(!got.is_empty() == want, "{name}");
+            check!(!got.is_empty() == case.want, "{}", case.name);
         }
     }
 
     #[test]
     fn a_window_is_counted_in_the_unit_the_caller_names() {
-        for (unit, want) in [
-            (BlockTimestampUnit::Millis, 1_000_i64),
-            (BlockTimestampUnit::Nanos, 1_000_000_000),
+        for case in [
+            UnitTicksCase {
+                unit: BlockTimestampUnit::Millis,
+                want: 1_000_i64,
+            },
+            UnitTicksCase {
+                unit: BlockTimestampUnit::Nanos,
+                want: 1_000_000_000,
+            },
         ] {
-            check!(unit.ticks(millis(1_000)) == want, "{unit:?}");
+            check!(
+                case.unit.ticks(millis(1_000)) == case.want,
+                "{:?}",
+                case.unit
+            );
         }
     }
 
@@ -232,7 +353,10 @@ mod tests {
         check!(BlockTimestampUnit::Millis.ticks(negative) == 0);
         check!(BlockTimestampUnit::Nanos.ticks(negative) == 0);
 
-        let windows = BTreeMap::from([("t".to_string(), negative)]);
+        let windows = retention_windows([TenantRetentionWindow {
+            tenant: "t".to_string(),
+            window: negative,
+        }]);
         let candidates = vec![candidate("t", "b", 0)];
         check!(
             plan_expired_blocks(&candidates, 10_000, BlockTimestampUnit::Millis, &windows)

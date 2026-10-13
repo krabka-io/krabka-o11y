@@ -165,8 +165,34 @@ pub use self::{
     server_security_error::ServerSecurityError,
     server_security_settings::ServerSecurity,
     server_stream::ServerStream,
-    spawn_router_server::{RouterServer, spawn_router_server},
+    spawn_router_server::{
+        JoinableRouterServer, RouterServer, spawn_router_server, spawn_router_server_joinable,
+        spawn_router_server_until_shutdown,
+    },
     tenant_denied::TenantDenied,
     tenant_grant::TenantGrant,
     unauthenticated_routes::UnauthenticatedRoutes,
 };
+
+/// Defines the shared `serve` wrapper used by signal distributors.
+#[macro_export]
+macro_rules! define_distributor_serve {
+    ($state:ty, $router:path, $service:literal, $description:literal) => {
+        #[doc = $description]
+        pub async fn serve(
+            addr: std::net::SocketAddr,
+            state: std::sync::Arc<$state>,
+            security: &$crate::server_security::ServerSecurity,
+            shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+        ) -> std::io::Result<std::net::SocketAddr> {
+            $crate::server_security::spawn_router_server_until_shutdown(
+                addr,
+                $router(state),
+                security,
+                shutdown,
+                $service,
+            )
+            .await
+        }
+    };
+}

@@ -23,11 +23,12 @@ impl MetadataIndex {
             }
         }
 
+        let mut metadata_by_tenant = BTreeMap::new();
+        for entry in by_tenant {
+            metadata_by_tenant.insert(entry.0, entry.1.into_iter().collect());
+        }
         Self {
-            by_tenant: by_tenant
-                .into_iter()
-                .map(|(tenant, metadata)| (tenant, metadata.into_iter().collect()))
-                .collect(),
+            by_tenant: metadata_by_tenant,
         }
     }
 

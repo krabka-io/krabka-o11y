@@ -1,8 +1,8 @@
 use tonic::service::Routes;
 
 use super::{
-    Arc, DistributorState, GrpcAuthenticationLayer, GrpcServer, ReceiverEndpoint, SocketAddr,
-    bind_listener, grpc_incoming, spawn_server,
+    Arc, DistributorState, GrpcAuthenticationLayer, GrpcServer, ReceiverEndpoint, RunningServer,
+    bind_and_spawn_server, grpc_incoming,
 };
 
 /// One gRPC receiver: the routes it serves over the distributor state, and the
@@ -17,18 +17,23 @@ pub(crate) struct GrpcReceiver {
 pub(crate) async fn serve_grpc_receiver(
     endpoint: ReceiverEndpoint<'_>,
     receiver: GrpcReceiver,
-) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+) -> std::io::Result<RunningServer> {
     let ReceiverEndpoint {
         addr,
         state,
         security,
         shutdown,
     } = endpoint;
-    let listener = bind_listener(addr, security).await?;
-    let bound = listener.local_addr();
-    let server = GrpcServer::builder()
-        .layer(GrpcAuthenticationLayer::new(security))
-        .add_routes((receiver.routes)(state))
-        .serve_with_incoming_shutdown(grpc_incoming(listener), shutdown.cancelled_owned());
-    Ok((bound, spawn_server(server, receiver.server_name)))
+    bind_and_spawn_server(
+        addr,
+        security,
+        |listener| {
+            GrpcServer::builder()
+                .layer(GrpcAuthenticationLayer::new(security))
+                .add_routes((receiver.routes)(state))
+                .serve_with_incoming_shutdown(grpc_incoming(listener), shutdown.cancelled_owned())
+        },
+        receiver.server_name,
+    )
+    .await
 }

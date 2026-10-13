@@ -8,7 +8,10 @@ pub(crate) async fn matching_on_a_metadata_label_keeps_it_out_of_the_result() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "x"), ("job", "a")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "x"),
+            crate::test_support::TestLabelPair::new("job", "a"),
+        ]),
         10_000,
         7.0,
     );

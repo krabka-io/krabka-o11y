@@ -1,7 +1,6 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataRange,
-    Principal, ProfileStore, ProfileType, QuerierState, authorize_tenant, connect_error, pb,
-    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    Principal, ProfileStore, ProfileType, QuerierState, connect_error, pb,
 };
 
 pub(crate) async fn profile_types_inner<S>(
@@ -13,9 +12,7 @@ pub(crate) async fn profile_types_inner<S>(
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
     let req = req.0;
     let range = MetadataRange::from_request(req.start, req.end)
         .validate(&state, &tenant)

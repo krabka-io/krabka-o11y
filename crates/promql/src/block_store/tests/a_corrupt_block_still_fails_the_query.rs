@@ -2,12 +2,18 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn a_corrupt_block_still_fails_the_query() {
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let base = url::Url::parse("memory:///").unwrap();
-    let mut block_store = BlockStore::new(object_store.clone(), base);
+    let fixture = MemoryBlockStoreFixture::build();
+    let object_store = &fixture.object_store;
+    let mut block_store = fixture.writer();
 
-    let corrupt_series = labels(&[("__name__", "up"), ("job", "api")]);
-    let kept_series = labels(&[("__name__", "up"), ("job", "db")]);
+    let corrupt_series = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
+    let kept_series = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "db"),
+    ]);
     write_float_block(
         &mut block_store,
         "metrics/float/0001.parquet",

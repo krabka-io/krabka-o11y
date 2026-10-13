@@ -97,7 +97,13 @@ async fn recovery_status_exposes_readiness_wal_and_object_store_progress() {
     let readiness = RoleReadiness::new();
     let gate = readiness.gate("wal-catch-up");
     let wal = crate::wal_consumer_metrics::WalConsumerMetrics::unregistered();
-    wal.record_assignment(&[("wal".to_owned(), 0)], true);
+    wal.record_assignment(
+        &[crate::wal_consumer_metrics::WalPartitionAssignment {
+            topic: "wal".to_owned(),
+            partition: 0,
+        }],
+        true,
+    );
     readiness.track_wal_consumer(wal);
     let object_store = ObjectStoreMetrics::unregistered();
     object_store.record_operation(ObjectStoreOperation::Get, true, krabka_units::millis(1));

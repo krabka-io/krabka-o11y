@@ -1,7 +1,7 @@
 use super::{
-    BlockDescriptor, BlockIndex, CompactionError, CompactionOffsetCommitter, LabelIndex,
-    LogCompactionIndexOutput, ObjectPath, ObjectStore, WalLogRecord,
-    compact_wal_records_to_object_store_with_delete_filters_and_index_output,
+    BlockDescriptor, BlockIndex, CompactionError, CompactionOffsetCommitter,
+    CompactionWriteOptions, LabelIndex, LogCompactionIndexOutput, ObjectPath, ObjectStore,
+    WalLogRecord, compact_wal_records_to_object_store_with_delete_filters_and_index_output,
 };
 
 /// # Errors
@@ -21,7 +21,10 @@ pub async fn compact_wal_records_to_object_store(
         block_index,
         committer,
         records,
-        (&[], LogCompactionIndexOutput::FullManifestAndShardCatalog),
+        CompactionWriteOptions {
+            delete_filters: &[],
+            index_output: LogCompactionIndexOutput::FullManifestAndShardCatalog,
+        },
     )
     .await?
     .ok_or(CompactionError::AllRowsDeleted)

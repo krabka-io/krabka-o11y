@@ -10,9 +10,9 @@ pub(crate) fn aggregate_labels(input: &Labels, modifier: Option<&LabelModifier>)
         return grouped;
     }
     let mut labels = Labels::new();
-    for (name, value) in grouped.iter() {
-        if name != "__name__" {
-            labels.insert(name, value.as_str());
+    for pair in grouped.iter() {
+        if pair.name != "__name__" {
+            labels.insert(pair.name, pair.value.as_str());
         }
     }
     labels

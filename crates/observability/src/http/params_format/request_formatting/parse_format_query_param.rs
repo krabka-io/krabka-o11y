@@ -1,13 +1,13 @@
-use super::{HttpQueryError, decode_form_component, split_query_param_pairs};
+use super::{HttpQueryError, decode_query_pair, split_query_param_pairs};
 
 pub(crate) fn parse_format_query_param(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
     let Some(raw_query) = raw_query else {
         return Err(HttpQueryError::LokiFormatMissingQuery);
     };
     for pair in split_query_param_pairs(raw_query, &["query"]) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        if decode_form_component(key)? == "query" {
-            return decode_form_component(value);
+        let pair = decode_query_pair(pair)?;
+        if pair.key == "query" {
+            return Ok(pair.value);
         }
     }
     Err(HttpQueryError::LokiFormatMissingQuery)

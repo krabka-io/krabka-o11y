@@ -16,6 +16,17 @@ pub(crate) struct OuterRangeFold {
     pub(crate) eval_ms: i64,
 }
 
+pub(crate) struct OuterRangeSample {
+    pub(crate) labels: Labels,
+    pub(crate) value: SampleValue,
+}
+
+impl OuterRangeSample {
+    fn new(labels: Labels, value: SampleValue) -> Self {
+        Self { labels, value }
+    }
+}
+
 /// Folds one series' window into its `(result labels, value)`.
 ///
 /// The fold matches what each interpreter `eval_*_call` does per series. This
@@ -29,7 +40,7 @@ pub(crate) fn outer_range_sample_from_series(
     series: &RangeSeries,
     window: &RangeWindow,
     fold: OuterRangeFold,
-) -> Option<(Labels, SampleValue)> {
+) -> Option<OuterRangeSample> {
     let RangeWindow {
         end_ms: range_end_ms,
         range,
@@ -39,26 +50,28 @@ pub(crate) fn outer_range_sample_from_series(
     let drop_range_name = |labels: &Labels| labels.clone();
     match outer {
         OuterRangeFn::Range(kind) => range_function_sample_from_series(series, window, kind)
-            .map(|value| (drop_range_name(&series.labels), value)),
+            .map(|value| OuterRangeSample::new(drop_range_name(&series.labels), value)),
         OuterRangeFn::InstantDelta(kind) => {
             instant_delta_sample_from_series(series, range_end_ms, range, kind)
-                .map(|value| (drop_range_name(&series.labels), value))
+                .map(|value| OuterRangeSample::new(drop_range_name(&series.labels), value))
         }
         OuterRangeFn::Deriv => deriv_sample_from_series(series, range_end_ms, range)
-            .map(|value| (series.labels.clone(), SampleValue::Float(value))),
+            .map(|value| OuterRangeSample::new(series.labels.clone(), SampleValue::Float(value))),
         OuterRangeFn::OverTime(kind) => {
             over_time_sample_from_series(series, range_end_ms, range, kind).map(|value| {
                 let labels = series.labels.clone();
-                (labels, value)
+                OuterRangeSample::new(labels, value)
             })
         }
         OuterRangeFn::QuantileOverTime(quantile) => {
-            quantile_over_time_sample_from_series(series, range_end_ms, range, quantile)
-                .map(|value| (series.labels.clone(), SampleValue::Float(value)))
+            quantile_over_time_sample_from_series(series, range_end_ms, range, quantile).map(
+                |value| OuterRangeSample::new(series.labels.clone(), SampleValue::Float(value)),
+            )
         }
         OuterRangeFn::PredictLinear(duration) => {
-            predict_linear_sample_from_series(series, range_end_ms, range, duration, eval_ms)
-                .map(|value| (series.labels.clone(), SampleValue::Float(value)))
+            predict_linear_sample_from_series(series, range_end_ms, range, duration, eval_ms).map(
+                |value| OuterRangeSample::new(series.labels.clone(), SampleValue::Float(value)),
+            )
         }
         #[cfg(feature = "experimental-functions")]
         OuterRangeFn::DoubleExponentialSmoothing { smoothing, trend } => {
@@ -69,7 +82,7 @@ pub(crate) fn outer_range_sample_from_series(
                 smoothing,
                 trend,
             )
-            .map(|value| (series.labels.clone(), SampleValue::Float(value)))
+            .map(|value| OuterRangeSample::new(series.labels.clone(), SampleValue::Float(value)))
         }
     }
 }

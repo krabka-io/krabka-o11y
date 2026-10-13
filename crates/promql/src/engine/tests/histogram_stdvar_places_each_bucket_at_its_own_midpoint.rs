@@ -10,10 +10,16 @@ use super::*;
 pub(crate) async fn histogram_stdvar_places_each_bucket_at_its_own_midpoint() {
     let engine = signed_bucket_histogram_engine(12.0);
 
-    for (query, want) in [
-        ("histogram_stdvar(h)", 3.459_559_885_480_119_5),
-        ("histogram_stddev(h)", 1.859_989_216_495_654_6),
+    for case in [
+        QueryValueCase {
+            query: "histogram_stdvar(h)",
+            value: 3.459_559_885_480_119_5,
+        },
+        QueryValueCase {
+            query: "histogram_stddev(h)",
+            value: 1.859_989_216_495_654_6,
+        },
     ] {
-        assert_lone_value(&engine, query, want).await;
+        assert_lone_value(&engine, case.query, case.value).await;
     }
 }

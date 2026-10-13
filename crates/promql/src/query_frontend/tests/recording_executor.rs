@@ -19,8 +19,15 @@ impl RangeQueryExecutor for RecordingExecutor {
         Ok(unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
             drop_name: false,
             start_timestamps_ms: std::collections::BTreeMap::new(),
-            labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
-            samples: vec![(query.start_ms, SampleValue::Float(120_000.0))],
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ])
+            .into(),
+            samples: vec![RangeSeriesSample::new(
+                query.start_ms,
+                SampleValue::Float(120_000.0),
+            )],
         }])))
     }
 }

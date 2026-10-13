@@ -1,4 +1,21 @@
 use super::*;
+use crate::test_support::nh;
+
+#[derive(bon::Builder)]
+struct HistogramPoint {
+    timestamp_ms: i64,
+    count: f64,
+}
+
+struct HistogramSeriesCase {
+    name: &'static str,
+    points: Vec<HistogramPoint>,
+}
+
+struct QueryExpectation {
+    query: &'static str,
+    want: f64,
+}
 
 /// The histogram extrapolation is a third copy of the same geometry, and the
 /// span test above only reads the shape of the result, never its numbers --
@@ -8,73 +25,120 @@ use super::*;
 /// 1.1.
 #[tokio::test]
 pub(crate) async fn increase_extrapolates_native_histogram_counts_by_the_sample_spacing() {
-    fn h(count: f64) -> NativeHistogram {
-        NativeHistogram {
-            schema: 0,
-            is_float: true,
-            reset_hint: ResetHint::No,
-            zero_threshold: 0.0,
-            zero_count: 0.0,
-            count,
-            sum: count,
-            positive_spans: vec![BucketSpan {
-                offset: 0,
-                length: 1,
-            }],
-            positive_counts: vec![count],
-            negative_spans: vec![],
-            negative_counts: vec![],
-            custom_values: None,
-            start_timestamp_ms: None,
-        }
-    }
-
     let mut store = InMemoryMetricStore::new();
-    for (name, points) in [
-        (
-            "gh_ends_short",
-            vec![
-                (50_000_i64, 0.0),
-                (60_000, 10.0),
-                (70_000, 20.0),
-                (80_000, 30.0),
+    let series = [
+        HistogramSeriesCase {
+            name: "gh_ends_short",
+            points: vec![
+                HistogramPoint::builder()
+                    .timestamp_ms(50_000)
+                    .count(0.0)
+                    .build(),
+                HistogramPoint::builder()
+                    .timestamp_ms(60_000)
+                    .count(10.0)
+                    .build(),
+                HistogramPoint::builder()
+                    .timestamp_ms(70_000)
+                    .count(20.0)
+                    .build(),
+                HistogramPoint::builder()
+                    .timestamp_ms(80_000)
+                    .count(30.0)
+                    .build(),
             ],
-        ),
-        (
-            "gh_starts_late",
-            vec![(70_000_i64, 5.0), (80_000, 15.0), (90_000, 25.0)],
-        ),
-        (
-            "gh_thr_edge",
-            vec![(68_950_i64, 0.0), (78_950, 10.0), (88_950, 20.0)],
-        ),
-    ] {
-        for (ts_ms, count) in points {
-            store.push_histogram("tenant-a", labels(&[("__name__", name)]), ts_ms, h(count));
+        },
+        HistogramSeriesCase {
+            name: "gh_starts_late",
+            points: vec![
+                HistogramPoint::builder()
+                    .timestamp_ms(70_000)
+                    .count(5.0)
+                    .build(),
+                HistogramPoint::builder()
+                    .timestamp_ms(80_000)
+                    .count(15.0)
+                    .build(),
+                HistogramPoint::builder()
+                    .timestamp_ms(90_000)
+                    .count(25.0)
+                    .build(),
+            ],
+        },
+        HistogramSeriesCase {
+            name: "gh_thr_edge",
+            points: vec![
+                HistogramPoint::builder()
+                    .timestamp_ms(68_950)
+                    .count(0.0)
+                    .build(),
+                HistogramPoint::builder()
+                    .timestamp_ms(78_950)
+                    .count(10.0)
+                    .build(),
+                HistogramPoint::builder()
+                    .timestamp_ms(88_950)
+                    .count(20.0)
+                    .build(),
+            ],
+        },
+    ];
+    for series_index in 0..series.len() {
+        let series = &series[series_index];
+        for point_index in 0..series.points.len() {
+            let point = &series.points[point_index];
+            store.push_histogram(
+                "tenant-a",
+                labels(&[crate::test_support::TestLabelPair::new(
+                    "__name__",
+                    series.name,
+                )]),
+                point.timestamp_ms,
+                nh(
+                    point.count,
+                    point.count,
+                    0,
+                    &[crate::test_support::BucketCount {
+                        index: 0,
+                        count: point.count,
+                    }],
+                ),
+            );
         }
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    for (query, want) in [
+    let queries = [
         // 20s to the range end clamps to half a 10s spacing; 10s to the start
         // does not.
-        ("increase(gh_ends_short[1m])", 35.0),
+        QueryExpectation {
+            query: "increase(gh_ends_short[1m])",
+            want: 35.0,
+        },
         // The mirror.
-        ("increase(gh_starts_late[1m])", 35.0),
+        QueryExpectation {
+            query: "increase(gh_starts_late[1m])",
+            want: 35.0,
+        },
         // 11.05s to the end: over 1.1x the spacing, under the spacing plus 1.1.
-        ("increase(gh_thr_edge[1m])", 25.0),
-    ] {
+        QueryExpectation {
+            query: "increase(gh_thr_edge[1m])",
+            want: 25.0,
+        },
+    ];
+    for query_index in 0..queries.len() {
+        let query = &queries[query_index];
         let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 100_000)
+            .query_instant(&tenant_id("tenant-a"), query.query, 100_000)
             .await
-            .unwrap_or_else(|error| panic!("{query}: {error}"));
+            .unwrap_or_else(|error| panic!("{}: {error}", query.query));
         let QueryResult::InstantVector(samples) = result else {
-            panic!("expected a vector for {query}");
+            panic!("expected a vector for {}", query.query);
         };
-        assert2::assert!(samples.len() == 1, "{query}");
+        assert2::assert!(samples.len() == 1, "{}", query.query);
         let SampleValue::Histogram(histogram) = &samples[0].value else {
-            panic!("expected a histogram sample for {query}");
+            panic!("expected a histogram sample for {}", query.query);
         };
-        assert2::assert!(approx_eq(histogram.count, want), "{query}");
+        assert2::assert!(approx_eq(histogram.count, query.want), "{}", query.query);
     }
 }

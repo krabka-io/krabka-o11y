@@ -49,10 +49,9 @@ for: 5m
     .await
     .expect("cleared alert state persistence");
 
-    let alert_labels = BTreeMap::from([
-        ("alertname".to_string(), "InstanceUp".to_string()),
-        ("job".to_string(), "api".to_string()),
-    ]);
+    let mut alert_labels = BTreeMap::new();
+    alert_labels.insert("alertname".to_string(), "InstanceUp".to_string());
+    alert_labels.insert("job".to_string(), "api".to_string());
     check!(pending == 0);
     check!(cleared == 0);
     check!(

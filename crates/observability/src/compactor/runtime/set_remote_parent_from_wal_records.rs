@@ -1,4 +1,24 @@
-use super::KafkaWalRecord;
+use super::{KafkaWalHeader, KafkaWalRecord};
+
+/// Re-parents `span` from Kafka headers carrying a trace context.
+///
+/// The Kafka client exposes headers through its own representation. Callers
+/// can first convert those external headers into [`KafkaWalHeader`] records,
+/// keeping the conversion to the propagation API at this boundary.
+pub fn set_remote_parent_from_kafka_headers(span: &tracing::Span, headers: &[KafkaWalHeader]) {
+    if !headers.iter().any(|header| header.key == "traceparent") {
+        return;
+    }
+    krabka_telemetry::propagation::set_remote_parent(
+        span,
+        headers.iter().map(|header| {
+            (
+                header.key.as_str(),
+                header.value.as_deref().unwrap_or(&[][..]),
+            )
+        }),
+    );
+}
 
 /// Re-parents `span` into the trace carried by the first record whose headers
 /// include a `traceparent`.
@@ -14,11 +34,5 @@ pub(crate) fn set_remote_parent_from_wal_records(span: &tracing::Span, records: 
     else {
         return;
     };
-    krabka_telemetry::propagation::set_remote_parent(
-        span,
-        parent
-            .headers
-            .iter()
-            .map(|h| (h.key.as_str(), h.value.as_deref().unwrap_or(&[][..]))),
-    );
+    set_remote_parent_from_kafka_headers(span, &parent.headers);
 }

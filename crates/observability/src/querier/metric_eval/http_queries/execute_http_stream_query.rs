@@ -56,15 +56,15 @@ pub(crate) async fn execute_http_stream_query(
     validate_query_bytes_limit(&state, &plan)?;
     let delete_filters = active_log_delete_filters(&state, tenant, time_range)?;
     if let Some(cold_store) = &state.cold_store {
-        let (records, frontier) = hot_tail_snapshot(&state, plan.time_range);
+        let snapshot = hot_tail_snapshot(&state, plan.time_range);
         let scan = execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options(
             Arc::clone(&cold_store.store),
             &cold_store.prefix,
             &plan,
             &state.label_index,
             QueryHotTail {
-                records: &records,
-                frontier: &frontier,
+                records: &snapshot.records,
+                frontier: &snapshot.frontier,
                 delete_filters: &delete_filters,
             },
             StreamScanOptions::from_stream_options(options, end_exclusive)
@@ -78,8 +78,8 @@ pub(crate) async fn execute_http_stream_query(
             response,
             &scan.scanned_blocks,
             &plan,
-            &records,
-            &frontier,
+            &snapshot.records,
+            &snapshot.frontier,
         ));
     }
     if let Some(hot_tail) = &state.hot_tail {

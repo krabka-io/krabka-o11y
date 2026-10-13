@@ -7,7 +7,9 @@ pub(crate) fn strip_outer_parenthesized_expression(query: &str) -> Option<&str> 
     let mut depth = 0usize;
     let mut quote_delimiter = None;
     let mut escaped = false;
-    for (index, ch) in trimmed.char_indices() {
+    for character in trimmed.char_indices() {
+        let index = character.0;
+        let ch = character.1;
         if let Some(delimiter) = quote_delimiter {
             if escaped {
                 escaped = false;

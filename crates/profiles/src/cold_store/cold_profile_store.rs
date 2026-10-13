@@ -2,22 +2,51 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::StreamExt;
+use krabka_pprof::ProfileLabel;
 use krabka_units::ByteSize;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 
 use super::{
     AddressFallbackResolver, Arc, AsArray, BTreeMap, BTreeSet, BlockRowFilter, ChainedResolver,
     CompositeSymbols, DebuginfodConfig, DebuginfodResolver, ExternalPartition, FileSystemResolver,
-    HashMap, Int64Type, LabelMatcher, LazySymbolizer, LocalPartition, MemTable, Mutex,
-    NativeResolver, ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path,
-    ProfileError, ProfileIndex, ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore,
-    RecordBatch, RwLock, SeriesFingerprint, SymbolDb, UInt64Type, VecDeque,
-    batch_fingerprints_overlap, block_partition_map, filter_and_remap_batch,
-    is_unbounded_metadata_range, local_native_resolver, profile_samples_schema,
+    HashMap, Int64Type, LabelMatcher, LazySymbolizer, LocalPartition, Mutex, NativeResolver,
+    ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path, ProfileError, ProfileIndex,
+    ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore, RecordBatch, RwLock,
+    SeriesFingerprint, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
+    block_partition_map, filter_and_remap_batch, is_unbounded_metadata_range,
+    local_native_resolver,
 };
 
 const SYMBOL_DB_CACHE_TTL: Duration = Duration::from_secs(30);
-type SymbolDbCache = (HashMap<String, (Arc<SymbolDb>, Instant)>, VecDeque<String>);
+
+#[derive(Clone)]
+struct CachedSymbolDb {
+    symbols: Arc<SymbolDb>,
+    cached_at: Instant,
+}
+
+#[derive(Default)]
+struct SymbolDbCache {
+    entries: HashMap<String, CachedSymbolDb>,
+    recency: VecDeque<String>,
+}
+
+#[derive(Clone)]
+struct IndexSnapshotConfig {
+    key: String,
+    max_bytes: ByteSize,
+}
+
+struct IndexedBlocks {
+    keys: Vec<String>,
+    fingerprints: BTreeSet<SeriesFingerprint>,
+}
+
+struct LoadedProfileBlock {
+    partition_map: BTreeMap<u64, u64>,
+    symbols: SymbolDb,
+    batches: Vec<RecordBatch>,
+}
 
 #[derive(Clone)]
 pub struct ColdProfileStore {
@@ -30,17 +59,17 @@ pub struct ColdProfileStore {
     pub(crate) index: Arc<RwLock<Arc<ProfileIndex>>>,
     pub(crate) resolver: Arc<ChainedResolver>,
     pub(crate) symdb_cache: Arc<Mutex<SymbolDbCache>>,
-    index_snapshot: Option<(String, ByteSize)>,
+    index_snapshot: Option<IndexSnapshotConfig>,
 }
 
 fn cached_symbol_db(cache: &mut SymbolDbCache, block_key: &str, now: Instant) -> Option<SymbolDb> {
-    if let Some((symbols, cached_at)) = cache.0.get(block_key)
-        && now.saturating_duration_since(*cached_at) < SYMBOL_DB_CACHE_TTL
+    if let Some(entry) = cache.entries.get(block_key)
+        && now.saturating_duration_since(entry.cached_at) < SYMBOL_DB_CACHE_TTL
     {
-        return Some((**symbols).clone());
+        return Some((*entry.symbols).clone());
     }
-    cache.0.remove(block_key);
-    cache.1.retain(|key| key != block_key);
+    cache.entries.remove(block_key);
+    cache.recency.retain(|key| key != block_key);
     None
 }
 
@@ -53,18 +82,18 @@ mod symdb_cache_tests {
     fn expired_symbol_database_is_reloaded() {
         let now = Instant::now();
         let mut cache = SymbolDbCache::default();
-        cache.0.insert(
+        cache.entries.insert(
             "block".into(),
-            (
-                Arc::new(SymbolDb::new()),
-                now.checked_sub(SYMBOL_DB_CACHE_TTL).unwrap(),
-            ),
+            CachedSymbolDb {
+                symbols: Arc::new(SymbolDb::new()),
+                cached_at: now.checked_sub(SYMBOL_DB_CACHE_TTL).unwrap(),
+            },
         );
-        cache.1.push_back("block".into());
+        cache.recency.push_back("block".into());
 
         assert!(cached_symbol_db(&mut cache, "block", now).is_none());
-        assert!(cache.0.is_empty());
-        assert!(cache.1.is_empty());
+        assert!(cache.entries.is_empty());
+        assert!(cache.recency.is_empty());
     }
 }
 
@@ -123,7 +152,7 @@ impl ColdProfileStore {
     /// Reloads this durable index when compaction retires a cached block.
     #[must_use]
     pub fn with_index_snapshot(mut self, key: String, max_bytes: ByteSize) -> Self {
-        self.index_snapshot = Some((key, max_bytes));
+        self.index_snapshot = Some(IndexSnapshotConfig { key, max_bytes });
         self
     }
 
@@ -155,15 +184,21 @@ impl ColdProfileStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<(Vec<String>, BTreeSet<SeriesFingerprint>), ProfileError> {
+    ) -> Result<IndexedBlocks, ProfileError> {
         let fps = index
             .select_fingerprints(tenant, profile_type, matchers)
             .map_err(|err| ProfileError::Store(err.to_string()))?;
         if fps.is_empty() {
-            return Ok((Vec::new(), fps));
+            return Ok(IndexedBlocks {
+                keys: Vec::new(),
+                fingerprints: fps,
+            });
         }
         let blocks = index.candidate_blocks_for_series(tenant, &fps, start_ms, end_ms);
-        Ok((blocks, fps))
+        Ok(IndexedBlocks {
+            keys: blocks,
+            fingerprints: fps,
+        })
     }
     async fn select_from_index(
         &self,
@@ -174,66 +209,63 @@ impl ColdProfileStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<ProfileScan, ProfileError> {
-        let (blocks, fps) =
+        let indexed_blocks =
             Self::index_block_keys(index, tenant, profile_type, matchers, start_ms, end_ms)?;
         let mut batches = Vec::new();
         let mut symbols = CompositeSymbols::default();
         // Keep partition identities and output order stable while overlapping
         // object-store waits. Four reads bound each query's transient decoding
         // memory independently of how many cold blocks its index selects.
-        let mut loaded = futures::stream::iter(blocks.into_iter().enumerate().map(
-            |(block_idx, block_key)| {
-                let fps = &fps;
-                async move {
-                    // Dense local rebasing prevents collisions when a compacted
-                    // block already uses high bits for its stored partitions.
-                    let stored_partitions = index.stacktrace_partitions(&block_key);
-                    let partition_map = block_partition_map(block_idx, &stored_partitions)?;
-                    let symdb = self.load_symdb(&block_key).await?;
-                    let batches = self
-                        .load_block_batches(
-                            &block_key,
-                            &partition_map,
-                            BlockRowFilter {
-                                fps,
-                                profile_type,
-                                start_ms,
-                                end_ms,
-                            },
-                        )
-                        .await?;
-                    Ok::<_, ProfileError>((partition_map, symdb, batches))
-                }
-            },
-        ))
+        let mut next_block_index = 0;
+        let mut loaded = futures::stream::iter(indexed_blocks.keys.into_iter().map(|block_key| {
+            let block_idx = next_block_index;
+            next_block_index += 1;
+            let fps = &indexed_blocks.fingerprints;
+            async move {
+                // Dense local rebasing prevents collisions when a compacted
+                // block already uses high bits for its stored partitions.
+                let stored_partitions = index.stacktrace_partitions(&block_key);
+                let partition_map = block_partition_map(block_idx, &stored_partitions)?;
+                let symdb = self.load_symdb(&block_key).await?;
+                let batches = self
+                    .load_block_batches(
+                        &block_key,
+                        &partition_map,
+                        BlockRowFilter {
+                            fps,
+                            profile_type,
+                            start_ms,
+                            end_ms,
+                        },
+                    )
+                    .await?;
+                Ok::<_, ProfileError>(LoadedProfileBlock {
+                    partition_map,
+                    symbols: symdb,
+                    batches,
+                })
+            }
+        }))
         .buffered(4);
         while let Some(result) = loaded.next().await {
-            let (partition_map, symdb, block_batches) = result?;
-            let source = Arc::new(LazySymbolizer::new(symdb, Arc::clone(&self.resolver)));
-            for (source_partition, external) in &partition_map {
+            let block = result?;
+            let source = Arc::new(LazySymbolizer::new(
+                block.symbols,
+                Arc::clone(&self.resolver),
+            ));
+            for source_partition in block.partition_map.keys() {
                 symbols.insert(
-                    ExternalPartition(*external),
+                    ExternalPartition(block.partition_map[source_partition]),
                     source.clone(),
                     LocalPartition(*source_partition),
                 );
             }
-            batches.extend(block_batches);
+            batches.extend(block.batches);
         }
 
-        if batches.is_empty() {
-            batches.push(RecordBatch::new_empty(profile_samples_schema()));
-        }
-        let table = MemTable::try_new(profile_samples_schema(), vec![batches])
+        let table = krabka_pprof::profile_samples_mem_table(batches)
             .map_err(|err| ProfileError::Store(err.to_string()))?;
-        let ctx = krabka_pprof::profile_session_context();
-        let samples_table = "samples".to_string();
-        ctx.register_table(&samples_table, Arc::new(table))
-            .map_err(|err| ProfileError::Store(err.to_string()))?;
-        Ok(ProfileScan {
-            ctx,
-            samples_table,
-            symbols: Arc::new(symbols),
-        })
+        ProfileScan::from_mem_table(table, Arc::new(symbols))
     }
 }
 
@@ -257,23 +289,30 @@ impl ProfileStore for ColdProfileStore {
                 Ok(scan) => return Ok(scan),
                 Err(error) => error,
             };
-            let Some((key, max_bytes)) = &self.index_snapshot else {
+            let Some(snapshot) = &self.index_snapshot else {
                 return Err(failure);
             };
             if retries == 0 {
                 return Err(failure);
             }
-            let latest =
-                ProfileIndex::load_latest_snapshot_with_max_bytes(&self.store, key, *max_bytes)
-                    .await
-                    .map_err(|error| ProfileError::Store(error.to_string()))?;
-            let (old_blocks, _) =
+            let latest = ProfileIndex::load_latest_snapshot_with_max_bytes(
+                &self.store,
+                &snapshot.key,
+                snapshot.max_bytes,
+            )
+            .await
+            .map_err(|error| ProfileError::Store(error.to_string()))?;
+            let old_blocks =
                 Self::index_block_keys(&index, tenant, profile_type, matchers, start_ms, end_ms)?;
-            let (new_blocks, _) =
+            let new_blocks =
                 Self::index_block_keys(&latest, tenant, profile_type, matchers, start_ms, end_ms)?;
             // Replan the whole query only when its selected blocks were retired.
             // A failing block still in the durable index remains an error.
-            if !old_blocks.iter().any(|block| !new_blocks.contains(block)) {
+            if !old_blocks
+                .keys
+                .iter()
+                .any(|block| !new_blocks.keys.contains(block))
+            {
                 return Err(failure);
             }
             index = Arc::new(latest);
@@ -372,11 +411,11 @@ impl ProfileStore for ColdProfileStore {
                 for row in 0..batch.num_rows() {
                     let fp = fingerprints.value(row);
                     block_series.insert(fp);
-                    block_profiles.insert((
-                        fp,
-                        types.value(row).to_string(),
-                        timestamps.value(row),
-                    ));
+                    block_profiles.insert(krabka_pprof::ProfileInstanceKey {
+                        fingerprint: fp,
+                        profile_type: types.value(row).to_string(),
+                        timestamp_ms: timestamps.value(row),
+                    });
                     if selected.contains(&fp) {
                         queried_storage_fingerprints.insert(fp);
                     }
@@ -391,10 +430,10 @@ impl ProfileStore for ColdProfileStore {
             stats.profiles.extend(block_profiles);
         }
         for labels in index.series_for_fingerprints(tenant, &queried_storage_fingerprints, &[]) {
-            let labels = krabka_blockstore::Labels::from_pairs(
+            let labels = krabka_blockstore::Labels::from_label_pairs(
                 labels
                     .into_iter()
-                    .filter(|(name, _)| name != "__profile_id__"),
+                    .filter(|label| label.name != "__profile_id__"),
             );
             stats.fingerprints.insert(labels.fingerprint());
         }
@@ -472,11 +511,22 @@ impl ProfileStore for ColdProfileStore {
         label_names: &[String],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<Vec<(String, String)>>, ProfileError> {
+    ) -> Result<Vec<Vec<ProfileLabel>>, ProfileError> {
         if is_unbounded_metadata_range(start_ms, end_ms) {
             return self
                 .current_index()
                 .series(tenant, matchers, label_names)
+                .map(|series| {
+                    series
+                        .into_iter()
+                        .map(|labels| {
+                            labels
+                                .into_iter()
+                                .map(|label| ProfileLabel::new(label.name, label.value))
+                                .collect()
+                        })
+                        .collect()
+                })
                 .map_err(|err| ProfileError::Store(err.to_string()));
         }
         let active = self
@@ -484,7 +534,15 @@ impl ProfileStore for ColdProfileStore {
             .await?;
         Ok(self
             .current_index()
-            .series_for_fingerprints(tenant, &active, label_names))
+            .series_for_fingerprints(tenant, &active, label_names)
+            .into_iter()
+            .map(|labels| {
+                labels
+                    .into_iter()
+                    .map(|label| ProfileLabel::new(label.name, label.value))
+                    .collect()
+            })
+            .collect())
     }
 
     async fn stats(
@@ -504,11 +562,14 @@ impl ProfileStore for ColdProfileStore {
         let bounds = self
             .current_index()
             .block_time_bounds(tenant, start_ms, end_ms)
-            .map(|(block_min, block_max)| (block_min.max(start_ms), block_max.min(end_ms)));
+            .map(|bounds| krabka_blockstore::BlockTimeBounds {
+                min_ts: bounds.min_ts.max(start_ms),
+                max_ts: bounds.max_ts.min(end_ms),
+            });
         Ok(ProfileStats {
             data_ingested: bounds.is_some(),
-            oldest_profile_time: bounds.map(|(oldest, _)| oldest),
-            newest_profile_time: bounds.map(|(_, newest)| newest),
+            oldest_profile_time: bounds.map(|bounds| bounds.min_ts),
+            newest_profile_time: bounds.map(|bounds| bounds.max_ts),
         })
     }
 }
@@ -577,14 +638,9 @@ impl ColdProfileStore {
         fps: &BTreeSet<SeriesFingerprint>,
     ) -> Result<Vec<RecordBatch>, ProfileError> {
         let reader = self.open_block_reader(block_key).await?;
-        let mut out = Vec::new();
-        for batch in reader {
-            let batch = batch.map_err(|err| ProfileError::Store(err.to_string()))?;
-            if batch_fingerprints_overlap(&batch, fps) {
-                out.push(batch);
-            }
-        }
-        Ok(out)
+        read_parquet_batches(reader, |batch| {
+            Ok(batch_fingerprints_overlap(&batch, fps).then_some(batch))
+        })
     }
 
     pub(crate) async fn load_symdb(&self, block_key: &str) -> Result<SymbolDb, ProfileError> {
@@ -598,17 +654,20 @@ impl ColdProfileStore {
         let bytes = self.object_bytes(&Path::from(key)).await?;
         let symbols = SymbolDb::decode(&bytes)?;
         let mut cache = self.symdb_cache.lock().expect("symbol cache lock poisoned");
-        if !cache.0.contains_key(block_key) {
-            while cache.0.len() >= 128 {
-                if let Some(oldest) = cache.1.pop_front() {
-                    cache.0.remove(&oldest);
+        if !cache.entries.contains_key(block_key) {
+            while cache.entries.len() >= 128 {
+                if let Some(oldest) = cache.recency.pop_front() {
+                    cache.entries.remove(&oldest);
                 }
             }
-            cache.0.insert(
+            cache.entries.insert(
                 block_key.to_string(),
-                (Arc::new(symbols.clone()), Instant::now()),
+                CachedSymbolDb {
+                    symbols: Arc::new(symbols.clone()),
+                    cached_at: Instant::now(),
+                },
             );
-            cache.1.push_back(block_key.to_string());
+            cache.recency.push_back(block_key.to_string());
         }
         Ok(symbols)
     }
@@ -620,14 +679,23 @@ impl ColdProfileStore {
         filter: BlockRowFilter<'_>,
     ) -> Result<Vec<RecordBatch>, ProfileError> {
         let reader = self.open_block_reader(block_key).await?;
-        let mut out = Vec::new();
-        for batch in reader {
-            let batch = batch.map_err(|err| ProfileError::Store(err.to_string()))?;
+        read_parquet_batches(reader, |batch| {
             let filtered = filter_and_remap_batch(&batch, partition_map, filter)?;
-            if filtered.num_rows() > 0 {
-                out.push(filtered);
-            }
-        }
-        Ok(out)
+            Ok((filtered.num_rows() > 0).then_some(filtered))
+        })
     }
+}
+
+fn read_parquet_batches(
+    reader: ParquetRecordBatchReader,
+    mut transform: impl FnMut(RecordBatch) -> Result<Option<RecordBatch>, ProfileError>,
+) -> Result<Vec<RecordBatch>, ProfileError> {
+    let mut batches = Vec::new();
+    for batch in reader {
+        let batch = batch.map_err(|err| ProfileError::Store(err.to_string()))?;
+        if let Some(batch) = transform(batch)? {
+            batches.push(batch);
+        }
+    }
+    Ok(batches)
 }

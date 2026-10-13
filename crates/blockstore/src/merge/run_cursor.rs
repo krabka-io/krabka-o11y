@@ -1,5 +1,10 @@
 use super::{ArrayRef, BlockBatchStream, RecordBatch, Result, Row, RowConverter, Rows, StreamExt};
 
+struct CurrentBatch {
+    batch: RecordBatch,
+    rows: Rows,
+}
+
 /// One input of a merge, positioned at the next row it has to offer.
 ///
 /// The cursor holds the batch it is reading and that batch's sort key in
@@ -8,7 +13,7 @@ use super::{ArrayRef, BlockBatchStream, RecordBatch, Result, Row, RowConverter, 
 /// dropped. That is the whole memory an input costs a merge.
 pub(crate) struct RunCursor {
     stream: BlockBatchStream,
-    current: Option<(RecordBatch, Rows)>,
+    current: Option<CurrentBatch>,
     row: usize,
 }
 
@@ -46,7 +51,7 @@ impl RunCursor {
             let rows = converter
                 .convert_columns(&columns)
                 .map_err(|err| crate::error::BlockStoreError::InvalidBlock(err.to_string()))?;
-            self.current = Some((batch, rows));
+            self.current = Some(CurrentBatch { batch, rows });
             self.row = 0;
         }
         Ok(())
@@ -54,14 +59,16 @@ impl RunCursor {
 
     /// The key of the row the cursor is on, or `None` when the run is spent.
     pub(crate) fn head(&self) -> Option<Row<'_>> {
-        self.current.as_ref().map(|(_, rows)| rows.row(self.row))
+        self.current
+            .as_ref()
+            .map(|current| current.rows.row(self.row))
     }
 
     /// Rows left in the batch the cursor is reading.
     pub(crate) fn remaining(&self) -> usize {
         self.current
             .as_ref()
-            .map_or(0, |(batch, _)| batch.num_rows() - self.row)
+            .map_or(0, |current| current.batch.num_rows() - self.row)
     }
 
     /// How many rows from the cursor sort before `limit`, with optional ties.
@@ -70,13 +77,16 @@ impl RunCursor {
     /// than a scan -- which is what makes the merge cost one comparison per
     /// *run* of rows it emits instead of one per row.
     pub(crate) fn rows_before(&self, limit: &Row<'_>, include_equal: bool) -> usize {
-        let Some((batch, rows)) = &self.current else {
+        let Some(current) = &self.current else {
             return 0;
         };
-        let (mut low, mut high) = (self.row, batch.num_rows());
+        let mut low = self.row;
+        let mut high = current.batch.num_rows();
         while low < high {
             let middle = low + (high - low) / 2;
-            if rows.row(middle) < *limit || include_equal && rows.row(middle) == *limit {
+            if current.rows.row(middle) < *limit
+                || include_equal && current.rows.row(middle) == *limit
+            {
                 low = middle + 1;
             } else {
                 high = middle;
@@ -87,10 +97,10 @@ impl RunCursor {
 
     /// Slices `count` rows off the cursor and advances past them.
     pub(crate) fn take(&mut self, count: usize) -> RecordBatch {
-        let (batch, _) = self.current.as_ref().expect("the cursor has a batch");
-        let slice = batch.slice(self.row, count);
+        let current = self.current.as_ref().expect("the cursor has a batch");
+        let slice = current.batch.slice(self.row, count);
         self.row += count;
-        if self.row == batch.num_rows() {
+        if self.row == current.batch.num_rows() {
             // The batch is spent: drop it here rather than at the next load,
             // so a run that is waiting on a slow input is not also holding the
             // batch it already handed over.

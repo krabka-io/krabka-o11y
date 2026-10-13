@@ -18,13 +18,16 @@ pub(crate) fn apply_info(
         let mut matched = false;
         let mut enrichment = super::Labels::new();
         if let Some(key) = info_identifying_key(&sample.labels) {
-            for info in info_by_key
-                .range(key.clone()..)
-                .take_while(|(candidate, _)| candidate.starts_with(&key))
-                .map(|(_, info)| info)
-            {
+            for entry in info_by_key.range(key.clone()..) {
+                let candidate = entry.0;
+                if !candidate.starts_with(&key) {
+                    break;
+                }
+                let info = entry.1;
                 matched = true;
-                for (name, value) in info.labels.iter() {
+                for pair in info.labels.iter() {
+                    let name = pair.name;
+                    let value = pair.value;
                     if name == "__name__"
                         || sample.labels.get(name).is_some()
                         || (context.restrict_data_labels
@@ -45,8 +48,8 @@ pub(crate) fn apply_info(
         if !matched && !context.required_data_label_matchers_match_empty {
             continue;
         }
-        for (name, value) in enrichment.iter() {
-            sample.labels.insert(name, value);
+        for pair in enrichment.iter() {
+            sample.labels.insert(pair.name, pair.value);
         }
         output.push(sample);
     }

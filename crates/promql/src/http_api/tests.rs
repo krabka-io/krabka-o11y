@@ -13,7 +13,9 @@ use axum::{
 };
 use krabka_blockstore::Labels;
 use krabka_metrics::{Limits, NativeHistogram, OverridesProvider, ResetHint};
-use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
+use krabka_observability::server_security::{
+    ClientAuth, ServerSecurity, ServerSecurityArgs, authenticate_requests,
+};
 use tower::ServiceExt;
 
 use super::{request::unix_now_ms, *};
@@ -24,6 +26,21 @@ use crate::{InMemoryMetricStore, PromqlMatcher as LabelMatcher, ScanResult};
 // request unauthenticated and lets it through.
 fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>) -> Router {
     authenticate_requests(super::prometheus_router(state), &ServerSecurity::default())
+}
+
+fn server_security_args(credentials: std::path::PathBuf) -> ServerSecurityArgs {
+    ServerSecurityArgs {
+        server_tls_cert_path: None,
+        server_tls_key_path: None,
+        server_tls_client_ca_path: None,
+        server_tls_client_auth: ClientAuth::NoClientCert,
+        server_tls_handshake_timeout: secs(10),
+        auth_credentials_config: Some(credentials),
+        internal_client_token_path: None,
+        internal_client_tls_cert_path: None,
+        internal_client_tls_key_path: None,
+        internal_client_tls_ca_path: None,
+    }
 }
 
 mod a_read_that_repeats_its_tenant_reads_that_tenant;

@@ -1,8 +1,7 @@
 use super::{
     BTreeMap, ConnectError, ConnectRequest, ConnectResponse, ProfileStore, QuerierRequestParts,
-    SeriesAgg, SeriesExemplarQuery, authorize_tenant, connect_error, label_pairs, limit, pb,
-    stack_trace_call_sites, step_from_secs, tenant_connect_error, tenant_denied_connect_error,
-    tenant_from_headers,
+    SeriesAgg, SeriesExemplarQuery, connect_error, label_pairs, limit, pb, stack_trace_call_sites,
+    step_from_secs,
 };
 
 pub(crate) async fn select_series_inner<S>(
@@ -16,9 +15,7 @@ pub(crate) async fn select_series_inner<S>(
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
     let req = req.0;
     let agg = if state.query_architecture == super::PyroscopeQueryArchitecture::V1
         && req.aggregation == Some(pb::querier::v1::SeriesAggregationType::Average as i32)
@@ -44,10 +41,14 @@ where
         {
             state
                 .select_series_span_exemplars(SeriesExemplarQuery {
-                    target: (&tenant, &req.profile_type_id, &req.label_selector),
+                    target: super::QueryTarget::new(
+                        &tenant,
+                        &req.profile_type_id,
+                        &req.label_selector,
+                    ),
                     group_by: &req.group_by,
                     step,
-                    range: (req.start, req.end),
+                    range: super::QueryRange::new(req.start, req.end),
                     call_sites: &stack_trace_call_sites,
                 })
                 .await
@@ -55,10 +56,10 @@ where
         }
         exemplar_type if exemplar_type == pb::querier::v1::ExemplarType::Individual as i32 => state
             .select_series_individual_exemplars(SeriesExemplarQuery {
-                target: (&tenant, &req.profile_type_id, &req.label_selector),
+                target: super::QueryTarget::new(&tenant, &req.profile_type_id, &req.label_selector),
                 group_by: &req.group_by,
                 step,
-                range: (req.start, req.end),
+                range: super::QueryRange::new(req.start, req.end),
                 call_sites: &stack_trace_call_sites,
             })
             .await
@@ -67,11 +68,11 @@ where
     };
     let mut series = state
         .select_series(
-            (&tenant, &req.profile_type_id, &req.label_selector),
+            super::QueryTarget::new(&tenant, &req.profile_type_id, &req.label_selector),
             &req.group_by,
             step,
             agg,
-            (req.start, req.end),
+            super::QueryRange::new(req.start, req.end),
             &stack_trace_call_sites,
         )
         .await
@@ -88,8 +89,9 @@ where
         ));
     }
     series.sort_by(|left, right| {
-        let total =
-            |series: &krabka_pprof::Series| series.points.iter().map(|(_, v)| v).sum::<f64>();
+        let total = |series: &krabka_pprof::Series| {
+            series.points.iter().map(|point| point.value).sum::<f64>()
+        };
         total(right)
             .total_cmp(&total(left))
             .then_with(|| left.labels.cmp(&right.labels))
@@ -105,12 +107,12 @@ where
                 points: series
                     .points
                     .into_iter()
-                    .map(|(timestamp, value)| pb::querier::v1::Point {
-                        timestamp,
-                        value,
+                    .map(|point| pb::querier::v1::Point {
+                        timestamp: point.timestamp_ms,
+                        value: point.value,
                         annotations: Vec::new(),
                         exemplars: exemplar_points
-                            .and_then(|points| points.get(&timestamp))
+                            .and_then(|points| points.get(&point.timestamp_ms))
                             .cloned()
                             .unwrap_or_default(),
                     })

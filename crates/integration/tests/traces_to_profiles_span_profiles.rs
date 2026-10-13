@@ -83,13 +83,7 @@ fn span(span_id: [u8; 8], name: &str) -> krabka_traces::Span {
         start_ns: SAMPLE_MS * 1_000_000,
         duration_ns: 5_000_000,
         status: krabka_traces::StatusCode::Ok,
-        status_message: String::new(),
-        resource_attrs: Vec::new(),
-        span_attrs: Vec::new(),
-        events: Vec::new(),
-        links: Vec::new(),
-        instrumentation_scope: String::new(),
-        instrumentation_version: String::new(),
+        ..krabka_traces::Span::default()
     }
 }
 
@@ -106,9 +100,9 @@ fn profile_record(span_ids: [u64; 2]) -> ProfileRecord {
         // its type selector through the registration this label drives.
         // Ingest's `split` inserts it for exactly this reason.
         labels: vec![
-            (LABEL_PROFILE_TYPE.to_string(), PROFILE_TYPE.to_string()),
-            ("__name__".to_string(), "process_cpu".to_string()),
-            ("service_name".to_string(), SERVICE.to_string()),
+            krabka_blockstore::LabelPair::new(LABEL_PROFILE_TYPE, PROFILE_TYPE),
+            krabka_blockstore::LabelPair::new("__name__", "process_cpu"),
+            krabka_blockstore::LabelPair::new("service_name", SERVICE),
         ],
         profile_type: PROFILE_TYPE.to_string(),
         samples: span_ids
@@ -131,7 +125,12 @@ async fn querier_over(record: &ProfileRecord) -> axum::Router {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let mut index = ProfileIndex::new();
 
-    let labels = Labels::from_pairs(record.labels.iter().cloned());
+    let labels = Labels::from_pairs(
+        record
+            .labels
+            .iter()
+            .map(|pair| krabka_blockstore::LabelPair::new(pair.name.clone(), pair.value.clone())),
+    );
     index
         .add_series(TENANT, labels.fingerprint(), &labels)
         .expect("the record carries __profile_type__");
@@ -141,7 +140,7 @@ async fn querier_over(record: &ProfileRecord) -> axum::Router {
         TENANT,
         0,
         std::slice::from_ref(record),
-        (0, 0),
+        krabka_blockstore::OffsetRange::new(0, 0),
         &krabka_blockstore::ObjectStoreMetrics::unregistered(),
     )
     .await
@@ -174,7 +173,12 @@ async fn querier_over(record: &ProfileRecord) -> axum::Router {
 ///
 /// The total is what makes the selector observable: each span contributed one
 /// sample worth 7, so the total says how many of them the query merged.
-async fn span_profile(app: axum::Router, span_selectors: &[String]) -> (Vec<String>, i64) {
+struct ProfileQueryResult {
+    names: Vec<String>,
+    total: i64,
+}
+
+async fn span_profile(app: axum::Router, span_selectors: &[String]) -> ProfileQueryResult {
     profile_query(
         app,
         "SelectMergeSpanProfile",
@@ -194,7 +198,7 @@ async fn profile_query(
     method: &str,
     tenant: &str,
     request: Value,
-) -> (Vec<String>, i64) {
+) -> ProfileQueryResult {
     let response = app
         .oneshot(
             Request::builder()
@@ -228,7 +232,7 @@ async fn profile_query(
         .map(|total| total.parse::<i64>().expect("total is an integer"))
         .or_else(|| json["flamegraph"]["total"].as_i64())
         .unwrap_or(0);
-    (names, total)
+    ProfileQueryResult { names, total }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -276,35 +280,35 @@ async fn a_span_id_stored_by_traces_selects_that_span_s_profile() {
         span_id_hex_from_u64(wanted_id),
         span_id_hex_from_u64(other_id),
     ];
-    let (names, total) = span_profile(querier_over(&record).await, &both).await;
-    check!(names.iter().any(|name| name == FRAME));
-    check!(total == 14);
+    let result = span_profile(querier_over(&record).await, &both).await;
+    check!(result.names.iter().any(|name| name == FRAME));
+    check!(result.total == 14);
 
-    let (names, total) = span_profile(
+    let result = span_profile(
         querier_over(&record).await,
         &[span_id_hex_from_u64(wanted_id)],
     )
     .await;
-    check!(names.iter().any(|name| name == FRAME));
-    check!(total == 7);
+    check!(result.names.iter().any(|name| name == FRAME));
+    check!(result.total == 7);
 
-    let (names, total) = span_profile(
+    let result = span_profile(
         querier_over(&record).await,
         &[span_id_hex_from_u64(other_id)],
     )
     .await;
-    check!(names.iter().any(|name| name == FRAME));
-    check!(total == 7);
+    check!(result.names.iter().any(|name| name == FRAME));
+    check!(result.total == 7);
 
     // A span id that no sample carries. The profile is not merely smaller, it
     // is absent: the frame is gone with it.
-    let (names, total) = span_profile(
+    let result = span_profile(
         querier_over(&record).await,
         &[span_id_hex_from_u64(999_999_999)],
     )
     .await;
-    check!(!names.iter().any(|name| name == FRAME));
-    check!(total == 0);
+    check!(!result.names.iter().any(|name| name == FRAME));
+    check!(result.total == 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -333,34 +337,71 @@ async fn trace_and_span_ids_select_profiles_through_supported_stacktrace_rpc() {
     let trace_id = hex::encode(wanted.trace_id);
     let wanted_id = hex::encode(wanted.span_id);
     let other_id = hex::encode(other.span_id);
-    for (tenant, spans, trace_ids, expected) in [
-        (TENANT, vec![], vec![trace_id.clone()], 14),
-        (TENANT, vec![wanted_id.clone()], vec![], 7),
-        (TENANT, vec![wanted_id.clone(), other_id], vec![], 14),
-        (
-            TENANT,
-            vec![],
-            vec!["ffffffffffffffffffffffffffffffff".to_string()],
-            0,
-        ),
-        (TENANT, vec!["ffffffffffffffff".to_string()], vec![], 0),
-        ("tenant-b", vec![], vec![trace_id.clone()], 0),
+    struct SelectorCase {
+        tenant: &'static str,
+        spans: Vec<String>,
+        trace_ids: Vec<String>,
+        expected: i64,
+    }
+    for case in [
+        SelectorCase {
+            tenant: TENANT,
+            spans: vec![],
+            trace_ids: vec![trace_id.clone()],
+            expected: 14,
+        },
+        SelectorCase {
+            tenant: TENANT,
+            spans: vec![wanted_id.clone()],
+            trace_ids: vec![],
+            expected: 7,
+        },
+        SelectorCase {
+            tenant: TENANT,
+            spans: vec![wanted_id.clone(), other_id],
+            trace_ids: vec![],
+            expected: 14,
+        },
+        SelectorCase {
+            tenant: TENANT,
+            spans: vec![],
+            trace_ids: vec!["ffffffffffffffffffffffffffffffff".to_string()],
+            expected: 0,
+        },
+        SelectorCase {
+            tenant: TENANT,
+            spans: vec!["ffffffffffffffff".to_string()],
+            trace_ids: vec![],
+            expected: 0,
+        },
+        SelectorCase {
+            tenant: "tenant-b",
+            spans: vec![],
+            trace_ids: vec![trace_id.clone()],
+            expected: 0,
+        },
     ] {
-        let (names, total) = profile_query(
+        let result = profile_query(
             app.clone(),
             "SelectMergeStacktraces",
-            tenant,
+            case.tenant,
             json!({
                 "profileTypeID": PROFILE_TYPE,
                 "labelSelector": format!("{{service_name=\"{SERVICE}\"}}"),
-                "spanSelector": spans, "traceIdSelector": trace_ids,
+                "spanSelector": case.spans, "traceIdSelector": case.trace_ids,
                 "start": 0, "end": 100,
             }),
         )
         .await;
-        check!(total == expected, "{tenant}, {spans:?}, {trace_ids:?}");
-        if expected != 0 {
-            check!(names.iter().any(|name| name == FRAME));
+        check!(
+            result.total == case.expected,
+            "{}, {:?}, {:?}",
+            case.tenant,
+            case.spans,
+            case.trace_ids
+        );
+        if case.expected != 0 {
+            check!(result.names.iter().any(|name| name == FRAME));
         }
     }
     let response = app

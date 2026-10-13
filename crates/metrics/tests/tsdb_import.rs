@@ -10,7 +10,10 @@ use serde_json::{Value, json};
 use tsdb_fixture::{
     FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FixtureFiles, expected_samples, fixture_files,
 };
-use tsdb_writer::{SyntheticChunk, SyntheticSeries, write_block, write_tombstones};
+use tsdb_writer::{
+    LabelBytes, SyntheticChunk, SyntheticSample, SyntheticSeries, TombstoneRecord, write_block,
+    write_tombstones,
+};
 
 #[path = "support/tsdb_fixture.rs"]
 mod tsdb_fixture;
@@ -19,6 +22,25 @@ mod tsdb_writer;
 
 const TENANT: &str = "tenant-a";
 const STALE_NAN: u64 = 0x7ff0_0000_0000_0002;
+
+#[derive(Clone, Copy)]
+struct LabelInput {
+    name: &'static str,
+    value: &'static str,
+}
+
+const fn label(name: &'static str, value: &'static str) -> LabelInput {
+    LabelInput { name, value }
+}
+
+const fn sample(timestamp_ms: i64, value: f64) -> SyntheticSample {
+    SyntheticSample::new(timestamp_ms, value)
+}
+
+struct PartitionedMarkers {
+    stale: Vec<Value>,
+    live: Vec<Value>,
+}
 
 fn fixture_meta() -> TsdbBlockMeta {
     let meta: Value = serde_json::from_slice(&fixture_files().meta).expect("meta.json is JSON");
@@ -86,35 +108,40 @@ fn histogram_json(timestamp: i64, hist: &NativeHistogram) -> Value {
 /// The decoded rows in the reference dump's shape: one entry per series in
 /// label order, with every `f64` as hex bits.
 fn decoded_as_dump(block: &DecodedTsdbBlock) -> Value {
+    struct LabelSeriesDump {
+        labels: BTreeMap<String, String>,
+        series: Value,
+    }
     let rows = &block.rows;
     let mut by_labels = rows
         .series_labels
         .iter()
-        .map(|(fingerprint, labels)| {
-            let labels = labels
-                .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect::<BTreeMap<_, _>>();
+        .map(|series| {
+            let labels = series.1.iter();
+            let mut label_map = BTreeMap::new();
+            for label in labels {
+                label_map.insert(label.name.clone(), label.value.as_str().to_owned());
+            }
             let floats = rows
                 .float_rows
                 .iter()
-                .filter(|row| row.fingerprint == *fingerprint)
+                .filter(|row| row.fingerprint == *series.0)
                 .map(|row| json!({"t": row.timestamp_ms, "v": bits(row.value)}))
                 .collect::<Vec<_>>();
             let histograms = rows
                 .histogram_rows
                 .iter()
-                .filter(|row| row.fingerprint == *fingerprint)
+                .filter(|row| row.fingerprint == *series.0)
                 .map(|row| histogram_json(row.timestamp_ms, &row.hist))
                 .collect::<Vec<_>>();
-            (
-                labels.clone(),
-                json!({"labels": labels, "floats": floats, "histograms": histograms}),
-            )
+            LabelSeriesDump {
+                labels: label_map.clone(),
+                series: json!({"labels": label_map, "floats": floats, "histograms": histograms}),
+            }
         })
         .collect::<Vec<_>>();
-    by_labels.sort_by(|left, right| left.0.cmp(&right.0));
-    by_labels.into_iter().map(|(_, series)| series).collect()
+    by_labels.sort_by(|left, right| left.labels.cmp(&right.labels));
+    by_labels.into_iter().map(|entry| entry.series).collect()
 }
 
 /// The reference dump with each histogram stale marker moved to the float
@@ -126,19 +153,31 @@ fn expected_as_imported() -> Value {
             .as_array()
             .expect("histograms are an array")
             .clone();
-        let (stale, live): (Vec<Value>, Vec<Value>) = histograms
-            .into_iter()
-            .partition(|hist| hist["sum"] == json!(format!("{STALE_NAN:016x}")));
+        let markers = histograms.into_iter().fold(
+            PartitionedMarkers {
+                stale: Vec::new(),
+                live: Vec::new(),
+            },
+            |mut markers, histogram| {
+                if histogram["sum"] == json!(format!("{STALE_NAN:016x}")) {
+                    markers.stale.push(histogram);
+                } else {
+                    markers.live.push(histogram);
+                }
+                markers
+            },
+        );
         let floats = series["floats"]
             .as_array_mut()
             .expect("floats are an array");
         floats.extend(
-            stale
+            markers
+                .stale
                 .iter()
                 .map(|hist| json!({"t": hist["t"], "v": hist["sum"]})),
         );
         floats.sort_by_key(|sample| sample["t"].as_i64());
-        series["histograms"] = Value::Array(live);
+        series["histograms"] = Value::Array(markers.live);
     }
     dump
 }
@@ -175,21 +214,25 @@ fn fixture_series_carry_the_krabka_fingerprint_of_their_labels() {
     let block = decode_fixture(&files, &fixture_meta(), &TsdbImportLimits::default())
         .expect("the fixture block decodes");
 
-    let expected = tsdb_fixture::expected_series_labels()
-        .into_iter()
-        .map(|labels| {
-            let labels = labels.into_iter().collect::<krabka_metrics::MetricLabels>();
-            (labels.fingerprint(), labels)
-        })
-        .collect::<BTreeMap<_, _>>();
+    let mut expected = BTreeMap::new();
+    for label_set in tsdb_fixture::expected_series_labels() {
+        let labels = krabka_metrics::MetricLabels::from_pairs(
+            label_set
+                .into_iter()
+                .map(|pair| krabka_metrics::MetricLabelPair::new(pair.0, pair.1)),
+        );
+        expected.insert(labels.fingerprint(), labels);
+    }
     assert!(block.rows.series_labels == expected);
 }
 
 #[test]
 fn fixture_block_is_accepted_under_a_matching_tenant_label() {
     let files = fixture_files();
+    let mut external_labels = BTreeMap::new();
+    external_labels.insert("__tenant_id__".to_owned(), TENANT.to_owned());
     let meta = TsdbBlockMeta {
-        external_labels: BTreeMap::from([("__tenant_id__".to_owned(), TENANT.to_owned())]),
+        external_labels,
         ..fixture_meta()
     };
 
@@ -378,14 +421,14 @@ fn corrupt_fixture_blocks_fail_with_a_specific_error() {
     }
 }
 
-fn series(
-    labels: Vec<(&'static str, &'static str)>,
-    chunks: Vec<SyntheticChunk>,
-) -> SyntheticSeries {
+fn series(labels: Vec<LabelInput>, chunks: Vec<SyntheticChunk>) -> SyntheticSeries {
     SyntheticSeries {
         labels: labels
             .into_iter()
-            .map(|(name, value)| (name.as_bytes().to_vec(), value.as_bytes().to_vec()))
+            .map(|label| LabelBytes {
+                name: label.name.as_bytes().to_vec(),
+                value: label.value.as_bytes().to_vec(),
+            })
             .collect(),
         chunks,
     }
@@ -395,8 +438,8 @@ fn series(
 // segment.
 fn one_sample_series(name: &'static str, timestamp_ms: i64) -> SyntheticSeries {
     series(
-        vec![("__name__", name)],
-        vec![chunk(0, &[(timestamp_ms, 1.0)])],
+        vec![label("__name__", name)],
+        vec![chunk(0, &[sample(timestamp_ms, 1.0)])],
     )
 }
 
@@ -406,7 +449,7 @@ fn series_order_error_for_a() -> TsdbImportError {
     }
 }
 
-fn chunk(segment: usize, samples: &[(i64, f64)]) -> SyntheticChunk {
+fn chunk(segment: usize, samples: &[SyntheticSample]) -> SyntheticChunk {
     SyntheticChunk {
         segment,
         samples: samples.to_vec(),
@@ -434,27 +477,27 @@ fn decode_synthetic(
     )
 }
 
-fn float_rows(block: &DecodedTsdbBlock) -> Vec<(u64, i64, f64)> {
-    block
-        .rows
-        .float_rows
-        .iter()
-        .map(|row| (row.fingerprint, row.timestamp_ms, row.value))
-        .collect()
+fn float_rows(block: &DecodedTsdbBlock) -> Vec<krabka_metrics::FloatRow> {
+    block.rows.float_rows.iter().cloned().collect()
 }
 
-fn fingerprint(labels: &[(&str, &str)]) -> u64 {
-    Labels::from_pairs(labels.iter().copied()).fingerprint()
+fn fingerprint(labels: &[LabelInput]) -> u64 {
+    Labels::from_pairs(
+        labels
+            .iter()
+            .map(|label| krabka_blockstore::LabelPair::new(label.name, label.value)),
+    )
+    .fingerprint()
 }
 
 #[test]
 fn chunks_in_several_segments_decode_in_reference_order() {
     let block = write_block(
         &[series(
-            vec![("__name__", "up")],
+            vec![label("__name__", "up")],
             vec![
-                chunk(0, &[(10, 1.0), (20, 2.5)]),
-                chunk(1, &[(30, -3.0), (45, 4.0)]),
+                chunk(0, &[sample(10, 1.0), sample(20, 2.5)]),
+                chunk(1, &[sample(30, -3.0), sample(45, 4.0)]),
             ],
         )],
         2,
@@ -462,9 +505,35 @@ fn chunks_in_several_segments_decode_in_reference_order() {
 
     let decoded = decode_synthetic(&block, None).expect("the block decodes");
 
-    let up = fingerprint(&[("__name__", "up")]);
+    let up = fingerprint(&[label("__name__", "up")]);
     assert!(
-        float_rows(&decoded) == vec![(up, 10, 1.0), (up, 20, 2.5), (up, 30, -3.0), (up, 45, 4.0)]
+        float_rows(&decoded)
+            == vec![
+                krabka_metrics::FloatRow {
+                    fingerprint: up,
+                    timestamp_ms: 10,
+                    value: 1.0,
+                    start_timestamp_ms: None,
+                },
+                krabka_metrics::FloatRow {
+                    fingerprint: up,
+                    timestamp_ms: 20,
+                    value: 2.5,
+                    start_timestamp_ms: None,
+                },
+                krabka_metrics::FloatRow {
+                    fingerprint: up,
+                    timestamp_ms: 30,
+                    value: -3.0,
+                    start_timestamp_ms: None,
+                },
+                krabka_metrics::FloatRow {
+                    fingerprint: up,
+                    timestamp_ms: 45,
+                    value: 4.0,
+                    start_timestamp_ms: None,
+                },
+            ]
     );
 }
 
@@ -473,12 +542,20 @@ fn tombstones_drop_the_deleted_samples_inclusively() {
     let block = write_block(
         &[
             series(
-                vec![("__name__", "a")],
-                vec![chunk(0, &[(10, 1.0), (20, 2.0), (30, 3.0), (40, 4.0)])],
+                vec![label("__name__", "a")],
+                vec![chunk(
+                    0,
+                    &[
+                        sample(10, 1.0),
+                        sample(20, 2.0),
+                        sample(30, 3.0),
+                        sample(40, 4.0),
+                    ],
+                )],
             ),
             series(
-                vec![("__name__", "b")],
-                vec![chunk(0, &[(10, 5.0), (20, 6.0)])],
+                vec![label("__name__", "b")],
+                vec![chunk(0, &[sample(10, 5.0), sample(20, 6.0)])],
             ),
         ],
         1,
@@ -486,98 +563,138 @@ fn tombstones_drop_the_deleted_samples_inclusively() {
     // The first series entry sits at the first 16-byte boundary after the
     // symbol table.
     let first = 2;
-    let tombstones = write_tombstones(&[(first, 20, 30)]);
+    let tombstones = write_tombstones(&[TombstoneRecord {
+        series_reference: first,
+        min_time: 20,
+        max_time: 30,
+    }]);
 
     let decoded = decode_synthetic(&block, Some(&tombstones)).expect("the block decodes");
 
-    let a = fingerprint(&[("__name__", "a")]);
-    let b = fingerprint(&[("__name__", "b")]);
-    let mut expected = vec![(a, 10, 1.0), (a, 40, 4.0), (b, 10, 5.0), (b, 20, 6.0)];
-    expected.sort_by_key(|(fingerprint, timestamp, _)| (*fingerprint, *timestamp));
+    let a = fingerprint(&[label("__name__", "a")]);
+    let b = fingerprint(&[label("__name__", "b")]);
+    let mut expected = vec![
+        krabka_metrics::FloatRow {
+            fingerprint: a,
+            timestamp_ms: 10,
+            value: 1.0,
+            start_timestamp_ms: None,
+        },
+        krabka_metrics::FloatRow {
+            fingerprint: a,
+            timestamp_ms: 40,
+            value: 4.0,
+            start_timestamp_ms: None,
+        },
+        krabka_metrics::FloatRow {
+            fingerprint: b,
+            timestamp_ms: 10,
+            value: 5.0,
+            start_timestamp_ms: None,
+        },
+        krabka_metrics::FloatRow {
+            fingerprint: b,
+            timestamp_ms: 20,
+            value: 6.0,
+            start_timestamp_ms: None,
+        },
+    ];
+    expected.sort_by(|left, right| {
+        left.fingerprint
+            .cmp(&right.fingerprint)
+            .then_with(|| left.timestamp_ms.cmp(&right.timestamp_ms))
+    });
     check!(float_rows(&decoded) == expected);
     check!(decoded.stats.deleted_samples == 2);
 }
 
 /// A name, the series to write, an optional tombstones file, and the error.
-type SyntheticCase = (
-    &'static str,
-    Vec<SyntheticSeries>,
-    Option<Vec<u8>>,
-    TsdbImportError,
-);
+struct SyntheticCase {
+    name: &'static str,
+    series: Vec<SyntheticSeries>,
+    tombstones: Option<Vec<u8>>,
+    expected: TsdbImportError,
+}
 
 #[test]
 fn malformed_synthetic_blocks_fail_with_a_specific_error() {
     let cases: [SyntheticCase; 6] = [
-        (
-            "samples out of order within a chunk",
-            vec![series(
-                vec![("__name__", "a")],
-                vec![chunk(0, &[(10, 1.0), (30, 2.0), (20, 3.0)])],
+        SyntheticCase {
+            name: "samples out of order within a chunk",
+            series: vec![series(
+                vec![label("__name__", "a")],
+                vec![chunk(
+                    0,
+                    &[sample(10, 1.0), sample(30, 2.0), sample(20, 3.0)],
+                )],
             )],
-            None,
-            TsdbImportError::SampleOrder {
+            tombstones: None,
+            expected: TsdbImportError::SampleOrder {
                 labels: r#"{__name__="a"}"#.to_owned(),
                 previous: 30,
                 timestamp: 20,
             },
-        ),
-        (
-            "duplicate series",
-            vec![one_sample_series("a", 10), one_sample_series("a", 20)],
-            None,
-            series_order_error_for_a(),
-        ),
-        (
-            "series out of order",
-            vec![one_sample_series("b", 10), one_sample_series("a", 20)],
-            None,
-            series_order_error_for_a(),
-        ),
-        (
-            "labels out of order",
-            vec![series(
-                vec![("job", "x"), ("__name__", "a")],
-                vec![chunk(0, &[(10, 1.0)])],
+        },
+        SyntheticCase {
+            name: "duplicate series",
+            series: vec![one_sample_series("a", 10), one_sample_series("a", 20)],
+            tombstones: None,
+            expected: series_order_error_for_a(),
+        },
+        SyntheticCase {
+            name: "series out of order",
+            series: vec![one_sample_series("b", 10), one_sample_series("a", 20)],
+            tombstones: None,
+            expected: series_order_error_for_a(),
+        },
+        SyntheticCase {
+            name: "labels out of order",
+            series: vec![series(
+                vec![label("job", "x"), label("__name__", "a")],
+                vec![chunk(0, &[sample(10, 1.0)])],
             )],
-            None,
-            TsdbImportError::InvalidLabels(
+            tombstones: None,
+            expected: TsdbImportError::InvalidLabels(
                 r#"series 3 has label "__name__" out of order or repeated"#.to_owned(),
             ),
-        ),
-        (
-            "sample past the block end",
-            vec![series(
-                vec![("__name__", "a")],
-                vec![chunk(0, &[(10, 1.0), (1_000, 2.0)])],
+        },
+        SyntheticCase {
+            name: "sample past the block end",
+            series: vec![series(
+                vec![label("__name__", "a")],
+                vec![chunk(0, &[sample(10, 1.0), sample(1_000, 2.0)])],
             )],
-            None,
-            TsdbImportError::OutOfBounds {
+            tombstones: None,
+            expected: TsdbImportError::OutOfBounds {
                 labels: r#"{__name__="a"}"#.to_owned(),
                 timestamp: 1_000,
                 min_time: 0,
                 max_time: 1_000,
             },
-        ),
-        (
-            "tombstone for a series the index lacks",
-            vec![series(
-                vec![("__name__", "a")],
-                vec![chunk(0, &[(10, 1.0)])],
+        },
+        SyntheticCase {
+            name: "tombstone for a series the index lacks",
+            series: vec![series(
+                vec![label("__name__", "a")],
+                vec![chunk(0, &[sample(10, 1.0)])],
             )],
-            Some(write_tombstones(&[(99, 0, 5)])),
-            TsdbImportError::InvalidIndex(
+            tombstones: Some(write_tombstones(&[TombstoneRecord {
+                series_reference: 99,
+                min_time: 0,
+                max_time: 5,
+            }])),
+            expected: TsdbImportError::InvalidIndex(
                 "tombstones name series reference 0x63, which the index does not hold".to_owned(),
             ),
-        ),
+        },
     ];
 
-    for (name, series, tombstones, expected) in cases {
-        let block = write_block(&series, 1);
+    for case in cases {
+        let block = write_block(&case.series, 1);
 
-        let result = decode_synthetic(&block, tombstones.as_deref());
+        let result = decode_synthetic(&block, case.tombstones.as_deref());
 
-        check!(result.err() == Some(expected), "case: {name}");
+        check!(result.err() == Some(case.expected), "case: {}", case.name);
     }
 }
 
@@ -585,12 +702,16 @@ fn malformed_synthetic_blocks_fail_with_a_specific_error() {
 fn a_block_whose_samples_are_all_deleted_is_empty() {
     let block = write_block(
         &[series(
-            vec![("__name__", "a")],
-            vec![chunk(0, &[(10, 1.0), (20, 2.0)])],
+            vec![label("__name__", "a")],
+            vec![chunk(0, &[sample(10, 1.0), sample(20, 2.0)])],
         )],
         1,
     );
-    let tombstones = write_tombstones(&[(2, 0, 999)]);
+    let tombstones = write_tombstones(&[TombstoneRecord {
+        series_reference: 2,
+        min_time: 0,
+        max_time: 999,
+    }]);
 
     let result = decode_synthetic(&block, Some(&tombstones));
 
@@ -608,14 +729,20 @@ fn native_index_values_preserve_bytes_and_validate_names_independently() {
     let series = values
         .iter()
         .enumerate()
-        .map(|(index, bytes)| SyntheticSeries {
+        .map(|entry| SyntheticSeries {
             labels: vec![
-                (b"__name__".to_vec(), b"byte_input".to_vec()),
-                (b"raw".to_vec(), bytes.clone()),
+                LabelBytes {
+                    name: b"__name__".to_vec(),
+                    value: b"byte_input".to_vec(),
+                },
+                LabelBytes {
+                    name: b"raw".to_vec(),
+                    value: entry.1.clone(),
+                },
             ],
             chunks: vec![chunk(
                 0,
-                &[(10, f64::from(u32::try_from(index).unwrap()) + 1.0)],
+                &[sample(10, f64::from(u32::try_from(entry.0).unwrap()) + 1.0)],
             )],
         })
         .collect::<Vec<_>>();
@@ -623,9 +750,13 @@ fn native_index_values_preserve_bytes_and_validate_names_independently() {
     let decoded = decode_synthetic(&block, None).unwrap();
     assert!(decoded.rows.series_labels.len() == 4 && decoded.rows.float_rows.len() == 4);
     let mut fingerprints = std::collections::BTreeSet::new();
-    for (index, value) in values.iter().enumerate() {
-        let mut expected = krabka_metrics::MetricLabels::from_pairs([("__name__", "byte_input")]);
-        expected.insert("raw", krabka_metrics::MetricString::from(value.clone()));
+    for entry in values.iter().enumerate() {
+        let mut expected =
+            krabka_metrics::MetricLabels::from_pairs([krabka_metrics::MetricLabelPair::new(
+                "__name__",
+                "byte_input",
+            )]);
+        expected.insert("raw", krabka_metrics::MetricString::from(entry.1.clone()));
         let fingerprint = expected.fingerprint();
         assert!(fingerprints.insert(fingerprint));
         assert!(decoded.rows.series_labels[&fingerprint] == expected);
@@ -638,16 +769,22 @@ fn native_index_values_preserve_bytes_and_validate_names_independently() {
         assert!(
             sample.timestamp_ms == 10
                 && sample.value.to_bits()
-                    == (f64::from(u32::try_from(index).unwrap()) + 1.0).to_bits()
+                    == (f64::from(u32::try_from(entry.0).unwrap()) + 1.0).to_bits()
         );
     }
     let invalid_name = write_block(
         &[SyntheticSeries {
             labels: vec![
-                (b"__name__".to_vec(), b"byte_input".to_vec()),
-                (vec![0xff], b"valid-value".to_vec()),
+                LabelBytes {
+                    name: b"__name__".to_vec(),
+                    value: b"byte_input".to_vec(),
+                },
+                LabelBytes {
+                    name: vec![0xff],
+                    value: b"valid-value".to_vec(),
+                },
             ],
-            chunks: vec![chunk(0, &[(10, 1.0)])],
+            chunks: vec![chunk(0, &[sample(10, 1.0)])],
         }],
         1,
     );
@@ -656,8 +793,17 @@ fn native_index_values_preserve_bytes_and_validate_names_independently() {
     );
     let duplicate = write_block(
         &[SyntheticSeries {
-            labels: vec![(b"raw".to_vec(), vec![0xff]), (b"raw".to_vec(), vec![0xfe])],
-            chunks: vec![chunk(0, &[(10, 1.0)])],
+            labels: vec![
+                LabelBytes {
+                    name: b"raw".to_vec(),
+                    value: vec![0xff],
+                },
+                LabelBytes {
+                    name: b"raw".to_vec(),
+                    value: vec![0xfe],
+                },
+            ],
+            chunks: vec![chunk(0, &[sample(10, 1.0)])],
         }],
         1,
     );

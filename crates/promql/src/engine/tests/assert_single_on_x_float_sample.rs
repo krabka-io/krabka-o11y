@@ -14,6 +14,11 @@ pub(crate) struct OnXHistogramStats<'a> {
     pub(crate) sum: f64,
 }
 
+struct OnXStatisticCase {
+    function: &'static str,
+    expected_value: f64,
+}
+
 /// Checks `histogram_count` and `histogram_sum` of `expected.query` at 10s
 /// for `tenant-a`: each one unnamed `x="1"` sample without `job`.
 pub(crate) async fn assert_on_x_histogram_stats<S: crate::MetricStore>(
@@ -21,15 +26,24 @@ pub(crate) async fn assert_on_x_histogram_stats<S: crate::MetricStore>(
     expected: OnXHistogramStats<'_>,
 ) {
     let OnXHistogramStats { query, count, sum } = expected;
-    for (stat_fn, expected_value) in [("histogram_count", count), ("histogram_sum", sum)] {
+    for case in [
+        OnXStatisticCase {
+            function: "histogram_count",
+            expected_value: count,
+        },
+        OnXStatisticCase {
+            function: "histogram_sum",
+            expected_value: sum,
+        },
+    ] {
         let result = engine
             .query_instant(
                 &tenant_id("tenant-a"),
-                &format!("{stat_fn}({query})"),
+                &format!("{}({query})", case.function),
                 10_000,
             )
             .await
             .unwrap();
-        assert_single_on_x_float_sample(&result, expected_value, query);
+        assert_single_on_x_float_sample(&result, case.expected_value, query);
     }
 }

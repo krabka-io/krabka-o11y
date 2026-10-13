@@ -6,7 +6,7 @@ use super::{
     matching_metric_binary_sample, metric_binary_sample_timestamps_match, metric_series_labels,
     metric_vector_group_modifier, metric_vector_matching_key, parse_metric_sample_value,
 };
-use crate::MetricValue;
+use crate::{MetricValue, querier::metric_eval::MetricOperandValues};
 
 /// The left and right sample of one binary operation.
 #[derive(Clone, Copy)]
@@ -19,7 +19,7 @@ pub(crate) struct SampleOperands<'a> {
 /// timestamps differ.
 pub(crate) fn metric_binary_operand_values(
     operands: SampleOperands<'_>,
-) -> Option<(MetricValue, MetricValue)> {
+) -> Option<MetricOperandValues> {
     let SampleOperands {
         left: left_sample,
         right: right_sample,
@@ -37,7 +37,10 @@ pub(crate) fn metric_binary_operand_values(
         .get(1)
         .and_then(Value::as_str)
         .and_then(parse_metric_sample_value)?;
-    Some((left_value, right_value))
+    Some(MetricOperandValues {
+        left: left_value,
+        right: right_value,
+    })
 }
 
 /// Applies `apply_sample` to each left sample and the right sample it matches,

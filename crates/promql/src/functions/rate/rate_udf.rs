@@ -1,7 +1,7 @@
 use super::{
-    Arc, ArrayRef, ColumnarValue, DataFusionError, DataType, DfResult, Float64Builder, RateFamily,
-    RateWindow, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Time, TimeExt, Volatility,
-    WindowBounds, WindowColumns, scalar_i64,
+    ColumnarValue, DataFusionError, DataType, DfResult, RateFamily, RateWindow, ScalarFunctionArgs,
+    ScalarUDF, ScalarUDFImpl, Signature, Time, TimeExt, Volatility, WindowBounds, WindowColumns,
+    append_window_values, impl_window_udf_identity, scalar_i64,
 };
 
 /// A `ScalarUDFImpl` over `RangeManipulate`'s windowed columns.
@@ -30,17 +30,7 @@ impl RateUdf {
 }
 
 impl ScalarUDFImpl for RateUdf {
-    fn name(&self) -> &str {
-        self.family.udf_name()
-    }
-
-    fn signature(&self) -> &Signature {
-        &self.signature
-    }
-
-    fn return_type(&self, _arg_types: &[DataType]) -> DfResult<DataType> {
-        Ok(DataType::Float64)
-    }
+    impl_window_udf_identity!();
 
     /// `Signature::user_defined` needs its own type coercion.
     ///
@@ -79,33 +69,20 @@ impl ScalarUDFImpl for RateUdf {
 
         windows.check_rows(rows, name)?;
 
-        let mut builder = Float64Builder::with_capacity(rows);
-        for row in 0..rows {
-            let (timestamps, values) = windows.window(row, name)?;
+        append_window_values(rows, |row| {
+            let window_values = windows.window(row, name)?;
             let eval = windows.eval_ts.value(row);
             let window = RateWindow {
-                timestamps,
-                values,
+                timestamps: window_values.timestamps,
+                values: window_values.values,
                 bounds: WindowBounds {
                     range_start_ms: eval - range.millis_i64(),
                     range_end_ms: eval,
                 },
                 range,
             };
-            match self.family.eval_window(window) {
-                // A genuinely-computed value (including a legitimately-NaN result)
-                // is kept as a non-null float so it propagates through downstream
-                // aggregates exactly as the interpreter propagates it.
-                Some(value) => builder.append_value(value),
-                // Prometheus has no value for this window (fewer than two samples,
-                // zero-width interval). Emit NULL — not a NaN sentinel — so the
-                // assembler drops the series and aggregates skip it, matching the
-                // interpreter, which omits no-value series before aggregating.
-                None => builder.append_null(),
-            }
-        }
-
-        Ok(ColumnarValue::Array(Arc::new(builder.finish()) as ArrayRef))
+            Ok(self.family.eval_window(window))
+        })
     }
 }
 

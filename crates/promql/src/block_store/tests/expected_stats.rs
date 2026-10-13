@@ -1,11 +1,16 @@
 use super::*;
 
-pub(crate) fn expected_stats(pairs: &[(&str, usize)]) -> Vec<NamedTsdbStat> {
-    pairs
+pub(crate) struct ExpectedStat {
+    pub(crate) name: &'static str,
+    pub(crate) value: usize,
+}
+
+pub(crate) fn expected_stats(stats: &[ExpectedStat]) -> Vec<NamedTsdbStat> {
+    stats
         .iter()
-        .map(|(name, value)| NamedTsdbStat {
-            name: (*name).to_string(),
-            value: *value,
+        .map(|stat| NamedTsdbStat {
+            name: stat.name.to_string(),
+            value: stat.value,
         })
         .collect()
 }

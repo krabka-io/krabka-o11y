@@ -1,5 +1,10 @@
 use super::*;
 
+struct EqualBoundaryCase {
+    window: &'static str,
+    timeout: &'static str,
+}
+
 #[test]
 pub(crate) fn compactor_policy_rejects_zero_and_invalid_bounds() {
     for argument in [
@@ -39,25 +44,27 @@ pub(crate) fn compactor_policy_rejects_zero_and_invalid_bounds() {
     check!(validate_compactor_policy(&initial_above_max).is_err());
 
     // And the same pair of boundaries here.
-    for (window, timeout) in [
-        (
-            "--compactor-accumulation-window=1s",
-            "--compactor-accumulation-poll-timeout=1s",
-        ),
-        (
-            "--compactor-object-store-initial-backoff=1s",
-            "--compactor-object-store-max-backoff=1s",
-        ),
+    for case in [
+        EqualBoundaryCase {
+            window: "--compactor-accumulation-window=1s",
+            timeout: "--compactor-accumulation-poll-timeout=1s",
+        },
+        EqualBoundaryCase {
+            window: "--compactor-object-store-initial-backoff=1s",
+            timeout: "--compactor-object-store-max-backoff=1s",
+        },
     ] {
         let at_the_limit = ServiceConfig::parse_from([
             "krabka-observability",
             "--target=block-builder",
-            window,
-            timeout,
+            case.window,
+            case.timeout,
         ]);
         check!(
             validate_compactor_policy(&at_the_limit).is_ok(),
-            "{window} with {timeout}"
+            "{} with {}",
+            case.window,
+            case.timeout
         );
     }
 }

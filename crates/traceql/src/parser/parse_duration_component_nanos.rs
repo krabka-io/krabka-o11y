@@ -5,7 +5,9 @@ pub(crate) fn parse_duration_component_nanos(
     multiplier: i128,
     original: &str,
 ) -> Result<i128> {
-    let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
+    let decimal_parts = number.split_once('.');
+    let whole = decimal_parts.map_or(number, |parts| parts.0);
+    let fraction = decimal_parts.map_or("", |parts| parts.1);
     if whole.is_empty() && fraction.is_empty() {
         return Err(TraceqlError::Parse(format!(
             "invalid duration number {number:?}"

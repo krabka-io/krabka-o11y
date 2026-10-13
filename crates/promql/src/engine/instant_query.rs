@@ -13,10 +13,10 @@ use super::{
     row_cache::{RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner},
 };
 use crate::{
-    DurationExprContext, PromqlError,
+    Annotations, DurationExprContext, PromqlError,
     error::Result,
     parse_promql_with_duration_context,
-    result::{Annotations, QueryResult},
+    result::{AnnotatedQueryResult, QueryResult},
     store::MetricStore,
 };
 
@@ -34,7 +34,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     ) -> Result<QueryResult> {
         self.query_instant_with_annotations(tenant, query, time_ms)
             .await
-            .map(|(result, _)| result)
+            .map(|annotated| annotated.result)
     }
 
     /// Evaluates an instant query at `time_ms` and returns the annotations.
@@ -57,7 +57,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         tenant: &TenantId,
         query: &str,
         time_ms: i64,
-    ) -> Result<(QueryResult, Annotations)> {
+    ) -> Result<AnnotatedQueryResult> {
         ANNOTATION_SOURCE
             .scope(
                 query.to_owned(),
@@ -84,7 +84,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                                 finalize_metric_names(&mut result)?;
                                 validate_unique_instant_labelsets(&result)?;
                                 let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
-                                Ok((result, annotations))
+                                Ok(AnnotatedQueryResult {
+                                    result,
+                                    annotations,
+                                })
                             },
                         )
                         .await

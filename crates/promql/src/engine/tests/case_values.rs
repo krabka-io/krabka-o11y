@@ -14,13 +14,28 @@ impl CaseValue {
     }
 }
 
+/// A query and the single float value its test case expects.
+pub(crate) struct QueryValueCase {
+    pub(crate) query: &'static str,
+    pub(crate) value: f64,
+}
+
+/// An instance label and its float sample for a focused engine case.
+pub(crate) struct InstanceValueCase {
+    pub(crate) instance: &'static str,
+    pub(crate) value: f64,
+}
+
 /// Pushes one `tenant-a` float sample at 10s per case, labelled with the
 /// metric `metric_name` and that case.
 pub(crate) fn push_cases(store: &mut InMemoryMetricStore, metric_name: &str, cases: &[CaseValue]) {
     for &CaseValue { case, sample_value } in cases {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", metric_name), ("case", case)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", metric_name),
+                crate::test_support::TestLabelPair::new("case", case),
+            ]),
             10_000,
             sample_value,
         );

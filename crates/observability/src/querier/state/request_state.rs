@@ -1,6 +1,7 @@
 use futures_util::{StreamExt as _, TryStreamExt as _};
 use krabka_units::convert::{ByteSizeExt, StdDurationExt, TimeExt};
 
+use super::types::TenantIndexPair;
 use crate::{
     AllowAllQueryAuthorizer, Arc, BlockIndex, BlockStoreError, ColdObjectStoreState,
     CompactionFrontier, CompactionFrontierSource, DynamicIndexCache, DynamicIndexCacheKey,

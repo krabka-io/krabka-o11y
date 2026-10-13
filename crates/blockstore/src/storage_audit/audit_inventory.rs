@@ -5,6 +5,11 @@ use super::{
     check_block, check_log_frontier, classify_object_key, compare_with_live, find_wal_overlaps,
 };
 
+pub struct AuditedInventory {
+    pub report: StorageAuditReport,
+    pub inventory: StorageInventory,
+}
+
 /// Runs [`audit_store`](super::audit_store) and also returns the listing it
 /// audited, so a repair can compare an object with what the audit saw.
 ///
@@ -13,7 +18,7 @@ use super::{
 pub async fn audit_inventory(
     store: &Arc<dyn ObjectStore>,
     options: &StorageAuditOptions,
-) -> Result<(StorageAuditReport, StorageInventory), StorageAuditError> {
+) -> Result<AuditedInventory, StorageAuditError> {
     let mut inventory = StorageInventory::default();
     let mut listed = 0_usize;
     let mut unclassified = 0_usize;
@@ -40,7 +45,7 @@ pub async fn audit_inventory(
     }
     findings.retain(|finding| options.covers_tenant(finding.tenant.as_deref()));
     let report = StorageAuditReport::new(options.scope(), listed, unclassified, findings);
-    Ok((report, inventory))
+    Ok(AuditedInventory { report, inventory })
 }
 
 async fn audit_signal(
@@ -50,7 +55,9 @@ async fn audit_signal(
     options: &StorageAuditOptions,
 ) -> Result<Vec<StorageFinding>, StorageAuditError> {
     let mut findings = Vec::new();
-    for (key, listed) in inventory.blocks(signal) {
+    for entry in inventory.blocks(signal) {
+        let key = entry.key;
+        let listed = entry.listed;
         if options.covers_tenant(listed.object.tenant.as_deref()) {
             findings.extend(check_block(store, key, listed, options.verify_data).await?);
         }
@@ -62,12 +69,12 @@ async fn audit_signal(
             findings.extend(audit_delete_state(store, inventory).await?);
         }
         StorageSignal::Logs => {
-            let (live, manifest_findings) = audit_log_manifests(store.as_ref(), inventory).await;
-            findings.extend(manifest_findings);
+            let manifest_audit = audit_log_manifests(store.as_ref(), inventory).await;
+            findings.extend(manifest_audit.findings);
             findings.extend(compare_with_live(
                 inventory,
                 signal,
-                &live,
+                &manifest_audit.live,
                 options,
                 "logs manifest",
             ));
@@ -79,18 +86,20 @@ async fn audit_signal(
             } else {
                 &options.profile_index_key
             };
-            let (live, index_findings) =
+            let snapshot_audit =
                 audit_snapshot_index(store, signal, key, inventory, options).await?;
-            findings.extend(index_findings);
+            findings.extend(snapshot_audit.findings);
             findings.extend(compare_with_live(
                 inventory,
                 signal,
-                &live,
+                &snapshot_audit.live,
                 options,
                 "index snapshot",
             ));
             if signal == StorageSignal::Profiles {
-                findings.extend(audit_profile_symbols(store, inventory, &live, options).await?);
+                findings.extend(
+                    audit_profile_symbols(store, inventory, &snapshot_audit.live, options).await?,
+                );
             }
         }
     }

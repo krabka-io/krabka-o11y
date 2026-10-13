@@ -58,7 +58,14 @@ mod tests {
                 memory_start: 10,
                 memory_limit: 20,
                 file_offset: 3,
-                symbolization: proto::MappingSymbolization::from_parts((true, false, false, false)),
+                symbolization: proto::MappingSymbolization::from_parts(
+                    proto::MappingSymbolizationParts {
+                        functions: true,
+                        filenames: false,
+                        line_numbers: false,
+                        inline_frames: false,
+                    },
+                ),
                 ..Default::default()
             },
             proto::Mapping {

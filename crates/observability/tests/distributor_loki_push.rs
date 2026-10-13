@@ -14,7 +14,7 @@ use flate2::{
     Compression,
     write::{DeflateEncoder, GzEncoder},
 };
-use krabka_blockstore::{LogLabels, labels};
+use krabka_blockstore::{LabelPair, LogLabels};
 use krabka_observability::{
     InMemoryWalSink, LogWalSink, Role, ServiceDependencies, WalLogRecord, build_service_router,
     distributor_router,
@@ -44,17 +44,25 @@ const LOOKS_LIKE_OBJECT: &str = "loghttp.PushRequest.Streams: []loghttp.LogProto
 const BAD_LABEL_PARSE: &str =
     "couldn't parse labels: 1:5: parse error: unexpected character inside braces: '-'\n";
 
-async fn push(app: &Router, request: Request<Body>) -> (StatusCode, String) {
+struct PushResponse {
+    status: StatusCode,
+    body: String,
+}
+
+async fn push(app: &Router, request: Request<Body>) -> PushResponse {
     let response = send(app, request).await;
-    (response.status(), text_body(response).await)
+    PushResponse {
+        status: response.status(),
+        body: text_body(response).await,
+    }
 }
 
 async fn push_request_to_sink(request: Request<Body>) -> PushOutcome {
     let sink = InMemoryWalSink::default();
-    let (status, body) = push(&distributor_router(sink.clone()), request).await;
+    let response = push(&distributor_router(sink.clone()), request).await;
     PushOutcome {
-        status,
-        body,
+        status: response.status,
+        body: response.body,
         records: sink.records(),
     }
 }
@@ -67,7 +75,7 @@ async fn push_json(payload: &Value) -> PushOutcome {
     push_to_sink(JSON_TYPE, payload.to_string()).await
 }
 
-async fn push_json_to(sink: impl LogWalSink, payload: &Value) -> (StatusCode, String) {
+async fn push_json_to(sink: impl LogWalSink, payload: &Value) -> PushResponse {
     push(
         &distributor_router(sink),
         push_request(PUSH, JSON_TYPE, payload.to_string()),
@@ -77,6 +85,23 @@ async fn push_json_to(sink: impl LogWalSink, payload: &Value) -> (StatusCode, St
 
 async fn push_proto(labels: &str, entry: LokiProtoEntry) -> PushOutcome {
     push_to_sink(PROTOBUF_TYPE, snappy_push(labels, entry)).await
+}
+
+async fn push_empty_proto_labels(label_json: &str) {
+    let outcome = push_proto(
+        label_json,
+        proto_entry(LokiProtoTimestamp {
+            seconds: 0,
+            nanos: 19,
+        }),
+    )
+    .await;
+
+    assert!(
+        outcome.accepted()
+            == [record(unknown_service_labels(), 19, "api error")
+                .with_metadata(log_labels([LabelPair::new("detected_level", "error")]))]
+    );
 }
 
 fn api_stream(values: Value) -> Value {
@@ -120,9 +145,32 @@ impl WithMetadata for WalLogRecord {
     }
 }
 
-const API: [(&str, &str); 2] = [("app", "api"), ("service_name", "api")];
-const API_PROD: [(&str, &str); 3] = [("app", "api"), ("env", "prod"), ("service_name", "api")];
-const UNKNOWN_SERVICE: [(&str, &str); 1] = [("service_name", "unknown_service")];
+fn log_labels(pairs: impl IntoIterator<Item = LabelPair>) -> LogLabels {
+    let mut labels = LogLabels::new();
+    for pair in pairs {
+        labels.insert(pair.name, pair.value);
+    }
+    labels
+}
+
+fn api_labels() -> LogLabels {
+    log_labels([
+        LabelPair::new("app", "api"),
+        LabelPair::new("service_name", "api"),
+    ])
+}
+
+fn api_prod_labels() -> LogLabels {
+    log_labels([
+        LabelPair::new("app", "api"),
+        LabelPair::new("env", "prod"),
+        LabelPair::new("service_name", "api"),
+    ])
+}
+
+fn unknown_service_labels() -> LogLabels {
+    log_labels([LabelPair::new("service_name", "unknown_service")])
+}
 
 /// A protobuf `api error` entry at `timestamp`, with no structured metadata
 /// yet.
@@ -178,13 +226,13 @@ async fn loki_push_endpoint_writes_tenant_scoped_wal_records() {
     assert!(
         outcome.accepted()
             == [
-                record(labels(API_PROD), 19, "api error").with_metadata(labels([
-                    ("detected_level", "error"),
-                    ("status", "500"),
-                    ("trace_id", "abc"),
+                record(api_prod_labels(), 19, "api error").with_metadata(log_labels([
+                    LabelPair::new("detected_level", "error"),
+                    LabelPair::new("status", "500"),
+                    LabelPair::new("trace_id", "abc"),
                 ])),
-                record(labels(API_PROD), 20, "api ok")
-                    .with_metadata(labels([("detected_level", "unknown")])),
+                record(api_prod_labels(), 20, "api ok")
+                    .with_metadata(log_labels([LabelPair::new("detected_level", "unknown")])),
             ]
     );
 }
@@ -195,8 +243,8 @@ async fn loki_push_endpoint_accepts_incomplete_json_value_as_empty_line() {
 
     assert!(
         outcome.accepted()
-            == [record(labels(API_PROD), 19, "")
-                .with_metadata(labels([("detected_level", "unknown")]))]
+            == [record(api_prod_labels(), 19, "")
+                .with_metadata(log_labels([LabelPair::new("detected_level", "unknown")]))]
     );
 }
 
@@ -209,8 +257,12 @@ async fn loki_push_endpoint_ignores_extra_json_value_fields_like_loki() {
 
     assert!(
         outcome.accepted()
-            == [record(labels(API), 19, "api error")
-                .with_metadata(labels([("detected_level", "error"), ("trace_id", "abc")]))]
+            == [
+                record(api_labels(), 19, "api error").with_metadata(log_labels([
+                    LabelPair::new("detected_level", "error"),
+                    LabelPair::new("trace_id", "abc")
+                ]))
+            ]
     );
 }
 
@@ -220,7 +272,8 @@ async fn loki_push_endpoint_decodes_empty_json_value_as_zero_timestamp_empty_lin
 
     assert!(
         outcome.accepted()
-            == [record(labels(API), 0, "").with_metadata(labels([("detected_level", "unknown")]))]
+            == [record(api_labels(), 0, "")
+                .with_metadata(log_labels([LabelPair::new("detected_level", "unknown")]))]
     );
 }
 
@@ -335,15 +388,15 @@ async fn loki_push_endpoint_accepts_missing_json_labels_like_loki() {
 
 #[tokio::test]
 async fn loki_push_endpoint_returns_server_error_when_wal_append_fails() {
-    let (status, body) = push_json_to(
+    let response = push_json_to(
         FailingWalSink,
         &api_prod_stream(json!([["19", "api error"]])),
     )
     .await;
 
-    assert!(status == StatusCode::SERVICE_UNAVAILABLE);
+    assert!(response.status == StatusCode::SERVICE_UNAVAILABLE);
     assert_loki_error(
-        &serde_json::from_str(&body).unwrap(),
+        &serde_json::from_str(&response.body).unwrap(),
         "server_error",
         "wal sink",
     );
@@ -357,7 +410,7 @@ async fn loki_push_endpoint_returns_server_error_when_wal_append_fails() {
 /// writes the entries that already landed a second time, permanently.
 #[tokio::test]
 async fn loki_push_endpoint_reports_a_partial_wal_batch_as_a_failure() {
-    let (status, body) = push_json_to(
+    let response = push_json_to(
         PartialWalSink::new(2),
         &api_prod_stream(json!([
             ["19", "one"],
@@ -369,9 +422,9 @@ async fn loki_push_endpoint_reports_a_partial_wal_batch_as_a_failure() {
     )
     .await;
 
-    assert!(status == StatusCode::SERVICE_UNAVAILABLE);
+    assert!(response.status == StatusCode::SERVICE_UNAVAILABLE);
     assert_loki_error(
-        &serde_json::from_str(&body).unwrap(),
+        &serde_json::from_str(&response.body).unwrap(),
         "server_error",
         "wal append wrote 2 of 5 records",
     );
@@ -382,8 +435,10 @@ fn traced_api_prod_payload() -> String {
 }
 
 fn traced_api_prod_record() -> WalLogRecord {
-    record(labels(API_PROD), 19, "api error")
-        .with_metadata(labels([("detected_level", "error"), ("trace_id", "abc")]))
+    record(api_prod_labels(), 19, "api error").with_metadata(log_labels([
+        LabelPair::new("detected_level", "error"),
+        LabelPair::new("trace_id", "abc"),
+    ]))
 }
 
 async fn push_encoded(encoding: &str, payload: impl Into<Body>) -> PushOutcome {
@@ -492,8 +547,8 @@ async fn loki_push_endpoint_accepts_json_content_type_parameters() {
 
     assert!(
         outcome.accepted()
-            == [record(labels(API), 19, "api error")
-                .with_metadata(labels([("detected_level", "error")]))]
+            == [record(api_labels(), 19, "api error")
+                .with_metadata(log_labels([LabelPair::new("detected_level", "error")]))]
     );
 }
 
@@ -508,8 +563,8 @@ async fn deprecated_api_prom_push_endpoint_writes_wal_records() {
 
     assert!(
         outcome.accepted()
-            == [record(labels(API_PROD), 19, "api error")
-                .with_metadata(labels([("detected_level", "error")]))]
+            == [record(api_prod_labels(), 19, "api error")
+                .with_metadata(log_labels([LabelPair::new("detected_level", "error")]))]
     );
 }
 
@@ -529,10 +584,10 @@ async fn loki_push_endpoint_accepts_snappy_protobuf_payloads() {
     assert!(
         outcome.accepted()
             == [
-                record(labels(API_PROD), 19, "api error").with_metadata(labels([
-                    ("detected_level", "error"),
-                    ("status", "500"),
-                    ("trace_id", "abc"),
+                record(api_prod_labels(), 19, "api error").with_metadata(log_labels([
+                    LabelPair::new("detected_level", "error"),
+                    LabelPair::new("status", "500"),
+                    LabelPair::new("trace_id", "abc"),
                 ]))
             ]
     );
@@ -540,38 +595,12 @@ async fn loki_push_endpoint_accepts_snappy_protobuf_payloads() {
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_empty_protobuf_labels_with_unknown_service() {
-    let outcome = push_proto(
-        "{}",
-        proto_entry(LokiProtoTimestamp {
-            seconds: 0,
-            nanos: 19,
-        }),
-    )
-    .await;
-
-    assert!(
-        outcome.accepted()
-            == [record(labels(UNKNOWN_SERVICE), 19, "api error")
-                .with_metadata(labels([("detected_level", "error")]))]
-    );
+    push_empty_proto_labels("{}").await;
 }
 
 #[tokio::test]
 async fn loki_push_endpoint_accepts_empty_string_protobuf_labels_with_unknown_service() {
-    let outcome = push_proto(
-        "",
-        proto_entry(LokiProtoTimestamp {
-            seconds: 0,
-            nanos: 19,
-        }),
-    )
-    .await;
-
-    assert!(
-        outcome.accepted()
-            == [record(labels(UNKNOWN_SERVICE), 19, "api error")
-                .with_metadata(labels([("detected_level", "error")]))]
-    );
+    push_empty_proto_labels("").await;
 }
 
 #[tokio::test]
@@ -639,8 +668,12 @@ async fn loki_push_endpoint_accepts_duplicate_protobuf_structured_metadata_using
 
     assert!(
         outcome.accepted()
-            == [record(labels(API), 19, "api error")
-                .with_metadata(labels([("detected_level", "error"), ("trace_id", "def")]))]
+            == [
+                record(api_labels(), 19, "api error").with_metadata(log_labels([
+                    LabelPair::new("detected_level", "error"),
+                    LabelPair::new("trace_id", "def")
+                ]))
+            ]
     );
 }
 
@@ -658,8 +691,12 @@ async fn loki_push_endpoint_accepts_invalid_protobuf_structured_metadata_name() 
 
     assert!(
         outcome.accepted()
-            == [record(labels(API), 19, "api error")
-                .with_metadata(labels([("detected_level", "error"), ("9bad", "metadata")]))]
+            == [
+                record(api_labels(), 19, "api error").with_metadata(log_labels([
+                    LabelPair::new("detected_level", "error"),
+                    LabelPair::new("9bad", "metadata")
+                ]))
+            ]
     );
 }
 
@@ -774,7 +811,7 @@ async fn loki_push_endpoint_rejects_negative_protobuf_timestamp_like_loki_withou
     .await
     .unwrap();
 
-    let (status, body) = push(
+    let response = push(
         &app,
         push_request(
             PUSH,
@@ -791,8 +828,8 @@ async fn loki_push_endpoint_rejects_negative_protobuf_timestamp_like_loki_withou
     .await;
 
     PushOutcome {
-        status,
-        body,
+        status: response.status,
+        body: response.body,
         records: sink.records(),
     }
     .rejected_containing(&[
@@ -855,11 +892,14 @@ async fn loki_push_endpoint_accepts_duplicate_json_labels_using_last_value() {
     assert!(
         outcome.accepted()
             == [record(
-                labels([("app", "worker"), ("service_name", "worker")]),
+                log_labels([
+                    LabelPair::new("app", "worker"),
+                    LabelPair::new("service_name", "worker")
+                ]),
                 19,
                 "api error"
             )
-            .with_metadata(labels([("detected_level", "error")]))]
+            .with_metadata(log_labels([LabelPair::new("detected_level", "error")]))]
     );
 }
 
@@ -876,8 +916,8 @@ async fn loki_push_endpoint_accepts_empty_json_labels_with_unknown_service() {
 
     assert!(
         outcome.accepted()
-            == [record(labels(UNKNOWN_SERVICE), 19, "api info")
-                .with_metadata(labels([("detected_level", "info")]))]
+            == [record(unknown_service_labels(), 19, "api info")
+                .with_metadata(log_labels([LabelPair::new("detected_level", "info")]))]
     );
 }
 
@@ -890,8 +930,12 @@ async fn loki_push_endpoint_accepts_invalid_json_structured_metadata_name() {
 
     assert!(
         outcome.accepted()
-            == [record(labels(API), 19, "api error")
-                .with_metadata(labels([("detected_level", "error"), ("9bad", "metadata")]))]
+            == [
+                record(api_labels(), 19, "api error").with_metadata(log_labels([
+                    LabelPair::new("detected_level", "error"),
+                    LabelPair::new("9bad", "metadata")
+                ]))
+            ]
     );
 }
 
@@ -923,8 +967,12 @@ async fn loki_push_endpoint_accepts_duplicate_json_structured_metadata_using_las
 
     assert!(
         outcome.accepted()
-            == [record(labels(API), 19, "api error")
-                .with_metadata(labels([("detected_level", "error"), ("trace_id", "def")]))]
+            == [
+                record(api_labels(), 19, "api error").with_metadata(log_labels([
+                    LabelPair::new("detected_level", "error"),
+                    LabelPair::new("trace_id", "def")
+                ]))
+            ]
     );
 }
 
@@ -934,7 +982,7 @@ async fn loki_push_endpoint_rejects_non_string_json_structured_metadata_without_
     let app = distributor_router(sink.clone());
 
     for structured_metadata in [json!({"status": 500}), json!({"nested": {"status": "500"}})] {
-        let (status, body) = push(
+        let response = push(
             &app,
             push_request(
                 PUSH,
@@ -944,8 +992,8 @@ async fn loki_push_endpoint_rejects_non_string_json_structured_metadata_without_
         )
         .await;
 
-        assert!(status == StatusCode::BAD_REQUEST);
-        assert!(body.contains(
+        assert!(response.status == StatusCode::BAD_REQUEST);
+        assert!(response.body.contains(
             "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value is string"
         ));
     }

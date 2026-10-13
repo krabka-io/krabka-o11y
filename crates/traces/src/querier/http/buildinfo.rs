@@ -1,4 +1,4 @@
-use super::{IntoResponse, Json, Response, json};
+use super::Response;
 
 /// Tempo-compatible build info.
 ///
@@ -8,16 +8,5 @@ use super::{IntoResponse, Json, Response, json};
 /// view. The Prometheus-style `{status, data:{version,...}}` shape matches
 /// Tempo's `/api/status/buildinfo`.
 pub(crate) async fn buildinfo() -> Response {
-    Json(json!({
-        "status": "success",
-        "data": {
-            "version": "3.0.3",
-            "revision": "krabka",
-            "branch": "main",
-            "buildUser": "krabka",
-            "buildDate": "",
-            "goVersion": "",
-        },
-    }))
-    .into_response()
+    crate::frontend::server::buildinfo().await
 }

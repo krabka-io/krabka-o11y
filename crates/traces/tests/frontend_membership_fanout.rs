@@ -26,8 +26,9 @@ use std::{
 use assert2::check;
 use axum::{
     Router,
+    body::Body,
     extract::State,
-    http::{StatusCode, Uri},
+    http::{Response, StatusCode, Uri},
     response::IntoResponse as _,
     routing::get,
 };
@@ -63,8 +64,31 @@ struct StubState {
     readiness: Readiness,
 }
 
+#[derive(Clone, Copy)]
+struct ReadinessResponse {
+    status: StatusCode,
+    body: &'static str,
+}
+
 /// The status and body one stub querier serves on `/ready`.
-type Readiness = Arc<Mutex<(StatusCode, &'static str)>>;
+type Readiness = Arc<Mutex<ReadinessResponse>>;
+
+#[derive(Debug, PartialEq)]
+struct HttpResult<T> {
+    status: StatusCode,
+    body: T,
+}
+
+struct ReadyQuerierPair {
+    up: Stub,
+    down: Stub,
+    frontend: std::net::SocketAddr,
+}
+
+struct FrontendRefreshServer {
+    addr: std::net::SocketAddr,
+    shutdown: CancellationToken,
+}
 
 /// A running stub querier: where to reach it, and what it was asked.
 struct Stub {
@@ -77,7 +101,10 @@ struct Stub {
 impl Stub {
     /// Make this querier answer `/ready` the way a started one does.
     fn mark_ready(&self) {
-        *self.readiness.lock().unwrap() = (StatusCode::OK, "ready\n");
+        *self.readiness.lock().unwrap() = ReadinessResponse {
+            status: StatusCode::OK,
+            body: "ready\n",
+        };
     }
 }
 
@@ -103,14 +130,20 @@ async fn spawn_querier_holding(
         log: Arc::new(Mutex::new(Vec::new())),
         live_trace: live_trace.to_string(),
         holds_trace,
-        readiness: Arc::new(Mutex::new((readiness, ready_body))),
+        readiness: Arc::new(Mutex::new(ReadinessResponse {
+            status: readiness,
+            body: ready_body,
+        })),
     };
     let app = Router::new()
         .route(
             "/ready",
             get(|State(state): State<StubState>| async move {
-                let (status, body) = *state.readiness.lock().unwrap();
-                (status, body)
+                let readiness = *state.readiness.lock().unwrap();
+                Response::builder()
+                    .status(readiness.status)
+                    .body(Body::from(readiness.body))
+                    .expect("readiness response builds")
             }),
         )
         .route(
@@ -135,7 +168,10 @@ async fn spawn_querier_holding(
             get(|State(state): State<StubState>| async move {
                 state.log.lock().unwrap().push("by-id".to_string());
                 if !state.holds_trace {
-                    return (StatusCode::NOT_FOUND, "trace not found").into_response();
+                    return axum::http::Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(axum::body::Body::from("trace not found"))
+                        .unwrap();
                 }
                 axum::Json(json!({
                     "trace": {
@@ -188,13 +224,15 @@ fn two_block_catalog() -> TraceIndexCatalog {
             compressed: ByteSize::from_bytes(100),
         }],
     };
-    TraceIndexCatalog::new(BTreeMap::from([(
+    let mut catalog = BTreeMap::new();
+    catalog.insert(
         "t1".to_string(),
         vec![
             block("blocks/a.parquet", 0, 1_000_000_000),
             block("blocks/b.parquet", 1_000_000_000, 2_000_000_000),
         ],
-    )]))
+    );
+    TraceIndexCatalog::new(catalog)
 }
 
 fn cfg() -> FrontendConfig {
@@ -217,6 +255,18 @@ async fn serve(endpoints: &[String], cfg: FrontendConfig) -> std::net::SocketAdd
     let membership = MembershipView::empty();
     membership.publish(refresh_membership(endpoints, &probe).await);
     serve_with(membership, cfg).await
+}
+
+async fn frontend_with_ready_and_unready_queriers(config: FrontendConfig) -> ReadyQuerierPair {
+    let up = spawn_querier(StatusCode::OK, "ready\n", "hot-up").await;
+    let down = spawn_querier(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "not ready: live-store\n",
+        "hot-down",
+    )
+    .await;
+    let frontend = serve(&[up.addr.clone(), down.addr.clone()], config).await;
+    ReadyQuerierPair { up, down, frontend }
 }
 
 async fn serve_with(membership: MembershipView, cfg: FrontendConfig) -> std::net::SocketAddr {
@@ -250,7 +300,7 @@ async fn serve_with_readiness(
     addr
 }
 
-async fn search(frontend: std::net::SocketAddr) -> (StatusCode, Value) {
+async fn search(frontend: std::net::SocketAddr) -> HttpResult<Value> {
     let resp = reqwest::Client::new()
         .get(format!(
             "http://{frontend}/api/search?q=%7B%7D&start=0&end=2"
@@ -262,7 +312,7 @@ async fn search(frontend: std::net::SocketAddr) -> (StatusCode, Value) {
         .unwrap();
     let status = resp.status();
     let body = resp.json::<Value>().await.unwrap_or(Value::Null);
-    (status, body)
+    HttpResult { status, body }
 }
 
 fn trace_ids(body: &Value) -> BTreeSet<String> {
@@ -302,7 +352,7 @@ async fn a_whole_pool_answers_with_no_warnings_and_the_plain_tempo_body() {
     let endpoints = vec![a.addr.clone(), b.addr.clone()];
     let frontend = serve(&endpoints, cfg()).await;
 
-    let (status, body) = search(frontend).await;
+    let HttpResult { status, body } = search(frontend).await;
     check!(status == StatusCode::OK);
     check!(
         body.get("warnings").is_none(),
@@ -331,17 +381,10 @@ async fn a_whole_pool_answers_with_no_warnings_and_the_plain_tempo_body() {
 /// client is told which querier is missing and why.
 #[tokio::test]
 async fn a_querier_that_is_not_ready_takes_no_jobs_and_is_named_in_the_response() {
-    let up = spawn_querier(StatusCode::OK, "ready\n", "hot-up").await;
-    let down = spawn_querier(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "not ready: live-store\n",
-        "hot-down",
-    )
-    .await;
-    let endpoints = vec![up.addr.clone(), down.addr.clone()];
-    let frontend = serve(&endpoints, cfg()).await;
+    let ReadyQuerierPair { up, down, frontend } =
+        frontend_with_ready_and_unready_queriers(cfg()).await;
 
-    let (status, body) = search(frontend).await;
+    let HttpResult { status, body } = search(frontend).await;
     check!(status == StatusCode::OK);
 
     // Not one job -- cold or live -- went to the querier that failed its probe.
@@ -384,7 +427,8 @@ async fn a_querier_that_dies_after_the_probe_fails_the_query_rather_than_shrinki
     let dead_addr = dead.local_addr().unwrap().to_string();
     let dead_peer = tokio::spawn(async move {
         loop {
-            let (connection, _) = dead.accept().await.unwrap();
+            let accepted_connection = dead.accept().await.unwrap();
+            let connection = accepted_connection.0;
             drop(connection);
         }
     });
@@ -392,7 +436,7 @@ async fn a_querier_that_dies_after_the_probe_fails_the_query_rather_than_shrinki
     let membership = MembershipView::fixed([up.addr.clone(), dead_addr]);
     let frontend = serve_with(membership, cfg()).await;
 
-    let (status, _body) = search(frontend).await;
+    let HttpResult { status, .. } = search(frontend).await;
     dead_peer.abort();
     check!(
         status == StatusCode::BAD_GATEWAY,
@@ -412,7 +456,7 @@ async fn an_empty_pool_fails_rather_than_returning_an_empty_result() {
     .await;
     let frontend = serve(std::slice::from_ref(&down.addr), cfg()).await;
 
-    let (status, _body) = search(frontend).await;
+    let HttpResult { status, .. } = search(frontend).await;
     check!(status == StatusCode::BAD_GATEWAY);
     check!(down.log.lock().unwrap().is_empty());
 }
@@ -422,26 +466,16 @@ async fn an_empty_pool_fails_rather_than_returning_an_empty_result() {
 /// costs nothing at all and the answer must not claim otherwise.
 #[tokio::test]
 async fn a_cold_only_window_loses_nothing_to_an_excluded_querier_and_says_nothing() {
-    let up = spawn_querier(StatusCode::OK, "ready\n", "hot-up").await;
-    let down = spawn_querier(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "not ready: live-store\n",
-        "hot-down",
-    )
-    .await;
-    let endpoints = vec![up.addr.clone(), down.addr.clone()];
-    let frontend = serve(
-        &endpoints,
-        FrontendConfig {
-            // The hot tier starts far past the query window, so no live shard
-            // is planned.
+    let ReadyQuerierPair { up, frontend, .. } =
+        frontend_with_ready_and_unready_queriers(FrontendConfig {
+            // The hot tier starts far past the query window, so no live shard is
+            // planned.
             hot_frontier_ns: i64::MAX,
             ..FrontendConfig::default()
-        },
-    )
-    .await;
+        })
+        .await;
 
-    let (status, body) = search(frontend).await;
+    let HttpResult { status, body } = search(frontend).await;
     check!(status == StatusCode::OK);
     check!(live_job_count(&up) == 0, "no live shard was planned");
     check!(cold_job_count(&up) == 2, "both blocks still scanned");
@@ -452,7 +486,7 @@ async fn a_cold_only_window_loses_nothing_to_an_excluded_querier_and_says_nothin
     check!(trace_ids(&body) == BTreeSet::from(["cold".to_string()]));
 }
 
-async fn by_id(frontend: std::net::SocketAddr) -> (StatusCode, String) {
+async fn by_id(frontend: std::net::SocketAddr) -> HttpResult<String> {
     let resp = reqwest::Client::new()
         .get(format!(
             "http://{frontend}/api/v2/traces/{}",
@@ -464,7 +498,10 @@ async fn by_id(frontend: std::net::SocketAddr) -> (StatusCode, String) {
         .await
         .unwrap();
     let status = resp.status();
-    (status, resp.text().await.unwrap_or_default())
+    HttpResult {
+        status,
+        body: resp.text().await.unwrap_or_default(),
+    }
 }
 
 /// A by-id 404 asserts the trace does not exist anywhere. With a querier out
@@ -472,16 +509,10 @@ async fn by_id(frontend: std::net::SocketAddr) -> (StatusCode, String) {
 /// says what was never looked at instead of claiming absence.
 #[tokio::test]
 async fn a_by_id_miss_admits_which_querier_was_never_asked() {
-    let up = spawn_querier(StatusCode::OK, "ready\n", "hot-up").await;
-    let down = spawn_querier(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "not ready: live-store\n",
-        "hot-down",
-    )
-    .await;
-    let frontend = serve(&[up.addr.clone(), down.addr.clone()], cfg()).await;
+    let ReadyQuerierPair { down, frontend, .. } =
+        frontend_with_ready_and_unready_queriers(cfg()).await;
 
-    let (status, body) = by_id(frontend).await;
+    let HttpResult { status, body } = by_id(frontend).await;
     check!(status == StatusCode::NOT_FOUND);
     check!(body.contains(&down.addr), "{body}");
     check!(body.contains("live-store"), "{body}");
@@ -496,7 +527,7 @@ async fn a_by_id_miss_on_a_whole_pool_is_the_plain_tempo_404() {
     let b = spawn_querier(StatusCode::OK, "ready\n", "hot-b").await;
     let frontend = serve(&[a.addr.clone(), b.addr.clone()], cfg()).await;
 
-    let (status, body) = by_id(frontend).await;
+    let HttpResult { status, body } = by_id(frontend).await;
     check!(status == StatusCode::NOT_FOUND);
     check!(body == "trace not found", "{body}");
 }
@@ -539,7 +570,7 @@ async fn an_assembled_trace_is_partial_when_a_querier_was_left_out() {
 
 /// Serve a frontend the way the role binary does, with the real probe loop
 /// moving the `querier-membership` gate that its own `/ready` reports.
-async fn serve_with_refresh(endpoints: Vec<String>) -> (std::net::SocketAddr, CancellationToken) {
+async fn serve_with_refresh(endpoints: Vec<String>) -> FrontendRefreshServer {
     let readiness = RoleReadiness::new();
     let gate = readiness.gate(QUERIER_MEMBERSHIP_GATE);
     let probe: Arc<dyn ReadinessProbe> = Arc::new(
@@ -561,11 +592,11 @@ async fn serve_with_refresh(endpoints: Vec<String>) -> (std::net::SocketAddr, Ca
         shutdown.clone(),
     ));
     let addr = serve_with_readiness(membership, cfg(), readiness).await;
-    (addr, shutdown)
+    FrontendRefreshServer { addr, shutdown }
 }
 
 /// Read one readiness path off the frontend.
-async fn probe_path(frontend: std::net::SocketAddr, path: &str) -> (StatusCode, String) {
+async fn probe_path(frontend: std::net::SocketAddr, path: &str) -> HttpResult<String> {
     let resp = reqwest::Client::new()
         .get(format!("http://{frontend}{path}"))
         .timeout(Duration::from_secs(5))
@@ -573,7 +604,10 @@ async fn probe_path(frontend: std::net::SocketAddr, path: &str) -> (StatusCode, 
         .await
         .unwrap();
     let status = resp.status();
-    (status, resp.text().await.unwrap_or_default())
+    HttpResult {
+        status,
+        body: resp.text().await.unwrap_or_default(),
+    }
 }
 
 /// Poll `path` until it answers `want`, or give up and return what it last
@@ -583,11 +617,11 @@ async fn await_path(
     frontend: std::net::SocketAddr,
     path: &str,
     want: StatusCode,
-) -> (StatusCode, String) {
+) -> HttpResult<String> {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         let got = probe_path(frontend, path).await;
-        if got.0 == want || std::time::Instant::now() >= deadline {
+        if got.status == want || std::time::Instant::now() >= deadline {
             return got;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -608,12 +642,15 @@ async fn the_frontend_is_unready_until_a_querier_passes_its_probe() {
         "hot-a",
     )
     .await;
-    let (frontend, shutdown) = serve_with_refresh(vec![querier.addr.clone()]).await;
+    let FrontendRefreshServer {
+        addr: frontend,
+        shutdown,
+    } = serve_with_refresh(vec![querier.addr.clone()]).await;
 
-    let starting = (
-        StatusCode::SERVICE_UNAVAILABLE,
-        "not ready: querier-membership\n".to_string(),
-    );
+    let starting = HttpResult {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        body: "not ready: querier-membership\n".to_string(),
+    };
     for path in ["/ready", "/status"] {
         check!(
             await_path(frontend, path, StatusCode::SERVICE_UNAVAILABLE).await == starting,
@@ -622,19 +659,22 @@ async fn the_frontend_is_unready_until_a_querier_passes_its_probe() {
     }
     // And the frontend means it: a query in that state fails rather than
     // answering from nobody.
-    let (status, _body) = search(frontend).await;
+    let HttpResult { status, .. } = search(frontend).await;
     check!(status == StatusCode::BAD_GATEWAY);
 
     querier.mark_ready();
 
-    let serving = (StatusCode::OK, "ready\n".to_string());
+    let serving = HttpResult {
+        status: StatusCode::OK,
+        body: "ready\n".to_string(),
+    };
     for path in ["/ready", "/status"] {
         check!(
             await_path(frontend, path, StatusCode::OK).await == serving,
             "{path}"
         );
     }
-    let (status, body) = search(frontend).await;
+    let HttpResult { status, body } = search(frontend).await;
     check!(status == StatusCode::OK, "{body}");
     check!(trace_ids(&body) == BTreeSet::from([querier.live_trace.clone(), "cold".to_string()]));
 
@@ -647,22 +687,30 @@ async fn the_frontend_is_unready_until_a_querier_passes_its_probe() {
 #[tokio::test]
 async fn the_frontend_goes_unready_again_when_its_last_querier_does() {
     let querier = spawn_querier(StatusCode::OK, "ready\n", "hot-a").await;
-    let (frontend, shutdown) = serve_with_refresh(vec![querier.addr.clone()]).await;
+    let FrontendRefreshServer {
+        addr: frontend,
+        shutdown,
+    } = serve_with_refresh(vec![querier.addr.clone()]).await;
 
     check!(
         await_path(frontend, "/ready", StatusCode::OK).await
-            == (StatusCode::OK, "ready\n".to_string())
+            == HttpResult {
+                status: StatusCode::OK,
+                body: "ready\n".to_string()
+            }
     );
 
-    *querier.readiness.lock().unwrap() =
-        (StatusCode::SERVICE_UNAVAILABLE, "not ready: live-store\n");
+    *querier.readiness.lock().unwrap() = ReadinessResponse {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        body: "not ready: live-store\n",
+    };
 
     check!(
         await_path(frontend, "/ready", StatusCode::SERVICE_UNAVAILABLE).await
-            == (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "not ready: querier-membership\n".to_string()
-            )
+            == HttpResult {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                body: "not ready: querier-membership\n".to_string(),
+            }
     );
 
     shutdown.cancel();

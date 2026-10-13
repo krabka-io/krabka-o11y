@@ -5,11 +5,9 @@ use super::*;
 #[test]
 pub(crate) fn the_tenant_lru_removes_the_least_recently_used_tenant() {
     let mut lru = TenantLru::new(NonZeroUsize::new(2).expect("a nonzero capacity"));
-    let (a, b, c) = (
-        tenant_for_test("a"),
-        tenant_for_test("b"),
-        tenant_for_test("c"),
-    );
+    let a = tenant_for_test("a");
+    let b = tenant_for_test("b");
+    let c = tenant_for_test("c");
     *lru.get_or_insert_with(&a, || 0) += 1;
     *lru.get_or_insert_with(&b, || 0) += 1;
     check!(lru.get_mut(&a).copied() == Some(1));

@@ -44,6 +44,7 @@
 use std::collections::BTreeSet;
 
 use crate::wal_consumer_metrics::WalConsumerMetrics;
+pub(crate) use crate::wal_consumer_metrics::WalPartitionAssignment;
 
 #[cfg(test)]
 mod tests;

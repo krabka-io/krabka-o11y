@@ -1,7 +1,7 @@
 use super::{
-    AuditOutcome, HttpQueryError, OPERATION_RULE_GROUP_DELETE, Path, QuerierState,
-    RESOURCE_RULE_GROUP, RESOURCE_TENANT, RequestSecurity, Response, RulerTenant, State,
-    StatusCode, json, json_response, resource, text_response,
+    AuditOutcome, HttpQueryError, LokiRuleGroupPath, OPERATION_RULE_GROUP_DELETE, Path,
+    QuerierState, RESOURCE_RULE_GROUP, RESOURCE_TENANT, RequestSecurity, Response, RulerTenant,
+    State, StatusCode, json, json_response, resource, text_response,
 };
 
 /// `DELETE /loki/api/v1/rules/{namespace}/{group_name}`: delete one rule group.
@@ -12,12 +12,15 @@ use super::{
 pub(crate) async fn delete_loki_rule_group(
     State(state): State<QuerierState>,
     security: RequestSecurity,
-    Path((namespace, group_name)): Path<(String, String)>,
+    Path(path): Path<LokiRuleGroupPath>,
     RulerTenant(tenant): RulerTenant,
 ) -> Result<Response, HttpQueryError> {
     let resources = vec![
         resource(RESOURCE_TENANT, tenant.as_str()),
-        resource(RESOURCE_RULE_GROUP, format!("{namespace}/{group_name}")),
+        resource(
+            RESOURCE_RULE_GROUP,
+            format!("{}/{}", path.namespace, path.group_name),
+        ),
     ];
     let snapshot = {
         let mut rules = state
@@ -31,20 +34,20 @@ pub(crate) async fn delete_loki_rule_group(
                 "group does not exist\n",
             ));
         };
-        let Some(groups) = namespaces.get_mut(&namespace) else {
+        let Some(groups) = namespaces.get_mut(&path.namespace) else {
             return Ok(text_response(
                 StatusCode::NOT_FOUND,
                 "group does not exist\n",
             ));
         };
-        if groups.remove(&group_name).is_none() {
+        if groups.remove(&path.group_name).is_none() {
             return Ok(text_response(
                 StatusCode::NOT_FOUND,
                 "group does not exist\n",
             ));
         }
         if groups.is_empty() {
-            namespaces.remove(&namespace);
+            namespaces.remove(&path.namespace);
         }
         if namespaces.is_empty() {
             rules.remove(tenant.as_str());

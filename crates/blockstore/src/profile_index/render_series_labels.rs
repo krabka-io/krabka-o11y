@@ -9,7 +9,7 @@ use super::Labels;
 pub(crate) fn render_series_labels(labels: &Labels) -> String {
     labels
         .iter()
-        .map(|(name, value)| format!("{name}={value:?}"))
+        .map(|pair| format!("{}={:?}", pair.name, pair.value))
         .collect::<Vec<_>>()
         .join(", ")
 }

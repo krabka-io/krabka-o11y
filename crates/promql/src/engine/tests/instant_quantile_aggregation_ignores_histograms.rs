@@ -1,26 +1,35 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct LatencySample {
+    instance: &'static str,
+    value: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn instant_quantile_aggregation_ignores_histograms() {
     let mut store = InMemoryMetricStore::new();
-    for (instance, value) in [("a", 2.0), ("b", 6.0)] {
+    for sample in [
+        LatencySample::builder().instance("a").value(2.0).build(),
+        LatencySample::builder().instance("b").value(6.0).build(),
+    ] {
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "latency_seconds"),
-                ("job", "api"),
-                ("instance", instance),
+                crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", sample.instance),
             ]),
             10_000,
-            value,
+            sample.value,
         );
     }
     store.push_histogram(
         "tenant-a",
         labels(&[
-            ("__name__", "latency_seconds"),
-            ("job", "api"),
-            ("instance", "hist"),
+            crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "hist"),
         ]),
         10_000,
         native_histogram(4.0, 10.0),

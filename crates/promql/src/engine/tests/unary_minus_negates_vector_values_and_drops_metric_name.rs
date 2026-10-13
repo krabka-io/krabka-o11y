@@ -5,7 +5,10 @@ pub(crate) async fn unary_minus_negates_vector_values_and_drops_metric_name() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "temperature_celsius"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "temperature_celsius"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         10_000,
         3.5,
     );

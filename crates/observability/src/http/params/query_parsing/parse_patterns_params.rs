@@ -1,6 +1,6 @@
 use super::{
-    HttpQueryError, PatternsParams, decode_form_component, parse_loki_duration_query_param,
-    parse_loki_timestamp_query_param, split_query_param_pairs,
+    HttpQueryError, PatternsParams, decoded_query_param_pairs, parse_loki_duration_query_param,
+    parse_loki_timestamp_query_param,
 };
 
 pub(crate) fn parse_patterns_params(
@@ -10,20 +10,12 @@ pub(crate) fn parse_patterns_params(
     let mut start = None;
     let mut end = None;
     let mut step = None;
-    let Some(raw_query) = raw_query else {
-        return Err(HttpQueryError::MissingQueryParameter("query"));
-    };
-
-    for pair in split_query_param_pairs(raw_query, &["query", "start", "end", "step"]) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = decode_form_component(key)?;
-        let value = decode_form_component(value)?;
-
-        match key.as_str() {
-            "query" => query = Some(value),
-            "start" => start = Some(parse_loki_timestamp_query_param("start", &value)?),
-            "end" => end = Some(parse_loki_timestamp_query_param("end", &value)?),
-            "step" => step = Some(parse_loki_duration_query_param("step", &value)?),
+    for pair in decoded_query_param_pairs(raw_query, &["query", "start", "end", "step"])? {
+        match pair.key.as_str() {
+            "query" => query = Some(pair.value),
+            "start" => start = Some(parse_loki_timestamp_query_param("start", &pair.value)?),
+            "end" => end = Some(parse_loki_timestamp_query_param("end", &pair.value)?),
+            "step" => step = Some(parse_loki_duration_query_param("step", &pair.value)?),
             _ => {}
         }
     }

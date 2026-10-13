@@ -11,7 +11,9 @@ pub fn encode_chunked_read_frames(
         .results
         .into_iter()
         .enumerate()
-        .flat_map(|(query_index, result)| {
+        .flat_map(|query_entry| {
+            let query_index = query_entry.0;
+            let result = query_entry.1;
             result
                 .timeseries
                 .into_iter()

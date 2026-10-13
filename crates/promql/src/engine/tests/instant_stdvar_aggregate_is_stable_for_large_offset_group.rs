@@ -8,16 +8,29 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_stdvar_aggregate_is_stable_for_large_offset_group() {
     let mut store = InMemoryMetricStore::new();
-    for (instance, value) in [1e8, 1e8 + 1.0, 1e8 + 2.0].into_iter().enumerate() {
+    for case in [
+        InstanceValueCase {
+            instance: "0",
+            value: 1e8,
+        },
+        InstanceValueCase {
+            instance: "1",
+            value: 1e8 + 1.0,
+        },
+        InstanceValueCase {
+            instance: "2",
+            value: 1e8 + 2.0,
+        },
+    ] {
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "big"),
-                ("job", "api"),
-                ("instance", &instance.to_string()),
+                crate::test_support::TestLabelPair::new("__name__", "big"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", case.instance),
             ]),
             10_000,
-            value,
+            case.value,
         );
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

@@ -92,8 +92,30 @@ mod tests {
             ..Limits::default()
         };
 
-        for (requested, want) in [(0, 2048), (-1, 2048), (1024, 1024), (10_000, 4096)] {
-            check!(limits.effective_max_nodes(requested) == want);
+        struct MaxNodesCase {
+            requested: i64,
+            expected: i64,
+        }
+
+        for case in [
+            MaxNodesCase {
+                requested: 0,
+                expected: 2048,
+            },
+            MaxNodesCase {
+                requested: -1,
+                expected: 2048,
+            },
+            MaxNodesCase {
+                requested: 1024,
+                expected: 1024,
+            },
+            MaxNodesCase {
+                requested: 10_000,
+                expected: 4096,
+            },
+        ] {
+            check!(limits.effective_max_nodes(case.requested) == case.expected);
         }
     }
 

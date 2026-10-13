@@ -14,8 +14,10 @@ impl FourColdApiBlocks {
         let store = RecordingObjectStore::new().with_get_delay(Duration::from_millis(25));
         let prefix = ObjectPath::from("observability/logs");
         let mut label_index = LabelIndex::default();
-        let api =
-            label_index.insert_series("tenant-a", krabka_blockstore::labels([("app", "api")]));
+        let api = label_index.insert_series(
+            "tenant-a",
+            krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "api")]),
+        );
         let mut block_index = BlockIndex::default();
         for block_id in 0_i64..4 {
             let start_ns = block_id * 10;

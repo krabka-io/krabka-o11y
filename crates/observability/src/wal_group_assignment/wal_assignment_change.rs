@@ -1,4 +1,4 @@
-use super::BTreeSet;
+use super::{BTreeSet, WalPartitionAssignment};
 
 /// The difference between two assignments of one consumer group member.
 ///
@@ -9,15 +9,15 @@ pub struct WalAssignmentChange {
     /// Partitions the group took away from this member since the last poll.
     ///
     /// Each one requires any uncommitted buffer to be fenced from later writes.
-    pub revoked: Vec<(String, i32)>,
+    pub revoked: Vec<WalPartitionAssignment>,
     /// Partitions the group placed on this member since the last poll.
-    pub gained: Vec<(String, i32)>,
+    pub gained: Vec<WalPartitionAssignment>,
 }
 
 impl WalAssignmentChange {
     pub(super) fn between(
-        previous: &BTreeSet<(String, i32)>,
-        current: &BTreeSet<(String, i32)>,
+        previous: &BTreeSet<WalPartitionAssignment>,
+        current: &BTreeSet<WalPartitionAssignment>,
     ) -> Self {
         Self {
             revoked: previous.difference(current).cloned().collect(),

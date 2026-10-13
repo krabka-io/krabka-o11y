@@ -52,6 +52,16 @@ const EMPTY_BUILD_ID: &str = "Empty GNU build ID, therefore no upload is needed.
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
+struct StoredRecordingRules {
+    response: pb::settings::v1::ListRecordingRulesResponse,
+    version: Option<UpdateVersion>,
+}
+
+struct UploadDecision {
+    should_upload: bool,
+    reason: &'static str,
+}
+
 fn admin_error(code: Code, message: impl Into<String>) -> ConnectError {
     ConnectError::new(code, message.into())
 }
@@ -225,7 +235,7 @@ async fn update_rules<T>(
 ) -> Result<T, ConnectError> {
     let key = Path::from(rules_key(tenant));
     for _ in 0..8 {
-        let (mut stored, version) = match store.get(&key).await {
+        let stored_rules = match store.get(&key).await {
             Ok(object) => {
                 let version = UpdateVersion {
                     e_tag: object.meta.e_tag.clone(),
@@ -237,14 +247,19 @@ async fn update_rules<T>(
                     .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
                 let stored = pb::settings::v1::ListRecordingRulesResponse::decode(bytes)
                     .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
-                (stored, Some(version))
+                StoredRecordingRules {
+                    response: stored,
+                    version: Some(version),
+                }
             }
-            Err(object_store::Error::NotFound { .. }) => (
-                pb::settings::v1::ListRecordingRulesResponse::default(),
-                None,
-            ),
+            Err(object_store::Error::NotFound { .. }) => StoredRecordingRules {
+                response: pb::settings::v1::ListRecordingRulesResponse::default(),
+                version: None,
+            },
             Err(error) => return Err(admin_error(Code::Internal, error.to_string())),
         };
+        let mut stored = stored_rules.response;
+        let version = stored_rules.version;
         let output = update(&mut stored)?;
         stored.rules.sort_by(|left, right| left.id.cmp(&right.id));
         let options = PutOptions {
@@ -697,15 +712,19 @@ pub(crate) async fn diff_adhoc_handler<S: ProfileStore>(
     let left = decode_profile(&left.profile)?;
     let right = decode_profile(&right.profile)?;
     let left_types = left.sample_types();
-    let right_types: BTreeSet<_> = right.sample_types().into_iter().collect();
+    let right_types = right.sample_types();
     let common: Vec<_> = left_types
         .into_iter()
-        .filter(|profile_type| right_types.contains(profile_type))
+        .filter(|profile_type| {
+            right_types.iter().any(|right_type| {
+                right_type.name == profile_type.name && right_type.unit == profile_type.unit
+            })
+        })
         .collect();
     let selected = match req.0.profile_type.as_deref() {
         Some(selected) => common
             .iter()
-            .find(|(candidate, _)| candidate == selected)
+            .find(|candidate| candidate.name == selected)
             .ok_or_else(|| admin_error(Code::InvalidArgument, "profile type not found"))?,
         None => common.first().ok_or_else(|| {
             admin_error(
@@ -715,16 +734,19 @@ pub(crate) async fn diff_adhoc_handler<S: ProfileStore>(
         })?,
     };
     let max_nodes = state.effective_max_nodes(&tenant, req.0.max_nodes.unwrap_or_default());
-    let left_tree = profile_tree(&left, &selected.0, &selected.1)?;
-    let right_tree = profile_tree(&right, &selected.0, &selected.1)?;
+    let left_tree = profile_tree(&left, &selected.name, &selected.unit)?;
+    let right_tree = profile_tree(&right, &selected.name, &selected.unit)?;
     let flamebearer_profile = diff_json(
         diff_trees(&left_tree, &right_tree, max_nodes),
-        &selected.0,
-        &selected.1,
+        &selected.name,
+        &selected.unit,
     )?;
     Ok(ConnectResponse::new(
         pb::adhocprofiles::v1::AdHocProfilesDiffResponse {
-            profile_types: common.into_iter().map(|(name, _)| name).collect(),
+            profile_types: common
+                .into_iter()
+                .map(|sample_type| sample_type.name)
+                .collect(),
             flamebearer_profile,
         },
     ))
@@ -751,7 +773,7 @@ fn adhoc_response(
     let unit = profile
         .sample_types()
         .into_iter()
-        .find_map(|(name, unit)| (name == selected).then_some(unit))
+        .find_map(|sample_type| (sample_type.name == selected).then_some(sample_type.unit))
         .ok_or_else(|| admin_error(Code::InvalidArgument, "profile type not found"))?;
     let tree = profile_tree(&profile, &selected, &unit)?;
     Ok(pb::adhocprofiles::v1::AdHocProfilesGetResponse {
@@ -806,7 +828,7 @@ fn profile_types(profile: &PprofProfile) -> Vec<String> {
     profile
         .sample_types()
         .into_iter()
-        .map(|(sample_type, _)| sample_type)
+        .map(|sample_type| sample_type.name)
         .collect()
 }
 
@@ -814,7 +836,7 @@ fn profile_tree(profile: &PprofProfile, selected: &str, unit: &str) -> Result<Tr
     let sample_types = profile.sample_types();
     let index = sample_types
         .iter()
-        .position(|(sample_type, sample_unit)| sample_type == selected && sample_unit == unit)
+        .position(|sample_type| sample_type.name == selected && sample_type.unit == unit)
         .ok_or_else(|| {
             admin_error(
                 Code::InvalidArgument,
@@ -996,21 +1018,33 @@ pub(crate) async fn should_initiate_upload_handler<S: ProfileStore>(
     }
     let existing =
         debuginfo_metadata(state.admin_store.as_ref(), &tenant, &file.gnu_build_id).await?;
-    let (should_upload, reason) = match existing.as_ref() {
-        None => (true, FIRST_SEEN),
+    let decision = match existing.as_ref() {
+        None => UploadDecision {
+            should_upload: true,
+            reason: FIRST_SEEN,
+        },
         Some(metadata)
             if metadata.state == 0
                 && metadata.started_at.as_ref().is_some_and(|stamp| {
                     now_seconds().saturating_sub(stamp.seconds) >= UPLOAD_STALE_SECS
                 }) =>
         {
-            (true, UPLOAD_STALE)
+            UploadDecision {
+                should_upload: true,
+                reason: UPLOAD_STALE,
+            }
         }
-        Some(metadata) if metadata.state == 0 => (false, UPLOAD_IN_PROGRESS),
-        Some(_) => (false, ALREADY_EXISTS),
+        Some(metadata) if metadata.state == 0 => UploadDecision {
+            should_upload: false,
+            reason: UPLOAD_IN_PROGRESS,
+        },
+        Some(_) => UploadDecision {
+            should_upload: false,
+            reason: ALREADY_EXISTS,
+        },
     };
-    if should_upload {
-        if reason == UPLOAD_STALE {
+    if decision.should_upload {
+        if decision.reason == UPLOAD_STALE {
             state.metrics.debuginfo_upload_retries.inc();
         }
         let metadata = pb::debuginfo::v1alpha1::ObjectMetadata {
@@ -1032,8 +1066,8 @@ pub(crate) async fn should_initiate_upload_handler<S: ProfileStore>(
     }
     Ok(ConnectResponse::new(
         pb::debuginfo::v1alpha1::ShouldInitiateUploadResponse {
-            should_initiate_upload: should_upload,
-            reason: reason.to_string(),
+            should_initiate_upload: decision.should_upload,
+            reason: decision.reason.to_string(),
         },
     ))
 }
@@ -1044,22 +1078,37 @@ pub(crate) async fn upload_debuginfo_handler<S: ProfileStore>(
     AxumPath(build_id): AxumPath<String>,
     request: Request,
 ) -> Response {
+    struct UploadFailure {
+        status: StatusCode,
+        message: &'static str,
+    }
+
     let result = async {
         let headers = request.headers().clone();
-        let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-            .map_err(|_| (StatusCode::BAD_REQUEST, "invalid tenant"))?;
-        authorize_tenant(&principal, &tenant)
-            .map_err(|_| (StatusCode::FORBIDDEN, "tenant access denied"))?;
-        let build_id = canonical_build_id(&build_id)
-            .map_err(|_| (StatusCode::BAD_REQUEST, "invalid gnu_build_id"))?;
+        let tenant =
+            tenant_from_headers(&headers, &state.tenant_policy).map_err(|_| UploadFailure {
+                status: StatusCode::BAD_REQUEST,
+                message: "invalid tenant",
+            })?;
+        authorize_tenant(&principal, &tenant).map_err(|_| UploadFailure {
+            status: StatusCode::FORBIDDEN,
+            message: "tenant access denied",
+        })?;
+        let build_id = canonical_build_id(&build_id).map_err(|_| UploadFailure {
+            status: StatusCode::BAD_REQUEST,
+            message: "invalid gnu_build_id",
+        })?;
         let metadata = debuginfo_metadata(state.admin_store.as_ref(), &tenant, &build_id)
             .await
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
+            .map_err(|_| UploadFailure {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: "internal error",
+            })?;
         if metadata.is_none_or(|metadata| metadata.state != 0) {
-            return Err((
-                StatusCode::PRECONDITION_FAILED,
-                "no pending upload for this build ID",
-            ));
+            return Err(UploadFailure {
+                status: StatusCode::PRECONDITION_FAILED,
+                message: "no pending upload for this build ID",
+            });
         }
         let path = Path::from(format!("{}/exe", debuginfo_prefix(&tenant, &build_id)));
         let mut writer = BufWriter::new(Arc::clone(&state.admin_store), path);
@@ -1067,18 +1116,21 @@ pub(crate) async fn upload_debuginfo_handler<S: ProfileStore>(
         let upload = async {
             let mut size = 0_usize;
             while let Some(chunk) = body.next().await {
-                let chunk = chunk.map_err(|_| (StatusCode::BAD_REQUEST, "invalid upload body"))?;
+                let chunk = chunk.map_err(|_| UploadFailure {
+                    status: StatusCode::BAD_REQUEST,
+                    message: "invalid upload body",
+                })?;
                 size = size.saturating_add(chunk.len());
                 if size > DEBUGINFO_MAX_BYTES {
-                    return Err((
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        "debug info upload is too large",
-                    ));
+                    return Err(UploadFailure {
+                        status: StatusCode::PAYLOAD_TOO_LARGE,
+                        message: "debug info upload is too large",
+                    });
                 }
-                writer
-                    .put(chunk)
-                    .await
-                    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "upload failed"))?;
+                writer.put(chunk).await.map_err(|_| UploadFailure {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    message: "upload failed",
+                })?;
             }
             Ok(())
         };
@@ -1091,19 +1143,26 @@ pub(crate) async fn upload_debuginfo_handler<S: ProfileStore>(
             Err(_) => {
                 let _ = writer.abort().await;
                 state.metrics.debuginfo_upload_timeouts.inc();
-                return Err((StatusCode::REQUEST_TIMEOUT, "debug info upload timed out"));
+                return Err(UploadFailure {
+                    status: StatusCode::REQUEST_TIMEOUT,
+                    message: "debug info upload timed out",
+                });
             }
         }
-        writer
-            .shutdown()
-            .await
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "upload failed"))?;
+        writer.shutdown().await.map_err(|_| UploadFailure {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "upload failed",
+        })?;
         Ok(StatusCode::OK)
     }
     .await;
     match result {
         Ok(status) => status.into_response(),
-        Err((status, message)) => (status, message).into_response(),
+        Err(failure) => {
+            let mut response = failure.message.into_response();
+            *response.status_mut() = failure.status;
+            response
+        }
     }
 }
 

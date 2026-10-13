@@ -1,5 +1,11 @@
 use super::{Arc, BTreeMap, HashMap, Labels, ScannedRows, SeriesFingerprint, Windowed};
 
+#[derive(Clone, Copy)]
+pub(crate) struct TimeWindow {
+    pub(crate) start_ms: i64,
+    pub(crate) end_ms: i64,
+}
+
 /// Per-query store-scan cache (see `PromqlEngine::scanned_rows`).
 ///
 /// A range query evaluates the same selector at every step, and each step's
@@ -29,7 +35,7 @@ pub(crate) struct RangeScanCacheInner {
     pub(crate) allow_latest_float_samples: bool,
     /// The window that a range query scans for each matcher set, or `None`
     /// for an instant query.
-    pub(crate) union: Option<(i64, i64)>,
+    pub(crate) union: Option<TimeWindow>,
     /// Per-matcher-set float and histogram rows.
     pub(crate) rows: HashMap<String, Windowed<ScannedRows>>,
     /// Per-matcher-set fingerprint->labels resolution. A series label set is
@@ -44,7 +50,7 @@ impl RangeScanCacheInner {
     /// A cache for a range query that scans `[start_ms, end_ms]` for each
     /// matcher set.
     pub(crate) fn range(start_ms: i64, end_ms: i64) -> Self {
-        Self::new(Some((start_ms, end_ms)))
+        Self::new(Some(TimeWindow { start_ms, end_ms }))
     }
 
     /// A cache for an instant query, which keeps the window of each scan.
@@ -52,7 +58,7 @@ impl RangeScanCacheInner {
         Self::new(None)
     }
 
-    fn new(union: Option<(i64, i64)>) -> Self {
+    fn new(union: Option<TimeWindow>) -> Self {
         Self {
             allow_latest_float_samples: false,
             union,
@@ -63,14 +69,10 @@ impl RangeScanCacheInner {
 
     /// The window to scan and keep for a request of `[start_ms, end_ms]`, or
     /// `None` when the result of the request is not to be kept.
-    pub(crate) fn fill_window(&self, start_ms: i64, end_ms: i64) -> Option<(i64, i64)> {
+    pub(crate) fn fill_window(&self, start_ms: i64, end_ms: i64) -> Option<TimeWindow> {
         match self.union {
-            None => Some((start_ms, end_ms)),
-            Some((union_start_ms, union_end_ms))
-                if start_ms >= union_start_ms && end_ms <= union_end_ms =>
-            {
-                Some((union_start_ms, union_end_ms))
-            }
+            None => Some(TimeWindow { start_ms, end_ms }),
+            Some(union) if start_ms >= union.start_ms && end_ms <= union.end_ms => Some(union),
             Some(_) => None,
         }
     }

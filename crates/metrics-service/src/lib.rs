@@ -39,14 +39,14 @@ use krabka_promql::{
     AlertmanagerSink, EngineOpts, ExemplarScan, InMemoryMetricStore, LabelNameCardinality,
     LabelValueCardinality, MergedMetricStore, MetadataScan, MetricBlockStore, MetricStore,
     PrometheusApiState, PromqlMatcher as LabelMatcher, QueryFrontendOptions, RecordingRuleWalSink,
-    RulerAlertState, RulerAlertStateRecord, RulerGroupEvaluation, RulerGroupState,
-    RulerGroupStateRecord, RulerShard, RulerStateSink, RulerWalError, ScanResult, TsdbBlock,
-    WalHead, evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
-    prometheus_router,
+    RulerAlertState, RulerAlertStateRecord, RulerEvaluationSchedule, RulerGroupEvaluation,
+    RulerGroupState, RulerGroupStateRecord, RulerShard, RulerSinks, RulerStateSink, RulerWalError,
+    ScanResult, TsdbBlock, WalHead, WalRecordAt,
+    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report, prometheus_router,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::task::JoinHandle;
 use url::Url;
 
 #[cfg(test)]
@@ -66,7 +66,21 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
+    use krabka_observability::wal_consumer_metrics::WalPartitionAssignment;
     use object_store::ObjectStoreExt;
+
+    struct OneShotChannel<T> {
+        sender: tokio::sync::oneshot::Sender<T>,
+        receiver: tokio::sync::oneshot::Receiver<T>,
+    }
+
+    fn one_shot_channel<T>() -> OneShotChannel<T> {
+        let channel = tokio::sync::oneshot::channel();
+        OneShotChannel {
+            sender: channel.0,
+            receiver: channel.1,
+        }
+    }
 
     fn format_headers() -> Vec<krabka_client_consumer::Header> {
         vec![krabka_client_consumer::Header {
@@ -234,15 +248,21 @@ mod tests {
             "the separator stops a shifted split from colliding"
         );
 
-        let alert = |rule: &str, labels: &[(&str, &str)]| {
+        struct TestAlertLabel {
+            name: &'static str,
+            value: &'static str,
+        }
+        let alert = |rule: &str, labels: &[TestAlertLabel]| {
+            let record_labels = krabka_metrics::MetricLabels::from_pairs(
+                labels
+                    .iter()
+                    .map(|label| krabka_metrics::MetricLabelPair::new(label.name, label.value)),
+            );
             super::ruler_state_compaction_key(&super::RulerStateWalRecord::Alert(
                 super::RulerAlertStateRecord {
                     tenant: "t".into(),
                     rule_id: rule.into(),
-                    labels: labels
-                        .iter()
-                        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-                        .collect(),
+                    labels: record_labels,
                     active_since_ms: Some(1),
                     keep_firing_until_ms: None,
                 },
@@ -250,13 +270,45 @@ mod tests {
         };
 
         check!(alert("r", &[]) == Bytes::from("alert\0t\0r"));
-        check!(alert("r", &[("a", "1")]) == Bytes::from("alert\0t\0r\0a=1"));
         check!(
-            alert("r", &[("a", "1"), ("b", "2")]) == Bytes::from("alert\0t\0r\0a=1\0b=2"),
+            alert(
+                "r",
+                &[TestAlertLabel {
+                    name: "a",
+                    value: "1"
+                }]
+            ) == Bytes::from("alert\0t\0r\0a=1")
+        );
+        check!(
+            alert(
+                "r",
+                &[
+                    TestAlertLabel {
+                        name: "a",
+                        value: "1"
+                    },
+                    TestAlertLabel {
+                        name: "b",
+                        value: "2"
+                    },
+                ]
+            ) == Bytes::from("alert\0t\0r\0a=1\0b=2"),
             "every label is part of the identity"
         );
         check!(
-            alert("r", &[("a", "1")]) != alert("r", &[("a", "2")]),
+            alert(
+                "r",
+                &[TestAlertLabel {
+                    name: "a",
+                    value: "1"
+                }]
+            ) != alert(
+                "r",
+                &[TestAlertLabel {
+                    name: "a",
+                    value: "2"
+                }]
+            ),
             "an alert with different label values is a different alert"
         );
 
@@ -343,7 +395,11 @@ mod tests {
         }
 
         let alert = krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([("alertname".into(), "Down".into())]),
+            labels: {
+                let mut labels = std::collections::BTreeMap::new();
+                labels.insert("alertname".into(), "Down".into());
+                labels
+            },
             annotations: std::collections::BTreeMap::new(),
             starts_at_ms: 1,
             ends_at_ms: None,
@@ -440,7 +496,12 @@ mod tests {
 
     struct ManifestRetirement {
         key: Path,
-        replacement: Option<(Path, PutPayload)>,
+        replacement: Option<ManifestObjectReplacement>,
+    }
+
+    struct ManifestObjectReplacement {
+        key: Path,
+        payload: PutPayload,
     }
 
     struct CountingObjectStore {
@@ -506,8 +567,8 @@ mod tests {
                 }
             };
             if let Some(ManifestRetirement { key, replacement }) = retirement {
-                if let Some((replacement_key, payload)) = replacement {
-                    self.inner.put(&replacement_key, payload).await?;
+                if let Some(replacement) = replacement {
+                    self.inner.put(&replacement.key, replacement.payload).await?;
                     self.inner.delete(&key).await?;
                 } else {
                     return Err(object_store::Error::NotFound {
@@ -566,20 +627,27 @@ mod tests {
 
     // GETs `uri` as tenant-a through an authenticated `router` and returns
     // whether it succeeded, with its JSON body.
-    async fn get_as_tenant_a(router: axum::Router, uri: &str) -> (bool, serde_json::Value) {
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header("x-scope-orgid", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+    fn request_as_tenant_a(uri: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header("x-scope-orgid", "tenant-a")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    struct TenantQueryResponse {
+        success: bool,
+        body: serde_json::Value,
+    }
+
+    async fn get_as_tenant_a(router: axum::Router, uri: &str) -> TenantQueryResponse {
+        let response = router.oneshot(request_as_tenant_a(uri)).await.unwrap();
         let status_is_success = response.status().is_success();
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status_is_success, serde_json::from_slice(&body).unwrap())
+        TenantQueryResponse {
+            success: status_is_success,
+            body: serde_json::from_slice(&body).unwrap(),
+        }
     }
 
     #[tokio::test]
@@ -588,12 +656,12 @@ mod tests {
             "/api/v1/query?query=vector(1)&time=10",
             "/prometheus/api/v1/query?query=vector(1)&time=10",
         ] {
-            let (status_is_success, body) =
+            let response =
                 get_as_tenant_a(authenticated(super::in_memory_prometheus_router()), uri).await;
-            assert2::assert!(status_is_success, "{uri}");
-            assert2::assert!(body["status"].as_str() == Some("success"), "{uri}");
+            assert2::assert!(response.success, "{uri}");
+            assert2::assert!(response.body["status"].as_str() == Some("success"), "{uri}");
             assert2::assert!(
-                body["data"]["resultType"].as_str() == Some("vector"),
+                response.body["data"]["resultType"].as_str() == Some("vector"),
                 "{uri}"
             );
         }
@@ -601,11 +669,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_for_store_serves_samples_from_supplied_store() {
-        let mut store = krabka_promql::InMemoryMetricStore::new();
-        let mut labels = krabka_blockstore::Labels::new();
-        labels.insert("__name__", "up");
-        labels.insert("job", "api");
-        store.push_float("tenant-a", labels, 10_000, 1.0);
+        let store = store_with_up_series(&["api"]);
 
         assert_api_up_is_one_at_ten_seconds(authenticated(super::prometheus_router_for_store(
             store,
@@ -627,8 +691,8 @@ mod tests {
         head.apply_wal_record(&WalRecord {
             tenant: "acme".into(),
             labels: vec![
-                ("__name__".into(), "http_requests_total".into()),
-                ("route".into(), "/orders".into()),
+                krabka_metrics::MetricLabelPair::new("__name__", "http_requests_total".into()),
+                krabka_metrics::MetricLabelPair::new("route", "/orders".into()),
             ],
             payload: SamplePayload::Float {
                 timestamp_ms: 1_000,
@@ -703,21 +767,20 @@ mod tests {
 
     #[test]
     fn configured_lookback_normalizes_only_unbounded_range() {
-        check!(
-            super::normalize_refresh_range(i64::MIN, i64::MAX, minutes(10), 1_000_000)
-                == (400_000, i64::MAX)
-        );
-        check!(super::normalize_refresh_range(100, 200, minutes(10), 1_000_000) == (100, 200));
+        let normalized = super::normalize_refresh_range(i64::MIN, i64::MAX, minutes(10), 1_000_000);
+        check!(normalized.start_ms == 400_000);
+        check!(normalized.end_ms == i64::MAX);
+        let bounded = super::normalize_refresh_range(100, 200, minutes(10), 1_000_000);
+        check!(bounded.start_ms == 100);
+        check!(bounded.end_ms == 200);
         // Bounded on one side only. Read as `||`, either sentinel alone is
         // enough to rewrite the caller's range to the lookback window.
-        check!(
-            super::normalize_refresh_range(i64::MIN, 5_000, minutes(10), 1_000_000)
-                == (i64::MIN, 5_000)
-        );
-        check!(
-            super::normalize_refresh_range(100, i64::MAX, minutes(10), 1_000_000)
-                == (100, i64::MAX)
-        );
+        let lower_bounded = super::normalize_refresh_range(i64::MIN, 5_000, minutes(10), 1_000_000);
+        check!(lower_bounded.start_ms == i64::MIN);
+        check!(lower_bounded.end_ms == 5_000);
+        let upper_bounded = super::normalize_refresh_range(100, i64::MAX, minutes(10), 1_000_000);
+        check!(upper_bounded.start_ms == 100);
+        check!(upper_bounded.end_ms == i64::MAX);
     }
 
     #[test]
@@ -742,12 +805,35 @@ mod tests {
 
     #[tokio::test]
     async fn query_frontend_router_serves_split_range_query() {
+        struct TestFloatSample {
+            timestamp_ms: i64,
+            value: f64,
+        }
+
+        impl TestFloatSample {
+            const fn new(timestamp_ms: i64, value: f64) -> Self {
+                Self {
+                    timestamp_ms,
+                    value,
+                }
+            }
+        }
+
         let mut store = krabka_promql::InMemoryMetricStore::new();
         let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
         labels.insert("job", "api");
-        for (ts_ms, value) in [(0, 1.0), (60_000, 2.0), (120_000, 3.0)] {
-            store.push_float("tenant-a", labels.clone(), ts_ms, value);
+        for sample in [
+            TestFloatSample::new(0, 1.0),
+            TestFloatSample::new(60_000, 2.0),
+            TestFloatSample::new(120_000, 3.0),
+        ] {
+            store.push_float(
+                "tenant-a",
+                labels.clone(),
+                sample.timestamp_ms,
+                sample.value,
+            );
         }
 
         let response = authenticated(super::query_frontend_prometheus_router_for_store(
@@ -757,13 +843,9 @@ mod tests {
                 shard_count: 1,
             },
         ))
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=up&start=0&end=120&step=60")
-                .header("x-scope-orgid", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(request_as_tenant_a(
+            "/api/v1/query_range?query=up&start=0&end=120&step=60",
+        ))
         .await
         .unwrap();
 
@@ -908,24 +990,33 @@ mod tests {
         let state_sink = super::PrometheusRulerStateSink::new(std::sync::Arc::clone(state));
         super::evaluate_ruler_once(
             state,
-            (wal_sink, &RecordingAlertmanagerSink, &state_sink),
+            krabka_promql::RulerSinks::new(wal_sink, &RecordingAlertmanagerSink, &state_sink),
             &mut krabka_promql::RulerAlertState::default(),
             &mut krabka_promql::RulerGroupState::default(),
-            &krabka_blockstore::TenantId::new("tenant-a").expect("a valid tenant id"),
-            krabka_promql::RulerShard::new(1, 1).unwrap(),
-            10_000,
+            super::RulerEvaluationContext {
+                tenant: &krabka_blockstore::TenantId::new("tenant-a").expect("a valid tenant id"),
+                shard: krabka_promql::RulerShard::new(1, 1).unwrap(),
+                eval_time_ms: 10_000,
+            },
         )
         .await
         .unwrap()
     }
 
+    fn store_with_up_series(jobs: &[&str]) -> krabka_promql::InMemoryMetricStore {
+        let mut store = krabka_promql::InMemoryMetricStore::new();
+        for job in jobs {
+            let mut labels = krabka_blockstore::Labels::new();
+            labels.insert("__name__", "up");
+            labels.insert("job", *job);
+            store.push_float("tenant-a", labels, 10_000, 1.0);
+        }
+        store
+    }
+
     #[tokio::test]
     async fn ruler_evaluation_reads_api_rules_and_appends_recording_wal_records() {
-        let mut store = krabka_promql::InMemoryMetricStore::new();
-        let mut labels = krabka_blockstore::Labels::new();
-        labels.insert("__name__", "up");
-        labels.insert("job", "api");
-        store.push_float("tenant-a", labels, 10_000, 1.0);
+        let store = store_with_up_series(&["api"]);
         let state = super::prometheus_api_state_for_store(store);
         let router = authenticated(krabka_promql::prometheus_router(std::sync::Arc::clone(
             &state,
@@ -963,15 +1054,7 @@ rules:
 
     #[tokio::test]
     async fn ruler_evaluation_applies_runtime_max_samples_per_query() {
-        let mut store = krabka_promql::InMemoryMetricStore::new();
-        let mut api_labels = krabka_blockstore::Labels::new();
-        api_labels.insert("__name__", "up");
-        api_labels.insert("job", "api");
-        store.push_float("tenant-a", api_labels, 10_000, 1.0);
-        let mut web_labels = krabka_blockstore::Labels::new();
-        web_labels.insert("__name__", "up");
-        web_labels.insert("job", "web");
-        store.push_float("tenant-a", web_labels, 10_000, 1.0);
+        let store = store_with_up_series(&["api", "web"]);
         let limits = krabka_metrics::Limits {
             max_samples_per_query: 1,
             ..krabka_metrics::Limits::default()
@@ -1034,6 +1117,10 @@ rules:
 
     #[tokio::test]
     async fn alertmanager_http_sink_posts_v2_alert_payloads() {
+        struct ReceivedAlertRequest {
+            tenant: Option<String>,
+            body: Vec<u8>,
+        }
         let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let received_for_route = std::sync::Arc::clone(&received);
         let router = axum::Router::new().route(
@@ -1041,13 +1128,16 @@ rules:
             axum::routing::post(move |headers: axum::http::HeaderMap, body: bytes::Bytes| {
                 let received = std::sync::Arc::clone(&received_for_route);
                 async move {
-                    received.lock().expect("received alerts poisoned").push((
-                        headers
-                            .get("X-Scope-OrgID")
-                            .and_then(|value| value.to_str().ok())
-                            .map(str::to_owned),
-                        body.to_vec(),
-                    ));
+                    received
+                        .lock()
+                        .expect("received alerts poisoned")
+                        .push(ReceivedAlertRequest {
+                            tenant: headers
+                                .get("X-Scope-OrgID")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_owned),
+                            body: body.to_vec(),
+                        });
                     axum::http::StatusCode::OK
                 }
             }),
@@ -1058,14 +1148,17 @@ rules:
         sink.dispatch_alerts_for_tenant(
             &krabka_blockstore::TenantId::new("tenant-a").unwrap(),
             vec![krabka_promql::AlertmanagerAlert {
-                labels: std::collections::BTreeMap::from([
-                    ("alertname".to_string(), "InstanceDown".into()),
-                    ("severity".to_string(), "page".into()),
-                ]),
-                annotations: std::collections::BTreeMap::from([(
-                    "summary".to_string(),
-                    "instance is down".to_string(),
-                )]),
+                labels: {
+                    let mut labels = std::collections::BTreeMap::new();
+                    labels.insert("alertname".to_string(), "InstanceDown".into());
+                    labels.insert("severity".to_string(), "page".into());
+                    labels
+                },
+                annotations: {
+                    let mut annotations = std::collections::BTreeMap::new();
+                    annotations.insert("summary".to_string(), "instance is down".to_string());
+                    annotations
+                },
                 starts_at_ms: 60_000,
                 ends_at_ms: None,
                 generator_url: "http://krabka.example/graph".to_string(),
@@ -1076,8 +1169,8 @@ rules:
 
         let bodies = received.lock().expect("received alerts poisoned");
         assert2::assert!(bodies.len() == 1);
-        assert2::assert!(bodies[0].0.as_deref() == Some("tenant-a"));
-        let body: serde_json::Value = serde_json::from_slice(&bodies[0].1).unwrap();
+        assert2::assert!(bodies[0].tenant.as_deref() == Some("tenant-a"));
+        let body: serde_json::Value = serde_json::from_slice(&bodies[0].body).unwrap();
         let expected = serde_json::json!([{
             "labels": {
                 "alertname": "InstanceDown",
@@ -1116,10 +1209,12 @@ rules:
         let alerts_url = serve_until_dropped(router).await;
         let sink = super::AlertmanagerHttpSink::with_delivery(
             vec![alerts_url],
-            std::collections::BTreeMap::from([
-                ("cluster".to_string(), "prod".into()),
-                ("severity".to_string(), "external-default".into()),
-            ]),
+            {
+                let mut labels = std::collections::BTreeMap::new();
+                labels.insert("cluster".to_string(), "prod".into());
+                labels.insert("severity".to_string(), "external-default".into());
+                labels
+            },
             Some("https://metrics.example/alerts/{alertname}".to_string()),
             2,
             Duration::ZERO,
@@ -1127,10 +1222,12 @@ rules:
         );
 
         sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([
-                ("alertname".to_string(), "Instance Down?/&".into()),
-                ("severity".to_string(), "page".into()),
-            ]),
+            labels: {
+                let mut labels = std::collections::BTreeMap::new();
+                labels.insert("alertname".to_string(), "Instance Down?/&".into());
+                labels.insert("severity".to_string(), "page".into());
+                labels
+            },
             annotations: std::collections::BTreeMap::new(),
             starts_at_ms: 60_000,
             ends_at_ms: None,
@@ -1240,12 +1337,34 @@ rules:
         format!("http://{bound}/api/v2/alerts")
     }
 
+    async fn queued_alertmanager_sink(
+        router: axum::Router,
+        capacity: usize,
+        request_timeout: Duration,
+        worker_poll_interval: Duration,
+    ) -> super::QueuedAlertmanagerSink {
+        let alerts_url = serve_until_dropped(router).await;
+        super::QueuedAlertmanagerSink::new(
+            super::AlertmanagerHttpSink::with_delivery(
+                vec![alerts_url],
+                std::collections::BTreeMap::new(),
+                None,
+                1,
+                Duration::ZERO,
+                request_timeout,
+            ),
+            capacity,
+            worker_poll_interval,
+        )
+    }
+
     fn instance_down_alert() -> krabka_promql::AlertmanagerAlert {
         krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([(
-                "alertname".to_string(),
-                "InstanceDown".to_string(),
-            )]),
+            labels: {
+                let mut labels = std::collections::BTreeMap::new();
+                labels.insert("alertname".to_string(), "InstanceDown".to_string());
+                labels
+            },
             annotations: std::collections::BTreeMap::new(),
             starts_at_ms: 60_000,
             ends_at_ms: None,
@@ -1276,19 +1395,13 @@ rules:
                 }
             }),
         );
-        let alerts_url = serve_until_dropped(router).await;
-        let sink = super::QueuedAlertmanagerSink::new(
-            super::AlertmanagerHttpSink::with_delivery(
-                vec![alerts_url],
-                std::collections::BTreeMap::new(),
-                None,
-                1,
-                Duration::ZERO,
-                Duration::from_millis(20),
-            ),
+        let sink = queued_alertmanager_sink(
+            router,
             2,
+            Duration::from_millis(20),
             Duration::from_millis(1),
-        );
+        )
+        .await;
         let alert = instance_down_alert();
 
         // Delivery failure does not fail or stall the evaluation-facing call.
@@ -1327,19 +1440,8 @@ rules:
                 }
             }),
         );
-        let alerts_url = serve_until_dropped(router).await;
-        let sink = super::QueuedAlertmanagerSink::new(
-            super::AlertmanagerHttpSink::with_delivery(
-                vec![alerts_url],
-                std::collections::BTreeMap::new(),
-                None,
-                1,
-                Duration::ZERO,
-                Duration::from_secs(1),
-            ),
-            1,
-            Duration::ZERO,
-        );
+        let sink =
+            queued_alertmanager_sink(router, 1, Duration::from_secs(1), Duration::ZERO).await;
         let alert = instance_down_alert();
 
         sink.dispatch_alerts(vec![alert.clone()]).await.unwrap();
@@ -1504,8 +1606,8 @@ rules:
             tenant: "tenant-a".to_string(),
             rule_id: "InstanceDown\nup == 0".to_string(),
             labels: krabka_metrics::MetricLabels::from_pairs([
-                ("alertname".to_string(), "InstanceDown"),
-                ("job".to_string(), "api"),
+                krabka_metrics::MetricLabelPair::new("alertname".to_string(), "InstanceDown"),
+                krabka_metrics::MetricLabelPair::new("job".to_string(), "api"),
             ]),
             active_since_ms: Some(120_000),
             keep_firing_until_ms: Some(180_000),
@@ -1563,10 +1665,12 @@ rules:
             super::RulerStateWalRecord::Alert(krabka_promql::RulerAlertStateRecord {
                 tenant: "tenant-a".to_string(),
                 rule_id: "InstanceDown\nup == 0".to_string(),
-                labels: krabka_metrics::MetricLabels::from_pairs([(
-                    "alertname".to_string(),
-                    "InstanceDown".to_string(),
-                )]),
+                labels: krabka_metrics::MetricLabels::from_pairs([
+                    krabka_metrics::MetricLabelPair::new(
+                        "alertname".to_string(),
+                        "InstanceDown".to_string(),
+                    ),
+                ]),
                 active_since_ms: Some(120_000),
                 keep_firing_until_ms: Some(180_000),
             });
@@ -1884,7 +1988,13 @@ rules:
             labels.insert("__name__", "up");
             labels.insert("job", "api");
             let fp = labels.fingerprint();
-            let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
+            let batch = krabka_metrics::encode_float_samples(&[krabka_metrics::FloatSampleRow {
+                fingerprint: fp,
+                timestamp_ms: 10_000,
+                value: 1.0,
+                start_timestamp_ms: None,
+            }])
+            .unwrap();
             let block_meta = writer_store
                 .writer()
                 .write_block(
@@ -1923,11 +2033,10 @@ rules:
 
     // What an `ApiUpBlock` answers through `router`: `up{job="api"}` is 1 at 10s.
     async fn assert_api_up_is_one_at_ten_seconds(router: axum::Router) {
-        let (status_is_success, body) =
-            get_as_tenant_a(router, "/api/v1/query?query=up&time=10").await;
-        assert2::assert!(status_is_success);
+        let response = get_as_tenant_a(router, "/api/v1/query?query=up&time=10").await;
+        assert2::assert!(response.success);
         first_vector_sample::check_first_vector_sample(
-            &body,
+            &response.body,
             &first_vector_sample::ExpectedVectorSample {
                 job: "api",
                 value: "1",
@@ -1964,14 +2073,38 @@ rules:
         labels.insert("job", "api");
         let fp = labels.fingerprint();
         let mut manifests = Vec::new();
-        for (name, samples) in [
-            ("old", vec![(10_000, 1.0)]),
-            ("replacement", vec![(10_000, 1.0), (11_000, 7.0)]),
+        struct SampleFile {
+            name: &'static str,
+            rows: Vec<krabka_metrics::FloatSampleRow>,
+        }
+        for SampleFile { name, rows } in [
+            SampleFile {
+                name: "old",
+                rows: vec![krabka_metrics::FloatSampleRow {
+                    fingerprint: fp,
+                    timestamp_ms: 10_000,
+                    value: 1.0,
+                    start_timestamp_ms: None,
+                }],
+            },
+            SampleFile {
+                name: "replacement",
+                rows: vec![
+                    krabka_metrics::FloatSampleRow {
+                        fingerprint: fp,
+                        timestamp_ms: 10_000,
+                        value: 1.0,
+                        start_timestamp_ms: None,
+                    },
+                    krabka_metrics::FloatSampleRow {
+                        fingerprint: fp,
+                        timestamp_ms: 11_000,
+                        value: 7.0,
+                        start_timestamp_ms: None,
+                    },
+                ],
+            },
         ] {
-            let rows = samples
-                .iter()
-                .map(|&(ts, value)| (fp, ts, value, None))
-                .collect::<Vec<_>>();
             let batch = krabka_metrics::encode_float_samples(&rows).unwrap();
             let meta = blocks
                 .writer()
@@ -1987,7 +2120,7 @@ rules:
                 block_key: meta.object_key.clone(),
                 index_key: format!("metrics/{name}.index"),
                 first_offset: 0,
-                last_offset: i64::try_from(samples.len()).unwrap() - 1,
+                last_offset: i64::try_from(rows.len()).unwrap() - 1,
                 row_count: meta.row_count,
             };
             manifests.push(krabka_metrics::CompactionIndexManifest::from_block_meta(
@@ -2010,10 +2143,10 @@ rules:
         // then physically retire the listed sidecar.
         *counting.retire_on_get.lock().unwrap() = Some(ManifestRetirement {
             key: old_key,
-            replacement: Some((
-                replacement_key.clone(),
-                PutPayload::from(manifests[1].encode().unwrap()),
-            )),
+            replacement: Some(ManifestObjectReplacement {
+                key: replacement_key.clone(),
+                payload: PutPayload::from(manifests[1].encode().unwrap()),
+            }),
         });
         let query = || {
             Request::builder()
@@ -2088,15 +2221,14 @@ rules:
         );
         let matchers = Vec::<krabka_promql::PromqlMatcher>::new();
 
-        let (a, b, c, d) = tokio::join!(
+        let results = tokio::join!(
             metric_store.series("tenant-a", &matchers, 0, 20_000),
             metric_store.series("tenant-a", &matchers, 0, 20_000),
             metric_store.series("tenant-a", &matchers, 0, 20_000),
             metric_store.series("tenant-a", &matchers, 0, 20_000),
         );
 
-        let cases = [("a", a), ("b", b), ("c", c), ("d", d)];
-        for (_name, result) in cases {
+        for result in [results.0, results.1, results.2, results.3] {
             assert2::assert!(result.unwrap().len() == 1);
         }
         assert2::assert!(list_calls.load(Ordering::SeqCst) == 1);
@@ -2139,8 +2271,13 @@ rules:
         old_labels.insert("__name__", "up");
         old_labels.insert("job", "old");
         let old_fp = old_labels.fingerprint();
-        let old_batch =
-            krabka_metrics::encode_float_samples(&[(old_fp, 10_000, 1.0, None)]).unwrap();
+        let old_batch = krabka_metrics::encode_float_samples(&[krabka_metrics::FloatSampleRow {
+            fingerprint: old_fp,
+            timestamp_ms: 10_000,
+            value: 1.0,
+            start_timestamp_ms: None,
+        }])
+        .unwrap();
         let old_block = writer_store
             .writer()
             .write_block(
@@ -2175,8 +2312,13 @@ rules:
         new_labels.insert("__name__", "up");
         new_labels.insert("job", "new");
         let new_fp = new_labels.fingerprint();
-        let new_batch =
-            krabka_metrics::encode_float_samples(&[(new_fp, 1_000_000, 1.0, None)]).unwrap();
+        let new_batch = krabka_metrics::encode_float_samples(&[krabka_metrics::FloatSampleRow {
+            fingerprint: new_fp,
+            timestamp_ms: 1_000_000,
+            value: 1.0,
+            start_timestamp_ms: None,
+        }])
+        .unwrap();
         let new_block = writer_store
             .writer()
             .write_block(
@@ -2435,7 +2577,9 @@ rules:
             tenant: "tenant-a".to_string(),
             labels: labels
                 .iter()
-                .map(|(name, value)| (name.clone(), value.clone().into()))
+                .map(|label| {
+                    krabka_metrics::MetricLabelPair::new(label.name.to_owned(), label.value.into())
+                })
                 .collect(),
             payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 20_000,
@@ -2453,11 +2597,10 @@ rules:
                 hot_store,
             ),
         );
-        let (status_is_success, body) =
-            get_as_tenant_a(router, "/api/v1/query?query=up&time=20").await;
-        assert2::assert!(status_is_success);
+        let response = get_as_tenant_a(router, "/api/v1/query?query=up&time=20").await;
+        assert2::assert!(response.success);
         first_vector_sample::check_first_vector_sample(
-            &body,
+            &response.body,
             &first_vector_sample::ExpectedVectorSample {
                 job: "api",
                 value: "2",
@@ -2478,7 +2621,13 @@ rules:
         labels.insert("__name__", "up");
         labels.insert("job", job);
         let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, ts_ms, 1.0, None)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[krabka_metrics::FloatSampleRow {
+            fingerprint: fp,
+            timestamp_ms: ts_ms,
+            value: 1.0,
+            start_timestamp_ms: None,
+        }])
+        .unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
@@ -2514,7 +2663,10 @@ rules:
     fn tenant_a_up_record() -> krabka_metrics::WalRecord {
         krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
-            labels: vec![("__name__".to_string(), "up".into())],
+            labels: vec![krabka_metrics::MetricLabelPair::new(
+                "__name__",
+                "up".into(),
+            )],
             payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 10_000,
                 value: 1.0,
@@ -2572,8 +2724,8 @@ rules:
         let record = |job: &str, timestamp_ms: i64| krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
             labels: vec![
-                ("__name__".to_string(), "up".into()),
-                ("job".to_string(), job.into()),
+                krabka_metrics::MetricLabelPair::new("__name__", "up".into()),
+                krabka_metrics::MetricLabelPair::new("job", job.into()),
             ],
             payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms,
@@ -2655,7 +2807,13 @@ rules:
         };
         let recovery =
             krabka_observability::wal_consumer_metrics::WalConsumerMetrics::unregistered();
-        recovery.record_assignment(&[(krabka_metrics::WAL_TOPIC.to_owned(), 0)], false);
+        recovery.record_assignment(
+            &[WalPartitionAssignment {
+                topic: krabka_metrics::WAL_TOPIC.to_owned(),
+                partition: 0,
+            }],
+            false,
+        );
 
         let result = super::poll_wal_head_consumer_once(
             &mut consumer,
@@ -2760,7 +2918,9 @@ rules:
 
     #[tokio::test]
     async fn in_memory_prometheus_server_binds_to_listen_address() {
-        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+        let stop = one_shot_channel();
+        let stop_tx = stop.sender;
+        let stop_rx = stop.receiver;
         let bound = super::serve_in_memory_prometheus(
             "127.0.0.1:0".parse().unwrap(),
             &krabka_observability::server_security::ServerSecurity::default(),
@@ -2781,8 +2941,10 @@ rules:
         // await graceful drain. Signalling `shutdown` must let the task run to
         // completion (axum's `with_graceful_shutdown` returns), so the join
         // resolves rather than the task living forever detached.
-        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-        let (bound, server) = super::serve_prometheus_router_joinable(
+        let stop = one_shot_channel();
+        let stop_tx = stop.sender;
+        let stop_rx = stop.receiver;
+        let serving = super::serve_prometheus_router_joinable(
             "127.0.0.1:0".parse().unwrap(),
             super::in_memory_prometheus_router(),
             &krabka_observability::server_security::ServerSecurity::default(),
@@ -2792,11 +2954,11 @@ rules:
         )
         .await
         .unwrap();
-        assert2::assert!(bound.port() != 0);
+        assert2::assert!(serving.addr.port() != 0);
 
         let _ = stop_tx.send(());
         // Bounded so a regression (handle never resolving) fails instead of hanging.
-        let joined = tokio::time::timeout(std::time::Duration::from_secs(5), server).await;
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(5), serving.server).await;
         assert2::assert!(matches!(joined, Ok(Ok(()))));
     }
 }
@@ -2830,6 +2992,7 @@ mod load_compaction_manifests_filtered;
 mod load_compaction_manifests_filtered_with_cache;
 mod load_compaction_manifests_for_range;
 mod load_compaction_manifests_for_range_with_cache;
+mod manifest_time_range;
 mod metrics_service_error;
 mod mimir_block_upload;
 mod mimir_tenant_admin;
@@ -2873,6 +3036,7 @@ mod wal_head_consumer_loop_summary;
 mod wal_head_consumer_poll;
 mod wal_head_consumer_record;
 mod wal_head_partition_offset;
+mod wal_head_recovery_state;
 mod wal_head_replay_error;
 mod wal_head_replay_result;
 mod wal_record_max_timestamp_ms;
@@ -2881,7 +3045,7 @@ pub use alertmanager_http_sink::AlertmanagerHttpSink;
 use alertmanager_payload::alertmanager_payload;
 pub use apply_ruler_state_record::apply_ruler_state_record;
 pub use blockstore_prometheus_router::blockstore_prometheus_router;
-pub use buffered_ruler_outputs::{BufferedRulerOutputs, RulerOutputBatch};
+pub use buffered_ruler_outputs::{BufferedRulerOutputs, RulerOutputBatch, TenantAlertBatch};
 use bundled_group_label::bundled_group_label;
 use bundled_rule_file::BundledRuleFile;
 pub use bundled_rules_address::bundled_rules_address;
@@ -2894,7 +3058,9 @@ use current_time_ms::current_time_ms;
 pub use default_cold_cache_ttl::DEFAULT_COLD_CACHE_TTL;
 pub use default_unbounded_compatibility_lookback::DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK;
 use duration_ms::duration_ms;
-pub use evaluate_ruler_once::{evaluate_ruler_once, evaluate_ruler_once_deferred};
+pub use evaluate_ruler_once::{
+    RulerEvaluationContext, evaluate_ruler_once, evaluate_ruler_once_deferred,
+};
 pub use in_memory_prometheus_router::in_memory_prometheus_router;
 pub use install_bundled_rule_groups::install_bundled_rule_groups;
 pub use kafka_recording_rule_wal_sink::KafkaRecordingRuleWalSink;
@@ -2905,6 +3071,7 @@ use load_compaction_manifests_filtered::load_compaction_manifests_filtered;
 use load_compaction_manifests_filtered_with_cache::load_compaction_manifests_filtered_with_cache;
 pub use load_compaction_manifests_for_range::load_compaction_manifests_for_range;
 use load_compaction_manifests_for_range_with_cache::load_compaction_manifests_for_range_with_cache;
+pub(crate) use manifest_time_range::ManifestTimeRange;
 pub use metrics_service_error::MetricsServiceError;
 pub use mimir_tenant_admin::{MimirTenantAdminState, mimir_tenant_admin_router};
 pub use noop_alertmanager_sink::NoopAlertmanagerSink;
@@ -2932,13 +3099,15 @@ pub use ruler_state_replay_error::RulerStateReplayError;
 pub use ruler_state_topic::RULER_STATE_TOPIC;
 pub use ruler_state_wal_record::RulerStateWalRecord;
 pub use ruler_state_wal_record_error::RulerStateWalRecordError;
-pub use run_fenced_ruler_evaluation_loop::run_fenced_ruler_evaluation_loop;
+pub use run_fenced_ruler_evaluation_loop::{RulerTopics, run_fenced_ruler_evaluation_loop};
 pub use run_ruler_evaluation_loop::run_ruler_evaluation_loop;
 pub use run_ruler_state_consumer_loop::run_ruler_state_consumer_loop;
 pub use run_wal_head_consumer_loop::run_wal_head_consumer_loop;
 pub use serve_in_memory_prometheus::serve_in_memory_prometheus;
 pub use serve_prometheus_router::serve_prometheus_router;
-pub use serve_prometheus_router_joinable::serve_prometheus_router_joinable;
+pub use serve_prometheus_router_joinable::{
+    JoinableRouterServer, serve_prometheus_router_joinable,
+};
 use unix_ms_to_rfc3339::unix_ms_to_rfc3339;
 use unix_time_ms::unix_time_ms;
 pub use wal_head_consumer_commit::WalHeadConsumerCommit;
@@ -2948,6 +3117,7 @@ pub use wal_head_consumer_poll::WalHeadConsumerPoll;
 pub use wal_head_consumer_record::WalHeadConsumerRecord;
 use wal_head_consumer_record::checked_replay_records;
 pub use wal_head_partition_offset::WalHeadPartitionOffset;
+pub use wal_head_recovery_state::{WalHeadRecoveryState, WalPartitionAssignment};
 pub use wal_head_replay_error::WalHeadReplayError;
 pub use wal_head_replay_result::WalHeadReplayResult;
 use wal_record_max_timestamp_ms::wal_record_max_timestamp_ms;

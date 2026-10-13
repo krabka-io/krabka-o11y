@@ -53,34 +53,66 @@ async fn different_wal_blocks_with_equal_time_ranges_survive_frontier_pruning() 
     let frontier = SharedCompactionFrontier::default();
     let mut label_index = LabelIndex::default();
     let mut block_index = BlockIndex::default();
-    for (app, first_offset) in [("api", 1), ("worker", 3)] {
-        let source = labels([("app", app)]);
+    struct SourceBlockCase {
+        app: &'static str,
+        first_offset: i64,
+    }
+    for case in [
+        SourceBlockCase {
+            app: "api",
+            first_offset: 1,
+        },
+        SourceBlockCase {
+            app: "worker",
+            first_offset: 3,
+        },
+    ] {
+        let source = labels([krabka_blockstore::LabelPair::new("app", case.app)]);
         let fingerprint = label_index.insert_series("tenant-a", source.clone());
         let mut rows = Vec::new();
-        for (timestamp, offset) in [(19, first_offset), (20, first_offset + 1)] {
-            let line = format!("{app}-{timestamp}");
+        struct WalRowCase {
+            timestamp: i64,
+            offset: i64,
+        }
+        for row in [
+            WalRowCase {
+                timestamp: 19,
+                offset: case.first_offset,
+            },
+            WalRowCase {
+                timestamp: 20,
+                offset: case.first_offset + 1,
+            },
+        ] {
+            let line = format!("{}-{}", case.app, row.timestamp);
             rows.push(LogRow::new(
                 fingerprint,
-                timestamp,
+                row.timestamp,
                 line.clone(),
                 BTreeMap::new(),
             ));
             hot_tail.append_records(vec![WalLogRecord {
                 tenant: "tenant-a".into(),
                 labels: source.clone(),
-                timestamp_ns: timestamp,
+                timestamp_ns: row.timestamp,
                 line,
                 structured_metadata: BTreeMap::new(),
                 position: Some(WalPosition {
                     partition: PartitionIndex(0),
-                    offset: Offset(offset),
+                    offset: Offset(row.offset),
                 }),
             }]);
         }
         compact_log_block_to_object_store_with_index_output(
             store.as_ref(),
             &prefix,
-            &BlockKey::new("tenant-a", 0, first_offset, first_offset + 1, range),
+            &BlockKey::new(
+                "tenant-a",
+                0,
+                case.first_offset,
+                case.first_offset + 1,
+                range,
+            ),
             &label_index,
             &mut block_index,
             rows,
@@ -124,7 +156,7 @@ async fn metric_frontend_reads_cold_and_hot_rows_before_the_evaluation_range() {
     let store = Arc::new(object_store::memory::InMemory::new());
     let prefix = ObjectPath::from("logs");
     let mut label_index = LabelIndex::default();
-    let source = labels([("app", "api")]);
+    let source = labels([krabka_blockstore::LabelPair::new("app", "api")]);
     let fingerprint = label_index.insert_series("tenant-a", source.clone());
     compact_log_block_to_object_store_with_index_output(
         store.as_ref(),
@@ -138,31 +170,37 @@ async fn metric_frontend_reads_cold_and_hot_rows_before_the_evaluation_range() {
     .await
     .unwrap();
     let hot_tail = BufferedLogHotTail::default();
-    hot_tail.append_records(vec![WalLogRecord {
-        tenant: "tenant-a".into(),
-        labels: source,
-        timestamp_ns: 20,
-        line: "hot".into(),
-        structured_metadata: BTreeMap::new(),
-        position: None,
-    }]);
+    hot_tail.append_records(vec![hot_record(source, 20, "hot")]);
     let state = QuerierState::new(".", LabelIndex::default(), BlockIndex::default())
         .with_cold_object_store_source(store.clone(), prefix.clone())
         .with_dynamic_tenant_object_store_shards(store, prefix)
         .with_hot_tail_shared_frontier(hot_tail, SharedCompactionFrontier::default());
-    for (query, at, want) in [
-        (r#"count_over_time({app="api"}[15ns])"#, 30, "2"),
-        (r#"count_over_time({app="api"}[15ns] offset 10ns)"#, 40, "2"),
-        (
-            r#"count_over_time({app="api"}[25ns]) + count_over_time({app="api"}[20ns] offset 10ns)"#,
-            40,
-            "4",
-        ),
+    struct MetricQueryCase {
+        query: &'static str,
+        evaluation_time: i64,
+        expected_sample: &'static str,
+    }
+    for case in [
+        MetricQueryCase {
+            query: r#"count_over_time({app="api"}[15ns])"#,
+            evaluation_time: 30,
+            expected_sample: "2",
+        },
+        MetricQueryCase {
+            query: r#"count_over_time({app="api"}[15ns] offset 10ns)"#,
+            evaluation_time: 40,
+            expected_sample: "2",
+        },
+        MetricQueryCase {
+            query: r#"count_over_time({app="api"}[25ns]) + count_over_time({app="api"}[20ns] offset 10ns)"#,
+            evaluation_time: 40,
+            expected_sample: "4",
+        },
     ] {
         let encoded: String = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("query", query)
-            .append_pair("start", &format!("0.{at:09}"))
-            .append_pair("end", &format!("0.{at:09}"))
+            .append_pair("query", case.query)
+            .append_pair("start", &format!("0.{:09}", case.evaluation_time))
+            .append_pair("end", &format!("0.{:09}", case.evaluation_time))
             .append_pair("step", "1ns")
             .finish();
         let params = crate::parse_query_params(Some(&encoded)).unwrap();
@@ -175,15 +213,16 @@ async fn metric_frontend_reads_cold_and_hot_rows_before_the_evaluation_range() {
         .await
         .unwrap();
         response["data"].as_object_mut().unwrap().remove("stats");
-        let timestamp: f64 = format!("0.{at:09}").parse().unwrap();
+        let timestamp: f64 = format!("0.{:09}", case.evaluation_time).parse().unwrap();
         assert!(
             response
                 == json!({
                     "status": "success", "data": {"resultType": "matrix", "result": [
-                        {"metric": {"app": "api"}, "values": [[timestamp, want]]}
+                        {"metric": {"app": "api"}, "values": [[timestamp, case.expected_sample]]}
                     ]}
                 }),
-            "{query}"
+            "{}",
+            case.query
         );
     }
 }
@@ -195,32 +234,39 @@ async fn metadata_without_time_bounds_keeps_hot_labels_outside_the_cold_window()
 
     let store = Arc::new(object_store::memory::InMemory::new());
     let hot_tail = BufferedLogHotTail::default();
-    hot_tail.append_records(vec![WalLogRecord {
-        tenant: "tenant-a".into(),
-        labels: labels([("app", "api")]),
-        timestamp_ns: 20,
-        line: "hot".into(),
-        structured_metadata: BTreeMap::new(),
-        position: None,
-    }]);
+    hot_tail.append_records(vec![hot_record(
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+        20,
+        "hot",
+    )]);
     let state = QuerierState::new(".", LabelIndex::default(), BlockIndex::default())
         .with_cold_object_store_source(store.clone(), ObjectPath::from("logs"))
         .with_dynamic_tenant_object_store_shards(store, ObjectPath::from("logs"))
         .with_hot_tail_shared_frontier(hot_tail, SharedCompactionFrontier::default());
     let app = crate::loki_router(state);
-    for (uri, data) in [
-        ("/loki/api/v1/labels", json!(["app"])),
-        ("/loki/api/v1/label/app/values", json!(["api"])),
-        (
-            "/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D",
-            json!([{"app":"api"}]),
-        ),
+    struct MetadataEndpointCase {
+        uri: &'static str,
+        data: serde_json::Value,
+    }
+    for case in [
+        MetadataEndpointCase {
+            uri: "/loki/api/v1/labels",
+            data: json!(["app"]),
+        },
+        MetadataEndpointCase {
+            uri: "/loki/api/v1/label/app/values",
+            data: json!(["api"]),
+        },
+        MetadataEndpointCase {
+            uri: "/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D",
+            data: json!([{"app":"api"}]),
+        },
     ] {
         let response = app
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri(uri)
+                    .uri(case.uri)
                     .header("X-Scope-OrgID", "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
@@ -232,7 +278,22 @@ async fn metadata_without_time_bounds_keeps_hot_labels_outside_the_cold_window()
             .await
             .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(value == json!({"status": "success", "data": data}), "{uri}");
+        assert!(
+            value == json!({"status": "success", "data": case.data}),
+            "{}",
+            case.uri
+        );
+    }
+}
+
+fn hot_record(labels: BTreeMap<String, String>, timestamp_ns: i64, line: &str) -> WalLogRecord {
+    WalLogRecord {
+        tenant: "tenant-a".into(),
+        labels,
+        timestamp_ns,
+        line: line.into(),
+        structured_metadata: BTreeMap::new(),
+        position: None,
     }
 }
 
@@ -278,7 +339,7 @@ async fn assert_rows_survive_handoff(first_load: FirstIndexLoad) {
     let prefix = ObjectPath::from("logs");
     let store = Arc::new(store);
     let mut label_index = LabelIndex::default();
-    let source = labels([("app", "api")]);
+    let source = labels([krabka_blockstore::LabelPair::new("app", "api")]);
     let fingerprint = label_index.insert_series("tenant-a", source.clone());
     let mut block_index = BlockIndex::default();
     let first = compact_log_block_to_object_store_with_index_output(
@@ -382,9 +443,30 @@ fn shard_snapshot_path(prefix: &ObjectPath, range: TimeRange, generation: u64) -
     .join(format!("{generation:020}.json"))
 }
 
-fn shard_indexes(app: &str, offset: i64) -> (LabelIndex, BlockIndex) {
+struct ShardIndexes {
+    labels: LabelIndex,
+    blocks: BlockIndex,
+}
+
+fn indexes_match(
+    actual: krabka_blockstore::LogIndexes,
+    labels: &LabelIndex,
+    blocks: &BlockIndex,
+) -> bool {
+    actual.labels == *labels && actual.blocks == *blocks
+}
+
+struct ShardAddition {
+    app: &'static str,
+    offset: i64,
+}
+
+fn shard_indexes(app: &str, offset: i64) -> ShardIndexes {
     let mut labels = LabelIndex::default();
-    let fingerprint = labels.insert_series("tenant-a", krabka_blockstore::labels([("app", app)]));
+    let fingerprint = labels.insert_series(
+        "tenant-a",
+        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", app)]),
+    );
     let mut blocks = BlockIndex::default();
     blocks.insert(BlockDescriptor::new(
         BlockKey::new(
@@ -396,7 +478,7 @@ fn shard_indexes(app: &str, offset: i64) -> (LabelIndex, BlockIndex) {
         ),
         BTreeSet::from([fingerprint]),
     ));
-    (labels, blocks)
+    ShardIndexes { labels, blocks }
 }
 
 /// A tenant shard store whose first read of generation 0 parks until
@@ -473,17 +555,20 @@ async fn shard_deltas_retry_conflicts_and_preserve_concurrent_append_labels() {
             release,
             store,
         } = BarrieredShard::default();
-        let (original_labels, original_blocks) = shard_indexes("original", 1);
-        seed_shard(store.as_ref(), &original_labels, &original_blocks).await;
+        let original = shard_indexes("original", 1);
+        seed_shard(store.as_ref(), &original.labels, &original.blocks).await;
         store.clear_put_paths();
         let previous = if change == "append" {
             BlockIndex::default()
         } else {
-            original_blocks
+            original.blocks
         };
-        let (next_labels, next_blocks) = match change {
+        let next = match change {
             "append" => shard_indexes("first-append", 3),
-            "remove" => (LabelIndex::default(), BlockIndex::default()),
+            "remove" => ShardIndexes {
+                labels: LabelIndex::default(),
+                blocks: BlockIndex::default(),
+            },
             _ => shard_indexes("replacement", 1),
         };
         let pending = {
@@ -496,22 +581,22 @@ async fn shard_deltas_retry_conflicts_and_preserve_concurrent_append_labels() {
                     "tenant-a",
                     range,
                     &previous,
-                    &next_labels,
-                    &next_blocks,
+                    &next.labels,
+                    &next.blocks,
                 )
                 .await
             })
         };
         entered.notified().await;
-        let (mut expected_labels, mut expected_blocks) = shard_indexes("concurrent", 2);
+        let mut expected = shard_indexes("concurrent", 2);
         update_tenant_log_index_shard_to_object_store(
             store.as_ref(),
             &prefix,
             "tenant-a",
             range,
             &BlockIndex::default(),
-            &expected_labels,
-            &expected_blocks,
+            &expected.labels,
+            &expected.blocks,
         )
         .await
         .unwrap();
@@ -520,29 +605,44 @@ async fn shard_deltas_retry_conflicts_and_preserve_concurrent_append_labels() {
         // The losing conditional put must retry; exactly two writes would mean
         // the interleaving never exercised the conflict.
         assert!(store.put_paths().len() == 3, "{change}");
-        for (app, offset) in match change {
-            "append" => vec![("original", 1), ("first-append", 3)],
+        for addition in match change {
+            "append" => vec![
+                ShardAddition {
+                    app: "original",
+                    offset: 1,
+                },
+                ShardAddition {
+                    app: "first-append",
+                    offset: 3,
+                },
+            ],
             "remove" => vec![],
-            _ => vec![("replacement", 1)],
+            _ => vec![ShardAddition {
+                app: "replacement",
+                offset: 1,
+            }],
         } {
-            let (extra_labels, extra_blocks) = shard_indexes(app, offset);
-            for (_, labels) in extra_labels.tenant_series("tenant-a") {
-                expected_labels.insert_series("tenant-a", labels);
+            let extra = shard_indexes(addition.app, addition.offset);
+            for series in extra.labels.tenant_series("tenant-a") {
+                expected.labels.insert_series("tenant-a", series.labels);
             }
-            for block in extra_blocks.blocks() {
-                expected_blocks.insert(block.clone());
+            for block in extra.blocks.blocks() {
+                expected.blocks.insert(block.clone());
             }
         }
         assert!(
-            read_tenant_log_index_shard_from_object_store(
-                store.as_ref(),
-                &prefix,
-                "tenant-a",
-                range,
-            )
-            .await
-            .unwrap()
-                == (expected_labels, expected_blocks),
+            indexes_match(
+                read_tenant_log_index_shard_from_object_store(
+                    store.as_ref(),
+                    &prefix,
+                    "tenant-a",
+                    range,
+                )
+                .await
+                .unwrap(),
+                &expected.labels,
+                &expected.blocks
+            ),
             "{change}"
         );
     }
@@ -557,8 +657,8 @@ async fn stale_retention_keeps_an_append_to_an_otherwise_empty_shard() {
         release,
         store,
     } = BarrieredShard::default();
-    let (old_labels, old_blocks) = shard_indexes("expired", 1);
-    seed_shard(store.as_ref(), &old_labels, &old_blocks).await;
+    let old = shard_indexes("expired", 1);
+    seed_shard(store.as_ref(), &old.labels, &old.blocks).await;
     let pending = {
         let store = store.clone();
         let prefix = prefix.clone();
@@ -577,15 +677,15 @@ async fn stale_retention_keeps_an_append_to_an_otherwise_empty_shard() {
         })
     };
     entered.notified().await;
-    let (new_labels, new_blocks) = shard_indexes("appended", 2);
+    let new = shard_indexes("appended", 2);
     update_tenant_log_index_shard_to_object_store(
         store.as_ref(),
         &prefix,
         "tenant-a",
         range,
         &BlockIndex::default(),
-        &new_labels,
-        &new_blocks,
+        &new.labels,
+        &new.blocks,
     )
     .await
     .unwrap();
@@ -596,18 +696,19 @@ async fn stale_retention_keeps_an_append_to_an_otherwise_empty_shard() {
             == vec![krabka_blockstore::BlockDeletion {
                 object_key: krabka_blockstore::log_block_object_path(
                     &prefix,
-                    &old_blocks.blocks()[0].key,
+                    &old.blocks.blocks()[0].key,
                 )
                 .to_string(),
                 sidecars: vec![],
             }]
     );
-    assert!(
+    assert!(indexes_match(
         read_tenant_log_index_shard_from_object_store(store.as_ref(), &prefix, "tenant-a", range,)
             .await
-            .unwrap()
-            == (new_labels, new_blocks)
-    );
+            .unwrap(),
+        &new.labels,
+        &new.blocks
+    ));
 }
 
 #[tokio::test]
@@ -619,14 +720,14 @@ async fn a_blocked_replay_append_does_not_resurrect_a_removed_descriptor() {
         release,
         store,
     } = BarrieredShard::default();
-    let (labels, blocks) = shard_indexes("original", 1);
-    seed_shard(store.as_ref(), &labels, &blocks).await;
+    let original = shard_indexes("original", 1);
+    seed_shard(store.as_ref(), &original.labels, &original.blocks).await;
     store.clear_put_paths();
     let replay = {
         let store = store.clone();
         let prefix = prefix.clone();
-        let labels = labels.clone();
-        let blocks = blocks.clone();
+        let labels = original.labels.clone();
+        let blocks = original.blocks.clone();
         tokio::spawn(async move {
             update_tenant_log_index_shard_to_object_store(
                 store.as_ref(),
@@ -646,7 +747,7 @@ async fn a_blocked_replay_append_does_not_resurrect_a_removed_descriptor() {
         &prefix,
         "tenant-a",
         range,
-        &blocks,
+        &original.blocks,
         &LabelIndex::default(),
         &BlockIndex::default(),
     )
@@ -655,12 +756,13 @@ async fn a_blocked_replay_append_does_not_resurrect_a_removed_descriptor() {
     release.add_permits(1);
     replay.await.unwrap().unwrap();
     assert!(store.put_paths().len() == 3);
-    assert!(
+    assert!(indexes_match(
         read_tenant_log_index_shard_from_object_store(store.as_ref(), &prefix, "tenant-a", range)
             .await
-            .unwrap()
-            == (LabelIndex::default(), BlockIndex::default())
-    );
+            .unwrap(),
+        &LabelIndex::default(),
+        &BlockIndex::default()
+    ));
 }
 
 #[tokio::test]
@@ -668,45 +770,46 @@ async fn shard_deltas_are_idempotent_and_do_not_resurrect_stale_descriptors() {
     let store = object_store::memory::InMemory::new();
     let prefix = ObjectPath::from("logs");
     let range = TimeRange::new(19, 20).unwrap();
-    let (old_labels, old_blocks) = shard_indexes("old", 1);
-    let (new_labels, new_blocks) = shard_indexes("new", 1);
+    let old = shard_indexes("old", 1);
+    let new = shard_indexes("new", 1);
     write_tenant_log_index_shard_to_object_store(
         &store,
         &prefix,
         "tenant-a",
         range,
-        &new_labels,
-        &new_blocks,
+        &new.labels,
+        &new.blocks,
     )
     .await
     .unwrap();
-    for previous in [BlockIndex::default(), old_blocks.clone()] {
+    for previous in [BlockIndex::default(), old.blocks.clone()] {
         update_tenant_log_index_shard_to_object_store(
             &store,
             &prefix,
             "tenant-a",
             range,
             &previous,
-            &old_labels,
-            &old_blocks,
+            &old.labels,
+            &old.blocks,
         )
         .await
         .unwrap();
-        assert!(
+        assert!(indexes_match(
             read_tenant_log_index_shard_from_object_store(&store, &prefix, "tenant-a", range,)
                 .await
-                .unwrap()
-                == (new_labels.clone(), new_blocks.clone())
-        );
+                .unwrap(),
+            &new.labels.clone(),
+            &new.blocks.clone()
+        ));
     }
     update_tenant_log_index_shard_to_object_store(
         &store,
         &prefix,
         "tenant-a",
         range,
-        &old_blocks,
-        &new_labels,
-        &new_blocks,
+        &old.blocks,
+        &new.labels,
+        &new.blocks,
     )
     .await
     .unwrap();
@@ -715,7 +818,7 @@ async fn shard_deltas_are_idempotent_and_do_not_resurrect_stale_descriptors() {
         &prefix,
         "tenant-a",
         range,
-        &old_blocks,
+        &old.blocks,
         &LabelIndex::default(),
         &BlockIndex::default(),
     )
@@ -732,7 +835,7 @@ async fn shard_deltas_are_idempotent_and_do_not_resurrect_stale_descriptors() {
         &prefix,
         "tenant-a",
         range,
-        &new_blocks,
+        &new.blocks,
         &LabelIndex::default(),
         &BlockIndex::default(),
     )
@@ -743,18 +846,19 @@ async fn shard_deltas_are_idempotent_and_do_not_resurrect_stale_descriptors() {
         &prefix,
         "tenant-a",
         range,
-        &old_blocks,
-        &old_labels,
-        &old_blocks,
+        &old.blocks,
+        &old.labels,
+        &old.blocks,
     )
     .await
     .unwrap();
-    assert!(
+    assert!(indexes_match(
         read_tenant_log_index_shard_from_object_store(&store, &prefix, "tenant-a", range,)
             .await
-            .unwrap()
-            == (LabelIndex::default(), BlockIndex::default())
-    );
+            .unwrap(),
+        &LabelIndex::default(),
+        &BlockIndex::default()
+    ));
 }
 
 #[tokio::test]
@@ -763,7 +867,7 @@ async fn invalid_shard_manifests_fail_before_conditional_publication() {
     let prefix = ObjectPath::from("logs");
     let range = TimeRange::new(19, 20).unwrap();
     let path = shard_snapshot_path(&prefix, range, 0);
-    let (labels, blocks) = shard_indexes("api", 1);
+    let indexes = shard_indexes("api", 1);
     for malformed in [
         r#"{"format_version":4294967295,"series":[],"blocks":[]}"#,
         r#"{"series":[],"blocks":[]}"#,
@@ -782,8 +886,8 @@ async fn invalid_shard_manifests_fail_before_conditional_publication() {
                 "tenant-a",
                 range,
                 &BlockIndex::default(),
-                &labels,
-                &blocks,
+                &indexes.labels,
+                &indexes.blocks,
             )
             .await
             .is_err()
@@ -812,21 +916,21 @@ async fn a_paused_shard_writer_retries_a_reclaimed_generation_instead_of_losing_
         release,
         store,
     } = BarrieredShard::default();
-    let (mut expected_labels, mut expected_blocks) = shard_indexes("initial", 0);
-    seed_shard(store.as_ref(), &expected_labels, &expected_blocks).await;
+    let mut expected = shard_indexes("initial", 0);
+    seed_shard(store.as_ref(), &expected.labels, &expected.blocks).await;
     let pending = {
         let store = store.clone();
         let prefix = prefix.clone();
         tokio::spawn(async move {
-            let (labels, blocks) = shard_indexes("paused", 100);
+            let indexes = shard_indexes("paused", 100);
             update_tenant_log_index_shard_to_object_store(
                 store.as_ref(),
                 &prefix,
                 "tenant-a",
                 range,
                 &BlockIndex::default(),
-                &labels,
-                &blocks,
+                &indexes.labels,
+                &indexes.blocks,
             )
             .await
         })
@@ -835,22 +939,22 @@ async fn a_paused_shard_writer_retries_a_reclaimed_generation_instead_of_losing_
     // More than the retained eight generations reclaim the paused writer's
     // proposed generation1. Its first Create can succeed, but is obsolete.
     for offset in 1..=12 {
-        let (labels, blocks) = shard_indexes(&format!("append-{offset}"), offset);
+        let indexes = shard_indexes(&format!("append-{offset}"), offset);
         update_tenant_log_index_shard_to_object_store(
             store.as_ref(),
             &prefix,
             "tenant-a",
             range,
             &BlockIndex::default(),
-            &labels,
-            &blocks,
+            &indexes.labels,
+            &indexes.blocks,
         )
         .await
         .unwrap();
-        for (_, series) in labels.tenant_series("tenant-a") {
-            expected_labels.insert_series("tenant-a", series);
+        for series in indexes.labels.tenant_series("tenant-a") {
+            expected.labels.insert_series("tenant-a", series.labels);
         }
-        expected_blocks.insert(blocks.blocks()[0].clone());
+        expected.blocks.insert(indexes.blocks.blocks()[0].clone());
     }
     assert!(matches!(
         store
@@ -861,17 +965,18 @@ async fn a_paused_shard_writer_retries_a_reclaimed_generation_instead_of_losing_
     ));
     release.add_permits(1);
     pending.await.unwrap().unwrap();
-    let (paused_labels, paused_blocks) = shard_indexes("paused", 100);
-    for (_, series) in paused_labels.tenant_series("tenant-a") {
-        expected_labels.insert_series("tenant-a", series);
+    let paused = shard_indexes("paused", 100);
+    for series in paused.labels.tenant_series("tenant-a") {
+        expected.labels.insert_series("tenant-a", series.labels);
     }
-    expected_blocks.insert(paused_blocks.blocks()[0].clone());
-    assert!(
+    expected.blocks.insert(paused.blocks.blocks()[0].clone());
+    assert!(indexes_match(
         read_tenant_log_index_shard_from_object_store(store.as_ref(), &prefix, "tenant-a", range,)
             .await
-            .unwrap()
-            == (expected_labels, expected_blocks)
-    );
+            .unwrap(),
+        &expected.labels,
+        &expected.blocks
+    ));
 }
 
 #[tokio::test]
@@ -883,8 +988,8 @@ async fn a_shard_reader_reselects_the_latest_generation_when_its_selected_object
         release,
         store,
     } = BarrieredShard::new(GetBarrierTiming::BeforeRead);
-    let (labels, blocks) = shard_indexes("old", 0);
-    seed_shard(store.as_ref(), &labels, &blocks).await;
+    let old = shard_indexes("old", 0);
+    seed_shard(store.as_ref(), &old.labels, &old.blocks).await;
     let pending = {
         let store = store.clone();
         let prefix = prefix.clone();
@@ -900,14 +1005,14 @@ async fn a_shard_reader_reselects_the_latest_generation_when_its_selected_object
     };
     entered.notified().await;
     for offset in 1..=12 {
-        let (labels, blocks) = shard_indexes("latest", offset);
+        let indexes = shard_indexes("latest", offset);
         write_tenant_log_index_shard_to_object_store(
             store.as_ref(),
             &prefix,
             "tenant-a",
             range,
-            &labels,
-            &blocks,
+            &indexes.labels,
+            &indexes.blocks,
         )
         .await
         .unwrap();
@@ -920,7 +1025,11 @@ async fn a_shard_reader_reselects_the_latest_generation_when_its_selected_object
         Err(object_store::Error::NotFound { .. })
     ));
     release.add_permits(1);
-    assert!(pending.await.unwrap().unwrap() == shard_indexes("latest", 12));
+    assert!({
+        let actual = pending.await.unwrap().unwrap();
+        let expected = shard_indexes("latest", 12);
+        indexes_match(actual, &expected.labels, &expected.blocks)
+    });
     // All publishers are now stopped; explicit deletion removes every retained
     // generation, and the reader reports an absent shard.
     krabka_blockstore::delete_tenant_log_index_shard_from_object_store(
@@ -954,7 +1063,7 @@ async fn shard_generation_overflow_fails_without_a_new_publication() {
         .await
         .unwrap();
     store.clear_put_paths();
-    let (labels, blocks) = shard_indexes("api", 1);
+    let indexes = shard_indexes("api", 1);
     assert!(
         update_tenant_log_index_shard_to_object_store(
             &store,
@@ -962,18 +1071,19 @@ async fn shard_generation_overflow_fails_without_a_new_publication() {
             "tenant-a",
             range,
             &BlockIndex::default(),
-            &labels,
-            &blocks,
+            &indexes.labels,
+            &indexes.blocks,
         )
         .await
         .is_err()
     );
     assert!(store.put_paths().is_empty());
     assert!(store.get_paths() == vec![path.to_string()]);
-    assert!(
+    assert!(indexes_match(
         read_tenant_log_index_shard_from_object_store(&store, &prefix, "tenant-a", range)
             .await
-            .unwrap()
-            == (LabelIndex::default(), BlockIndex::default())
-    );
+            .unwrap(),
+        &LabelIndex::default(),
+        &BlockIndex::default()
+    ));
 }

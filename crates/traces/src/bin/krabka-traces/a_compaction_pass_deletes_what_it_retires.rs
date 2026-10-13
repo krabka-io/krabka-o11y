@@ -13,7 +13,7 @@ use std::{
 use assert2::check;
 use clap::Parser as _;
 use futures::StreamExt as _;
-use krabka_blockstore::{BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, TraceIndex};
+use krabka_blockstore::{BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, OffsetRange, TraceIndex};
 use krabka_traces::{
     AttrValue, KeyValue, Span, SpanRecord,
     blockbuilder::{TRACE_BLOCK_OBJECT_PREFIX, build_blocks},
@@ -103,7 +103,7 @@ async fn publish_block(
         "tenant-a",
         7,
         &[span_record(trace, start_ns)],
-        (offset, offset),
+        OffsetRange::new(offset, offset),
     )
     .await
     .expect("the block is written");

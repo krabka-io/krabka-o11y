@@ -10,7 +10,9 @@ pub(crate) async fn no_snapshot_and_an_unreachable_broker_fail_closed_without_a_
     let source = Arc::new(CountingBrokerAccess::answering(Err(
         "broker unreachable".to_string()
     )));
-    let (access, connected, _) = broker_access_for_test(&source, 8);
+    let fixture = broker_access_for_test(&source, 8);
+    let access = fixture.cache;
+    let connected = fixture.connected;
     let authorizer = BrokerBackedQueryAuthorizer { access };
     for _ in 0..10 {
         check!(matches!(
@@ -18,14 +20,16 @@ pub(crate) async fn no_snapshot_and_an_unreachable_broker_fail_closed_without_a_
             Err(QueryAuthorizationError::Unavailable { reason, .. }) if reason == "broker unreachable"
         ));
     }
-    check!(source.lookups() == (1, 0));
+    check!(source.lookups() == BrokerLookups { acl: 1, quota: 0 });
     check!(!connected.load(AtomicOrdering::SeqCst));
 
     let source = Arc::new(CountingBrokerAccess::answering(Ok(
         AclSet::SecurityDisabled,
     )));
     *source.quotas.lock().expect("fake quota lock") = Err("broker unreachable".to_string());
-    let (access, _, clock) = broker_access_for_test(&source, 8);
+    let fixture = broker_access_for_test(&source, 8);
+    let access = fixture.cache;
+    let clock = fixture.clock;
     let limiter = BrokerBackedIngestLimiter::with_access(access, secs(1));
     for _ in 0..10 {
         check!(matches!(
@@ -33,7 +37,7 @@ pub(crate) async fn no_snapshot_and_an_unreachable_broker_fail_closed_without_a_
             Err(IngestLimitError::Unavailable { reason, .. }) if reason == "broker unreachable"
         ));
     }
-    check!(source.lookups() == (1, 1));
+    check!(source.lookups() == BrokerLookups { acl: 1, quota: 1 });
 
     // One TTL later the broker is asked again.
     clock.advance(secs(10));
@@ -43,5 +47,5 @@ pub(crate) async fn no_snapshot_and_an_unreachable_broker_fail_closed_without_a_
             .await
             .is_err()
     );
-    check!(source.lookups() == (2, 2));
+    check!(source.lookups() == BrokerLookups { acl: 2, quota: 2 });
 }

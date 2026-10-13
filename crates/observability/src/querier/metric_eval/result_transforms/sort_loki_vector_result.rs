@@ -11,14 +11,18 @@ pub(crate) fn sort_loki_vector_result(value: &mut Value, order: SampleOrder) {
         return;
     };
     results.sort_by(|left, right| {
-        let ordering = match (
-            loki_vector_sample_value(left),
-            loki_vector_sample_value(right),
-        ) {
-            (Some(left), Some(right)) => left.cmp_value(right),
-            (Some(_), None) => Ordering::Less,
-            (None, Some(_)) => Ordering::Greater,
-            (None, None) => Ordering::Equal,
+        let left_value = loki_vector_sample_value(left);
+        let right_value = loki_vector_sample_value(right);
+        let ordering = if let Some(left_value) = left_value {
+            if let Some(right_value) = right_value {
+                left_value.cmp_value(right_value)
+            } else {
+                Ordering::Less
+            }
+        } else if right_value.is_some() {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
         };
         order.orient(ordering)
     });

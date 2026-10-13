@@ -88,19 +88,24 @@ async fn a_line_pushed_into_the_all_in_one_comes_back_out_of_its_query_api() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_drain_request_takes_the_all_in_one_out_of_rotation() {
     let stack = Box::pin(AllInOne::start()).await;
-    check!(!stack.ready_body().await.1.contains("accepting-writes"));
+    check!(!stack.ready_body().await.body.contains("accepting-writes"));
 
     let drained = stack.prepare_shutdown().await;
     check!(drained == reqwest::StatusCode::NO_CONTENT);
 
-    let (status, body) = stack.ready_body().await;
-    check!(status == reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    let response = stack.ready_body().await;
+    check!(response.status == reqwest::StatusCode::SERVICE_UNAVAILABLE);
     // Once, not twice. The querier's own gates flap as its hot tail
     // reconnects and disconnects, so the rest of the line is not this test's
     // business; what is its business is that one drain request moved one gate.
     check!(
-        body.matches("distributor/accepting-writes").count() == 1,
-        "{body}"
+        response
+            .body
+            .matches("distributor/accepting-writes")
+            .count()
+            == 1,
+        "{}",
+        response.body
     );
 
     let _object_dir = stack.stop().await;
@@ -255,7 +260,7 @@ impl AllInOne {
     }
 
     /// `GET /ready` on the data port, status and body.
-    async fn ready_body(&self) -> (reqwest::StatusCode, String) {
+    async fn ready_body(&self) -> ReadyBody {
         let response = self
             .client
             .get(format!("http://{}/ready", self.addr))
@@ -263,7 +268,10 @@ impl AllInOne {
             .await
             .expect("the readiness probe answers");
         let status = response.status();
-        (status, response.text().await.expect("a readiness body"))
+        ReadyBody {
+            status,
+            body: response.text().await.expect("a readiness body"),
+        }
     }
 
     /// The drain an operator's `preStop` hook sends.
@@ -323,6 +331,11 @@ impl AllInOne {
     }
 }
 
+struct ReadyBody {
+    status: reqwest::StatusCode,
+    body: String,
+}
+
 /// Every log line the object store holds under the index prefix, read back
 /// the way another process would read it.
 ///
@@ -356,17 +369,17 @@ fn block_keys(prefix: &std::path::Path) -> Vec<BlockKey> {
             let [tenant, partition, offsets, time] = parts.as_slice() else {
                 return None;
             };
-            let (first, last) = offsets.strip_prefix("offsets=")?.split_once('-')?;
-            let (start, end) = time
+            let offset_parts = offsets.strip_prefix("offsets=")?.split_once('-')?;
+            let time_parts = time
                 .strip_prefix("time=")?
                 .strip_suffix(".parquet")?
                 .split_once('-')?;
             Some(BlockKey::new(
                 tenant.strip_prefix("tenant=")?,
                 partition.strip_prefix("partition=")?.parse().ok()?,
-                first.parse().ok()?,
-                last.parse().ok()?,
-                TimeRange::new(start.parse().ok()?, end.parse().ok()?).ok()?,
+                offset_parts.0.parse().ok()?,
+                offset_parts.1.parse().ok()?,
+                TimeRange::new(time_parts.0.parse().ok()?, time_parts.1.parse().ok()?).ok()?,
             ))
         })
         .collect()

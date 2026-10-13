@@ -1,5 +1,6 @@
 use super::{
-    BTreeMap, PromqlError, QueryResult, RangeSeries, SampleValue, scaled_native_histogram,
+    BTreeMap, PromqlError, QueryResult, RangeSeries, RangeSeriesSample, SampleValue,
+    scaled_native_histogram,
 };
 
 pub(crate) fn divide_range_query_results(
@@ -16,33 +17,33 @@ pub(crate) fn divide_range_query_results(
             "avg query-frontend count merge requires range matrix results".into(),
         ));
     };
-    let counts_by_fp = count_series
-        .into_iter()
-        .map(|series| (series.labels.fingerprint(), series))
-        .collect::<BTreeMap<_, _>>();
+    let mut counts_by_fp = BTreeMap::new();
+    for series in count_series {
+        counts_by_fp.insert(series.labels.fingerprint(), series);
+    }
     let mut avg_series = Vec::new();
 
     for series in sum_series {
         let Some(count_series) = counts_by_fp.get(&series.labels.fingerprint()) else {
             continue;
         };
-        let counts_by_ts = count_series
-            .samples
-            .iter()
-            .filter_map(|(ts_ms, value)| match value {
-                SampleValue::Float(value) => Some((*ts_ms, *value)),
-                SampleValue::Histogram(_) => None,
-            })
-            .collect::<BTreeMap<_, _>>();
+        let mut counts_by_ts = BTreeMap::new();
+        for sample in &count_series.samples {
+            if let SampleValue::Float(value) = &sample.value {
+                counts_by_ts.insert(sample.timestamp_ms, *value);
+            }
+        }
         let samples = series
             .samples
             .into_iter()
-            .filter_map(|(ts_ms, value)| {
+            .filter_map(|sample| {
+                let ts_ms = sample.timestamp_ms;
+                let value = sample.value;
                 let count = *counts_by_ts.get(&ts_ms)?;
                 if count == 0.0 {
                     return None;
                 }
-                Some((
+                Some(RangeSeriesSample::new(
                     ts_ms,
                     match value {
                         SampleValue::Float(value) => SampleValue::Float(value / count),

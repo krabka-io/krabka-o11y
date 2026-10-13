@@ -42,6 +42,11 @@ pub struct OneRecordBroker {
     pub bootstrap: String,
 }
 
+pub struct DrainOnlyConfig {
+    pub config: BlockBuilderConfig,
+    pub metrics: ServiceMetrics,
+}
+
 impl OneRecordBroker {
     pub async fn start() -> Self {
         let broker = WalTopicBroker::start().await;
@@ -67,7 +72,7 @@ impl OneRecordBroker {
         &self,
         store: &Arc<dyn ObjectStore>,
         group_id: &str,
-    ) -> (BlockBuilderConfig, ServiceMetrics) {
+    ) -> DrainOnlyConfig {
         let mut config = BlockBuilderConfig::new(self.bootstrap.clone(), Arc::clone(store));
         config.group_id = group_id.to_string();
         config.flush_records = UNREACHABLE_FLUSH_RECORDS;
@@ -75,7 +80,7 @@ impl OneRecordBroker {
         config.poll_timeout = millis(100);
         let metrics = ServiceMetrics::new();
         config.metrics = Some(metrics.clone());
-        (config, metrics)
+        DrainOnlyConfig { config, metrics }
     }
 
     /// What a restart as `restart` would be handed. An uncommitted offset
@@ -168,11 +173,11 @@ fn profile_record() -> ProfileRecord {
     ProfileRecord {
         tenant: "tenant-a".into(),
         labels: vec![
-            ("__name__".into(), "process_cpu".into()),
-            ("service_name".into(), "checkout".into()),
-            (
-                "__profile_type__".into(),
-                "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
+            krabka_blockstore::LabelPair::new("__name__", "process_cpu"),
+            krabka_blockstore::LabelPair::new("service_name", "checkout"),
+            krabka_blockstore::LabelPair::new(
+                "__profile_type__",
+                "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
             ),
         ],
         profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),

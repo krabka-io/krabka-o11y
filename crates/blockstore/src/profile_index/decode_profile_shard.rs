@@ -13,10 +13,7 @@ use super::{
 /// # Errors
 /// Returns [`BlockStoreError::InvalidBlock`] when the bytes are not a profile
 /// shard of the current format version, or when they end early.
-pub(crate) fn decode_profile_shard(
-    object_key: &str,
-    bytes: &[u8],
-) -> Result<(String, ProfileShard)> {
+pub(crate) fn decode_profile_shard(object_key: &str, bytes: &[u8]) -> Result<ProfileShard> {
     decode(object_key, bytes).map_err(|error| match error {
         BlockStoreError::InvalidBlock(message) if !message.contains(object_key) => {
             BlockStoreError::InvalidBlock(format!("profile index shard `{object_key}`: {message}"))
@@ -25,7 +22,7 @@ pub(crate) fn decode_profile_shard(
     })
 }
 
-fn decode(object_key: &str, bytes: &[u8]) -> Result<(String, ProfileShard)> {
+fn decode(object_key: &str, bytes: &[u8]) -> Result<ProfileShard> {
     let mut reader = ByteReader::new(bytes);
     if reader.take(PROFILE_SHARD_MAGIC.len(), "the magic")? != PROFILE_SHARD_MAGIC {
         return Err(BlockStoreError::InvalidBlock(
@@ -42,7 +39,7 @@ fn decode(object_key: &str, bytes: &[u8]) -> Result<(String, ProfileShard)> {
     let inner_len = reader.count("the embedded index shard")?;
     let inner = reader.take(inner_len, "the embedded index shard")?;
     let index = decode_index_shard(object_key, inner)?;
-    let tenant = index
+    let _tenant = index
         .tenant_names()
         .next()
         .ok_or_else(|| {
@@ -68,5 +65,5 @@ fn decode(object_key: &str, bytes: &[u8]) -> Result<(String, ProfileShard)> {
         ));
     }
 
-    Ok((tenant, ProfileShard { index, partitions }))
+    Ok(ProfileShard { index, partitions })
 }

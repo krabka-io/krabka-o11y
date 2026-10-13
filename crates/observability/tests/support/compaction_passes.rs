@@ -8,7 +8,9 @@
 
 use std::time::{Duration, Instant};
 
-use krabka_observability::{CancellationToken, StagedDrain, compaction_metrics::CompactionMetrics};
+use krabka_observability::{
+    CancellationToken, RoleReadiness, StagedDrain, compaction_metrics::CompactionMetrics,
+};
 use krabka_units::secs;
 
 /// The compaction interval the suites run the role at: short enough that
@@ -41,6 +43,17 @@ pub async fn passes_reach(compaction: &CompactionMetrics, wanted: u64) {
     );
 }
 
+/// Cancels a ready role after two completed passes.
+pub async fn cancel_ready_role_after_two_passes(
+    compaction: &CompactionMetrics,
+    readiness: &RoleReadiness,
+    shutdown: &CancellationToken,
+) {
+    passes_reach(compaction, 2).await;
+    assert2::check!(readiness.is_ready(), "{:?}", readiness.pending());
+    shutdown.cancel();
+}
+
 /// Asserts that the role finishes no further pass during [`AFTER_THE_STOP`],
 /// starting now.
 ///
@@ -51,6 +64,20 @@ pub async fn assert_no_pass_after_the_stop(compaction: &CompactionMetrics, outli
     let stopped_at = passes(compaction);
     tokio::time::sleep(AFTER_THE_STOP).await;
     assert2::assert!(passes(compaction) == stopped_at, "{outlived_message}");
+}
+
+/// Asserts that a cancelled role returned cleanly and did not leave its loop
+/// running.
+pub async fn assert_role_stops_after_cancel<RoleError: std::fmt::Debug>(
+    outcome: &Result<(), RoleError>,
+    compaction: &CompactionMetrics,
+) {
+    assert2::check!(outcome.is_ok());
+    assert_no_pass_after_the_stop(
+        compaction,
+        "a compaction loop was still running after the role returned",
+    )
+    .await;
 }
 
 /// Asserts that a role started with its token already cancelled returned

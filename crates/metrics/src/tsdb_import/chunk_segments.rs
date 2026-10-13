@@ -8,6 +8,12 @@ pub struct ChunkSegments<'a> {
     segments: Vec<&'a [u8]>,
 }
 
+/// The verified encoding and payload of one TSDB chunk.
+pub struct DecodedChunkData<'a> {
+    pub encoding: ChunkEncoding,
+    pub data: &'a [u8],
+}
+
 const MAGIC: u32 = 0x85BD_40DD;
 const FORMAT_V1: u8 = 1;
 const HEADER_LEN: usize = 8;
@@ -16,7 +22,9 @@ impl<'a> ChunkSegments<'a> {
     /// Checks each segment header. `segments` must already be in file-name
     /// order.
     pub fn new(segments: Vec<&'a [u8]>) -> Result<Self, TsdbImportError> {
-        for (index, segment) in segments.iter().enumerate() {
+        for segment_entry in segments.iter().enumerate() {
+            let index = segment_entry.0;
+            let segment = segment_entry.1;
             let mut reader = ByteReader::new(segment, "chunk segment header");
             let magic = reader.be32()?;
             if magic != MAGIC {
@@ -38,7 +46,7 @@ impl<'a> ChunkSegments<'a> {
     }
 
     /// Returns the verified encoding and data of the chunk at `reference`.
-    pub fn chunk(&self, reference: u64) -> Result<(ChunkEncoding, &'a [u8]), TsdbImportError> {
+    pub fn chunk(&self, reference: u64) -> Result<DecodedChunkData<'a>, TsdbImportError> {
         let out_of_range = || TsdbImportError::ChunkReference { reference };
         let segment = usize::try_from(reference >> 32).map_err(|_| out_of_range())?;
         let offset = usize::try_from(reference & 0xffff_ffff).map_err(|_| out_of_range())?;
@@ -68,6 +76,9 @@ impl<'a> ChunkSegments<'a> {
                 reference,
                 encoding: covered[0],
             })?;
-        Ok((encoding, &covered[1..]))
+        Ok(DecodedChunkData {
+            encoding,
+            data: &covered[1..],
+        })
     }
 }

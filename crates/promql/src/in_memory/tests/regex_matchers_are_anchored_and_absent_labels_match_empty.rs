@@ -3,8 +3,21 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn regex_matchers_are_anchored_and_absent_labels_match_empty() {
     let mut store = InMemoryMetricStore::new();
-    store.push_float("t", lbls(&[("__name__", "up"), ("job", "api")]), 1, 1.0);
-    store.push_float("t", lbls(&[("__name__", "up")]), 1, 2.0);
+    store.push_float(
+        "t",
+        lbls(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
+        1,
+        1.0,
+    );
+    store.push_float(
+        "t",
+        lbls(&[crate::test_support::TestLabelPair::new("__name__", "up")]),
+        1,
+        2.0,
+    );
 
     let anchored = [LabelMatcher::new("job", MatchOp::Re, "a")];
     assert2::assert!(

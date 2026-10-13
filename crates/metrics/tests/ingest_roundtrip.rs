@@ -12,7 +12,6 @@ use axum::{
     http::{Request, StatusCode},
 };
 use krabka_blockstore::{MeteredObjectStore, read_block};
-use krabka_broker::{Broker, BrokerConfig};
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_producer::Producer;
 use krabka_ids::{Offset, PartitionIndex};
@@ -31,6 +30,9 @@ use krabka_units::prelude::*;
 use object_store::{ObjectStore, memory::InMemory};
 use tower::ServiceExt as _;
 
+#[path = "../../integration/tests/support/test_broker.rs"]
+mod test_broker;
+
 #[path = "support/up_remote_write.rs"]
 mod up_remote_write;
 
@@ -47,11 +49,10 @@ fn router(state: Arc<DistributorState>) -> axum::Router {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_write_v1_lands_as_block() {
-    let tempdir = tempfile::TempDir::new().expect("tempdir");
-    let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
+    let started = test_broker::start_broker().await;
+    let _broker = started.broker;
+    let _tempdir = started.tempdir;
+    let bootstrap = started.bootstrap;
     create_metrics_wal_topic(&bootstrap).await;
 
     let producer = Producer::builder()
@@ -85,7 +86,7 @@ async fn remote_write_v1_lands_as_block() {
         wal_record
             .labels
             .iter()
-            .any(|(name, value)| name == "__name__" && value == "up")
+            .any(|label| label.name == "__name__" && label.value == "up")
     );
     assert!(matches!(
         wal_record.payload,

@@ -20,12 +20,17 @@ pub(crate) fn instant_delta_sample_from_series(
     let window = series
         .samples
         .iter()
-        .filter(|(timestamp, _)| *timestamp > range_start_ms && *timestamp <= range_end_ms)
+        .filter(|sample| {
+            sample.timestamp_ms > range_start_ms && sample.timestamp_ms <= range_end_ms
+        })
         .collect::<Vec<_>>();
-    let [(previous_ms, previous), (last_ms, last)] = window.get(window.len().checked_sub(2)?..)?
-    else {
+    let [previous, last] = window.get(window.len().checked_sub(2)?..)? else {
         return None;
     };
+    let previous_ms = previous.timestamp_ms;
+    let last_ms = last.timestamp_ms;
+    let previous = &previous.value;
+    let last = &last.value;
     let interval_secs = (last_ms - previous_ms).to_f64()? / 1000.0;
     if interval_secs <= 0.0 {
         return None;
@@ -33,7 +38,7 @@ pub(crate) fn instant_delta_sample_from_series(
 
     let previous_start = series
         .start_timestamps_ms
-        .get(previous_ms)
+        .get(&previous_ms)
         .copied()
         .or(match previous {
             SampleValue::Histogram(h) => h.start_timestamp_ms,
@@ -42,7 +47,7 @@ pub(crate) fn instant_delta_sample_from_series(
         .unwrap_or(0);
     let start = series
         .start_timestamps_ms
-        .get(last_ms)
+        .get(&last_ms)
         .copied()
         .or(match last {
             SampleValue::Histogram(h) => h.start_timestamp_ms,
@@ -50,34 +55,39 @@ pub(crate) fn instant_delta_sample_from_series(
         })
         .unwrap_or(0);
     let start_reset = matches!(kind, IrateFn::Irate)
-        && start_timestamp_reset(previous_start, *previous_ms, start, *last_ms);
-    match (previous, last) {
-        (SampleValue::Float(previous), SampleValue::Float(last)) => {
-            Some(SampleValue::Float(if start_reset {
+        && start_timestamp_reset(previous_start, previous_ms, start, last_ms);
+    match previous {
+        SampleValue::Float(previous) => match last {
+            SampleValue::Float(last) => Some(SampleValue::Float(if start_reset {
                 *last / interval_secs
             } else {
                 instant_delta(*previous, *last, interval_secs, kind)
-            }))
-        }
-        (SampleValue::Histogram(previous), SampleValue::Histogram(last)) => {
-            let metric = series.labels.get("__name__").unwrap_or("");
-            let mut out = if start_reset {
-                let mut out = last.clone();
-                out.reset_hint = super::ResetHint::Gauge;
-                out
-            } else {
-                instant_delta_histogram(previous, last, metric, kind)?
-            };
-            if matches!(kind, IrateFn::Irate) {
-                scale_native_histogram_values(&mut out, 1.0 / interval_secs);
+            })),
+            _ => mixed_sample_warning(series),
+        },
+        SampleValue::Histogram(previous) => match last {
+            SampleValue::Histogram(last) => {
+                let metric = series.labels.get("__name__").unwrap_or("");
+                let mut out = if start_reset {
+                    let mut out = last.clone();
+                    out.reset_hint = super::ResetHint::Gauge;
+                    out
+                } else {
+                    instant_delta_histogram(previous, last, metric, kind)?
+                };
+                if matches!(kind, IrateFn::Irate) {
+                    scale_native_histogram_values(&mut out, 1.0 / interval_secs);
+                }
+                Some(SampleValue::Histogram(out))
             }
-            Some(SampleValue::Histogram(out))
-        }
-        _ => {
-            emit_warning(mixed_floats_histograms_warning(
-                series.labels.get("__name__").unwrap_or(""),
-            ));
-            None
-        }
+            _ => mixed_sample_warning(series),
+        },
     }
+}
+
+fn mixed_sample_warning(series: &RangeSeries) -> Option<SampleValue> {
+    emit_warning(mixed_floats_histograms_warning(
+        series.labels.get("__name__").unwrap_or(""),
+    ));
+    None
 }

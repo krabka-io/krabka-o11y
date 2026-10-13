@@ -43,13 +43,13 @@ pub(crate) async fn increase_recompacts_native_histogram_spans_around_gaps() {
     // The outermost buckets hold still, as does one in the middle of a run.
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "h")]),
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "h")]),
         10_000,
         histogram(vec![1.0; 9]),
     );
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "h")]),
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "h")]),
         20_000,
         histogram(vec![1.0, 3.0, 4.0, 5.0, 6.0, 1.0, 7.0, 8.0, 1.0]),
     );

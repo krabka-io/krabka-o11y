@@ -22,13 +22,19 @@ pub(crate) struct AnalyticsQuery<'a> {
     pub(crate) volume_range_limit: VolumeRangeLimit,
 }
 
+pub(crate) struct PlannedAnalyticsQuery {
+    pub(crate) state: QuerierState,
+    pub(crate) plan: StreamPlan,
+    pub(crate) time_range: TimeRange,
+}
+
 /// Plans an index analytics read, and checks it against the tenant's limits.
 ///
 /// Returns the request's state, the plan, and the clamped time range.
 pub(crate) async fn plan_analytics_query(
     state: &QuerierState,
     request: AnalyticsQuery<'_>,
-) -> Result<(QuerierState, StreamPlan, TimeRange), HttpQueryError> {
+) -> Result<PlannedAnalyticsQuery, HttpQueryError> {
     let AnalyticsQuery {
         tenant,
         time_range,
@@ -59,5 +65,9 @@ pub(crate) async fn plan_analytics_query(
     )?;
     validate_query_series_limit(&state, &plan)?;
     validate_query_bytes_limit(&state, &plan)?;
-    Ok((state, plan, time_range))
+    Ok(PlannedAnalyticsQuery {
+        state,
+        plan,
+        time_range,
+    })
 }

@@ -13,6 +13,11 @@ pub(crate) struct MetricBucket {
     pub(crate) exemplars: Vec<TraceMetricExemplar>,
 }
 
+struct CompensatedSum {
+    sum: f64,
+    compensation: f64,
+}
+
 impl MetricBucket {
     pub(crate) fn record(&mut self, value: Option<f64>, exemplar: Option<TraceMetricExemplar>) {
         self.count += 1;
@@ -22,9 +27,9 @@ impl MetricBucket {
         let Some(value) = value else {
             return;
         };
-        let (sum, compensation) = kahan_increment(self.sum, value - self.sum_compensation, 0.0);
-        self.sum = sum;
-        self.sum_compensation = compensation;
+        let accumulated = kahan_increment(self.sum, value - self.sum_compensation, 0.0);
+        self.sum = accumulated.sum;
+        self.sum_compensation = accumulated.compensation;
         if let Some(mean) = self.mean {
             let count =
                 f64_from_u64(self.count).expect("u64 values have finite f64 representations");
@@ -34,9 +39,9 @@ impl MetricBucket {
                     || (increment.is_infinite()
                         && mean.is_sign_positive() == increment.is_sign_positive())))
             {
-                let (mean, compensation) = kahan_increment(mean, increment, self.mean_compensation);
-                self.mean = Some(mean);
-                self.mean_compensation = compensation;
+                let accumulated = kahan_increment(mean, increment, self.mean_compensation);
+                self.mean = Some(accumulated.sum);
+                self.mean_compensation = accumulated.compensation;
             }
         } else {
             self.mean = Some(value);
@@ -95,7 +100,7 @@ impl MetricBucket {
 }
 
 // Tempo's shared Kahan/Neumaier increment, including its infinity branch.
-fn kahan_increment(sum: f64, increment: f64, mut compensation: f64) -> (f64, f64) {
+fn kahan_increment(sum: f64, increment: f64, mut compensation: f64) -> CompensatedSum {
     let result = sum + increment;
     if result.is_infinite() {
         compensation = 0.0;
@@ -104,7 +109,10 @@ fn kahan_increment(sum: f64, increment: f64, mut compensation: f64) -> (f64, f64
     } else {
         compensation += (increment - result) + sum;
     }
-    (result, compensation)
+    CompensatedSum {
+        sum: result,
+        compensation,
+    }
 }
 
 #[cfg(test)]

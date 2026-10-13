@@ -136,32 +136,65 @@ mod tests {
     #[test]
     fn query_counters_split_by_route_and_status() {
         let query = QueryInstruments::register(&mut Registry::default(), &QUERY_HELP);
-        for (route, outcome) in [
-            ("query", RequestOutcome::Ok),
-            ("query", RequestOutcome::Ok),
-            ("query", RequestOutcome::Error),
-            ("labels", RequestOutcome::Ok),
+        struct RequestCase {
+            route: &'static str,
+            outcome: RequestOutcome,
+        }
+        for case in [
+            RequestCase {
+                route: "query",
+                outcome: RequestOutcome::Ok,
+            },
+            RequestCase {
+                route: "query",
+                outcome: RequestOutcome::Ok,
+            },
+            RequestCase {
+                route: "query",
+                outcome: RequestOutcome::Error,
+            },
+            RequestCase {
+                route: "labels",
+                outcome: RequestOutcome::Ok,
+            },
         ] {
             query.record(QueryRequest {
-                route,
-                outcome,
+                route: case.route,
+                outcome: case.outcome,
                 elapsed: millis(10),
             });
         }
-        for (route, status, want) in [
-            ("query", "ok", 2u64),
-            ("query", "error", 1),
-            ("labels", "ok", 1),
+        struct ExpectedCounter {
+            route: &'static str,
+            status: &'static str,
+            count: u64,
+        }
+        for expected in [
+            ExpectedCounter {
+                route: "query",
+                status: "ok",
+                count: 2,
+            },
+            ExpectedCounter {
+                route: "query",
+                status: "error",
+                count: 1,
+            },
+            ExpectedCounter {
+                route: "labels",
+                status: "ok",
+                count: 1,
+            },
         ] {
             assert!(
                 query
                     .requests
                     .get_or_create(&RouteStatusLabel {
-                        route: route.into(),
-                        status: status.into()
+                        route: expected.route.into(),
+                        status: expected.status.into()
                     })
                     .get()
-                    == want
+                    == expected.count
             );
         }
     }

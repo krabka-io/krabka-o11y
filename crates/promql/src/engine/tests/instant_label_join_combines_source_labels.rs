@@ -6,10 +6,10 @@ pub(crate) async fn instant_label_join_combines_source_labels() {
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "up"),
-            ("job", "api"),
-            ("instance", "a"),
-            ("zone", "us-east-1a"),
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", "a"),
+            crate::test_support::TestLabelPair::new("zone", "us-east-1a"),
         ]),
         10_000,
         1.0,

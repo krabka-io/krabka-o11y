@@ -236,7 +236,7 @@ pub(crate) struct Cli {
     pub(crate) ruler_alertmanager_queue_capacity: usize,
     /// Label in `name=value` form added when an alert does not define it.
     #[arg(long, value_parser = parse_external_label)]
-    pub(crate) ruler_external_label: Vec<(String, String)>,
+    pub(crate) ruler_external_label: Vec<super::parse_external_label::ExternalLabel>,
     /// External labels from a JSON array in the environment.
     #[arg(
         long = "ruler-external-label-env",

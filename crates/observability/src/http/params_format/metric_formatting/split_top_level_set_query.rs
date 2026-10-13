@@ -1,6 +1,6 @@
-use super::{has_word_boundary, split_top_level_query};
+use super::{TopLevelQuerySplit, has_word_boundary, split_top_level_query};
 
-pub(crate) fn split_top_level_set_query(query: &str) -> Option<(&str, &'static str, &str)> {
+pub(crate) fn split_top_level_set_query(query: &str) -> Option<TopLevelQuerySplit<'_>> {
     split_top_level_query(query, |index, ch| {
         if !ch.is_ascii_alphabetic() {
             return None;

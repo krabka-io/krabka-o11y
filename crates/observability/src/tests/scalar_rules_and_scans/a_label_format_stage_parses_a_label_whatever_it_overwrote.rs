@@ -43,52 +43,48 @@ pub(crate) fn a_label_format_stage_parses_a_label_whatever_it_overwrote() {
     )
     .expect("the plan names the series");
 
-    check!(
-        loki_streams_response(streams.clone(), LokiStreamEncoding::Folded)
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-                                "env": "prod",
-                                "region": "eu",
-                                "shard": "z"
-                            },
-                            "values": [["10", "api ok"]]
-                        }
-                    ]
-                }
-            })
-    );
-
-    check!(
-        loki_streams_response(streams, LokiStreamEncoding::CategorizeLabels)
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {"app": "api"},
-                            "values": [
-                                [
-                                    "10",
-                                    "api ok",
-                                    {
-                                        "parsed": {
-                                            "env": "prod",
-                                            "region": "eu",
-                                            "shard": "z"
-                                        }
+    assert_stream_response_encodings(
+        streams,
+        json!({
+            "status": "success",
+            "data": {
+                "resultType": "streams",
+                "result": [
+                    {
+                        "stream": {
+                            "app": "api",
+                            "env": "prod",
+                            "region": "eu",
+                            "shard": "z"
+                        },
+                        "values": [["10", "api ok"]]
+                    }
+                ]
+            }
+        }),
+        json!({
+            "status": "success",
+            "data": {
+                "resultType": "streams",
+                "result": [
+                    {
+                        "stream": {"app": "api"},
+                        "values": [
+                            [
+                                "10",
+                                "api ok",
+                                {
+                                    "parsed": {
+                                        "env": "prod",
+                                        "region": "eu",
+                                        "shard": "z"
                                     }
-                                ]
+                                }
                             ]
-                        }
-                    ]
-                }
-            })
+                        ]
+                    }
+                ]
+            }
+        }),
     );
 }

@@ -1,5 +1,6 @@
 use super::{
-    BlockMeta, BlockWriter, SpanRecord, TraceIndex, TracesError, build_blocks_with_promoted_attrs,
+    BlockMeta, BlockWriter, OffsetRange, SpanRecord, TraceIndex, TracesError,
+    build_blocks_with_promoted_attrs,
 };
 
 /// Build and write one span block for `tenant` from the supplied WAL records.
@@ -12,7 +13,7 @@ pub async fn build_blocks(
     tenant: &str,
     partition: i32,
     records: &[SpanRecord],
-    offset_range: (i64, i64),
+    offset_range: OffsetRange,
 ) -> Result<Vec<BlockMeta>, TracesError> {
     build_blocks_with_promoted_attrs(writer, index, tenant, partition, records, offset_range, &[])
         .await

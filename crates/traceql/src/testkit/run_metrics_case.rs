@@ -77,7 +77,7 @@ fn metrics_json(series: &[TraceMetricSeries]) -> Value {
     json!(series.iter().map(|series| {
         let mut result = json!({
             "labels": series.labels,
-            "points": series.points.iter().map(|(timestamp, value)| (*timestamp, metric_value(*value))).collect::<Vec<_>>(),
+            "points": series.points.iter().map(|point| json!([point.timestamp, metric_value(point.value)])).collect::<Vec<_>>(),
             "exemplars": series.exemplars.iter().map(|exemplar| {
                 let mut value = json!({"labels": exemplar.labels, "value": metric_value(exemplar.value), "timestamp_ns": exemplar.timestamp_ns});
                 if !exemplar.label_types.is_empty() { value["label_types"] = json!(exemplar.label_types); }
@@ -107,11 +107,15 @@ fn normalize_metrics(value: &mut Value) {
             }
         }
     }
-    series.sort_by_cached_key(|series| {
-        (
-            series["labels"].to_string(),
-            series["label_types"].to_string(),
-        )
+    series.sort_by(|left, right| {
+        left["labels"]
+            .to_string()
+            .cmp(&right["labels"].to_string())
+            .then_with(|| {
+                left["label_types"]
+                    .to_string()
+                    .cmp(&right["label_types"].to_string())
+            })
     });
 }
 
@@ -142,17 +146,17 @@ mod tests {
         // The fixture has one svc=x span: trace 2, span 1, start 1001ns.
         let expected = vec![TraceMetricSeries {
             label_types: BTreeMap::default(),
-            labels: vec![("span.svc".into(), "x".into())],
-            points: vec![(0, 1.0), (10_000, 0.0)],
+            labels: vec![crate::MetricLabel::new("span.svc", "x")],
+            points: vec![
+                crate::MetricPoint::new(0, 1.0),
+                crate::MetricPoint::new(10_000, 0.0),
+            ],
             exemplars: vec![TraceMetricExemplar {
                 label_types: BTreeMap::default(),
                 labels: vec![
-                    (
-                        "trace:id".into(),
-                        "02".repeat(16).trim_start_matches('0').into(),
-                    ),
-                    (".svc".into(), "x".into()),
-                    ("span.svc".into(), "x".into()),
+                    crate::MetricLabel::new("trace:id", "02".repeat(16).trim_start_matches('0')),
+                    crate::MetricLabel::new(".svc", "x"),
+                    crate::MetricLabel::new("span.svc", "x"),
                 ],
                 value: f64::NAN,
                 timestamp_ns: 1_001,
@@ -163,17 +167,17 @@ mod tests {
         assert!(correct.passed_assertions == 2 && correct.total_assertions == 2);
 
         let mut wrong_value = expected.clone();
-        wrong_value[0].points[0].1 = 2.0;
+        wrong_value[0].points[0].value = 2.0;
         let mut wrong_label = expected.clone();
-        wrong_label[0].labels[0].1 = "a".into();
+        wrong_label[0].labels[0].value = "a".into();
         let mut wrong_timestamp = expected.clone();
-        wrong_timestamp[0].points[0].0 = 1;
+        wrong_timestamp[0].points[0].timestamp = 1;
         let mut wrong_type = expected.clone();
         wrong_type[0]
             .label_types
             .insert("span.svc".into(), crate::TraceMetricLabelType::Int);
         let mut wrong_exemplar = expected;
-        wrong_exemplar[0].exemplars[0].labels[0].1 = "03".repeat(16);
+        wrong_exemplar[0].exemplars[0].labels[0].value = "03".repeat(16);
         for wrong in [
             wrong_value,
             wrong_label,
@@ -205,7 +209,11 @@ mod tests {
         let series = [TraceMetricSeries {
             label_types: BTreeMap::default(),
             labels: Vec::new(),
-            points: vec![(0, f64::NAN), (1, f64::INFINITY), (2, f64::NEG_INFINITY)],
+            points: vec![
+                crate::MetricPoint::new(0, f64::NAN),
+                crate::MetricPoint::new(1, f64::INFINITY),
+                crate::MetricPoint::new(2, f64::NEG_INFINITY),
+            ],
             exemplars: vec![TraceMetricExemplar {
                 label_types: BTreeMap::default(),
                 labels: Vec::new(),

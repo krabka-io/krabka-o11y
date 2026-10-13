@@ -1,4 +1,4 @@
-use super::{Extension, IntoResponse, Response, RoleReadiness, StatusCode};
+use super::{Extension, Response, RoleReadiness, StatusCode};
 
 /// The `GET /ready` handler every Krabka role serves.
 ///
@@ -13,14 +13,13 @@ use super::{Extension, IntoResponse, Response, RoleReadiness, StatusCode};
 pub async fn ready(Extension(readiness): Extension<RoleReadiness>) -> Response {
     let pending = readiness.pending();
     if pending.is_empty() {
-        (StatusCode::OK, "ready\n").into_response()
+        crate::text_response(StatusCode::OK, "ready\n")
     } else {
         // Loki, Mimir and Tempo all name what is still starting in the 503
         // body. An operator reading a probe failure wants the same answer.
-        (
+        crate::text_response(
             StatusCode::SERVICE_UNAVAILABLE,
-            format!("not ready: {}\n", pending.join(", ")),
+            &format!("not ready: {}\n", pending.join(", ")),
         )
-            .into_response()
     }
 }

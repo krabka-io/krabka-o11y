@@ -39,12 +39,16 @@ mod populate_loki_query_scan_stats;
 pub(crate) use add_loki_query_stat_field::add_loki_query_stat_field;
 pub(crate) use add_loki_query_stats::add_loki_query_stats;
 pub(crate) use add_loki_query_stats_for_metric_plan::add_loki_query_stats_for_metric_plan;
-pub(crate) use add_loki_query_stats_for_metric_plan_with_hot_tail::add_loki_query_stats_for_metric_plan_with_hot_tail;
+pub(crate) use add_loki_query_stats_for_metric_plan_with_hot_tail::{
+    MetricEvaluationWindow, add_loki_query_stats_for_metric_plan_with_hot_tail,
+};
 pub(crate) use add_loki_query_stats_for_stream_blocks_with_hot_tail::add_loki_query_stats_for_stream_blocks_with_hot_tail;
 pub(crate) use add_loki_query_stats_for_stream_plan::add_loki_query_stats_for_stream_plan;
 pub(crate) use add_loki_query_stats_for_stream_plan_with_hot_tail::add_loki_query_stats_for_stream_plan_with_hot_tail;
 pub(crate) use consume_hot_metric_sample::consume_hot_metric_sample;
-pub(crate) use count_loki_metric_result_hot_tail_samples::count_loki_metric_result_hot_tail_samples;
+pub(crate) use count_loki_metric_result_hot_tail_samples::{
+    HotSampleKey, count_loki_metric_result_hot_tail_samples,
+};
 pub(crate) use count_loki_metric_result_samples::count_loki_metric_result_samples;
 pub(crate) use count_loki_metric_result_scan_lines::count_loki_metric_result_scan_lines;
 pub(crate) use count_loki_stream_result_hot_tail_lines::count_loki_stream_result_hot_tail_lines;

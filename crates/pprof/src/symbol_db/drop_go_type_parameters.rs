@@ -13,7 +13,8 @@ pub(crate) fn drop_go_type_parameters(input: &str) -> Cow<'_, str> {
 
         let mut depth = 0_i32;
         let mut end = None;
-        for (offset, byte) in input[start..].bytes().enumerate() {
+        let mut offset = 0;
+        for byte in input[start..].bytes() {
             match byte {
                 b'[' => depth += 1,
                 b']' => {
@@ -25,6 +26,7 @@ pub(crate) fn drop_go_type_parameters(input: &str) -> Cow<'_, str> {
                 }
                 _ => {}
             }
+            offset += 1;
         }
         let Some(next) = end else {
             result.push_str(&input[start..]);

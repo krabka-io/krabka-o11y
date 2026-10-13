@@ -16,27 +16,27 @@ pub(crate) fn trace_metrics_json(resp: &TraceMetricsResponse, query: &str) -> Va
             let name = series_name(series, name);
             let mut legend_labels = series.labels.clone();
             if let Some(name) = name {
-                legend_labels.push(("__name__".into(), name.into()));
+                legend_labels.push(krabka_traceql::MetricLabel::new("__name__", name));
             }
             json!({
                 "labels": metric_labels_json(series, name),
                 "promLabels": metric_prom_labels(&legend_labels, &series.label_types),
                 "samples": series.points.iter()
-                    .map(|(ts_ns, value)| json!({
-                        "timestampMs": (ts_ns / 1_000_000).to_string(),
-                        "value": metric_value_json(*value),
+                    .map(|point| json!({
+                        "timestampMs": (point.timestamp / 1_000_000).to_string(),
+                        "value": metric_value_json(point.value),
                     }))
                     .collect::<Vec<_>>(),
                 "exemplars": series.exemplars.iter()
                     .map(|exemplar| {
                         json!({
                             "labels": exemplar.labels.iter()
-                                .map(|(key, value)| metric_label_json(key, value, exemplar.label_types.get(key).copied()))
+                                .map(|label| metric_label_json(&label.key, &label.value, exemplar.label_types.get(&label.key).copied()))
                                 .collect::<Vec<_>>(),
                             "value": metric_value_json(if exemplar.value.is_nan() {
                                 series.points.iter()
-                                    .find(|(timestamp, _)| *timestamp >= exemplar.timestamp_ns)
-                                    .map_or(exemplar.value, |(_, value)| *value)
+                                    .find(|point| point.timestamp >= exemplar.timestamp_ns)
+                                    .map_or(exemplar.value, |point| point.value)
                             } else {
                                 exemplar.value
                             }),
@@ -52,12 +52,13 @@ pub(crate) fn trace_metrics_json(resp: &TraceMetricsResponse, query: &str) -> Va
 pub(crate) fn trace_metrics_instant_json(resp: &TraceMetricsResponse, query: &str) -> Value {
     let name = metrics_operation_name(query);
     super::instant_metrics_response(resp.series.iter().filter_map(|series| {
-        series.points.first().map(|(_, value)| {
-            (
-                metric_labels_json(series, series_name(series, name)),
-                *value,
-            )
-        })
+        series
+            .points
+            .first()
+            .map(|point| super::InstantMetricSample {
+                labels: metric_labels_json(series, series_name(series, name)),
+                value: point.value,
+            })
     }))
 }
 
@@ -66,7 +67,7 @@ fn series_name(series: &TraceMetricSeries, name: Option<&'static str>) -> Option
         !series
             .labels
             .iter()
-            .any(|(key, _)| matches!(key.as_str(), "__bucket" | "p"))
+            .any(|label| matches!(label.key.as_str(), "__bucket" | "p"))
     })
 }
 
@@ -75,7 +76,13 @@ fn metric_labels_json(series: &TraceMetricSeries, name: Option<&str>) -> Value {
         series
             .labels
             .iter()
-            .map(|(key, value)| metric_label_json(key, value, series.label_types.get(key).copied()))
+            .map(|label| {
+                metric_label_json(
+                    &label.key,
+                    &label.value,
+                    series.label_types.get(&label.key).copied(),
+                )
+            })
             .chain(name.map(|name| metric_label_json("__name__", name, None)))
             .collect(),
     )
@@ -86,7 +93,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use assert2::assert;
-    use krabka_traceql::{TraceMetricExemplar, TraceMetricSeries};
+    use krabka_traceql::{MetricLabel, MetricPoint, TraceMetricExemplar, TraceMetricSeries};
 
     use super::*;
 
@@ -97,12 +104,12 @@ mod tests {
                 TraceMetricSeries {
                     label_types: BTreeMap::new(),
                     labels: Vec::new(),
-                    points: vec![(1, 3.0), (2, 99.0)],
+                    points: vec![MetricPoint::new(1, 3.0), MetricPoint::new(2, 99.0)],
                     exemplars: Vec::new(),
                 },
                 TraceMetricSeries {
                     label_types: BTreeMap::new(),
-                    labels: vec![("missing".into(), "no-sample".into())],
+                    labels: vec![MetricLabel::new("missing", "no-sample")],
                     points: Vec::new(),
                     exemplars: Vec::new(),
                 },
@@ -123,17 +130,20 @@ mod tests {
             series: vec![TraceMetricSeries {
                 label_types: BTreeMap::default(),
                 labels: Vec::new(),
-                points: vec![(20_000_000, 3.0), (30_000_000, 7.0)],
+                points: vec![
+                    MetricPoint::new(20_000_000, 3.0),
+                    MetricPoint::new(30_000_000, 7.0),
+                ],
                 exemplars: vec![
                     TraceMetricExemplar {
                         label_types: BTreeMap::default(),
-                        labels: vec![("trace:id".into(), "123".into())],
+                        labels: vec![MetricLabel::new("trace:id", "123")],
                         value: f64::NAN,
                         timestamp_ns: 20_000_000,
                     },
                     TraceMetricExemplar {
                         label_types: BTreeMap::default(),
-                        labels: vec![("name".into(), "selected".into())],
+                        labels: vec![MetricLabel::new("name", "selected")],
                         value: f64::NAN,
                         timestamp_ns: 21_000_000,
                     },

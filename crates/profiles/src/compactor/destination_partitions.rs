@@ -27,8 +27,8 @@ pub(crate) fn destination_partitions(
             ProfilesError::Block(format!("block base for index {block_idx} overflows u64"))
         })?;
     let mut map = BTreeMap::new();
-    for (local, source) in source_partitions.iter().enumerate() {
-        let local = u64::try_from(local).map_err(|err| {
+    for partition in source_partitions.iter().enumerate() {
+        let local = u64::try_from(partition.0).map_err(|err| {
             ProfilesError::Block(format!("local partition does not fit u64: {err}"))
         })?;
         if local >= 1 << 32 {
@@ -38,7 +38,7 @@ pub(crate) fn destination_partitions(
         }
         // `block_base` is a multiple of `1 << 32` and `local < 1 << 32`, so the
         // low bits are guaranteed clear and OR is equivalent to addition.
-        map.insert(*source, block_base | local);
+        map.insert(*partition.1, block_base | local);
     }
     Ok(map)
 }

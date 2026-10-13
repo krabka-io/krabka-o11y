@@ -1,5 +1,12 @@
 use super::*;
 
+struct ComparisonCase {
+    ordering: std::cmp::Ordering,
+    sample: MetricValue,
+    scalar: MetricValue,
+    scalar_side: super::super::prelude::ScalarSide,
+}
+
 /// `metric_scalar_comparison_matches` compares a sample against a scalar,
 /// given the side the scalar was written on. That side only
 /// matters for the four ordered operators -- `1 > x` and `x > 1` disagree
@@ -30,23 +37,53 @@ pub(crate) fn a_scalar_comparison_answers_every_operator_from_both_sides() {
         )
     };
 
-    // (ordering of left against right, sample, scalar, scalar_side)
+    // The ordering of left against right, the sample, scalar, and scalar side.
     let cases = [
-        (Ordering::Less, one, two, ScalarSide::Right),
-        (Ordering::Greater, one, two, ScalarSide::Left),
-        (Ordering::Greater, two, one, ScalarSide::Right),
-        (Ordering::Less, two, one, ScalarSide::Left),
-        (Ordering::Equal, one, one, ScalarSide::Right),
-        (Ordering::Equal, one, one, ScalarSide::Left),
+        ComparisonCase {
+            ordering: Ordering::Less,
+            sample: one,
+            scalar: two,
+            scalar_side: ScalarSide::Right,
+        },
+        ComparisonCase {
+            ordering: Ordering::Greater,
+            sample: one,
+            scalar: two,
+            scalar_side: ScalarSide::Left,
+        },
+        ComparisonCase {
+            ordering: Ordering::Greater,
+            sample: two,
+            scalar: one,
+            scalar_side: ScalarSide::Right,
+        },
+        ComparisonCase {
+            ordering: Ordering::Less,
+            sample: two,
+            scalar: one,
+            scalar_side: ScalarSide::Left,
+        },
+        ComparisonCase {
+            ordering: Ordering::Equal,
+            sample: one,
+            scalar: one,
+            scalar_side: ScalarSide::Right,
+        },
+        ComparisonCase {
+            ordering: Ordering::Equal,
+            sample: one,
+            scalar: one,
+            scalar_side: ScalarSide::Left,
+        },
     ];
-    for (ordering, sample, scalar, scalar_side) in cases {
+    for case in cases {
         let want = |op| match op {
-            ComparisonOp::Equal => ordering == Ordering::Equal,
-            ComparisonOp::NotEqual => ordering != Ordering::Equal,
-            ComparisonOp::Greater => ordering == Ordering::Greater,
-            ComparisonOp::GreaterEqual => ordering != Ordering::Less,
-            ComparisonOp::Less => ordering == Ordering::Less,
-            ComparisonOp::LessEqual => ordering != Ordering::Greater,
+            ComparisonOp::Equal => case.ordering == Ordering::Equal,
+            ComparisonOp::NotEqual => case.ordering != Ordering::Equal,
+            ComparisonOp::Greater => case.ordering == Ordering::Greater,
+            ComparisonOp::GreaterEqual => case.ordering != Ordering::Less,
+            ComparisonOp::Less => case.ordering == Ordering::Less,
+            ComparisonOp::LessEqual => case.ordering != Ordering::Greater,
             ComparisonOp::RegexEqual | ComparisonOp::RegexNotEqual => false,
         };
         for op in [
@@ -60,8 +97,10 @@ pub(crate) fn a_scalar_comparison_answers_every_operator_from_both_sides() {
             ComparisonOp::RegexNotEqual,
         ] {
             check!(
-                matches(sample, op, scalar, scalar_side) == want(op),
-                "{op:?} at {ordering:?} with the scalar on the {scalar_side:?}"
+                matches(case.sample, op, case.scalar, case.scalar_side) == want(op),
+                "{op:?} at {:?} with the scalar on the {:?}",
+                case.ordering,
+                case.scalar_side
             );
         }
     }

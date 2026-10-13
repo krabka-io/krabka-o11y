@@ -9,7 +9,10 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
         .insert(
             "tenant-a",
             &cached_query,
-            one_sample_matrix(labels(&[("__name__", "up"), ("job", "api")])),
+            one_sample_matrix(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ])),
         )
         .await
         .unwrap();

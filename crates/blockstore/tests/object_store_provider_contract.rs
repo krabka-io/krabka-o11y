@@ -27,6 +27,11 @@ use self::faults::{
 
 const OBJECTS_OVER_ONE_S3_PAGE: usize = 1_005;
 
+struct CloudCase {
+    url: &'static str,
+    cloud: &'static str,
+}
+
 async fn delete_all(store: &Arc<dyn ObjectStore>) {
     let paths = store
         .list(None)
@@ -123,8 +128,10 @@ async fn supported_provider_satisfies_the_object_store_contract() {
     let raw_url = std::env::var("KRABKA_OBJECT_STORE_CONTRACT_URL")
         .expect("KRABKA_OBJECT_STORE_CONTRACT_URL must name a dedicated contract prefix");
     let url = Url::parse(&raw_url).expect("the contract URL parses");
-    let (store, prefix) = object_store::parse_url_opts(&url, std::env::vars())
+    let parsed = object_store::parse_url_opts(&url, std::env::vars())
         .expect("provider configuration is valid before the contract writes data");
+    let store = parsed.0;
+    let prefix = parsed.1;
     assert!(
         prefix.as_ref().starts_with("krabka-contract/"),
         "refusing a destructive run outside a `krabka-contract/` prefix"
@@ -235,33 +242,52 @@ async fn supported_provider_satisfies_the_object_store_contract() {
 #[test]
 fn the_report_names_the_cloud_whose_client_serves_the_url() {
     let cases = [
-        ("s3://bucket/krabka-contract/run", "aws"),
-        ("s3a://bucket/krabka-contract/run", "aws"),
-        (
-            "https://s3.us-east-1.amazonaws.com/bucket/krabka-contract/run",
-            "aws",
-        ),
-        (
-            "https://account.r2.cloudflarestorage.com/bucket/krabka-contract/run",
-            "aws",
-        ),
-        ("gs://bucket/krabka-contract/run", "gcs"),
-        ("az://container/krabka-contract/run", "azure"),
-        (
-            "abfss://container@account.dfs.core.windows.net/run",
-            "azure",
-        ),
-        (
-            "https://account.blob.core.windows.net/container/krabka-contract/run",
-            "azure",
-        ),
-        ("https://example.com/krabka-contract/run", "other"),
-        ("file:///tmp/krabka-contract/run", "other"),
+        CloudCase {
+            url: "s3://bucket/krabka-contract/run",
+            cloud: "aws",
+        },
+        CloudCase {
+            url: "s3a://bucket/krabka-contract/run",
+            cloud: "aws",
+        },
+        CloudCase {
+            url: "https://s3.us-east-1.amazonaws.com/bucket/krabka-contract/run",
+            cloud: "aws",
+        },
+        CloudCase {
+            url: "https://account.r2.cloudflarestorage.com/bucket/krabka-contract/run",
+            cloud: "aws",
+        },
+        CloudCase {
+            url: "gs://bucket/krabka-contract/run",
+            cloud: "gcs",
+        },
+        CloudCase {
+            url: "az://container/krabka-contract/run",
+            cloud: "azure",
+        },
+        CloudCase {
+            url: "abfss://container@account.dfs.core.windows.net/run",
+            cloud: "azure",
+        },
+        CloudCase {
+            url: "https://account.blob.core.windows.net/container/krabka-contract/run",
+            cloud: "azure",
+        },
+        CloudCase {
+            url: "https://example.com/krabka-contract/run",
+            cloud: "other",
+        },
+        CloudCase {
+            url: "file:///tmp/krabka-contract/run",
+            cloud: "other",
+        },
     ];
-    for (url, want) in cases {
+    for case in cases {
         check!(
-            object_store_cloud(&Url::parse(url).unwrap()) == want,
-            "{url}"
+            object_store_cloud(&Url::parse(case.url).unwrap()) == case.cloud,
+            "{}",
+            case.url
         );
     }
 }

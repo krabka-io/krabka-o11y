@@ -18,47 +18,78 @@ use std::{
 
 use arrow::{
     array::{Int64Array, StringArray, UInt64Array},
-    datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
 use krabka_blockstore::{
-    BlockKey, BlockStore, COL_FINGERPRINT, COL_TIMESTAMP, LabelMatcher, Labels, LogRow, MatchOp,
-    TimeRange, read_log_block, write_log_block,
+    BlockKey, BlockStore, LabelMatcher, Labels, LogRow, MatchOp, TimeRange, read_log_block,
+    write_log_block,
 };
 use object_store::{ObjectStore, memory::InMemory};
 use proptest::prelude::*;
 
+#[path = "support/log_schema.rs"]
+mod log_schema;
+
 /// A total order over a row's full contents, so the read-back, which is sorted
 /// by `(fingerprint, timestamp)`, and the input compare as multisets even when
 /// two rows share a `(fingerprint, timestamp)` pair.
-fn row_sort_key(row: &LogRow) -> (u64, i64, String, BTreeMap<String, String>) {
-    (
-        row.series_fingerprint,
-        row.timestamp_ns,
-        row.line.clone(),
-        row.structured_metadata.clone(),
-    )
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct LogRowSortKey {
+    series_fingerprint: u64,
+    timestamp_ns: i64,
+    line: String,
+    structured_metadata: BTreeMap<String, String>,
 }
 
-fn arb_row() -> impl Strategy<Value = (u64, i64, String, BTreeMap<String, String>)> {
-    (
-        any::<u64>(),
-        0_i64..1_000_000_000_000_i64,
-        "[a-zA-Z0-9 ,.:|=_/-]{0,40}",
-        proptest::collection::btree_map("[a-zA-Z0-9_]{1,12}", "[a-zA-Z0-9_ ]{0,20}", 0..4_usize),
-    )
+fn row_sort_key(row: &LogRow) -> LogRowSortKey {
+    LogRowSortKey {
+        series_fingerprint: row.series_fingerprint,
+        timestamp_ns: row.timestamp_ns,
+        line: row.line.clone(),
+        structured_metadata: row.structured_metadata.clone(),
+    }
 }
 
-fn schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new(COL_FINGERPRINT, DataType::UInt64, false),
-        Field::new(COL_TIMESTAMP, DataType::Int64, false),
-        Field::new("line", DataType::Utf8, true),
-    ]))
+#[derive(Clone, Debug)]
+struct GeneratedLogRow {
+    series_fingerprint: u64,
+    timestamp_ns: i64,
+    line: String,
+    structured_metadata: BTreeMap<String, String>,
 }
 
-fn arb_rows() -> impl Strategy<Value = Vec<(bool, i64, String)>> {
-    proptest::collection::vec((any::<bool>(), 0_i64..1_000_i64, "[a-z]{1,8}"), 1..40)
+prop_compose! {
+    fn arb_row()(
+        series_fingerprint in any::<u64>(),
+        timestamp_ns in 0_i64..1_000_000_000_000_i64,
+        line in "[a-zA-Z0-9 ,.:|=_/-]{0,40}",
+        structured_metadata in proptest::collection::btree_map(
+            "[a-zA-Z0-9_]{1,12}", "[a-zA-Z0-9_ ]{0,20}", 0..4_usize
+        ),
+    ) -> GeneratedLogRow {
+        GeneratedLogRow { series_fingerprint, timestamp_ns, line, structured_metadata }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GeneratedMatcherRow {
+    is_api: bool,
+    timestamp: i64,
+    line: String,
+}
+
+prop_compose! {
+    fn arb_matcher_row()(
+        is_api in any::<bool>(),
+        timestamp in 0_i64..1_000_i64,
+        line in "[a-z]{1,8}",
+    ) -> GeneratedMatcherRow {
+        GeneratedMatcherRow { is_api, timestamp, line }
+    }
+}
+
+fn arb_rows() -> impl Strategy<Value = Vec<GeneratedMatcherRow>> {
+    proptest::collection::vec(arb_matcher_row(), 1..40)
 }
 
 proptest! {
@@ -68,8 +99,8 @@ proptest! {
     fn write_then_read_preserves_all_rows(raw in proptest::collection::vec(arb_row(), 1..40)) {
         let dir = tempfile::tempdir().unwrap();
 
-        let min_ts = raw.iter().map(|(_, ts, _, _)| *ts).min().unwrap();
-        let max_ts = raw.iter().map(|(_, ts, _, _)| *ts).max().unwrap();
+        let min_ts = raw.iter().map(|row| row.timestamp_ns).min().unwrap();
+        let max_ts = raw.iter().map(|row| row.timestamp_ns).max().unwrap();
         let key = BlockKey::new(
             "tenant-prop",
             0,
@@ -80,7 +111,12 @@ proptest! {
 
         let rows: Vec<LogRow> = raw
             .iter()
-            .map(|(fp, ts, line, metadata)| LogRow::new(*fp, *ts, line.clone(), metadata.clone()))
+            .map(|row| LogRow::new(
+                row.series_fingerprint,
+                row.timestamp_ns,
+                row.line.clone(),
+                row.structured_metadata.clone(),
+            ))
             .collect();
 
         let descriptor = write_log_block(dir.path(), &key, rows.clone()).unwrap();
@@ -112,26 +148,37 @@ proptest! {
             web.insert("app", "web");
             let web_fp = web.fingerprint();
 
-            let mut sorted: Vec<(u64, i64, String)> = rows
+            #[derive(Eq, Ord, PartialEq, PartialOrd)]
+            struct MatcherRow {
+                fingerprint: u64,
+                timestamp: i64,
+                line: String,
+            }
+
+            let mut sorted: Vec<MatcherRow> = rows
                 .iter()
-                .map(|(is_api, ts, line)| {
-                    (if *is_api { api_fp } else { web_fp }, *ts, line.clone())
+                .map(|row| {
+                    MatcherRow {
+                        fingerprint: if row.is_api { api_fp } else { web_fp },
+                        timestamp: row.timestamp,
+                        line: row.line.clone(),
+                    }
                 })
                 .collect();
-            sorted.sort_by_key(|(fp, ts, _)| (*fp, *ts));
+            sorted.sort();
 
             let expected_api_count = sorted
                 .iter()
-                .filter(|(fp, _, _)| *fp == api_fp)
+                .filter(|row| row.fingerprint == api_fp)
                 .count();
 
-            let fps = UInt64Array::from(sorted.iter().map(|(fp, _, _)| *fp).collect::<Vec<_>>());
-            let timestamps = Int64Array::from(sorted.iter().map(|(_, ts, _)| *ts).collect::<Vec<_>>());
+            let fps = UInt64Array::from(sorted.iter().map(|row| row.fingerprint).collect::<Vec<_>>());
+            let timestamps = Int64Array::from(sorted.iter().map(|row| row.timestamp).collect::<Vec<_>>());
             let lines = StringArray::from(
-                sorted.iter().map(|(_, _, line)| line.as_str()).collect::<Vec<_>>(),
+                sorted.iter().map(|row| row.line.as_str()).collect::<Vec<_>>(),
             );
             let batch = RecordBatch::try_new(
-                schema(),
+                log_schema::schema(),
                 vec![Arc::new(fps), Arc::new(timestamps), Arc::new(lines)],
             )
             .unwrap();
@@ -141,23 +188,25 @@ proptest! {
             let mut block_store = BlockStore::new(store, base);
             let meta = block_store
                 .writer()
-                .write_block("t", "b.parquet", schema(), &[batch])
+                .write_block("t", "b.parquet", log_schema::schema(), &[batch])
                 .await
                 .unwrap();
             block_store.index_mut().add_series("t", api_fp, &api);
             block_store.index_mut().add_series("t", web_fp, &web);
             block_store.index_mut().add_block(&meta);
 
-            let (ctx, table) = block_store
+            let registered = block_store
                 .scan_context(
                     "t",
                     &[LabelMatcher::new("app", MatchOp::Eq, "api")],
                     i64::MIN,
                     i64::MAX,
-                    schema(),
+                    log_schema::schema(),
                 )
                 .await
                 .unwrap();
+            let ctx = &registered.context;
+            let table = &registered.table;
             let df = ctx
                 .sql(&format!(
                     "SELECT count(*) AS c FROM {table} WHERE series_fingerprint = {api_fp}"

@@ -21,9 +21,11 @@ where
         cache,
         request,
     };
-    let ([sums, counts, sum_squares], annotations) = run
+    let partials = run
         .summed_partials([sum_query, count_query, sum_squares_query])
         .await?;
+    let [sums, counts, sum_squares] = partials.results;
+    let annotations = partials.annotations;
     Ok(AnnotatedQueryResult {
         result: reduce_moment_range_query_results(sums, counts, sum_squares, kind)?,
         annotations,

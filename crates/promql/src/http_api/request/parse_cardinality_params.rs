@@ -7,7 +7,9 @@ pub(crate) fn parse_cardinality_params(
     let Some(raw_query) = raw_query else {
         return Ok(params);
     };
-    for (name, value) in form_urlencoded::parse(raw_query.as_bytes()) {
+    for pair in form_urlencoded::parse(raw_query.as_bytes()) {
+        let name = pair.0;
+        let value = pair.1;
         match name.as_ref() {
             "selector" => params.selector = Some(value.into_owned()),
             "label_names[]" => params.label_names.push(value.into_owned()),

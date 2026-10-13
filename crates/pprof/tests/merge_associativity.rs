@@ -7,18 +7,18 @@ proptest! {
     #[test]
     fn merge_is_order_independent(stacks in stack_samples()) {
         let mut whole = Tree::new();
-        for (frames, value) in &stacks {
-            whole.add_stack(frames, *value);
+        for sample in &stacks {
+            whole.add_stack(&sample.frames, sample.value);
         }
 
         let mid = stacks.len() / 2;
         let mut left = Tree::new();
-        for (frames, value) in &stacks[..mid] {
-            left.add_stack(frames, *value);
+        for sample in &stacks[..mid] {
+            left.add_stack(&sample.frames, sample.value);
         }
         let mut right = Tree::new();
-        for (frames, value) in &stacks[mid..] {
-            right.add_stack(frames, *value);
+        for sample in &stacks[mid..] {
+            right.add_stack(&sample.frames, sample.value);
         }
         left.merge(&right);
 
@@ -26,8 +26,22 @@ proptest! {
     }
 }
 
-fn stack_samples() -> impl Strategy<Value = Vec<(Vec<Frame>, i64)>> {
-    prop::collection::vec((stack_frames(), 1_i64..1_000), 1..40)
+#[derive(Debug)]
+struct StackSample {
+    frames: Vec<Frame>,
+    value: i64,
+}
+
+fn stack_samples() -> impl Strategy<Value = Vec<StackSample>> {
+    prop::collection::vec(
+        stack_frames().prop_flat_map(|frames| {
+            (1_i64..1_000).prop_map(move |value| StackSample {
+                frames: frames.clone(),
+                value,
+            })
+        }),
+        1..40,
+    )
 }
 
 fn stack_frames() -> impl Strategy<Value = Vec<Frame>> {

@@ -11,7 +11,10 @@ pub(crate) fn labels_from_v1(labels: &[pb::v1::Label]) -> Result<Labels, WireErr
                     label.name
                 )));
             }
-            Ok((label.name.clone(), label.value.clone()))
+            Ok(super::LabelPair::new(
+                label.name.clone(),
+                label.value.clone(),
+            ))
         })
         .collect()
 }

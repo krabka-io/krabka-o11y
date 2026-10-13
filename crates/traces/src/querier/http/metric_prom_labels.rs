@@ -1,19 +1,19 @@
 use std::collections::BTreeMap;
 
-use krabka_traceql::TraceMetricLabelType;
+use krabka_traceql::{MetricLabel, TraceMetricLabelType};
 
 /// Tempo's `Labels.String`: sorted verbatim names and typed display values.
 pub(crate) fn metric_prom_labels(
-    labels: &[(String, String)],
+    labels: &[MetricLabel],
     types: &BTreeMap<String, TraceMetricLabelType>,
 ) -> String {
-    let labels = labels
-        .iter()
-        .map(|(key, value)| (key, value))
-        .collect::<BTreeMap<_, _>>();
+    let mut labels = labels.iter().collect::<Vec<_>>();
+    labels.sort_by(|left, right| left.key.cmp(&right.key));
     let inner = labels
         .into_iter()
-        .map(|(key, value)| {
+        .map(|label| {
+            let key = &label.key;
+            let value = &label.value;
             let kind = types.get(key).copied().or_else(|| {
                 matches!(key.as_str(), "p" | "__bucket").then_some(TraceMetricLabelType::Double)
             });
@@ -92,7 +92,9 @@ fn float_label(value: f64) -> String {
         .into();
     }
     let exponent = format!("{value:e}");
-    let (mantissa, power) = exponent.split_once('e').expect("float exponent has e");
+    let separator = exponent.find('e').expect("float exponent has e");
+    let mantissa = &exponent[..separator];
+    let power = &exponent[separator + 1..];
     let power = power.parse::<i32>().expect("float exponent is integer");
     if (-4..6).contains(&power) {
         value.to_string()
@@ -144,23 +146,28 @@ fn quote_label(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use assert2::assert;
+    use krabka_traceql::MetricLabel;
 
     use super::{BTreeMap, TraceMetricLabelType, float_label, metric_prom_labels, quote_label};
+
+    struct FloatLabelCase {
+        value: f64,
+        expected: &'static str,
+    }
 
     #[test]
     fn legends_preserve_names_types_missing_values_and_go_escaping() {
         let labels = vec![
-            ("span.value".into(), "1".into()),
-            ("span:duration".into(), "1ms".into()),
-            ("empty".into(), String::new()),
-            ("absent".into(), "nil".into()),
-            ("text".into(), "a\"\\\n\0".into()),
-            ("float".into(), "1".into()),
+            MetricLabel::new("span.value", "1"),
+            MetricLabel::new("span:duration", "1ms"),
+            MetricLabel::new("empty", ""),
+            MetricLabel::new("absent", "nil"),
+            MetricLabel::new("text", "a\"\\\n\0"),
+            MetricLabel::new("float", "1"),
         ];
-        let types = BTreeMap::from([
-            ("span.value".into(), TraceMetricLabelType::Int),
-            ("float".into(), TraceMetricLabelType::Double),
-        ]);
+        let mut types = BTreeMap::new();
+        types.insert("span.value".into(), TraceMetricLabelType::Int);
+        types.insert("float".into(), TraceMetricLabelType::Double);
         assert!(
             metric_prom_labels(&labels, &types)
                 == r#"{absent="<nil>", empty="<empty>", float="1.0", "span.value"="int(1)", "span:duration"="1ms", text="a\"\\\n\x00"}"#
@@ -180,23 +187,39 @@ mod tests {
 
     #[test]
     fn float_and_array_legends_follow_pinned_static_formatting() {
-        for (value, text) in [
-            (1e6, "1e+06"),
-            (1e-5, "1e-05"),
-            (0.0001, "0.0001"),
-            (-0.0, "-0"),
-            (f64::INFINITY, "+Inf"),
+        for case in [
+            FloatLabelCase {
+                value: 1e6,
+                expected: "1e+06",
+            },
+            FloatLabelCase {
+                value: 1e-5,
+                expected: "1e-05",
+            },
+            FloatLabelCase {
+                value: 0.0001,
+                expected: "0.0001",
+            },
+            FloatLabelCase {
+                value: -0.0,
+                expected: "-0",
+            },
+            FloatLabelCase {
+                value: f64::INFINITY,
+                expected: "+Inf",
+            },
         ] {
-            assert!(float_label(value) == text);
+            assert!(float_label(case.value) == case.expected);
         }
         let array =
             serde_json::json!({"arrayValue":{"values":[{"intValue":"2"},{"intValue":"4"}]}})
                 .to_string();
         assert!(
-            metric_prom_labels(
-                &[("span.numbers".into(), array)],
-                &BTreeMap::from([("span.numbers".into(), TraceMetricLabelType::Array)])
-            ) == r#"{"span.numbers"="[2, 4]"}"#
+            metric_prom_labels(&[MetricLabel::new("span.numbers", array)], &{
+                let mut types = BTreeMap::new();
+                types.insert("span.numbers".into(), TraceMetricLabelType::Array);
+                types
+            }) == r#"{"span.numbers"="[2, 4]"}"#
         );
     }
 }

@@ -140,11 +140,11 @@ mod logfmt_parser_config;
 
 use is_json_path_field_name_char::is_json_path_field_name_char;
 pub use json_extraction::JsonExtraction;
-pub use json_object_fields::parse_json_object_entries;
+pub use json_object_fields::{JsonObjectEntry, parse_json_object_entries};
 pub use json_parser_config::JsonParserConfig;
 use json_path::JsonPath;
 use json_path_parser::JsonPathParser;
 pub(crate) use json_path_part::JsonPathPart;
 pub use logfmt_extraction::LogfmtExtraction;
-pub use logfmt_parser::LogfmtParser;
+pub use logfmt_parser::{LogfmtField, LogfmtParser};
 pub use logfmt_parser_config::LogfmtParserConfig;
