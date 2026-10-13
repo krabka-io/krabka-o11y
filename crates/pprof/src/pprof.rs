@@ -18,7 +18,7 @@ mod tests {
             sample: vec![crate::proto::Sample {
                 location_id: vec![1],
                 value: vec![42],
-                label: Vec::new(),
+                ..Default::default()
             }],
             string_table: vec![
                 String::new(),

@@ -1,7 +1,8 @@
 use super::{
-    BTreeSet, InstantSample, Result, VectorMatching, VectorOperands, append_left_fill_results,
-    append_matched_binary_result, binary_match_key, copy_group_labels, fill_missing_right,
-    index_by_match_key, labels_without_metric_name, one_to_one_binary_result_labels,
+    BTreeSet, InstantSample, LeftSampleMatch, Result, VectorMatching, VectorOperands,
+    append_left_fill_results, append_matched_binary_result, copy_group_labels, fill_missing_right,
+    index_by_match_key, labels_without_metric_name, left_sample_matches,
+    one_to_one_binary_result_labels,
 };
 
 pub(crate) fn eval_many_to_one_vector_binary(
@@ -17,9 +18,13 @@ pub(crate) fn eval_many_to_one_vector_binary(
 
     let mut out = Vec::new();
     let mut matched = BTreeSet::new();
-    for left_sample in left {
-        let key = binary_match_key(&left_sample.labels, modifier);
-        let Some(right_sample) = right_by_key.get(&key) else {
+    for LeftSampleMatch {
+        left: left_sample,
+        key,
+        right,
+    } in left_sample_matches(left, &right_by_key, modifier)
+    {
+        let Some(right_sample) = right else {
             out.extend(fill_missing_right(&left_sample, matching, |fill| {
                 let mut labels = if fill.preserves_name {
                     left_sample.labels.clone()

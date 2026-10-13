@@ -54,7 +54,7 @@ mod server_security_pki;
 mod token_sha256;
 
 use recorded_security_events::{RecordedEvents, tenant};
-use secure_router::{SecureRouter, serve_secure_router};
+use secure_router::{SecureRouter, bind_secure_listener, serve_secure_router};
 use server_security_pki::{Leaf, Pem, authority};
 use token_sha256::sha256_hex;
 
@@ -707,9 +707,9 @@ struct GrpcServer {
 }
 
 async fn serve_grpc(security: &ServerSecurity) -> GrpcServer {
-    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
-    let listener = ServerListener::bind(tcp, security).expect("the listener binds");
-    let addr = listener.local_addr();
+    let secure_listener = bind_secure_listener(security).await;
+    let addr = secure_listener.addr;
+    let listener = secure_listener.listener;
     let stop = CancellationToken::new();
     let server = tonic::transport::Server::builder()
         .layer(GrpcAuthenticationLayer::new(security))

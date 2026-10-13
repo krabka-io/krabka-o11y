@@ -11,13 +11,6 @@ use krabka_observability::server_security::{Principal, authorize_admin};
 
 use super::{AuthorizedTenant, MetricStore, PrometheusApiState};
 
-fn text_response(status: StatusCode, body: impl Into<String>) -> Response {
-    let body: String = body.into();
-    let mut response = Response::new(body.into());
-    *response.status_mut() = status;
-    response
-}
-
 fn require_ruler_admin(principal: &Principal) -> Result<(), Response> {
     authorize_admin(principal).map_err(|error| error.into_response())
 }
@@ -64,7 +57,7 @@ async fn all_rule_groups<S: MetricStore>(
     };
     match serde_yaml::to_string(&rules) {
         Ok(body) => {
-            let mut response = text_response(StatusCode::OK, body);
+            let mut response = super::response_with_status(StatusCode::OK, body);
             response.headers_mut().insert(
                 axum::http::header::CONTENT_TYPE,
                 axum::http::HeaderValue::from_static("application/yaml"),
@@ -157,7 +150,7 @@ async fn delete_tenant_config<S: MetricStore>(
     }
     match state.persist_ruler_config(&tenant).await {
         Ok(()) => StatusCode::OK.into_response(),
-        Err(error) => text_response(StatusCode::INTERNAL_SERVER_ERROR, error),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 

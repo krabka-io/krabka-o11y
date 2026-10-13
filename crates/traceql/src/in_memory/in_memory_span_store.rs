@@ -317,60 +317,21 @@ impl TagCatalog for InMemorySpanStore {
                             .map(|attribute| attribute.key.clone()),
                     );
                 }
-                if !input.instrumentation_name.is_empty() {
-                    tags.instrumentation
-                        .insert("instrumentation:name".to_string());
-                }
-                if !input.instrumentation_version.is_empty() {
-                    tags.instrumentation
-                        .insert("instrumentation:version".to_string());
-                }
+                tags.add_instrumentation(
+                    &input.instrumentation_name,
+                    &input.instrumentation_version,
+                );
             }
         }
 
-        let mut out = Vec::new();
-        if matches!(scope, None | Some(TagScope::Resource)) && !tags.resource.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Resource,
-                tags: tags.resource.into_iter().collect(),
-            });
+        Ok(TagNameGroups {
+            resource: tags.resource,
+            span: tags.span,
+            event: tags.event,
+            link: tags.link,
+            instrumentation: tags.instrumentation,
         }
-        if matches!(scope, None | Some(TagScope::Span)) && !tags.span.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Span,
-                tags: tags.span.into_iter().collect(),
-            });
-        }
-        if matches!(scope, None | Some(TagScope::Intrinsic)) && !traces.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Intrinsic,
-                tags: INTRINSIC_TAGS
-                    .iter()
-                    .map(|tag| (*tag).to_string())
-                    .collect(),
-            });
-        }
-        if matches!(scope, None | Some(TagScope::Event)) && !tags.event.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Event,
-                tags: tags.event.into_iter().collect(),
-            });
-        }
-        if matches!(scope, None | Some(TagScope::Link)) && !tags.link.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Link,
-                tags: tags.link.into_iter().collect(),
-            });
-        }
-        if matches!(scope, None | Some(TagScope::Instrumentation))
-            && !tags.instrumentation.is_empty()
-        {
-            out.push(ScopedTag {
-                scope: TagScope::Instrumentation,
-                tags: tags.instrumentation.into_iter().collect(),
-            });
-        }
-        Ok(out)
+        .into_scoped_tags(scope, !traces.is_empty(), INTRINSIC_TAGS))
     }
 
     async fn tag_values(
@@ -380,10 +341,10 @@ impl TagCatalog for InMemorySpanStore {
         start_ns: i64,
         end_ns: i64,
     ) -> Result<Vec<TypedValue>> {
-        let tag = tag.strip_prefix('.').unwrap_or(tag);
-        let scoped_tag = scoped_attribute_tag(tag);
-        let attr_tag = scoped_tag.tag;
-        let attr_scope = scoped_tag.scope;
+        let parsed_tag = TagScope::parse_attribute_tag(tag);
+        let tag = parsed_tag.tag;
+        let attr_tag = parsed_tag.attribute.tag;
+        let attr_scope = parsed_tag.attribute.scope;
         let mut values = BTreeSet::new();
         for trace in self.traces_in_range(tenant, start_ns, end_ns) {
             collect_trace_intrinsic_values(trace, tag, &mut values);

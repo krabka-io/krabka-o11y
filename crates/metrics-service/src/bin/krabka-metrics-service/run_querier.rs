@@ -1,8 +1,8 @@
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, MimirTenantAdminState, RoleLaunch, RoleObjectStore, ServerSecurity, ServingWalHead,
-    Shutdown, load_runtime_overrides, mimir_tenant_admin_router, prometheus_router,
+    Arc, MimirTenantAdminState, RoleLaunch, RoleObjectStore, ServerSecurity, ServingMetricStore,
+    ServingWalHead, Shutdown, load_runtime_overrides, mimir_tenant_admin_router, prometheus_router,
     readiness_router, serve_prometheus_router_joinable, serving_api_state,
     spawn_role_wal_head_consumer,
 };
@@ -43,12 +43,11 @@ pub(crate) fn run_querier(
                     spawn_role_wal_head_consumer(&cli, feed, shutdown.clone()),
                 );
             }
-            let ServingWalHead {
+            let ServingMetricStore {
                 head,
-                status: status_wal,
-                ..
-            } = wal_head;
-            let metric_store = Arc::new(role_store.refreshing_metric_store(&cli, head.clone()));
+                status_wal,
+                metric_store,
+            } = ServingMetricStore::from_head(&role_store, &cli, wal_head);
             let state = serving_api_state(Arc::clone(&metric_store), &cli)
                 .with_erasure_store(Arc::clone(&store))
                 .with_metrics(metrics)

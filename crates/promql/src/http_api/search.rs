@@ -77,15 +77,21 @@ pub(super) async fn search_metric_names<S: MetricStore>(
     search(state, request).await
 }
 
-pub(super) async fn search_metric_names_post<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    caller: RequestCaller,
-    RawQuery(query): RawQuery,
-    body: Bytes,
-) -> Response {
-    let request = search_request(caller, query.as_deref(), SearchKind::MetricNames);
-    search_post(state, request, &body).await
+macro_rules! search_post_handler {
+    ($name:ident, $kind:ident) => {
+        pub(super) async fn $name<S: MetricStore>(
+            State(state): State<Arc<PrometheusApiState<S>>>,
+            caller: RequestCaller,
+            RawQuery(query): RawQuery,
+            body: Bytes,
+        ) -> Response {
+            let request = search_request(caller, query.as_deref(), SearchKind::$kind);
+            search_post(state, request, &body).await
+        }
+    };
 }
+
+search_post_handler!(search_metric_names_post, MetricNames);
 
 pub(super) async fn search_label_names<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
@@ -96,15 +102,7 @@ pub(super) async fn search_label_names<S: MetricStore>(
     search(state, request).await
 }
 
-pub(super) async fn search_label_names_post<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    caller: RequestCaller,
-    RawQuery(query): RawQuery,
-    body: Bytes,
-) -> Response {
-    let request = search_request(caller, query.as_deref(), SearchKind::LabelNames);
-    search_post(state, request, &body).await
-}
+search_post_handler!(search_label_names_post, LabelNames);
 
 pub(super) async fn search_label_values<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
@@ -115,15 +113,7 @@ pub(super) async fn search_label_values<S: MetricStore>(
     search(state, request).await
 }
 
-pub(super) async fn search_label_values_post<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    caller: RequestCaller,
-    RawQuery(query): RawQuery,
-    body: Bytes,
-) -> Response {
-    let request = search_request(caller, query.as_deref(), SearchKind::LabelValues);
-    search_post(state, request, &body).await
-}
+search_post_handler!(search_label_values_post, LabelValues);
 
 /// One search request: who asks, the raw query string, and what it searches.
 struct SearchRequest<'a> {

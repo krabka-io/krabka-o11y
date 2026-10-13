@@ -1,13 +1,35 @@
 use krabka_blockstore::MeteredObjectStore;
 use krabka_metrics_service::RefreshingMetricBlockStore;
 
-use super::{Arc, Cli, ObjectStore, RoleReadiness, WalHead};
+use super::{Arc, Cli, ObjectStore, RoleReadiness, ServingWalHead, ServingWalHeadStatus, WalHead};
 
 /// The object store a serving role reads blocks from, metered and tracked by
 /// the role's readiness.
 pub(crate) struct RoleObjectStore {
     pub(crate) url: url::Url,
     pub(crate) store: Arc<dyn ObjectStore>,
+}
+
+pub(crate) struct ServingMetricStore {
+    pub(crate) metric_store: Arc<RefreshingMetricBlockStore>,
+    pub(crate) head: WalHead,
+    pub(crate) status_wal: Option<ServingWalHeadStatus>,
+}
+
+impl ServingMetricStore {
+    pub(crate) fn from_head(
+        role_store: &RoleObjectStore,
+        cli: &Cli,
+        serving_head: ServingWalHead,
+    ) -> Self {
+        Self {
+            metric_store: Arc::new(
+                role_store.refreshing_metric_store(cli, serving_head.head.clone()),
+            ),
+            head: serving_head.head,
+            status_wal: serving_head.status,
+        }
+    }
 }
 
 impl RoleObjectStore {

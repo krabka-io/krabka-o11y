@@ -34,10 +34,10 @@ pub use in_memory::InMemorySpanStore;
 pub use lexer::{Token, lex};
 pub use parser::parse;
 pub use result::{
-    AttrValue, Attribute, EventRef, LinkRef, MetricLabel, MetricPoint, ScopedTag, SearchResponse,
-    SpanRef, SpanSet, TagNameSets, TagScope, TagScopePrefix, TraceMetricExemplar,
-    TraceMetricLabelType, TraceMetricSeries, TraceMetricsResponse, TraceResult, TraceSpans,
-    TypedValue,
+    AttrValue, Attribute, EventRef, LinkRef, MetricLabel, MetricPoint, ParsedTagScope, ScopedTag,
+    SearchResponse, SpanRef, SpanSet, TagNameGroups, TagNameSets, TagScope, TagScopePrefix,
+    TraceMetricExemplar, TraceMetricLabelType, TraceMetricSeries, TraceMetricsResponse,
+    TraceResult, TraceSpans, TypedValue,
 };
 pub use span_columns::{
     ATTR_PREFIX, AttributeColumn, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME,

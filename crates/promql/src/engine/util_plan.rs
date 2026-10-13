@@ -277,10 +277,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
-        let Some(planned_arg) = self.plan_lone_vector_arg(tenant, call, time_ms).await? else {
+        let Some(samples) = self
+            .plan_lone_vector_arg(tenant, call, time_ms)
+            .await?
+            .map(|planned_arg| planned_arg.samples)
+        else {
             return Ok(None);
         };
-        let samples = planned_arg.samples;
         // `funcScalar` counts only the float samples: a vector of one float and
         // any number of histograms still yields that float, and only a count of
         // floats other than one yields NaN.

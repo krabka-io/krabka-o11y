@@ -63,6 +63,17 @@ impl RoleReadiness {
         readiness
     }
 
+    /// Tracks the metrics active for a single role, omitting WAL readiness in
+    /// all-in-one mode where the process manages its role gates separately.
+    #[must_use]
+    pub fn from_target_metrics(
+        single_role: bool,
+        wal_consumer: WalConsumerMetrics,
+        object_store: ObjectStoreMetrics,
+    ) -> Self {
+        Self::from_metrics(single_role.then_some(wal_consumer), object_store)
+    }
+
     /// A view onto the same preconditions that names `role` in front of every
     /// gate it registers.
     ///

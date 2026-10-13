@@ -242,24 +242,21 @@ mod tests {
     }
 
     fn sample_histogram() -> NativeHistogram {
-        NativeHistogram {
-            schema: 2,
-            is_float: false,
-            reset_hint: ResetHint::No,
-            zero_threshold: 1e-128,
-            zero_count: 3.0,
-            count: 10.0,
-            sum: 42.5,
-            positive_spans: vec![BucketSpan {
+        NativeHistogram::builder()
+            .schema(2)
+            .reset_hint(ResetHint::No)
+            .zero_threshold(1e-128)
+            .zero_count(3.0)
+            .count(10.0)
+            .sum(42.5)
+            .positive_spans(vec![BucketSpan {
                 offset: 0,
                 length: 2,
-            }],
-            positive_counts: vec![4.0, 3.0],
-            negative_spans: vec![],
-            negative_counts: vec![],
-            custom_values: None,
-            start_timestamp_ms: None,
-        }
+            }])
+            .positive_counts(vec![4.0, 3.0])
+            .maybe_custom_values(None)
+            .maybe_start_timestamp_ms(None)
+            .build()
     }
 }
 

@@ -36,13 +36,6 @@ macro_rules! tenant_or_return {
     };
 }
 
-fn text_response(status: StatusCode, body: impl Into<String>) -> Response {
-    let body: String = body.into();
-    let mut response = Response::new(body.into());
-    *response.status_mut() = status;
-    response
-}
-
 #[derive(Deserialize)]
 struct AlertmanagerConfig {
     #[serde(default)]
@@ -92,14 +85,14 @@ async fn get_config<S: MetricStore>(
     match state.alertmanager_configs.read() {
         Ok(configs) => match configs.get(&tenant) {
             Some(config) => {
-                let mut response = text_response(StatusCode::OK, config.clone());
+                let mut response = super::response_with_status(StatusCode::OK, config.clone());
                 response.headers_mut().insert(
                     header::CONTENT_TYPE,
                     axum::http::HeaderValue::from_static("application/yaml"),
                 );
                 response
             }
-            None => text_response(
+            None => super::response_with_status(
                 StatusCode::NOT_FOUND,
                 "alertmanager storage object not found\n",
             ),
@@ -116,18 +109,24 @@ async fn set_config<S: MetricStore>(
     let tenant = tenant_or_return!(caller);
     let body = match String::from_utf8(body.to_vec()) {
         Ok(body) => body,
-        Err(error) => return text_response(StatusCode::BAD_REQUEST, error.to_string()),
+        Err(error) => {
+            return super::response_with_status(StatusCode::BAD_REQUEST, error.to_string());
+        }
     };
     let config: AlertmanagerConfig = match serde_yaml::from_str(&body) {
         Ok(config) => config,
-        Err(error) => return text_response(StatusCode::BAD_REQUEST, error.to_string()),
+        Err(error) => {
+            return super::response_with_status(StatusCode::BAD_REQUEST, error.to_string());
+        }
     };
     let parsed = match serde_yaml::from_str::<serde_yaml::Value>(&config.alertmanager_config) {
         Ok(parsed) => parsed,
-        Err(error) => return text_response(StatusCode::BAD_REQUEST, error.to_string()),
+        Err(error) => {
+            return super::response_with_status(StatusCode::BAD_REQUEST, error.to_string());
+        }
     };
     if let Err(error) = validate_alertmanager_config(&parsed, &config.template_files) {
-        return text_response(StatusCode::BAD_REQUEST, error);
+        return super::response_with_status(StatusCode::BAD_REQUEST, error);
     }
     let stored = match state.alertmanager_configs.write() {
         Ok(mut configs) => {
@@ -141,7 +140,7 @@ async fn set_config<S: MetricStore>(
     }
     match state.persist_alertmanager_config(&tenant).await {
         Ok(()) => StatusCode::CREATED.into_response(),
-        Err(error) => text_response(StatusCode::INTERNAL_SERVER_ERROR, error),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -162,7 +161,7 @@ async fn delete_config<S: MetricStore>(
     }
     match state.persist_alertmanager_config(&tenant).await {
         Ok(()) => StatusCode::OK.into_response(),
-        Err(error) => text_response(StatusCode::INTERNAL_SERVER_ERROR, error),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -283,7 +282,7 @@ async fn set_alerts<S: MetricStore>(
     }
     match state.persist_alertmanager_alerts(&tenant).await {
         Ok(()) => StatusCode::OK.into_response(),
-        Err(error) => text_response(StatusCode::INTERNAL_SERVER_ERROR, error),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -364,7 +363,7 @@ async fn set_silence<S: MetricStore>(
     }
     match state.persist_alertmanager_silences(&tenant).await {
         Ok(()) => Json(json!({"silenceID":id})).into_response(),
-        Err(error) => text_response(StatusCode::INTERNAL_SERVER_ERROR, error),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -409,7 +408,7 @@ async fn delete_silence<S: MetricStore>(
     }
     match state.persist_alertmanager_silences(&tenant).await {
         Ok(()) => StatusCode::OK.into_response(),
-        Err(error) => text_response(StatusCode::INTERNAL_SERVER_ERROR, error),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 

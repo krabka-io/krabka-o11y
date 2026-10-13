@@ -9,6 +9,27 @@ use crate::{
     parse_metric_sample_value, sort_loki_stream_values,
 };
 
+struct LokiParquetColumns {
+    timestamp_data_type: DataType,
+    timestamp_array: TimestampNanosecondArray,
+    labels_array: datafusion::arrow::array::MapArray,
+}
+
+fn loki_parquet_columns(
+    timestamps: Vec<i64>,
+    label_sets: &[Vec<krabka_blockstore::LabelPair>],
+) -> Result<LokiParquetColumns, HttpQueryError> {
+    let timestamp_data_type = DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()));
+    let timestamp_array =
+        TimestampNanosecondArray::from(timestamps).with_data_type(timestamp_data_type.clone());
+    let labels_array = loki_parquet_label_array(label_sets)?;
+    Ok(LokiParquetColumns {
+        timestamp_data_type,
+        timestamp_array,
+        labels_array,
+    })
+}
+
 mod accept_parameter_is_zero_quality;
 mod accept_part_allows_loki_parquet;
 mod add_loki_encoding_flags;

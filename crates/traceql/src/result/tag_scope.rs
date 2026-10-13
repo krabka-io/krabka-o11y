@@ -16,7 +16,29 @@ pub struct TagScopePrefix<'a> {
     pub scope: Option<TagScope>,
 }
 
+/// A normalized query tag and the attribute prefix it names, when present.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParsedTagScope<'a> {
+    pub tag: &'a str,
+    pub attribute: TagScopePrefix<'a>,
+}
+
 impl TagScope {
+    /// Removes an optional leading dot and resolves instrumentation,
+    /// resource, or span attribute prefixes.
+    #[must_use]
+    pub fn parse_attribute_tag(tag: &str) -> ParsedTagScope<'_> {
+        let tag = tag.strip_prefix('.').unwrap_or(tag);
+        let attribute = match tag.strip_prefix("instrumentation.") {
+            Some(tag) => TagScopePrefix {
+                tag,
+                scope: Some(Self::Instrumentation),
+            },
+            None => Self::split_resource_or_span_prefix(tag),
+        };
+        ParsedTagScope { tag, attribute }
+    }
+
     /// Splits a `resource.` or `span.` scope prefix off an attribute tag.
     ///
     /// Returns the bare attribute name, with the scope the prefix named, or

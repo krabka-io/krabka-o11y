@@ -93,6 +93,23 @@ mod orch_tests {
         )
     }
 
+    fn three_querier_frontend(config: FrontendConfig) -> QueryFrontend<MockQuerier, MockCatalog> {
+        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+            "b1",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 100,
+            },
+            &[500],
+        )]);
+        QueryFrontend::new(
+            Arc::new(MockQuerier::new()),
+            Arc::new(catalog),
+            config,
+            MembershipView::fixed(["q1:3200", "q2:3200", "q3:3200"]),
+        )
+    }
+
     fn one_trace(tid: &str, start: u64) -> SearchPartial {
         SearchPartial {
             traces: vec![TraceJson {
@@ -222,25 +239,11 @@ mod orch_tests {
 
     #[tokio::test]
     async fn trace_by_id_fans_one_job_per_ready_querier() {
-        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
-            "b1",
-            TimeRange {
-                start_ns: 0,
-                end_ns: 100,
-            },
-            &[500],
-        )]);
-        let backend = MockQuerier::new();
         let cfg = FrontendConfig {
             max_concurrency: 1,
             ..FrontendConfig::default()
         };
-        let qf = QueryFrontend::new(
-            Arc::new(backend),
-            Arc::new(catalog),
-            cfg,
-            MembershipView::fixed(["q1:3200", "q2:3200", "q3:3200"]),
-        );
+        let qf = three_querier_frontend(cfg);
         let result = qf.trace_by_id(&tenant_t1(), [9; 16], 0, 300).await.unwrap();
         // One job per ready querier (3), each addressed by name, none returned
         // the trace => Complete + None.
@@ -265,25 +268,11 @@ mod orch_tests {
     /// so it goes to exactly one.
     #[tokio::test]
     async fn a_live_shard_reaches_every_querier_and_a_block_reaches_one() {
-        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
-            "b1",
-            TimeRange {
-                start_ns: 0,
-                end_ns: 100,
-            },
-            &[500],
-        )]);
-        let backend = MockQuerier::new();
         let cfg = FrontendConfig {
             hot_frontier_ns: 0,
             ..FrontendConfig::default()
         };
-        let qf = QueryFrontend::new(
-            Arc::new(backend),
-            Arc::new(catalog),
-            cfg,
-            MembershipView::fixed(["q1:3200", "q2:3200", "q3:3200"]),
-        );
+        let qf = three_querier_frontend(cfg);
         let resp = qf.search(&tenant_t1(), "{ }", 0, 300, 20, 3).await.unwrap();
 
         let calls = qf.backend_ref().search_calls();

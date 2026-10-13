@@ -535,18 +535,9 @@ async fn an_assembled_trace_is_partial_when_a_querier_was_left_out() {
     .await;
     let frontend = serve(&[up.addr.clone(), down.addr.clone()], cfg()).await;
 
-    let resp = reqwest::Client::new()
-        .get(format!(
-            "http://{frontend}/api/v2/traces/{}",
-            "0a".repeat(16)
-        ))
-        .header("X-Scope-OrgID", "t1")
-        .timeout(Duration::from_secs(10))
-        .send()
-        .await
-        .unwrap();
-    check!(resp.status() == StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
+    let HttpResult { status, body } = by_id(frontend).await;
+    check!(status == StatusCode::OK);
+    let body: Value = serde_json::from_str(&body).unwrap();
     check!(body["status"] == json!("PARTIAL"), "{body}");
     let message = body["message"].as_str().unwrap();
     check!(message.contains(&down.addr), "{message}");

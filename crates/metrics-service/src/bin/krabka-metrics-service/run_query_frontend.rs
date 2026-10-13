@@ -2,9 +2,10 @@ use krabka_observability::SupervisedTasks;
 
 use super::{
     Arc, MimirTenantAdminState, QueryFrontendOptions, RoleLaunch, RoleObjectStore, ServerSecurity,
-    ServingWalHead, Shutdown, TimeExt, load_runtime_overrides, mimir_tenant_admin_router,
-    prometheus_router, readiness_router, serve_prometheus_router_joinable, serving_api_state,
-    spawn_role_wal_head_consumer, spawn_shutdown_signal_listener,
+    ServingMetricStore, ServingWalHead, Shutdown, TimeExt, load_runtime_overrides,
+    mimir_tenant_admin_router, prometheus_router, readiness_router,
+    serve_prometheus_router_joinable, serving_api_state, spawn_role_wal_head_consumer,
+    spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -50,12 +51,11 @@ pub(crate) async fn run_query_frontend(
             spawn_role_wal_head_consumer(&cli, feed, shutdown.clone()),
         );
     }
-    let ServingWalHead {
+    let ServingMetricStore {
         head,
-        status: status_wal,
-        ..
-    } = wal_head;
-    let metric_store = Arc::new(role_store.refreshing_metric_store(&cli, head.clone()));
+        status_wal,
+        metric_store,
+    } = ServingMetricStore::from_head(&role_store, &cli, wal_head);
     let query_cache = krabka_promql::ObjectStoreQueryFrontendCache::new(
         Arc::clone(&store),
         cli.query_frontend_cache_prefix.clone(),

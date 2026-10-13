@@ -1,9 +1,9 @@
 use std::borrow::Borrow;
 
 use super::{
-    BTreeMap, FsPath, HotTailMetricSamples, MetricRangeScanRequest, PreparedMetricRangeScan,
-    QueryError, SessionContext, Value, loki_matrix_response, metric_plan_scan_sql,
-    metric_samples_from_batches, register_log_blocks,
+    super::registered_local_log_session, BTreeMap, FsPath, HotTailMetricSamples,
+    MetricRangeScanRequest, PreparedMetricRangeScan, QueryError, Value, loki_matrix_response,
+    metric_plan_scan_sql, metric_samples_from_batches,
 };
 use crate::WalLogRecord;
 
@@ -24,8 +24,7 @@ pub(crate) async fn execute_metric_query_range_with_hot_tail_frontier_and_delete
     let mut samples = BTreeMap::new();
 
     if !plan.blocks.is_empty() && !plan.fingerprints.is_empty() {
-        let ctx = SessionContext::new();
-        register_log_blocks(&ctx, "logs", root, &plan.blocks)?;
+        let ctx = registered_local_log_session(root, &plan.blocks)?;
         let sql = metric_plan_scan_sql(plan, query, eval_range)?;
         let batches = ctx.sql(&sql).await?.collect().await?;
         samples = metric_samples_from_batches(

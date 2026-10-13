@@ -33,26 +33,16 @@ mod tests {
 
     use super::*;
     use crate::span::{
-        AttrValue, KeyValue, Span, SpanKind, StatusCode,
+        AttrValue, KeyValue, Span,
         batch::{span_batch, span_batch_with_promoted_attrs},
+        test_span::api_server_span,
     };
 
     fn span(attrs: Vec<KeyValue>) -> Span {
         Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            name: "GET /".into(),
-            kind: SpanKind::Server,
-            start_ns: 1_000,
-            duration_ns: 100,
-            status: StatusCode::Ok,
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
             span_attrs: attrs,
             instrumentation_scope: "test".into(),
-            ..Span::default()
+            ..api_server_span()
         }
     }
 

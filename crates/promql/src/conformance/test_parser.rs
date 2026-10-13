@@ -28,6 +28,14 @@ struct EvalFailurePrefix<'a> {
     rest: &'a str,
 }
 
+fn parse_sample_values(value: &str, line: Line<'_>) -> Result<Vec<SampleSpec>> {
+    split_sample_tokens(value, line)?
+        .into_iter()
+        .map(|token| parse_sample_token(token, line))
+        .collect::<Result<Vec<_>>>()
+        .map(|values| values.into_iter().flatten().collect())
+}
+
 pub(crate) struct TestParser<'a> {
     pub(crate) lines: Vec<Line<'a>>,
     pub(crate) index: usize,
@@ -165,13 +173,7 @@ impl<'a> TestParser<'a> {
                 });
                 continue;
             }
-            let values = split_sample_tokens(values, line)?
-                .into_iter()
-                .map(|token| parse_sample_token(token, line))
-                .collect::<Result<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
+            let values = parse_sample_values(values, line)?;
             let start_offsets_ms = if let Some(start) = pending_start.take() {
                 if start.metric != metric || start.offsets.len() != values.len() {
                     return Err(parse_error(
@@ -362,13 +364,7 @@ impl<'a> TestParser<'a> {
             let parts = split_metric_and_tail(line.trimmed, line)?;
             let metric = parts.head;
             let value = parts.tail;
-            let values = split_sample_tokens(value, line)?
-                .into_iter()
-                .map(|token| parse_sample_token(token, line))
-                .collect::<Result<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
+            let values = parse_sample_values(value, line)?;
             if values.is_empty() {
                 return Err(parse_error(line, "expected at least one expected value"));
             }

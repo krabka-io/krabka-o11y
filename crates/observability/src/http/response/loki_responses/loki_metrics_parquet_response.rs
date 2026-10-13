@@ -38,21 +38,18 @@ pub(crate) fn loki_metrics_parquet_response(
         }
     }
 
-    let timestamp_data_type = DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()));
-    let timestamp_array =
-        TimestampNanosecondArray::from(timestamps).with_data_type(timestamp_data_type.clone());
-    let labels_array = loki_parquet_label_array(&label_sets)?;
+    let columns = loki_parquet_columns(timestamps, &label_sets)?;
     let value_array = Float64Array::from(values);
     let schema = Arc::new(Schema::new(vec![
-        Field::new("timestamp", timestamp_data_type, false),
-        Field::new("labels", labels_array.data_type().clone(), false),
+        Field::new("timestamp", columns.timestamp_data_type, false),
+        Field::new("labels", columns.labels_array.data_type().clone(), false),
         Field::new("value", DataType::Float64, false),
     ]));
     let batch = RecordBatch::try_new(
         schema,
         vec![
-            Arc::new(timestamp_array) as ArrayRef,
-            Arc::new(labels_array) as ArrayRef,
+            Arc::new(columns.timestamp_array) as ArrayRef,
+            Arc::new(columns.labels_array) as ArrayRef,
             Arc::new(value_array) as ArrayRef,
         ],
     )?;

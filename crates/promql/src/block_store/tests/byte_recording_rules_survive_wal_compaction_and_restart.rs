@@ -208,10 +208,7 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
         };
         assert2::assert!(samples.len() == 3);
         assert2::assert!(
-            samples
-                .iter()
-                .map(|sample| sample.labels.get_value("raw").unwrap().as_bytes().to_vec())
-                .collect::<BTreeSet<_>>()
+            raw_label_values(&samples)
                 == BTreeSet::from([
                     vec![0xfe],
                     "�".as_bytes().to_vec(),
@@ -251,6 +248,27 @@ struct ErasureCase {
 struct QueryValueCase {
     query: &'static str,
     expected: f64,
+}
+
+fn raw_label_values(samples: &[crate::InstantSample]) -> BTreeSet<Vec<u8>> {
+    samples
+        .iter()
+        .map(|sample| sample.labels.get_value("raw").unwrap().as_bytes().to_vec())
+        .collect()
+}
+
+async fn instant_vector<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+) -> Vec<crate::InstantSample> {
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant(&tenant_id("tenant-a"), query, 30_000)
+        .await
+        .unwrap()
+    else {
+        panic!("expected vector");
+    };
+    samples
 }
 
 struct RecordingRuleCase {
@@ -388,20 +406,10 @@ async fn check_byte_ledger<S: MetricStore>(engine: &PromqlEngine<S>, values: &[V
             expected: 2.0,
         },
     ] {
-        let QueryResult::InstantVector(samples) = engine
-            .query_instant(&tenant_id("tenant-a"), case.query, 30_000)
-            .await
-            .unwrap()
-        else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(&engine, case.query).await;
         assert2::assert!(samples.len() == 4, "{}", case.query);
         assert2::assert!(
-            samples
-                .iter()
-                .map(|sample| sample.labels.get_value("raw").unwrap().as_bytes().to_vec())
-                .collect::<BTreeSet<_>>()
-                == values.iter().cloned().collect::<BTreeSet<_>>(),
+            raw_label_values(&samples) == values.iter().cloned().collect::<BTreeSet<_>>(),
             "{}",
             case.query
         );
@@ -442,13 +450,7 @@ async fn check_byte_ledger<S: MetricStore>(engine: &PromqlEngine<S>, values: &[V
             expected: vec![vec![0xfe]],
         },
     ] {
-        let QueryResult::InstantVector(samples) = engine
-            .query_instant(&tenant_id("tenant-a"), case.query, 30_000)
-            .await
-            .unwrap()
-        else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(engine, case.query).await;
         assert2::assert!(
             samples
                 .iter()

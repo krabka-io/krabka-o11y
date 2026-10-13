@@ -54,8 +54,9 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
         // the seven roles take `for_role` views of this one list, so `/ready`
         // stays a single answer and names the role whose gate is holding the
         // process back.
-        let readiness = RoleReadiness::from_metrics(
-            (cli.target != Target::All).then(|| metrics.wal_consumer.clone()),
+        let readiness = RoleReadiness::from_target_metrics(
+            cli.target != Target::All,
+            metrics.wal_consumer.clone(),
             metrics.object_store.clone(),
         );
         let admin = krabka_telemetry::profiling::spawn_admin_with_config(

@@ -1,6 +1,21 @@
+use std::path::Path;
+
+use datafusion::prelude::SessionContext;
+use krabka_blockstore::BlockDescriptor;
+
 use crate::{
     LabelIndex, MetricQuery, QueryError, QueryHotTail, StreamPlan, TimeRange, checked_eval_times,
+    register_log_blocks,
 };
+
+pub(crate) fn registered_local_log_session(
+    root: impl AsRef<Path>,
+    blocks: &[BlockDescriptor],
+) -> Result<SessionContext, QueryError> {
+    let ctx = SessionContext::new();
+    register_log_blocks(&ctx, "logs", root, blocks)?;
+    Ok(ctx)
+}
 
 pub(crate) struct MetricRangeScanRequest<'a, R> {
     pub(crate) plan: &'a StreamPlan,

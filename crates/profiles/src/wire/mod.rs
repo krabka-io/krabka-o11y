@@ -256,7 +256,7 @@ pub(crate) mod test_fixtures {
             sample: vec![krabka_pprof::proto::Sample {
                 location_id: vec![1],
                 value: vec![42],
-                label: Vec::new(),
+                ..Default::default()
             }],
             string_table: vec![
                 String::new(),

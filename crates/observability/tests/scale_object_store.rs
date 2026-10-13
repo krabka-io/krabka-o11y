@@ -117,6 +117,28 @@ fn series_labels(which: usize) -> Labels {
     labels
 }
 
+struct SeriesIndexFixture {
+    index: Index,
+    sorted_fingerprints: Vec<u64>,
+}
+
+fn series_index(series_count: usize) -> SeriesIndexFixture {
+    let mut index = Index::new();
+    let mut fingerprints = (0..series_count)
+        .map(|which| {
+            let labels = series_labels(which);
+            let fingerprint = labels.fingerprint();
+            index.add_series(TENANT, fingerprint, &labels);
+            fingerprint
+        })
+        .collect::<Vec<_>>();
+    fingerprints.sort_unstable();
+    SeriesIndexFixture {
+        index,
+        sorted_fingerprints: fingerprints,
+    }
+}
+
 /// One block's rows: every series, sampled `samples` times inside the block's
 /// own window, sorted by fingerprint and then timestamp.
 fn series_batch(fingerprints: &[u64], block: usize, samples: usize) -> RecordBatch {
@@ -224,18 +246,10 @@ async fn ten_thousand_series_over_twelve_blocks_prune_to_one() {
 
     let minio = start_minio(MINIO_USER).await;
     let writer = BlockWriter::new(Arc::clone(&minio.store));
-    let mut index = Index::new();
-
-    let fingerprints: Vec<u64> = (0..SERIES)
-        .map(|which| {
-            let labels = series_labels(which);
-            let fingerprint = labels.fingerprint();
-            index.add_series(TENANT, fingerprint, &labels);
-            fingerprint
-        })
-        .collect();
-    let mut sorted = fingerprints.clone();
-    sorted.sort_unstable();
+    let SeriesIndexFixture {
+        mut index,
+        sorted_fingerprints: sorted,
+    } = series_index(SERIES);
 
     for block in 0..BLOCKS {
         let key = format!("blocks/{TENANT}/{block:06}.parquet");
@@ -386,17 +400,10 @@ async fn compaction_over_twenty_four_blocks_keeps_every_row() {
 
     let minio = start_minio(MINIO_USER).await;
     let writer = BlockWriter::new(Arc::clone(&minio.store));
-    let mut index = Index::new();
-
-    let mut fingerprints: Vec<u64> = (0..SERIES)
-        .map(|which| {
-            let labels = series_labels(which);
-            let fingerprint = labels.fingerprint();
-            index.add_series(TENANT, fingerprint, &labels);
-            fingerprint
-        })
-        .collect();
-    fingerprints.sort_unstable();
+    let SeriesIndexFixture {
+        mut index,
+        sorted_fingerprints: fingerprints,
+    } = series_index(SERIES);
 
     let mut source_keys = Vec::with_capacity(BLOCKS);
     for block in 0..BLOCKS {

@@ -22,8 +22,8 @@ use krabka_units::{
 use crate::{
     error::{Result, TraceqlError},
     result::{
-        AttrValue, Attribute, EventRef, LinkRef, ScopedTag, SpanRef, TagNameSets, TagScope,
-        TraceSpans, TypedValue,
+        AttrValue, Attribute, EventRef, LinkRef, ScopedTag, SpanRef, TagNameGroups, TagNameSets,
+        TagScope, TraceSpans, TypedValue,
     },
     span_columns::{
         AttributeColumn, EVENT_ATTR_PREFIX, INSTRUMENTATION_ATTR_PREFIX, InputSpan,
@@ -2505,7 +2505,6 @@ mod nested_event_matchers_match;
 mod nested_link_matchers_match;
 mod resource_matches;
 mod scan_builders;
-mod scoped_attribute_tag;
 mod span_attr_matches;
 mod span_matches;
 mod span_ref;
@@ -2532,7 +2531,6 @@ use nested_event_matchers_match::nested_event_matchers_match;
 use nested_link_matchers_match::nested_link_matchers_match;
 use resource_matches::resource_matches;
 use scan_builders::ScanBuilders;
-use scoped_attribute_tag::scoped_attribute_tag;
 use span_attr_matches::span_attr_matches;
 use span_matches::span_matches;
 use span_ref::span_ref;
