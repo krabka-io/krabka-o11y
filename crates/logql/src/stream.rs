@@ -9,8 +9,8 @@ use crate::{
 #[cfg(test)]
 mod tests {
     use super::{
-        PatternParser, PatternPart, parse_pattern_parts, sanitize_json_field_name,
-        sanitize_logfmt_field_name,
+        PatternParser, PatternPart, parse_pattern_parts, pattern_parser::PatternCapture,
+        sanitize_json_field_name, sanitize_logfmt_field_name,
     };
 
     struct FieldNameCase {
@@ -262,8 +262,6 @@ use parse_logfmt_fields::parse_logfmt_fields;
 use parse_pattern_parts::parse_pattern_parts;
 use parse_selected_logfmt_fields::parse_selected_logfmt_fields;
 pub use parser_stage::ParserStage;
-#[cfg(test)]
-pub(crate) use pattern_parser::PatternCapture;
 pub use pattern_parser::PatternParser;
 use pattern_part::PatternPart;
 pub use pipeline_evaluation::PipelineEvaluation;
