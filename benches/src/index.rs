@@ -90,8 +90,7 @@ pub fn populated_index(series: usize, blocks: usize) -> Index {
 pub fn populated_log_label_index(series: usize) -> LabelIndex {
     let mut index = LabelIndex::default();
     for which in 0..series {
-        let labels = series_labels(which).into_iter().collect::<BTreeMap<_, _>>();
-        index.insert_series(TENANT, labels);
+        index.insert_series(TENANT, series_labels(which));
     }
     index
 }

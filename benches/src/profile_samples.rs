@@ -1,7 +1,8 @@
 //! Repeated stack IDs and trace associations for full profile queries.
 
 use krabka_pprof::{
-    FlameGraph, Frame, FunctionRec, InMemoryProfileStore, LineRec, LocationRec, Tree,
+    FlameGraph, Frame, FunctionRec, InMemoryProfileStore, LineRec, LocationRec, ProfileIdentity,
+    ProfileLabel, SampleAssociations, SampleValues, StacktraceIdentity, Tree,
 };
 
 use crate::{Seeded, index::TENANT};
@@ -72,7 +73,10 @@ pub fn profile_samples(samples: usize, stacks_per_partition: usize) -> ProfileSa
                 })
                 .collect::<Vec<_>>();
             let partition = u64::try_from(partition).expect("a partition fits u64");
-            stacks.push((partition, db.intern_stacktrace(partition, &locations)));
+            stacks.push(StacktraceIdentity::new(
+                partition,
+                db.intern_stacktrace(partition, &locations),
+            ));
             frames.push(generated);
         }
     }
@@ -96,12 +100,12 @@ pub fn profile_samples(samples: usize, stacks_per_partition: usize) -> ProfileSa
             totals[stack][2] += value;
         }
         store.push_sample_with_total_and_associations(
-            (TENANT, PROFILE_TYPE),
-            vec![("service".to_string(), "api".to_string())],
+            ProfileIdentity::new(TENANT, PROFILE_TYPE),
+            vec![ProfileLabel::new("service", "api")],
             stacks[stack],
-            (value, value),
+            SampleValues::new(value, value),
             i64::try_from(row).expect("a timestamp fits i64"),
-            (
+            SampleAssociations::new(
                 Some(u64::try_from(trace + 1).expect("a span fits u64")),
                 Some(traces[trace].clone()),
             ),
